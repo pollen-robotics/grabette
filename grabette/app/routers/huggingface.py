@@ -115,6 +115,31 @@ def get_job(job_id: str):
     }
 
 
+@router.post("/slam/{session_id}")
+async def run_slam(
+    session_id: str,
+    req: UploadRequest,
+    hf: HuggingFaceClient = Depends(get_hf_client),
+    sm: SessionManager = Depends(get_session_manager),
+):
+    """Upload a session and trigger SLAM processing."""
+    if not hf.is_authenticated:
+        raise HTTPException(status_code=401, detail="Not authenticated with HuggingFace")
+
+    try:
+        sm.get_session(session_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session_dir = sm._session_dir(session_id)
+
+    from grabette.slam import get_slam_orchestrator
+    slam = get_slam_orchestrator()
+    job_id = await slam.run_slam(session_id, session_dir, req.repo_id, hf)
+
+    return {"job_id": job_id, "status": "started"}
+
+
 @router.websocket("/upload/{session_id}/ws")
 async def upload_progress_ws(ws: WebSocket, session_id: str):
     """Stream upload progress for a session."""

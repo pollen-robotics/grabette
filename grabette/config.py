@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # IMU
     imu_hz: int = 200
 
+    # UI
+    ui_enabled: bool = True
+
     # Logging
     log_level: str = "INFO"
 

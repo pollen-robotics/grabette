@@ -97,4 +97,20 @@ def create_app() -> FastAPI:
     app.include_router(camera_router)
     app.include_router(hf_router)
     app.include_router(system_router)
+
+    # Mount Gradio UI if enabled and installed
+    if settings.ui_enabled:
+        try:
+            import gradio as gr
+            from grabette.ui.app import create_ui
+
+            demo = create_ui()
+            app = gr.mount_gradio_app(app, demo, path="/")
+            logger.info("Gradio UI mounted at /")
+        except ImportError:
+            logger.warning(
+                "Gradio not installed, UI disabled "
+                "(install with: uv sync --extra ui)"
+            )
+
     return app
