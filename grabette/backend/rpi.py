@@ -71,7 +71,18 @@ class RpiBackend(Backend):
 
     def get_state(self) -> SensorState:
         imu = None
-        if self._imu and self._imu._bmi088:
+        if self._capturing:
+            # During capture, read latest from capture buffer (no I2C contention)
+            if self._imu and self._imu._samples.accel:
+                last_accel = self._imu._samples.accel[-1]
+                last_gyro = self._imu._samples.gyro[-1] if self._imu._samples.gyro else {"cts": 0, "value": [0, 0, 0]}
+                imu = IMUSample(
+                    timestamp_ms=last_accel["cts"],
+                    accel=tuple(last_accel["value"]),
+                    gyro=tuple(last_gyro["value"]),
+                )
+        elif self._imu and self._imu._bmi088:
+            # When idle, read directly from sensor
             try:
                 accel = self._imu._bmi088.read_accel()
                 gyro = self._imu._bmi088.read_gyro()
@@ -179,18 +190,13 @@ class RpiBackend(Backend):
         return self._capturing
 
     def get_frame_jpeg(self) -> bytes | None:
-        """Capture a JPEG frame from the picamera2 lores stream."""
+        """Capture a JPEG frame from picamera2."""
         if self._camera and self._camera._picam2:
             try:
                 import io
-                return self._camera._picam2.capture_file(io.BytesIO(), format="jpeg").getvalue()
-            except Exception:
-                # Fallback: capture array and encode
-                try:
-                    import io
-                    buf = io.BytesIO()
-                    self._camera._picam2.capture_file(buf, format="jpeg")
-                    return buf.getvalue()
-                except Exception:
-                    pass
+                buf = io.BytesIO()
+                self._camera._picam2.capture_file(buf, format="jpeg")
+                return buf.getvalue()
+            except Exception as e:
+                logger.debug("Failed to capture JPEG: %s", e)
         return None
