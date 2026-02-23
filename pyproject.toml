@@ -1,0 +1,21 @@
+[project]
+name = "grabette"
+version = "0.1.0"
+description = "Autonomous RPi service for robotic manipulation data collection"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.optional-dependencies]
+rpi = [
+    "picamera2",
+    "adafruit-extended-bus",
+]
+hf = [
+    "huggingface-hub>=0.20.0",
+]

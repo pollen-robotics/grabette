@@ -1,0 +1,15 @@
+[Unit]
+Description=Grabette - Robotic manipulation data collection service
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/grabette
+ExecStart=/home/pi/grabette/.venv/bin/python -m grabette
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
