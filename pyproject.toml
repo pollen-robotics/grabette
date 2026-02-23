@@ -15,6 +15,7 @@ dependencies = [
 rpi = [
     "picamera2",
     "adafruit-extended-bus",
+    "numpy<2",  # system simplejpeg is compiled against numpy 1.x
 ]
 hf = [
     "huggingface-hub>=0.20.0",
