@@ -13,101 +13,6 @@ from grabette.ui.api_client import GrabetteClient
 
 logger = logging.getLogger(__name__)
 
-# ── Client-side uPlot charts (loaded from CDN, poll /state directly) ──
-_CHARTS_HTML = """\
-<style>
-#gc-wrap .u-title{color:#ccc;font-size:12px}
-#gc-wrap .u-legend .u-label{color:#aaa}
-#gc-wrap .u-legend .u-value{color:#ccc}
-#gc-wrap .u-legend{font-size:11px}
-</style>
-<div id="gc-wrap" style="display:flex;gap:16px;width:100%;padding:8px 0;">
-  <div style="flex:1;min-width:0;">
-    <div id="gc-accel"></div>
-    <div id="gc-gyro" style="margin-top:4px;"></div>
-  </div>
-  <div style="flex:1;min-width:0;">
-    <div id="gc-angle"></div>
-  </div>
-</div>
-<script>
-(function(){
-  var MAXLEN = 30;
-  function loadUPlot(){
-    return new Promise(function(ok){
-      if(window.uPlot){ok();return;}
-      var c=document.createElement('link');
-      c.rel='stylesheet';
-      c.href='https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css';
-      document.head.appendChild(c);
-      var s=document.createElement('script');
-      s.src='https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js';
-      s.onload=ok;document.head.appendChild(s);
-    });
-  }
-  function roll(a,v){a.push(v);if(a.length>MAXLEN)a.shift();}
-  var iT=[],ax=[],ay=[],az=[],gx=[],gy=[],gz=[];
-  var aT=[],pr=[],di=[],t0=null;
-
-  loadUPlot().then(function(){
-    var wrap=document.getElementById('gc-wrap');
-    var hw=Math.floor(wrap.clientWidth/2-12);
-    function opts(title,yLbl,ser,h){
-      return {width:hw,height:h||160,title:title,
-        cursor:{show:false},legend:{show:true,live:false},
-        scales:{x:{time:false}},series:[{}].concat(ser),
-        axes:[{stroke:'#888',grid:{stroke:'#333'},size:40},
-              {stroke:'#888',grid:{stroke:'#333'},label:yLbl,size:60}]};
-    }
-    var aC=new uPlot(opts('Accelerometer','m/s\\u00b2',[
-      {label:'X',stroke:'#e55',width:1},
-      {label:'Y',stroke:'#5b5',width:1},
-      {label:'Z',stroke:'#55e',width:1}]),
-      [[],[],[],[]],document.getElementById('gc-accel'));
-    var gC=new uPlot(opts('Gyroscope','rad/s',[
-      {label:'X',stroke:'#e55',width:1},
-      {label:'Y',stroke:'#5b5',width:1},
-      {label:'Z',stroke:'#55e',width:1}]),
-      [[],[],[],[]],document.getElementById('gc-gyro'));
-    var nC=new uPlot(opts('Angle Sensors','Degrees',[
-      {label:'Proximal',stroke:'#4488cc',width:1.5},
-      {label:'Distal',stroke:'#cc8844',width:1.5}],328),
-      [[],[],[]],document.getElementById('gc-angle'));
-
-    new ResizeObserver(function(){
-      var nw=Math.floor(wrap.clientWidth/2-12);
-      aC.setSize({width:nw,height:160});
-      gC.setSize({width:nw,height:160});
-      nC.setSize({width:nw,height:328});
-    }).observe(wrap);
-
-    setInterval(function(){
-      fetch('/state').then(function(r){return r.ok?r.json():null;})
-      .then(function(s){
-        if(!s)return;
-        var now=performance.now()/1000;
-        if(t0===null)t0=now;
-        var t=now-t0;
-        if(s.imu){
-          var a=s.imu.accel,g=s.imu.gyro;
-          roll(iT,t);roll(ax,a[0]);roll(ay,a[1]);roll(az,a[2]);
-          roll(gx,g[0]);roll(gy,g[1]);roll(gz,g[2]);
-          aC.setData([iT.slice(),ax.slice(),ay.slice(),az.slice()]);
-          gC.setData([iT.slice(),gx.slice(),gy.slice(),gz.slice()]);
-        }
-        if(s.angle){
-          var p=s.angle.proximal*180/Math.PI;
-          var d=s.angle.distal*180/Math.PI;
-          roll(aT,t);roll(pr,p);roll(di,d);
-          nC.setData([aT.slice(),pr.slice(),di.slice()]);
-        }
-      }).catch(function(){});
-    },500);
-  });
-})();
-</script>"""
-
-
 def create_ui(api_url: str | None = None) -> gr.Blocks:
     """Build and return the Gradio Blocks app.
 
@@ -319,10 +224,24 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     lines=2,
                     interactive=False,
                 )
+                gr.HTML(
+                    value=(
+                        '<iframe src="/charts/imu" '
+                        'style="width:100%;height:240px;border:none;'
+                        'border-radius:8px;background:transparent;"></iframe>'
+                    ),
+                )
                 angle_box = gr.Textbox(
                     label="Angle Sensors",
                     lines=2,
                     interactive=False,
+                )
+                gr.HTML(
+                    value=(
+                        '<iframe src="/charts/angle" '
+                        'style="width:100%;height:130px;border:none;'
+                        'border-radius:8px;background:transparent;"></iframe>'
+                    ),
                 )
                 capture_box = gr.Textbox(
                     label="Capture Status",
@@ -335,9 +254,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 capture_msg = gr.Textbox(
                     show_label=False, interactive=False, max_lines=1,
                 )
-
-        # ── Sensor charts (client-side uPlot, polls /state via JS) ─────
-        charts_html = gr.HTML(value=_CHARTS_HTML)
 
         # ── Sessions ──────────────────────────────────────────────────
         gr.Markdown("### Sessions")

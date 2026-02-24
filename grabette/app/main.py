@@ -115,6 +115,7 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
+    from grabette.app.routers.charts import router as charts_router
     from grabette.app.routers.viewer import router as viewer_router
 
     app.include_router(daemon_router)
@@ -124,6 +125,7 @@ def create_app() -> FastAPI:
     app.include_router(hf_router)
     app.include_router(system_router)
     app.include_router(viewer_router)
+    app.include_router(charts_router)
 
     # Serve URDF model + STL meshes as static files
     _urdf_dir = Path(__file__).resolve().parent.parent.parent / "urdf"
