@@ -26,7 +26,6 @@ class RpiBackend(Backend):
         self._start_time: float | None = None
         self._capturing = False
         self._capture_session_dir: Path | None = None
-        self._capture_start: float | None = None
         self._enable_angle = enable_angle
 
         self._sync = None
@@ -128,9 +127,9 @@ class RpiBackend(Backend):
             raise RuntimeError("Already capturing")
 
         self._capture_session_dir = session_dir
-        self._capture_start = time.time()
 
-        # Start synchronized capture
+        # Start synchronized capture — all streams share the same
+        # SyncManager t=0 reference (time.monotonic based).
         self._sync.start()
         self._imu.start_capture()
         if self._angle:
@@ -146,6 +145,10 @@ class RpiBackend(Backend):
 
         self._capturing = False
 
+        # Grab sync-clock duration before stopping streams (monotonic,
+        # same clock used by all stream timestamps — no wall-clock drift).
+        duration_ms = self._sync.get_timestamp_ms()
+
         # Stop in reverse order
         frame_timestamps = self._camera.stop()
         imu_samples = self._imu.stop()
@@ -156,11 +159,19 @@ class RpiBackend(Backend):
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
 
-        duration = time.time() - self._capture_start if self._capture_start else 0.0
+        duration = round(duration_ms / 1000.0, 2)
+
+        # Compute actual video FPS from frame timestamps
+        actual_fps = float(FPS)
+        if len(frame_timestamps) >= 2:
+            video_span_ms = frame_timestamps[-1] - frame_timestamps[0]
+            if video_span_ms > 0:
+                actual_fps = round((len(frame_timestamps) - 1) / (video_span_ms / 1000.0), 3)
+
         status = CaptureStatus(
             is_capturing=False,
             session_id=self._capture_session_dir.name if self._capture_session_dir else None,
-            duration_seconds=round(duration, 2),
+            duration_seconds=duration,
             frame_count=len(frame_timestamps),
             imu_sample_count=len(imu_samples.accel),
             angle_sample_count=angle_count,
@@ -171,7 +182,7 @@ class RpiBackend(Backend):
             write_imu_json(
                 imu_samples.accel,
                 imu_samples.gyro,
-                FPS,
+                actual_fps,
                 self._capture_session_dir / "imu_data.json",
                 angle_samples=angle_samples,
             )
@@ -180,7 +191,7 @@ class RpiBackend(Backend):
                 "frame_count": status.frame_count,
                 "imu_sample_count": status.imu_sample_count,
                 "angle_sample_count": status.angle_sample_count,
-                "fps": FPS,
+                "fps": actual_fps,
                 "imu_hz": IMU_HZ,
                 "backend": "rpi",
             }
@@ -199,14 +210,13 @@ class RpiBackend(Backend):
             self._init_angle_sensors()
 
         self._capture_session_dir = None
-        self._capture_start = None
         logger.info("RpiBackend capture stopped")
         return status
 
     def get_capture_status(self) -> CaptureStatus:
         duration = 0.0
-        if self._capture_start:
-            duration = time.time() - self._capture_start
+        if self._capturing and self._sync and self._sync.is_started:
+            duration = self._sync.get_timestamp_ms() / 1000.0
 
         frame_count = self._camera.frame_count if self._camera else 0
         imu_count = self._imu.sample_count[0] if self._imu else 0
