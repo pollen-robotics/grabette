@@ -197,6 +197,54 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return f"Running ({latest.get('progress', 0):.0f}%): {latest.get('message', '')}"
         return f"Pending: {latest.get('message', '')}"
 
+    # Replay
+    def on_replay_start(session_id: str | None):
+        if not session_id:
+            return "No session selected", gr.update(visible=False), gr.update(), gr.update()
+        result = client.replay_start(session_id)
+        if "error" in result:
+            return f"Error: {result['error']}", gr.update(visible=False), gr.update(), gr.update()
+        dur = result.get("duration_ms", 0)
+        return (
+            f"Replaying {session_id}",
+            gr.update(visible=True),
+            gr.update(maximum=dur, value=0),
+            gr.update(active=True),
+        )
+
+    def on_replay_stop():
+        client.replay_stop()
+        return (
+            "Replay stopped",
+            gr.update(visible=False),
+            gr.update(active=False),
+        )
+
+    def on_replay_pause_play(currently_playing: bool):
+        if currently_playing:
+            client.replay_pause()
+        else:
+            client.replay_resume()
+
+    def on_replay_seek(time_ms: float):
+        client.replay_seek(time_ms)
+
+    def poll_replay_status():
+        st = client.replay_status()
+        if not st.get("active"):
+            return gr.update(), gr.update(), gr.update(active=False), gr.update(visible=False)
+        t = st.get("time_ms", 0)
+        dur = st.get("duration_ms", 0)
+        playing = st.get("playing", False)
+        label = f"{t / 1000:.1f}s / {dur / 1000:.1f}s" + (" (paused)" if not playing else "")
+        btn_label = "Pause" if playing else "Play"
+        return (
+            gr.update(value=t),
+            label,
+            gr.update(),  # keep timer active
+            gr.update(),  # keep panel visible
+        )
+
     # ── Build layout ──────────────────────────────────────────────────
 
     with gr.Blocks(title="Grabette") as demo:
@@ -269,8 +317,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         with gr.Row():
             dl_btn = gr.Button("Download .tar.gz", size="sm")
             del_btn = gr.Button("Delete", variant="stop", size="sm")
+            replay_btn = gr.Button("Replay", size="sm")
         dl_file = gr.File(label="Download")
         del_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+
+        # ── Replay panel (hidden until replay starts) ────────────────
+        with gr.Group(visible=False) as replay_panel:
+            gr.Markdown("#### Session Replay")
+            replay_slider = gr.Slider(
+                minimum=0, maximum=1, step=1, value=0,
+                label="Timeline (ms)", interactive=True,
+            )
+            replay_time_label = gr.Textbox(
+                value="0.0s / 0.0s", show_label=False,
+                interactive=False, max_lines=1,
+            )
+            with gr.Row():
+                replay_pause_btn = gr.Button("Pause", size="sm")
+                replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
+        # Hidden state to track playing
+        replay_playing_state = gr.State(True)
+        replay_timer = gr.Timer(0.5, active=False)
 
         # ── HuggingFace ───────────────────────────────────────────────
         gr.Markdown("### HuggingFace")
@@ -321,6 +388,28 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         del_btn.click(
             fn=on_delete, inputs=session_dd,
             outputs=[del_msg, sessions_table, session_dd],
+        )
+
+        # Replay
+        replay_btn.click(
+            fn=on_replay_start, inputs=session_dd,
+            outputs=[del_msg, replay_panel, replay_slider, replay_timer],
+        )
+        replay_stop_btn.click(
+            fn=on_replay_stop,
+            outputs=[del_msg, replay_panel, replay_timer],
+        )
+        replay_pause_btn.click(
+            fn=on_replay_pause_play, inputs=replay_playing_state,
+        ).then(
+            fn=lambda playing: (not playing, "Play" if playing else "Pause"),
+            inputs=replay_playing_state,
+            outputs=[replay_playing_state, replay_pause_btn],
+        )
+        replay_slider.release(fn=on_replay_seek, inputs=replay_slider)
+        replay_timer.tick(
+            fn=poll_replay_status,
+            outputs=[replay_slider, replay_time_label, replay_timer, replay_panel],
         )
 
         # HuggingFace

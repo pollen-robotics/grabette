@@ -175,6 +175,59 @@ class GrabetteClient:
         except Exception:
             return []
 
+    # -- Replay --
+
+    def replay_start(self, session_id: str) -> dict:
+        try:
+            r = self._http.post("/api/replay/start", json={"session_id": session_id})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            detail = e.response.json().get("detail", str(e))
+            return {"error": detail}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def replay_stop(self) -> dict:
+        try:
+            r = self._http.post("/api/replay/stop")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def replay_pause(self) -> dict:
+        try:
+            r = self._http.post("/api/replay/pause")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def replay_resume(self) -> dict:
+        try:
+            r = self._http.post("/api/replay/resume")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def replay_seek(self, time_ms: float) -> dict:
+        try:
+            r = self._http.post("/api/replay/seek", json={"time_ms": time_ms})
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def replay_status(self) -> dict:
+        try:
+            r = self._http.get("/api/replay/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {"active": False, "session_id": None, "time_ms": 0, "duration_ms": 0, "playing": False}
+
     # -- SLAM --
 
     def slam_run(self, session_id: str, repo_id: str) -> dict:

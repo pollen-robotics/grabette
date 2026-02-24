@@ -31,6 +31,16 @@ class SampleRing:
                 s = state.angle
                 self._angle.append((seq, {"t": s.timestamp_ms, "p": s.proximal, "d": s.distal}))
 
+    def push_raw(self, imu: dict | None = None, angle: dict | None = None) -> None:
+        """Push pre-formatted dicts directly (used by ReplayEngine)."""
+        with self._lock:
+            self._seq += 1
+            seq = self._seq
+            if imu is not None:
+                self._imu.append((seq, imu))
+            if angle is not None:
+                self._angle.append((seq, angle))
+
     def get_since(self, cursor: int = 0) -> dict:
         """Return samples with seq > cursor. Multiple consumers can read independently."""
         with self._lock:
@@ -56,6 +66,8 @@ class Daemon:
         self._error: str | None = None
         self.sample_ring = SampleRing()
         self._poll_task: asyncio.Task | None = None
+        self._replay: "ReplayEngine | None" = None
+        self._generation: int = 0
 
     async def start(self) -> None:
         if self.state not in (DaemonState.NOT_INITIALIZED, DaemonState.STOPPED, DaemonState.ERROR):
@@ -120,3 +132,53 @@ class Daemon:
         if self.state == DaemonState.RUNNING:
             result["sensor"] = self.backend.get_state().model_dump()
         return result
+
+    # ── Replay ─────────────────────────────────────────────────────
+
+    def get_active_ring(self) -> SampleRing:
+        if self._replay is not None and self._replay.active:
+            return self._replay.ring
+        return self.sample_ring
+
+    @property
+    def generation(self) -> int:
+        return self._generation
+
+    async def start_replay(self, session_dir: str, session_id: str) -> None:
+        from grabette.replay import ReplayEngine
+
+        if self._replay is not None and self._replay.active:
+            await self._replay.stop()
+        engine = ReplayEngine()
+        engine.load(session_dir, session_id)
+        await engine.start()
+        self._replay = engine
+        self._generation += 1
+        logger.info("Replay started for %s (gen %d)", session_id, self._generation)
+
+    async def stop_replay(self) -> None:
+        if self._replay is not None:
+            await self._replay.stop()
+            self._replay = None
+            self._generation += 1
+            logger.info("Replay stopped (gen %d)", self._generation)
+
+    async def replay_pause(self) -> None:
+        if self._replay is not None:
+            self._replay.pause()
+
+    async def replay_resume(self) -> None:
+        if self._replay is not None:
+            self._replay.resume()
+
+    async def replay_seek(self, time_ms: float) -> None:
+        if self._replay is not None:
+            self._replay.seek(time_ms)
+            self._generation += 1
+            logger.info("Replay seek to %.0fms (gen %d)", time_ms, self._generation)
+
+    @property
+    def replay_status(self) -> dict:
+        if self._replay is not None:
+            return self._replay.status
+        return {"active": False, "session_id": None, "time_ms": 0, "duration_ms": 0, "playing": False}

@@ -27,7 +27,7 @@ IMU_CHART_HTML = f"""\
 <div id="accel"></div>
 <div id="gyro" style="margin-top:2px"></div>
 <script>
-var MAXLEN=750,cur=0;
+var MAXLEN=750,cur=0,gen=-1;
 function clip(a){{while(a.length>MAXLEN)a.shift();}}
 var iT=[],ax=[],ay=[],az=[],gx=[],gy=[],gz=[],t0=null;
 
@@ -63,6 +63,12 @@ var iT=[],ax=[],ay=[],az=[],gx=[],gy=[],gz=[],t0=null;
     fetch('/api/state/history?cursor='+cur).then(function(r){{return r.ok?r.json():null;}})
     .then(function(d){{
       if(!d)return;
+      if(d.gen!==undefined&&d.gen!==gen){{
+        gen=d.gen;cur=0;t0=null;
+        iT=[];ax=[];ay=[];az=[];gx=[];gy=[];gz=[];
+        aC.setData([[],[],[],[]]);gC.setData([[],[],[],[]]);
+        return;
+      }}
       if(d.cursor)cur=d.cursor;
       if(!d.imu||!d.imu.length)return;
       for(var i=0;i<d.imu.length;i++){{
@@ -88,7 +94,7 @@ ANGLE_CHART_HTML = f"""\
 </head><body>
 <div id="angle"></div>
 <script>
-var MAXLEN=750,cur=0;
+var MAXLEN=750,cur=0,gen=-1;
 function clip(a){{while(a.length>MAXLEN)a.shift();}}
 var aT=[],pr=[],di=[],t0=null;
 
@@ -114,6 +120,12 @@ var aT=[],pr=[],di=[],t0=null;
     fetch('/api/state/history?cursor='+cur).then(function(r){{return r.ok?r.json():null;}})
     .then(function(d){{
       if(!d)return;
+      if(d.gen!==undefined&&d.gen!==gen){{
+        gen=d.gen;cur=0;t0=null;
+        aT=[];pr=[];di=[];
+        nC.setData([[],[],[]]);
+        return;
+      }}
       if(d.cursor)cur=d.cursor;
       if(!d.angle||!d.angle.length)return;
       for(var i=0;i<d.angle.length;i++){{
