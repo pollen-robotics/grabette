@@ -47,13 +47,35 @@ def _create_backend():
             return MockBackend()
 
 
+_button_listener = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _daemon
+    global _daemon, _button_listener
+    import asyncio
+
     backend = _create_backend()
     _daemon = Daemon(backend)
     await _daemon.start()
+
+    # Start physical button listener on RPi
+    if settings.button_enabled:
+        try:
+            from grabette.button_listener import ButtonListener
+            from grabette.app.routers.sessions import get_session_manager
+
+            _button_listener = ButtonListener(backend, get_session_manager())
+            _button_listener.start(asyncio.get_running_loop())
+        except Exception as e:
+            logger.debug("Button listener not started: %s", e)
+            _button_listener = None
+
     yield
+
+    if _button_listener is not None:
+        _button_listener.stop()
+        _button_listener = None
     await _daemon.stop()
     _daemon = None
 

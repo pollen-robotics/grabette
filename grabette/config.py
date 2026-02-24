@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # UI
     ui_enabled: bool = True
 
+    # Hardware button (Grove LED Button on GPIO22/23)
+    button_enabled: bool = True
+
     # Logging
     log_level: str = "INFO"
 

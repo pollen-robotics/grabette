@@ -57,10 +57,10 @@ def get_camera_frame():
 def get_sensor_state():
     c = get_client()
     if c is None:
-        return "Not connected", "Not connected"
+        return "Not connected", "Not connected", gr.update(active=True)
     state = c.get_state()
     if state is None:
-        return "Disconnected", "Disconnected"
+        return "Disconnected", "Disconnected", gr.update(active=True)
     imu = state.get("imu")
     if imu:
         a = imu["accel"]
@@ -72,7 +72,8 @@ def get_sensor_state():
     else:
         imu_text = "No IMU data"
     cap = state.get("capture", {})
-    if cap.get("is_capturing"):
+    capturing = cap.get("is_capturing", False)
+    if capturing:
         cap_text = (
             f"\u25cf RECORDING  {cap.get('session_id', '')}\n"
             f"Duration: {cap.get('duration_seconds', 0):.1f}s\n"
@@ -81,7 +82,9 @@ def get_sensor_state():
         )
     else:
         cap_text = "\u25cb Idle"
-    return imu_text, cap_text
+    # Pause camera polling during capture to protect sync
+    camera_active = not capturing
+    return imu_text, cap_text, gr.update(active=camera_active)
 
 
 def on_start_capture():
@@ -348,11 +351,14 @@ with gr.Blocks(title="Grabette") as demo:
     )
 
     # Periodic updates (Gradio 6 Timer)
+    # Camera timer is paused during capture to protect sync
     camera_timer = gr.Timer(0.2)
     camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
     state_timer = gr.Timer(0.5)
-    state_timer.tick(fn=get_sensor_state, outputs=[imu_box, capture_box])
+    state_timer.tick(
+        fn=get_sensor_state, outputs=[imu_box, capture_box, camera_timer],
+    )
 
     system_timer = gr.Timer(10)
     system_timer.tick(fn=get_system_bar, outputs=system_bar)

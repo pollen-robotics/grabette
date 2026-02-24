@@ -25,6 +25,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Callback helpers ──────────────────────────────────────────────
 
     def get_camera_frame():
+        """Fetch camera frame. Returns None during capture (backend skips
+        JPEG encoding to protect frame timing and IMU sync)."""
         data = client.get_snapshot()
         if data is None:
             return None
@@ -36,7 +38,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def get_sensor_state():
         state = client.get_state()
         if state is None:
-            return "Disconnected", "Disconnected"
+            return "Disconnected", "Disconnected", gr.update(active=True)
 
         # IMU
         imu = state.get("imu")
@@ -52,7 +54,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         # Capture
         cap = state.get("capture", {})
-        if cap.get("is_capturing"):
+        capturing = cap.get("is_capturing", False)
+        if capturing:
             cap_text = (
                 f"\u25cf RECORDING  {cap.get('session_id', '')}\n"
                 f"Duration: {cap.get('duration_seconds', 0):.1f}s\n"
@@ -62,7 +65,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         else:
             cap_text = "\u25cb Idle"
 
-        return imu_text, cap_text
+        # Pause camera polling during capture to protect sync
+        camera_active = not capturing
+        return imu_text, cap_text, gr.update(active=camera_active)
 
     def on_start_capture():
         result = client.start_capture()
@@ -285,12 +290,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
         # ── Periodic updates (Gradio 6 Timer) ─────────────────────────
+        # Camera timer is paused by state_timer during capture to protect
+        # frame timing and IMU synchronization.
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
         state_timer = gr.Timer(0.5)
         state_timer.tick(
-            fn=get_sensor_state, outputs=[imu_box, capture_box],
+            fn=get_sensor_state,
+            outputs=[imu_box, capture_box, camera_timer],
         )
 
         system_timer = gr.Timer(10)

@@ -190,7 +190,14 @@ class RpiBackend(Backend):
         return self._capturing
 
     def get_frame_jpeg(self) -> bytes | None:
-        """Capture a JPEG frame from picamera2."""
+        """Capture a JPEG frame from picamera2.
+
+        Returns None during active capture to avoid competing with the
+        H.264 encoder for camera resources (preserves frame timing and
+        IMU synchronization).
+        """
+        if self._capturing:
+            return None
         if self._camera and self._camera._picam2:
             try:
                 import io
