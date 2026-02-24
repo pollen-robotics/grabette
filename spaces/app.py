@@ -7,7 +7,15 @@ via tunnel URL (set GRABETTE_API_URL as a Space secret).
 from __future__ import annotations
 
 import io
+import math
 import os
+import time
+from collections import deque
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 
 import gradio as gr
 from PIL import Image
@@ -53,6 +61,58 @@ def _viewer_placeholder():
     )
 
 
+# ── Rolling data buffers for plots ────────────────────────────────────
+_plot_maxlen = 30  # ~15 s at 0.5 s poll
+_imu_t: deque[float] = deque(maxlen=_plot_maxlen)
+_imu_accel: deque[list[float]] = deque(maxlen=_plot_maxlen)
+_imu_gyro: deque[list[float]] = deque(maxlen=_plot_maxlen)
+_ang_t: deque[float] = deque(maxlen=_plot_maxlen)
+_ang_vals: deque[list[float]] = deque(maxlen=_plot_maxlen)
+
+
+def _make_imu_plot():
+    if not _imu_t:
+        return None
+    now = time.monotonic()
+    t = np.array([x - now for x in _imu_t])
+    accel = np.array(list(_imu_accel))
+    gyro = np.array(list(_imu_gyro))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(5, 3.5), tight_layout=True)
+    for i, (c, label) in enumerate(zip("rgb", "XYZ")):
+        ax1.plot(t, accel[:, i], color=c, linewidth=1, label=label)
+    ax1.set_ylabel("m/s\u00b2")
+    ax1.set_title("Accelerometer", fontsize=9)
+    ax1.legend(loc="upper left", fontsize=7, ncol=3)
+    ax1.grid(True, alpha=0.3)
+    for i, (c, label) in enumerate(zip("rgb", "XYZ")):
+        ax2.plot(t, gyro[:, i], color=c, linewidth=1, label=label)
+    ax2.set_ylabel("rad/s")
+    ax2.set_xlabel("Time (s)")
+    ax2.set_title("Gyroscope", fontsize=9)
+    ax2.legend(loc="upper left", fontsize=7, ncol=3)
+    ax2.grid(True, alpha=0.3)
+    plt.close(fig)
+    return fig
+
+
+def _make_angle_plot():
+    if not _ang_t:
+        return None
+    now = time.monotonic()
+    t = np.array([x - now for x in _ang_t])
+    vals = np.array(list(_ang_vals))
+    fig, ax = plt.subplots(figsize=(5, 3.5), tight_layout=True)
+    ax.plot(t, vals[:, 0], color="#4488cc", linewidth=1.5, label="Proximal")
+    ax.plot(t, vals[:, 1], color="#cc8844", linewidth=1.5, label="Distal")
+    ax.set_ylabel("Degrees")
+    ax.set_xlabel("Time (s)")
+    ax.set_title("Angle Sensors", fontsize=9)
+    ax.legend(loc="upper left", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    plt.close(fig)
+    return fig
+
+
 # ── Callbacks ─────────────────────────────────────────────────────────
 
 def get_camera_frame():
@@ -71,10 +131,12 @@ def get_camera_frame():
 def get_sensor_state():
     c = get_client()
     if c is None:
-        return "Not connected", "Not connected", "Not connected", gr.update(active=True)
+        return ("Not connected", "Not connected", "Not connected",
+                None, None, gr.update(active=True))
     state = c.get_state()
     if state is None:
-        return "Disconnected", "Disconnected", "Disconnected", gr.update(active=True)
+        return ("Disconnected", "Disconnected", "Disconnected",
+                None, None, gr.update(active=True))
     imu = state.get("imu")
     if imu:
         a = imu["accel"]
@@ -83,18 +145,22 @@ def get_sensor_state():
             f"Accel: [{a[0]:+8.3f}, {a[1]:+8.3f}, {a[2]:+8.3f}] m/s\u00b2\n"
             f"Gyro:  [{g[0]:+8.4f}, {g[1]:+8.4f}, {g[2]:+8.4f}] rad/s"
         )
+        _imu_t.append(time.monotonic())
+        _imu_accel.append(a)
+        _imu_gyro.append(g)
     else:
         imu_text = "No IMU data"
     # Angle sensors
     angle = state.get("angle")
     if angle:
-        import math
         p_deg = math.degrees(angle["proximal"])
         d_deg = math.degrees(angle["distal"])
         angle_text = (
             f"Proximal: {p_deg:+7.2f}\u00b0  ({angle['proximal']:+.4f} rad)\n"
             f"Distal:   {d_deg:+7.2f}\u00b0  ({angle['distal']:+.4f} rad)"
         )
+        _ang_t.append(time.monotonic())
+        _ang_vals.append([p_deg, d_deg])
     else:
         angle_text = "No angle data"
     cap = state.get("capture", {})
@@ -112,9 +178,13 @@ def get_sensor_state():
         cap_text = "\n".join(parts)
     else:
         cap_text = "\u25cb Idle"
+    # Plots
+    imu_fig = _make_imu_plot()
+    angle_fig = _make_angle_plot()
     # Pause camera polling during capture to protect sync
     camera_active = not capturing
-    return imu_text, angle_text, cap_text, gr.update(active=camera_active)
+    return (imu_text, angle_text, cap_text,
+            imu_fig, angle_fig, gr.update(active=camera_active))
 
 
 def on_start_capture():
@@ -311,6 +381,11 @@ with gr.Blocks(title="Grabette") as demo:
                 show_label=False, interactive=False, max_lines=1,
             )
 
+    # ── Sensor plots ──────────────────────────────────────────────
+    with gr.Row(equal_height=True):
+        imu_plot_out = gr.Plot(label="IMU")
+        angle_plot_out = gr.Plot(label="Angle Sensors")
+
     # ── Sessions ──────────────────────────────────────────────────
     gr.Markdown("### Sessions")
     with gr.Row():
@@ -399,7 +474,9 @@ with gr.Blocks(title="Grabette") as demo:
 
     state_timer = gr.Timer(0.5)
     state_timer.tick(
-        fn=get_sensor_state, outputs=[imu_box, angle_box, capture_box, camera_timer],
+        fn=get_sensor_state,
+        outputs=[imu_box, angle_box, capture_box,
+                 imu_plot_out, angle_plot_out, camera_timer],
     )
 
     system_timer = gr.Timer(10)

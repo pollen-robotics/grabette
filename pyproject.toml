@@ -27,4 +27,5 @@ urdf = [
 ]
 ui = [
     "gradio>=5.0.0",
+    "matplotlib>=3.8.0",
 ]
