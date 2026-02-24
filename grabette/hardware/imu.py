@@ -96,13 +96,7 @@ class BMI088Capture:
         error_count = 0
         read_count = 0
         late_count = 0
-        # Poll at 2x sensor ODR to avoid missing samples.  The sensor
-        # updates its data register at sample_rate_hz; if we poll at
-        # the same rate, thread-scheduling jitter causes us to sometimes
-        # read before the sensor updated, getting the same sensortime
-        # as before (deduplicated → dropped sample → 10ms gap instead
-        # of 5ms).  Polling at 2x gives ≥2.5ms of margin per sample.
-        sample_interval = 0.5 / self.sample_rate_hz
+        sample_interval = 1.0 / self.sample_rate_hz
         next_sample_time = time.monotonic()
         last_sensortime = -1
 

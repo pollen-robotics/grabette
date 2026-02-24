@@ -149,8 +149,10 @@ class RpiBackend(Backend):
         # same clock used by all stream timestamps — no wall-clock drift).
         duration_ms = self._sync.get_timestamp_ms()
 
-        # Stop in reverse order
-        frame_timestamps = self._camera.stop()
+        # Stop IMU/angle BEFORE camera.  camera.stop() runs ffmpeg muxing
+        # which takes ~1-2s — if IMU is still running during muxing, it
+        # accumulates extra samples that extend the IMU duration well past
+        # the video duration (causes 7-9% IMU-video clock drift).
         imu_samples = self._imu.stop()
         angle_samples = None
         angle_count = 0
@@ -158,6 +160,7 @@ class RpiBackend(Backend):
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
+        frame_timestamps = self._camera.stop()
 
         duration = round(duration_ms / 1000.0, 2)
 
