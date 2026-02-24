@@ -9,6 +9,38 @@
       <mass value="1e-09"/>
       <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
     </inertial>
+    <!-- Part bmi088 -->
+    <visual>
+      <origin xyz="0.0622801 -0.0605999 0.0945557" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bmi088.stl"/>
+      </geometry>
+      <material name="bmi088_material">
+        <color rgba="0.282353 0.54902 0.160784 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0622801 -0.0605999 0.0945557" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bmi088.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part b0404 -->
+    <visual>
+      <origin xyz="-0.0408438 -0.0535999 0.044" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/b0404.stl"/>
+      </geometry>
+      <material name="b0404_material">
+        <color rgba="0.372549 0.654902 0.239216 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0408438 -0.0535999 0.044" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/b0404.stl"/>
+      </geometry>
+    </collision>
     <!-- Part grip -->
     <visual>
       <origin xyz="-0.0105436 0.0157273 0" rpy="0 -0 0"/>
@@ -23,6 +55,22 @@
       <origin xyz="-0.0105436 0.0157273 0" rpy="0 -0 0"/>
       <geometry>
         <mesh filename="package://grabette_right/assets/grip.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part camera_imu_support -->
+    <visual>
+      <origin xyz="-0.0104436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/camera_imu_support.stl"/>
+      </geometry>
+      <material name="camera_imu_support_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/camera_imu_support.stl"/>
       </geometry>
     </collision>
     <!-- Part vertical_support -->
@@ -410,6 +458,36 @@
       </geometry>
     </collision>
   </link>
+  <!-- Frame camera (dummy link + fixed joint) -->
+  <link name="camera">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="camera_frame" type="fixed">
+    <origin xyz="-0.0408438 -0.0494999 0.044" rpy="1.5708 -0 3.14159"/>
+    <parent link="thumb_base"/>
+    <child link="camera"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame imu (dummy link + fixed joint) -->
+  <link name="imu">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="imu_frame" type="fixed">
+    <origin xyz="-0.0408438 -0.0631499 0.044" rpy="1.5708 -0 0"/>
+    <parent link="thumb_base"/>
+    <child link="imu"/>
+    <axis xyz="0 0 0"/>
+  </joint>
   <!-- Link phalanx_1_bottom -->
   <link name="phalanx_1_bottom">
     <inertial>
