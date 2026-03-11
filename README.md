@@ -1,8 +1,7 @@
 # Grabette
 
+Part of the GRABETTE project.
 Autonomous Raspberry Pi service for robotic manipulation data collection. Captures synchronized camera + IMU streams, manages recording sessions, and integrates with HuggingFace for cloud SLAM processing.
-
-Part of the GRABETTE project — a data collection pipeline for the [Universal Manipulation Interface (UMI)](https://umi-gripper.github.io/) framework.
 
 ## Hardware
 
