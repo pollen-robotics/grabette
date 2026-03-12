@@ -255,7 +255,7 @@ let gotPostMessage = false;
 window.addEventListener('message', e => {
   if (!e.data || typeof e.data !== 'object') return;
   const { proximal, distal } = e.data;
-  if (proximal !== undefined) setJoint('proximal', -proximal);
+  if (proximal !== undefined) setJoint('proximal', proximal);
   if (distal   !== undefined) setJoint('distal',   -distal);
   updateStatus(proximal, distal);
   gotPostMessage = true;
@@ -273,7 +273,7 @@ function startPolling() {
       if (data.cursor) cur = data.cursor;
       if (data.angle && data.angle.length) {
         const latest = data.angle[data.angle.length - 1];
-        setJoint('proximal', -latest.p);
+        setJoint('proximal', latest.p);
         setJoint('distal',   -latest.d);
         updateStatus(latest.p, latest.d);
       }
