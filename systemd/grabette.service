@@ -4,9 +4,9 @@ After=network.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/grabette
-ExecStart=/home/pi/grabette/.venv/bin/python -m grabette
+User=rasp
+WorkingDirectory=/home/rasp/Project/Repo/grabette
+ExecStart=/home/rasp/Project/Repo/grabette/.venv/bin/python -m grabette
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
