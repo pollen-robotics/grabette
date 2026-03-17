@@ -9,7 +9,7 @@ import time
 from adafruit_extended_bus import ExtendedI2C
 
 AS5600_ADDR = 0x36
-I2C_BUS_PROXIMAL = 4  # proximal sensor on bus 4
+I2C_BUS_DISTAL = 5  # distal sensor on bus 5
 
 # AS5600 registers
 REG_ANGLE = 0x0C    # 12-bit angle (2 bytes)
@@ -46,8 +46,8 @@ def read_status(i2c) -> dict:
 
 
 def main():
-    i2c = ExtendedI2C(I2C_BUS_PROXIMAL)
-    print(f"AS5600 on I2C bus {I2C_BUS_PROXIMAL}, addr 0x{AS5600_ADDR:02X}")
+    i2c = ExtendedI2C(I2C_BUS_DISTAL)
+    print(f"AS5600 on I2C bus {I2C_BUS_DISTAL}, addr 0x{AS5600_ADDR:02X}")
 
     status = read_status(i2c)
     print(f"Status: detected={status['magnet_detected']}, "
