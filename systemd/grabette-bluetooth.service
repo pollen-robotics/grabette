@@ -5,6 +5,7 @@ Requires=bluetooth.target
 
 [Service]
 Type=simple
+WorkingDirectory=/home/rasp/Project/Repo/grabette
 ExecStartPre=/usr/sbin/rfkill unblock bluetooth
 ExecStart=/home/rasp/Project/Repo/grabette/.venv/bin/python -m grabette.bluetooth
 Restart=on-failure
