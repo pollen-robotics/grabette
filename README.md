@@ -183,9 +183,8 @@ RPi (camera + BMI088 + AS5600)
 
 | Project | Description |
 |---|---|
-| [gripette](../grabette-gripper/) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
-| [universal_manipulation_interface](../universal_manipulation_interface/) | Forked UMI SLAM pipeline (ORB-SLAM3, Docker) |
-| [OpenImuCameraCalibrator](../OpenImuCameraCalibrator/) | Camera-IMU calibration tool (C++/CMake) |
+| [gripette](https://github.com/SteveNguyen/gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
+| [grabette-data](https://github.com/SteveNguyen/grabette-data) | grabette data processing (ORB-SLAM3, Docker) |
 
 ## Calibration
 
