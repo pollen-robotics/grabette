@@ -8,7 +8,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "GRABETTE_"}
+    model_config = {"env_prefix": "GRABETTE_", "env_file": ".env"}
 
     # Server
     host: str = "0.0.0.0"
