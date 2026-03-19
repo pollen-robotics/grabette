@@ -4,12 +4,16 @@ Run on the Pi:
     python scripts/angle_test.py
 """
 
+import sys
 import time
 
 from adafruit_extended_bus import ExtendedI2C
+from grabette.config import settings
 
 AS5600_ADDR = 0x36
-I2C_BUS_DISTAL = 5  # distal sensor on bus 5
+# Default to distal sensor; pass "proximal" or "1" as arg for the other
+I2C_BUS_DISTAL = settings.angle_i2c_bus_2
+I2C_BUS_PROXIMAL = settings.angle_i2c_bus_1
 
 # AS5600 registers
 REG_ANGLE = 0x0C    # 12-bit angle (2 bytes)
@@ -46,8 +50,14 @@ def read_status(i2c) -> dict:
 
 
 def main():
-    i2c = ExtendedI2C(I2C_BUS_DISTAL)
-    print(f"AS5600 on I2C bus {I2C_BUS_DISTAL}, addr 0x{AS5600_ADDR:02X}")
+    if len(sys.argv) > 1 and sys.argv[1] in ("proximal", "1"):
+        bus = I2C_BUS_PROXIMAL
+        name = "proximal"
+    else:
+        bus = I2C_BUS_DISTAL
+        name = "distal"
+    i2c = ExtendedI2C(bus)
+    print(f"AS5600 ({name}) on I2C bus {bus}, addr 0x{AS5600_ADDR:02X}")
 
     status = read_status(i2c)
     print(f"Status: detected={status['magnet_detected']}, "

@@ -5,8 +5,8 @@
 #
 # Grove connector mapping:
 #   I2C connector (GPIO 2/3, hw I2C-1) → BMI088 IMU
-#   D5 connector  (GPIO 5/6, sw I2C-3) → AS5600 proximal angle sensor
-#   D16 connector (GPIO 16/17, sw I2C-4) → AS5600 distal angle sensor
+#   D5 connector  (GPIO 6=SDA/5=SCL, sw I2C-3) → AS5600 proximal angle sensor
+#   D16 connector (GPIO 17=SDA/16=SCL, sw I2C-4) → AS5600 distal angle sensor
 #   PWM connector (GPIO 12/13)          → Grove LED Button
 #   CSI ribbon                          → Camera
 #
@@ -53,7 +53,7 @@ arm_boost=1
 
 [all]
 # Software I2C for angle sensors (AS5600, same address 0x36, need separate buses)
-# Proximal on Grove D5 connector
-dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=5,i2c_gpio_scl=6,i2c_gpio_delay_us=2
+# Proximal on Grove D5 connector (SDA/SCL swapped: Grove I2C pin1=SCL, digital pin1=SIG1)
+dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=6,i2c_gpio_scl=5,i2c_gpio_delay_us=2
 # Distal on Grove D16 connector
-dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=16,i2c_gpio_scl=17,i2c_gpio_delay_us=2
+dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=17,i2c_gpio_scl=16,i2c_gpio_delay_us=2
