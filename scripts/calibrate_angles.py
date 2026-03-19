@@ -13,25 +13,17 @@ Usage:
 
 import argparse
 import json
-import os
 import time
 from datetime import datetime
 from pathlib import Path
 
-# Load .env if present (no dependency on pydantic-settings or grabette package)
-_env_file = Path(__file__).resolve().parent.parent / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
+from grabette.config import settings
 
 CALIBRATION_FILE = Path.home() / ".grabette" / "angle_calibration.json"
 AS5600_ADDRESS = 0x36
 ANGLE_REGISTER = 0x0C
-I2C_BUS_1 = int(os.environ.get("GRABETTE_ANGLE_I2C_BUS_1", 4))  # sensor 1 (distal)
-I2C_BUS_2 = int(os.environ.get("GRABETTE_ANGLE_I2C_BUS_2", 5))  # sensor 2 (proximal)
+I2C_BUS_1 = settings.angle_i2c_bus_1  # sensor 1 (distal)
+I2C_BUS_2 = settings.angle_i2c_bus_2  # sensor 2 (proximal)
 NUM_SAMPLES = 20  # average over N reads for stability
 
 

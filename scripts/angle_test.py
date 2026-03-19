@@ -4,25 +4,15 @@ Run on the Pi:
     python scripts/angle_test.py
 """
 
-import os
 import sys
 import time
-from pathlib import Path
 
 from adafruit_extended_bus import ExtendedI2C
-
-# Load .env if present
-_env_file = Path(__file__).resolve().parent.parent / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            key, _, val = line.partition("=")
-            os.environ.setdefault(key.strip(), val.strip())
+from grabette.config import settings
 
 AS5600_ADDR = 0x36
-I2C_BUS_PROXIMAL = int(os.environ.get("GRABETTE_ANGLE_I2C_BUS_1", 4))
-I2C_BUS_DISTAL = int(os.environ.get("GRABETTE_ANGLE_I2C_BUS_2", 5))
+I2C_BUS_PROXIMAL = settings.angle_i2c_bus_1
+I2C_BUS_DISTAL = settings.angle_i2c_bus_2
 
 # AS5600 registers
 REG_ANGLE = 0x0C    # 12-bit angle (2 bytes)
