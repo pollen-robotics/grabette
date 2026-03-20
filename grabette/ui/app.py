@@ -92,6 +92,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         frames = result.get("frame_count", 0)
         return f"Stopped \u2014 {dur:.1f}s, {frames} frames"
 
+    def get_grpc_status():
+        st = client.get_grpc_status()
+        if st is None or not st.get("enabled"):
+            return "\u25cb gRPC disabled"
+
+        def _stream(info, label):
+            if info.get("active"):
+                return f"{label} \u2713"
+            last = info.get("last_seen_s")
+            if last is None:
+                return f"{label} \u2013"
+            return f"{label} ({last:.0f}s)"
+
+        cam = _stream(st.get("camera", {}), "Camera")
+        rh = _stream(st.get("r_hand", {}), "R.Hand")
+        lh = _stream(st.get("l_hand", {}), "L.Hand")
+
+        if st.get("connected"):
+            return f"\u25cf Connected  |  {cam}  |  {rh}  |  {lh}"
+        return f"\u25cb No client  |  {cam}  |  {rh}  |  {lh}"
+
     # ── Session helpers ───────────────────────────────────────────────
 
     def _get_sessions():
@@ -420,6 +441,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 capture_msg = gr.Textbox(
                     show_label=False, interactive=False, max_lines=1,
                 )
+                grpc_status_box = gr.Textbox(
+                    label="gRPC Client",
+                    interactive=False,
+                    max_lines=1,
+                )
 
         # ── Sessions + Episodes ───────────────────────────────────────
         gr.Markdown("### Sessions")
@@ -610,6 +636,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=get_sensor_state,
             outputs=[imu_box, angle_box, capture_box, camera_timer],
         )
+
+        grpc_timer = gr.Timer(1.0)
+        grpc_timer.tick(fn=get_grpc_status, outputs=grpc_status_box)
 
         system_timer = gr.Timer(10)
         system_timer.tick(fn=get_system_bar, outputs=system_bar)

@@ -21,10 +21,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _daemon: Daemon | None = None
+_grpc_server = None
 
 
 def get_daemon_instance() -> Daemon | None:
     return _daemon
+
+
+def get_grpc_server_instance():
+    return _grpc_server
 
 
 def _create_backend():
@@ -54,13 +59,12 @@ _button_listener = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _daemon, _button_listener
+    global _daemon, _button_listener, _grpc_server
     import asyncio
 
     backend = _create_backend()
 
     # Start gRPC server and wrap backend with recording hooks
-    _grpc_server = None
     if settings.grpc_enabled:
         from grabette.grpc_server import GrpcServer
         from grabette.backend.grpc_wrapper import GrpcBackend
@@ -92,7 +96,7 @@ async def lifespan(app: FastAPI):
     _daemon = None
     if _grpc_server is not None:
         _grpc_server.stop()
-        _grpc_server = None
+        _grpc_server = None  # noqa: F841 (module-level reset)
 
 
 def create_app() -> FastAPI:
@@ -129,6 +133,7 @@ def create_app() -> FastAPI:
         )
 
     from grabette.app.routers.charts import router as charts_router
+    from grabette.app.routers.grpc import router as grpc_router
     from grabette.app.routers.replay import router as replay_router
     from grabette.app.routers.viewer import router as viewer_router
 
@@ -141,6 +146,7 @@ def create_app() -> FastAPI:
     app.include_router(viewer_router)
     app.include_router(charts_router)
     app.include_router(replay_router)
+    app.include_router(grpc_router)
 
     # Serve URDF model + STL meshes as static files
     _urdf_dir = Path(__file__).resolve().parent.parent.parent / "urdf"

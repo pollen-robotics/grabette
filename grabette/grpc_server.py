@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
+import time
 from concurrent import futures
 from pathlib import Path
 
@@ -32,6 +33,10 @@ class _RecordingState:
         self._total = 0
         self._r_hand_traj: list = []
         self._l_hand_traj: list = []
+        # Activity tracking (updated regardless of recording state)
+        self._last_camera_ts: float = 0.0
+        self._last_r_hand_ts: float = 0.0
+        self._last_l_hand_ts: float = 0.0
 
     def start_recording(self, session_dir: Path) -> None:
         with self._lock:
@@ -59,6 +64,7 @@ class _RecordingState:
     def save_camera_frame(self, timestamp_ms: int, jpeg_data: bytes) -> bool:
         """Save JPEG frame to disk. Returns False if not recording."""
         with self._lock:
+            self._last_camera_ts = time.time()
             if not self._recording:
                 return False
             self._total += 1
@@ -71,6 +77,11 @@ class _RecordingState:
     def append_hand_entry(self, entry: dict, side: int) -> bool:
         """Append a hand pose entry. Returns False if not recording."""
         with self._lock:
+            now = time.time()
+            if side == _RIGHT:
+                self._last_r_hand_ts = now
+            elif side == _LEFT:
+                self._last_l_hand_ts = now
             if not self._recording:
                 return False
             if side == _RIGHT:
@@ -84,6 +95,11 @@ class _RecordingState:
     def append_hand_entries_bulk(self, r_entries: list, l_entries: list) -> bool:
         """Bulk-append hand entries. Returns False if not recording."""
         with self._lock:
+            now = time.time()
+            if r_entries:
+                self._last_r_hand_ts = now
+            if l_entries:
+                self._last_l_hand_ts = now
             if not self._recording:
                 return False
             self._r_hand_traj.extend(r_entries)
@@ -97,6 +113,11 @@ class _RecordingState:
     def flush_hand_entries(self, r_entries: list, l_entries: list) -> None:
         """Save hand entries even if recording has already stopped (session path must exist)."""
         with self._lock:
+            now = time.time()
+            if r_entries:
+                self._last_r_hand_ts = now
+            if l_entries:
+                self._last_l_hand_ts = now
             if not self._r_hand_path:
                 return
             self._r_hand_traj.extend(r_entries)
@@ -105,6 +126,31 @@ class _RecordingState:
                 self._r_hand_path.write_text(json.dumps(self._r_hand_traj, indent=2))
             if l_entries:
                 self._l_hand_path.write_text(json.dumps(self._l_hand_traj, indent=2))
+
+
+    def get_activity(self, stale_s: float = 3.0) -> dict:
+        """Return connection and per-stream activity status."""
+        now = time.time()
+        with self._lock:
+            cam_age = (now - self._last_camera_ts) if self._last_camera_ts else None
+            r_age = (now - self._last_r_hand_ts) if self._last_r_hand_ts else None
+            l_age = (now - self._last_l_hand_ts) if self._last_l_hand_ts else None
+
+        def _info(age):
+            if age is None:
+                return {"active": False, "last_seen_s": None}
+            return {"active": age < stale_s, "last_seen_s": round(age, 1)}
+
+        connected = any(
+            age is not None and age < stale_s
+            for age in [cam_age, r_age, l_age]
+        )
+        return {
+            "connected": connected,
+            "camera": _info(cam_age),
+            "r_hand": _info(r_age),
+            "l_hand": _info(l_age),
+        }
 
 
 def _frame_to_hand_entry(frame) -> dict:
@@ -211,3 +257,9 @@ class GrpcServer:
     def stop_recording(self) -> None:
         if self._state is not None:
             self._state.stop_recording()
+
+    def get_status(self) -> dict:
+        """Return gRPC server status and client activity."""
+        if self._state is None:
+            return {"enabled": False, "connected": False}
+        return {"enabled": True, **self._state.get_activity()}

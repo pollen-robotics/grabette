@@ -42,6 +42,14 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def get_grpc_status(self) -> dict | None:
+        try:
+            r = self._http.get("/api/grpc/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     def get_daemon_status(self) -> dict | None:
         try:
             r = self._http.get("/api/daemon/status")
