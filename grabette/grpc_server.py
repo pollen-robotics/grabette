@@ -80,16 +80,9 @@ class _RecordingState:
             self._recording = False  # idempotent if stop_accepting() was called first
             self._flush_to_disk()
             total = self._total
-            tmp_dir = self._camera_dir
-            final_dir = self._camera_dir_final
-
-        # Move frames from RAM to persistent storage now that recording is done.
-        # This runs outside the lock so save_camera_frame is never blocked by the copy.
-        if tmp_dir and final_dir and tmp_dir != final_dir:
-            self._move_frames_to_persistent(tmp_dir, final_dir)
-            with self._lock:
-                self._camera_dir = final_dir
-
+        # Intentionally no file I/O here. Frames stay in /dev/shm until
+        # mux_camera_frames_to_mp4() runs, so that the mux reads from RAM
+        # and does not compete with the next recording's H.264 SD writes.
         logger.info("gRPC recording stopped (%d frames received)", total)
 
     def _move_frames_to_persistent(self, src: Path, dst: Path) -> None:
@@ -159,15 +152,29 @@ class _RecordingState:
             self._flush_to_disk()
 
     def mux_camera_frames_to_mp4(self) -> None:
-        """Assemble gRPC JPEG frames into an MP4 using ffmpeg (same approach as raw_video)."""
+        """Assemble gRPC JPEG frames into an MP4 using ffmpeg.
+
+        Reads frames from their current location (RAM if /dev/shm was used).
+        Writes the MP4 directly to the persistent session directory.
+        Only moves individual JPEG frames to persistent storage after the mux
+        completes, so SD I/O does not overlap with an ongoing recording.
+        """
         with self._lock:
-            camera_dir = self._camera_dir
-        if camera_dir is None or not camera_dir.is_dir():
+            src_dir = self._camera_dir
+            final_dir = self._camera_dir_final
+
+        if src_dir is None or not src_dir.is_dir():
             return
 
-        frames = sorted(camera_dir.glob("frame_*.jpg"))
+        frames = sorted(src_dir.glob("frame_*.jpg"))
         if len(frames) < 2:
             logger.info("gRPC: not enough frames to create MP4 (%d)", len(frames))
+            # Clean up empty RAM dir if needed
+            if final_dir and src_dir != final_dir:
+                try:
+                    src_dir.rmdir()
+                except OSError:
+                    pass
             return
 
         # Parse timestamps from filenames: frame_{timestamp_ms:016d}_{n:06d}.jpg
@@ -178,24 +185,22 @@ class _RecordingState:
             return
 
         duration_ms = ts_list[-1] - ts_list[0]
-        if duration_ms > 0:
-            fps = (len(ts_list) - 1) / (duration_ms / 1000.0)
-        else:
-            fps = 30.0
+        fps = (len(ts_list) - 1) / (duration_ms / 1000.0) if duration_ms > 0 else 30.0
 
-        # Write a concat list with per-frame durations for accurate timing
-        concat_path = camera_dir / "frames.txt"
+        # Write concat list in the source dir (alongside the frames, for relative paths)
+        concat_path = src_dir / "frames.txt"
         lines = []
         for i, f in enumerate(frames):
             lines.append(f"file '{f.name}'")
-            if i + 1 < len(ts_list):
-                duration_s = (ts_list[i + 1] - ts_list[i]) / 1000.0
-            else:
-                duration_s = 1.0 / fps
+            duration_s = (ts_list[i + 1] - ts_list[i]) / 1000.0 if i + 1 < len(ts_list) else 1.0 / fps
             lines.append(f"duration {duration_s:.6f}")
         concat_path.write_text("\n".join(lines))
 
-        output_path = camera_dir.parent / "grpc_video.mp4"
+        # MP4 goes to the persistent session directory regardless of where frames are.
+        # This means ffmpeg reads from RAM and writes one sequential file to SD —
+        # much less disruptive to concurrent SD writes than reading many small files.
+        output_dir = final_dir.parent if final_dir else src_dir.parent
+        output_path = output_dir / "grpc_video.mp4"
         cmd = [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0", "-i", str(concat_path),
@@ -209,6 +214,13 @@ class _RecordingState:
             logger.warning("gRPC: ffmpeg failed: %s", result.stderr[-300:])
         else:
             logger.info("gRPC: video saved → %s (%.1f fps, %d frames)", output_path, fps, len(frames))
+
+        # Move individual JPEG frames to persistent storage now that the mux is done.
+        # Doing this after the mux ensures no concurrent SD read pressure during recording.
+        if final_dir and src_dir != final_dir:
+            self._move_frames_to_persistent(src_dir, final_dir)
+            with self._lock:
+                self._camera_dir = final_dir
 
 
     def get_activity(self, stale_s: float = 3.0) -> dict:
