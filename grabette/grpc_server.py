@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import threading
 import time
@@ -28,7 +29,8 @@ class _RecordingState:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._recording = False
-        self._camera_dir: Path | None = None
+        self._camera_dir: Path | None = None        # active write dir (RAM or persistent)
+        self._camera_dir_final: Path | None = None  # persistent destination on SD card
         self._r_hand_path: Path | None = None
         self._l_hand_path: Path | None = None
         self._total = 0
@@ -40,10 +42,25 @@ class _RecordingState:
         self._last_l_hand_ts: float = 0.0
 
     def start_recording(self, session_dir: Path) -> None:
-        with self._lock:
-            camera_dir = session_dir / "grpc_camera_frames"
+        # Persistent destination on SD card (created now so it's ready for the move)
+        camera_dir_final = session_dir / "grpc_camera_frames"
+        camera_dir_final.mkdir(parents=True, exist_ok=True)
+
+        # Write frames to RAM during recording to avoid I/O contention with the
+        # H.264 encoder stream. Falls back to the persistent dir if /dev/shm is
+        # unavailable (non-Linux environments).
+        shm = Path("/dev/shm")
+        if shm.is_dir():
+            camera_dir = shm / f"grabette_{session_dir.name}"
             camera_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("gRPC frames → RAM (%s), will move to %s on stop", camera_dir, camera_dir_final)
+        else:
+            camera_dir = camera_dir_final
+            logger.info("gRPC frames → %s (/dev/shm unavailable)", camera_dir_final)
+
+        with self._lock:
             self._camera_dir = camera_dir
+            self._camera_dir_final = camera_dir_final
             self._r_hand_path = session_dir / "r_hand_traj.json"
             self._l_hand_path = session_dir / "l_hand_traj.json"
             self._total = 0
@@ -57,7 +74,28 @@ class _RecordingState:
             self._recording = False
             self._flush_to_disk()
             total = self._total
+            tmp_dir = self._camera_dir
+            final_dir = self._camera_dir_final
+
+        # Move frames from RAM to persistent storage now that recording is done.
+        # This runs outside the lock so save_camera_frame is never blocked by the copy.
+        if tmp_dir and final_dir and tmp_dir != final_dir:
+            self._move_frames_to_persistent(tmp_dir, final_dir)
+            with self._lock:
+                self._camera_dir = final_dir
+
         logger.info("gRPC recording stopped (%d frames received)", total)
+
+    def _move_frames_to_persistent(self, src: Path, dst: Path) -> None:
+        """Move JPEG frames from RAM (/dev/shm) to persistent storage."""
+        frames = sorted(src.glob("frame_*.jpg"))
+        logger.info("gRPC: moving %d frames from RAM to persistent storage", len(frames))
+        for f in frames:
+            shutil.move(str(f), dst / f.name)
+        try:
+            src.rmdir()
+        except OSError:
+            pass
 
     def save_camera_frame(self, timestamp_ms: int, jpeg_data: bytes) -> bool:
         """Save JPEG frame to disk. Returns False if not recording."""
@@ -272,7 +310,7 @@ class GrpcServer:
                     state.flush_to_disk()
                 return frames_pb2.FrameResponse(success=True)
 
-        self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+        self._server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
         frames_pb2_grpc.add_GrabetteServiceServicer_to_server(_Servicer(), self._server)
         self._server.add_insecure_port(f"{self._host}:{self._port}")
         self._server.start()
