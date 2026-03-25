@@ -33,7 +33,15 @@ class GrpcBackend(Backend):
         self._grpc.start_recording(session_dir)
 
     async def stop_capture(self) -> CaptureStatus:
+        # Stop accepting gRPC frames immediately — the recording window must match
+        # the RPI capture window, not the longer post-processing window (ffmpeg mux
+        # + hardware reinit) that follows.
+        self._grpc.stop_accepting()
+        # RPI stops: IMU/camera halt, ffmpeg mux, hardware reinit (~3-5s total).
         status = await self._inner.stop_capture()
+        # Only now do the I/O-heavy work: move frames from RAM + start gRPC mux.
+        # Running after the RPI mux avoids two concurrent ffmpeg processes competing
+        # for SD card bandwidth.
         self._grpc.stop_recording()
         return status
 

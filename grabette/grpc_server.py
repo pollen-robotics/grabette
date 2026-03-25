@@ -69,9 +69,15 @@ class _RecordingState:
             self._recording = True
         logger.info("gRPC recording started → %s", session_dir)
 
-    def stop_recording(self) -> None:
+    def stop_accepting(self) -> None:
+        """Stop accepting new frames immediately, without doing any I/O.
+        Call stop_recording() later (after RPI mux completes) for file operations."""
         with self._lock:
             self._recording = False
+
+    def stop_recording(self) -> None:
+        with self._lock:
+            self._recording = False  # idempotent if stop_accepting() was called first
             self._flush_to_disk()
             total = self._total
             tmp_dir = self._camera_dir
@@ -256,15 +262,6 @@ class GrpcServer:
             logger.warning("gRPC server disabled (import error): %s", exc)
             return False
 
-        # Reduce the GIL switch interval from the default 5ms to 1ms.
-        # gRPC worker threads hold the GIL during protobuf deserialization and
-        # Python-side processing. At 5ms, a single worker can starve picamera2's
-        # pre-callback thread long enough to exhaust the ISP buffer pool and drop
-        # frames. At 1ms the maximum starvation window drops below 5% of the
-        # camera frame period (21.7ms at 46fps), keeping the pipeline safe.
-        import sys
-        sys.setswitchinterval(0.001)
-        logger.info("GIL switch interval set to 1ms for camera/gRPC coexistence")
 
         state = _RecordingState()
         self._state = state
@@ -336,6 +333,11 @@ class GrpcServer:
     def start_recording(self, session_dir: Path) -> None:
         if self._state is not None:
             self._state.start_recording(session_dir)
+
+    def stop_accepting(self) -> None:
+        """Stop the recording window immediately (no I/O). Call stop_recording() later."""
+        if self._state is not None:
+            self._state.stop_accepting()
 
     def stop_recording(self) -> None:
         if self._state is not None:
