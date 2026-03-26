@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from grabette.grpc_server import mux_grpc_video
-
 logger = logging.getLogger(__name__)
 
 
@@ -71,11 +69,6 @@ class HuggingFaceClient:
 
         # Create repo if it doesn't exist
         api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
-
-        if progress_callback:
-            progress_callback(5.0, "Converting gRPC frames to video...")
-
-        mux_grpc_video(episode_dir)
 
         if progress_callback:
             progress_callback(10.0, "Uploading files...")
