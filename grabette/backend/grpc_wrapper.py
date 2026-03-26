@@ -33,8 +33,8 @@ class GrpcBackend(Backend):
         self._grpc.start_recording(session_dir)
 
     async def stop_capture(self) -> CaptureStatus:
-        status = await self._inner.stop_capture()
         self._grpc.stop_recording()
+        status = await self._inner.stop_capture()
         return status
 
     def get_capture_status(self) -> CaptureStatus:
