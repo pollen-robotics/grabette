@@ -118,6 +118,21 @@ class VideoCapture:
         self._first_sensor_ts = None
         self._sync_offset_ms = 0.0
 
+        # Lock AE/AWB at current converged values — prevents ISP algorithm
+        # spikes from dropping frames during recording.
+        meta = self._picam2.capture_metadata()
+        lock = {
+            "AeEnable": False,
+            "AwbEnable": False,
+            "ExposureTime": meta["ExposureTime"],
+            "AnalogueGain": meta["AnalogueGain"],
+        }
+        if "ColourGains" in meta:
+            lock["ColourGains"] = meta["ColourGains"]
+        self._picam2.set_controls(lock)
+        # Wait one frame so the lock takes effect before the encoder starts.
+        self._picam2.capture_metadata()
+
         self._picam2.post_callback = self._on_frame
         self._recording = True
         self._picam2.start_encoder(self._encoder, str(self._h264_path))
