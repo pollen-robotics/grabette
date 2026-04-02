@@ -3,6 +3,7 @@
 Ported from grabette-capture/grabette_capture/video.py.
 """
 
+import gc
 import logging
 import subprocess
 from pathlib import Path
@@ -69,7 +70,7 @@ class VideoCapture:
                 controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
             )
         self._picam2.configure(video_config)
-        self._encoder = H264Encoder(bitrate=self.bitrate)
+        self._encoder = H264Encoder(bitrate=self.bitrate, num_video_buffers=12)
 
         if self.preview:
             try:
@@ -135,6 +136,7 @@ class VideoCapture:
 
         self._picam2.post_callback = self._on_frame
         self._recording = True
+        gc.disable()  # Prevent GC pauses from dropping frames during recording
         self._picam2.start_encoder(self._encoder, str(self._h264_path))
 
     def stop(self) -> list[float]:
@@ -143,6 +145,7 @@ class VideoCapture:
 
         self._recording = False
         self._picam2.stop_encoder()
+        gc.enable()
         if self.preview:
             try:
                 self._picam2.stop_preview()
