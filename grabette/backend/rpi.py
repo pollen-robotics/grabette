@@ -223,11 +223,6 @@ class RpiBackend(Backend):
             }
             (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
-            # Save per-frame timestamps (ms, sync-clock-relative) for frame drop detection
-            # and accurate video-trajectory alignment
-            (self._capture_session_dir / "frame_timestamps.json").write_text(
-                json.dumps(frame_timestamps)
-            )
 
         self._sync.reset()
 

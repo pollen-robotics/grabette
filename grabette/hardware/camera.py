@@ -107,32 +107,10 @@ class VideoCapture:
             raise RuntimeError("SyncManager must be started before video capture")
 
         self._output_path = Path(output_path)
-        # Write raw H.264 to tmpfs (RAM) to avoid SD card write jitter.
-        # The file is small (~600KB/s at 5Mbps) and is muxed to the final
-        # location on stop(). Falls back to output dir if /dev/shm unavailable.
-        tmpfs = Path("/dev/shm")
-        if tmpfs.is_dir():
-            self._h264_path = tmpfs / f"grabette_{self._output_path.stem}.h264"
-        else:
-            self._h264_path = self._output_path.with_suffix(".h264")
+        self._h264_path = self._output_path.with_suffix(".h264")
         self._frame_timestamps = []
         self._first_sensor_ts = None
         self._sync_offset_ms = 0.0
-
-        # Lock AE/AWB at current converged values — prevents ISP algorithm
-        # spikes from dropping frames during recording.
-        meta = self._picam2.capture_metadata()
-        lock = {
-            "AeEnable": False,
-            "AwbEnable": False,
-            "ExposureTime": meta["ExposureTime"],
-            "AnalogueGain": meta["AnalogueGain"],
-        }
-        if "ColourGains" in meta:
-            lock["ColourGains"] = meta["ColourGains"]
-        self._picam2.set_controls(lock)
-        # Wait one frame so the lock takes effect before the encoder starts.
-        self._picam2.capture_metadata()
 
         self._picam2.post_callback = self._on_frame
         self._recording = True
@@ -156,15 +134,6 @@ class VideoCapture:
         self._picam2 = None
         self._encoder = None
 
-        # Detect frame drops before muxing
-        if len(self._frame_timestamps) >= 2:
-            intervals = [self._frame_timestamps[i+1] - self._frame_timestamps[i]
-                         for i in range(len(self._frame_timestamps) - 1)]
-            expected_ms = 1000.0 / self.fps
-            n_drops = sum(1 for dt in intervals if dt > expected_ms * 1.5)
-            if n_drops > 0:
-                logger.warning("Detected %d frame drops during recording", n_drops)
-
         self._mux_to_mp4()
         return self._frame_timestamps
 
@@ -187,12 +156,9 @@ class VideoCapture:
             str(self._output_path),
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
-        try:
-            self._h264_path.unlink()
-        except OSError:
-            pass
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg muxing failed: {result.stderr}")
+        self._h264_path.unlink()
 
     @property
     def frame_count(self) -> int:
