@@ -154,6 +154,22 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def download_episodes(self, episode_ids: list[str]) -> str | None:
+        try:
+            r = self._http.post(
+                "/api/episodes/download",
+                json={"episode_ids": episode_ids},
+                timeout=120.0,
+            )
+            r.raise_for_status()
+            filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"
+            path = os.path.join(tempfile.gettempdir(), filename)
+            with open(path, "wb") as f:
+                f.write(r.content)
+            return path
+        except Exception:
+            return None
+
     def move_episodes(self, episode_ids: list[str], target_session_id: str) -> dict:
         try:
             r = self._http.post(
