@@ -48,6 +48,7 @@ class VideoCapture:
         self._recording = False
         self._first_sensor_ts: int | None = None
         self._sync_offset_ms: float = 0.0
+        self._frame_count: int = 0
 
     def init_camera(self) -> None:
         """Initialize picamera2 with CFR configuration."""
@@ -111,6 +112,7 @@ class VideoCapture:
         self._frame_timestamps = []
         self._first_sensor_ts = None
         self._sync_offset_ms = 0.0
+        self._frame_count = 0
 
         self._recording = True
         gc.disable()  # Prevent GC pauses from dropping frames during recording
@@ -158,7 +160,28 @@ class VideoCapture:
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg muxing failed: {result.stderr}")
         self._h264_path.unlink()
+        self._frame_count = self._count_frames_ffprobe()
+
+    def _count_frames_ffprobe(self) -> int:
+        if self._output_path is None or not self._output_path.exists():
+            return 0
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe", "-v", "error",
+                    "-select_streams", "v:0",
+                    "-count_packets",
+                    "-show_entries", "stream=nb_read_packets",
+                    "-of", "csv=p=0",
+                    str(self._output_path),
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            val = result.stdout.strip()
+            return int(val) if val.isdigit() else 0
+        except Exception:
+            return 0
 
     @property
     def frame_count(self) -> int:
-        return len(self._frame_timestamps)
+        return self._frame_count
