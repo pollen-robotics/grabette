@@ -514,23 +514,30 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # ── HuggingFace ───────────────────────────────────────────────
         gr.HTML("<hr style='margin:24px 0;border:none;border-top:2px solid #333;'>")
         gr.Markdown("# HuggingFace")
-        with gr.Row():
-            hf_token = gr.Textbox(
-                label="HF Token", type="password",
-                placeholder="hf_...", scale=2,
-            )
-            hf_auth_btn = gr.Button("Authenticate", size="sm", scale=1)
-        hf_status = gr.Textbox(label="HF Status", interactive=False, max_lines=1)
-        with gr.Row():
-            hf_repo = gr.Textbox(
-                label="Dataset Repo ID",
-                placeholder="username/grabette-data",
-                scale=2,
-            )
-            hf_upload_btn = gr.Button("Upload Episode", size="sm", scale=1)
-        hf_upload_msg = gr.Textbox(
-            label="Upload Status", interactive=False, max_lines=1,
-        )
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
+                hf_token = gr.Textbox(
+                    label="HF Token", type="password",
+                    placeholder="hf_...", scale=2,
+                )
+                hf_auth_btn = gr.Button("Authenticate", size="sm", scale=1, variant="secondary")
+
+            with gr.Column(scale=1):
+                hf_repo = gr.Textbox(
+                    label="Dataset Repo ID",
+                    placeholder="username/grabette-data",
+                    scale=2,
+                )
+                hf_upload_btn = gr.Button("Upload Episode", size="sm", scale=1, variant = "huggingface")
+            
+
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=1):
+                hf_status = gr.Textbox(label="HF Status", interactive=False, max_lines=1)
+            with gr.Column(scale=1):
+                hf_upload_msg = gr.Textbox(
+                    label="Upload Status", interactive=False, max_lines=1,
+                )
 
         # ── SLAM ──────────────────────────────────────────────────────
         gr.Markdown("### SLAM Processing")
