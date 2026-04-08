@@ -16,6 +16,7 @@ Changes from reference:
 
 import logging
 import subprocess
+import threading
 from typing import Callable
 
 import dbus
@@ -198,6 +199,10 @@ class Characteristic(dbus.service.Object):
         self.descriptors = []
         dbus.service.Object.__init__(self, bus, self.path)
 
+    @dbus.service.signal(DBUS_PROP_IFACE, signature="sa{sv}as")
+    def PropertiesChanged(self, interface, changed, invalidated):
+        pass
+
     def get_properties(self):
         props = {
             GATT_CHRC_IFACE: {
@@ -246,12 +251,26 @@ class CommandCharacteristic(Characteristic):
 
     def WriteValue(self, value, options):
         command_bytes = bytes(value)
+        # Run in a background thread so the GATT write returns immediately.
+        # Commands like WIFI can block for several seconds (nmcli), which would
+        # cause the BLE client to time out with "GATT operation failed".
+        threading.Thread(target=self._run_command, args=(command_bytes,), daemon=True).start()
+
+    def _run_command(self, command_bytes: bytes) -> None:
         response = self.command_handler(command_bytes)
-        # Store response in the sibling response characteristic
-        self.service.response_char.value = [
-            dbus.Byte(b) for b in response.encode("utf-8")
-        ]
-        logger.info("Command processed, response: %s", response)
+        # Update response char on the GLib main loop thread (thread-safe).
+        def _update():
+            encoded = [dbus.Byte(b) for b in response.encode("utf-8")]
+            self.service.response_char.value = encoded
+            # Notify subscribed BLE clients so they don't need to poll.
+            self.service.response_char.PropertiesChanged(
+                GATT_CHRC_IFACE,
+                {"Value": dbus.Array(encoded, signature="y")},
+                dbus.Array([], signature="s"),
+            )
+            logger.info("Command processed, response: %s", response)
+            return False  # one-shot
+        GLib.idle_add(_update)
 
 
 class ResponseCharacteristic(Characteristic):

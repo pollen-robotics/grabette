@@ -226,6 +226,7 @@
             const cmdService = await server.getPrimaryService(SERVICE_UUID);
             commandChar = await cmdService.getCharacteristic(COMMAND_CHAR_UUID);
             responseChar = await cmdService.getCharacteristic(RESPONSE_CHAR_UUID);
+            await responseChar.startNotifications();
 
             // Status service
             try {
@@ -259,12 +260,16 @@
         try {
             log('> ' + cmd, 'log-cmd');
             const encoder = new TextEncoder();
+            // Wait for notification before writing, to avoid race conditions.
+            const responsePromise = new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Response timeout')), 35000);
+                responseChar.addEventListener('characteristicvaluechanged', (event) => {
+                    clearTimeout(timeout);
+                    resolve(new TextDecoder().decode(event.target.value));
+                }, { once: true });
+            });
             await commandChar.writeValue(encoder.encode(cmd));
-            // Small delay for the device to process
-            await new Promise(r => setTimeout(r, 200));
-            const value = await responseChar.readValue();
-            const decoder = new TextDecoder();
-            const response = decoder.decode(value);
+            const response = await responsePromise;
             const cls = response.startsWith('OK') || response === 'PONG' ? 'log-ok' : 'log-err';
             log('< ' + response, cls);
             return response;
