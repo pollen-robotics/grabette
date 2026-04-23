@@ -149,49 +149,52 @@ class OakCapture:
                     frame_idx = 0
 
                     while pipeline.isRunning():
-                        rect  = q_rect.tryGet()
-                        if rect  is not None:
-                            pending_rect[rect.getSequenceNum()]   = rect
-                        depth = q_depth.tryGet()
-                        if depth is not None:
-                            pending_depth[depth.getSequenceNum()] = depth
+                        try:
+                            rect  = q_rect.tryGet()
+                            if rect  is not None:
+                                pending_rect[rect.getSequenceNum()]   = rect
+                            depth = q_depth.tryGet()
+                            if depth is not None:
+                                pending_depth[depth.getSequenceNum()] = depth
 
-                        for seq in sorted(set(pending_rect) & set(pending_depth)):
-                            r = pending_rect.pop(seq)
-                            d = pending_depth.pop(seq)
-                            stamp_ns = int(r.getTimestampDevice().total_seconds() * 1e9)
+                            for seq in sorted(set(pending_rect) & set(pending_depth)):
+                                r = pending_rect.pop(seq)
+                                d = pending_depth.pop(seq)
+                                stamp_ns = int(r.getTimestampDevice().total_seconds() * 1e9)
 
-                            cv2.imwrite(
-                                str(oak_dir / "frames" / f"{frame_idx:06d}.png"),
-                                r.getCvFrame(),
-                                [cv2.IMWRITE_PNG_COMPRESSION, 0],
-                            )
-                            cv2.imwrite(
-                                str(oak_dir / "depth" / f"{frame_idx:06d}.png"),
-                                d.getCvFrame(),
-                                [cv2.IMWRITE_PNG_COMPRESSION, 0],
-                            )
-                            ts_f.write(f"{frame_idx},{stamp_ns}\n")
-                            frame_idx += 1
-
-                        # Drop unmatched frames older than 10 frames
-                        cutoff = frame_idx - 10
-                        pending_rect  = {k: v for k, v in pending_rect.items()  if k > cutoff}
-                        pending_depth = {k: v for k, v in pending_depth.items() if k > cutoff}
-
-                        imu_data = q_imu.tryGet()
-                        if imu_data is not None:
-                            for pkt in imu_data.packets:
-                                acc  = pkt.acceleroMeter
-                                gyro = pkt.gyroscope
-                                acc_f.write(
-                                    f"{int(acc.getTimestampDevice().total_seconds()*1e9)}"
-                                    f",{acc.x},{acc.y},{acc.z}\n"
+                                cv2.imwrite(
+                                    str(oak_dir / "frames" / f"{frame_idx:06d}.png"),
+                                    r.getCvFrame(),
+                                    [cv2.IMWRITE_PNG_COMPRESSION, 0],
                                 )
-                                gyro_f.write(
-                                    f"{int(gyro.getTimestampDevice().total_seconds()*1e9)}"
-                                    f",{gyro.x},{gyro.y},{gyro.z}\n"
+                                cv2.imwrite(
+                                    str(oak_dir / "depth" / f"{frame_idx:06d}.png"),
+                                    d.getCvFrame(),
+                                    [cv2.IMWRITE_PNG_COMPRESSION, 0],
                                 )
+                                ts_f.write(f"{frame_idx},{stamp_ns}\n")
+                                frame_idx += 1
+
+                            # Drop unmatched frames older than 10 frames
+                            cutoff = frame_idx - 10
+                            pending_rect  = {k: v for k, v in pending_rect.items()  if k > cutoff}
+                            pending_depth = {k: v for k, v in pending_depth.items() if k > cutoff}
+
+                            imu_data = q_imu.tryGet()
+                            if imu_data is not None:
+                                for pkt in imu_data.packets:
+                                    acc  = pkt.acceleroMeter
+                                    gyro = pkt.gyroscope
+                                    acc_f.write(
+                                        f"{int(acc.getTimestampDevice().total_seconds()*1e9)}"
+                                        f",{acc.x},{acc.y},{acc.z}\n"
+                                    )
+                                    gyro_f.write(
+                                        f"{int(gyro.getTimestampDevice().total_seconds()*1e9)}"
+                                        f",{gyro.x},{gyro.y},{gyro.z}\n"
+                                    )
+                        except Exception:
+                            break  # pipeline was stopped, queues are closed
 
                         time.sleep(0.002)
 
