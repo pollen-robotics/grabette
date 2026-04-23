@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     angle_sensors: bool = True
 
     # OAK-D camera (rect_left + depth + IMU → session/oak/)
-    oak_enabled: bool = False
+    oak_enabled: bool = True
 
     # UI
     ui_enabled: bool = True

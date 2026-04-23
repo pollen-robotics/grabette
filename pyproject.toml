@@ -16,6 +16,7 @@ rpi = [
     "picamera2",
     "adafruit-extended-bus",
     "gpiod>=2.0.0",
+    "depthai==3.5.0"
     "numpy<2",  # system simplejpeg is compiled against numpy 1.x
 ]
 hf = [

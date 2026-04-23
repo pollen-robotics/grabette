@@ -156,6 +156,8 @@ class RpiBackend(Backend):
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
+        import asyncio
+
         # Keep _capturing = True until ALL streams have stopped.
         # This prevents the daemon poll loop (get_state) from doing
         # direct I2C reads while capture threads are still running.
@@ -175,8 +177,16 @@ class RpiBackend(Backend):
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
-        oak_frame_count = self._oak.stop() if self._oak else 0
-        frame_timestamps = self._camera.stop()
+
+        loop = asyncio.get_event_loop()
+
+        # oak.stop() and camera.stop() both block (thread join + ffmpeg subprocess).
+        # Run them in an executor so the event loop stays responsive.
+        if self._oak:
+            oak_frame_count = await loop.run_in_executor(None, self._oak.stop)
+        else:
+            oak_frame_count = 0
+        frame_timestamps = await loop.run_in_executor(None, self._camera.stop)
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
@@ -236,12 +246,13 @@ class RpiBackend(Backend):
 
         self._sync.reset()
 
-        # Re-initialize hardware for next capture
+        # Re-initialize hardware for next capture.
+        # init_camera() starts picamera2 (blocking) — run in executor.
         from grabette.hardware.imu import BMI088Capture
         from grabette.hardware.camera import VideoCapture
         self._camera = VideoCapture(self._sync, fps=FPS)
         self._imu = BMI088Capture(self._sync, sample_rate_hz=IMU_HZ)
-        self._camera.init_camera()
+        await loop.run_in_executor(None, self._camera.init_camera)
         self._imu.init_sensor()
         if self._enable_angle:
             self._init_angle_sensors()

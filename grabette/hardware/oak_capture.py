@@ -8,8 +8,6 @@ import threading
 import time
 from pathlib import Path
 
-import cv2
-
 logger = logging.getLogger(__name__)
 
 WIDTH  = 640
@@ -33,6 +31,7 @@ class OakCapture:
     def __init__(self) -> None:
         self._thread: threading.Thread | None = None
         self._pipeline = None          # set inside thread, guarded by _lock
+        self._pipeline_started = False # True only after pipeline.start() returns
         self._lock = threading.Lock()
         self._frame_count = 0
 
@@ -45,6 +44,7 @@ class OakCapture:
         (oak_dir / "frames").mkdir(parents=True, exist_ok=True)
         (oak_dir / "depth").mkdir(exist_ok=True)
         self._frame_count = 0
+        self._pipeline_started = False
 
         self._thread = threading.Thread(
             target=self._run, args=(oak_dir,), daemon=True, name="oak-capture"
@@ -56,7 +56,8 @@ class OakCapture:
         """Stop the pipeline and wait for the thread to finish. Returns frame count."""
         with self._lock:
             pipeline = self._pipeline
-        if pipeline is not None:
+            started = self._pipeline_started
+        if pipeline is not None and started:
             pipeline.stop()
         if self._thread is not None:
             self._thread.join(timeout=10)
@@ -69,9 +70,10 @@ class OakCapture:
 
     def _run(self, oak_dir: Path) -> None:
         try:
+            import cv2
             import depthai as dai
-        except ImportError:
-            logger.error("depthai not installed — OAK capture disabled")
+        except ImportError as e:
+            logger.error("OAK dependency not installed (%s) — OAK capture disabled", e)
             return
 
         try:
@@ -111,6 +113,8 @@ class OakCapture:
                 q_imu   = imu.out.createOutputQueue(maxSize=50, blocking=False)
 
                 pipeline.start()
+                with self._lock:
+                    self._pipeline_started = True
 
                 # --- Calibration ---
                 calib      = pipeline.getDefaultDevice().readCalibration()
