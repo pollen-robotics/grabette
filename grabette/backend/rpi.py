@@ -21,17 +21,19 @@ IMU_HZ = 200
 class RpiBackend(Backend):
     """Backend using real RPi camera and BMI088 IMU hardware."""
 
-    def __init__(self, enable_angle: bool = False) -> None:
+    def __init__(self, enable_angle: bool = False, enable_oak: bool = False) -> None:
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
         self._capture_session_dir: Path | None = None
         self._enable_angle = enable_angle
+        self._enable_oak = enable_oak
 
         self._sync = None
         self._camera = None
         self._imu = None
         self._angle = None
+        self._oak = None
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
@@ -50,6 +52,11 @@ class RpiBackend(Backend):
 
         if self._enable_angle:
             self._init_angle_sensors()
+
+        if self._enable_oak:
+            from grabette.hardware.oak_capture import OakCapture
+            self._oak = OakCapture()
+            logger.info("OAK-D capture ready")
 
         self._running = True
         self._start_time = time.time()
@@ -139,6 +146,8 @@ class RpiBackend(Backend):
         self._imu.start_capture()
         if self._angle:
             self._angle.start_capture()
+        if self._oak:
+            self._oak.start_capture(session_dir)
         self._camera.start_recording(session_dir / "raw_video.mp4")
 
         logger.info("RpiBackend capture started → %s", session_dir)
@@ -166,6 +175,7 @@ class RpiBackend(Backend):
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
+        oak_frame_count = self._oak.stop() if self._oak else 0
         frame_timestamps = self._camera.stop()
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
@@ -217,6 +227,7 @@ class RpiBackend(Backend):
                 "frame_count": status.frame_count,
                 "imu_sample_count": status.imu_sample_count,
                 "angle_sample_count": status.angle_sample_count,
+                "oak_frame_count": oak_frame_count,
                 "fps": actual_fps,
                 "imu_hz": IMU_HZ,
                 "backend": "rpi",
