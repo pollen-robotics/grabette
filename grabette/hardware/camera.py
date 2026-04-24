@@ -121,6 +121,7 @@ class VideoCapture:
         self._sync_offset_ms = 0.0
         self._frame_count = 0
 
+        self._picam2.pre_callback = self._on_frame
         self._recording = True
         gc.disable()  # Prevent GC pauses from dropping frames during recording
         self._picam2.start_encoder(self._encoder, str(self._h264_path))
@@ -179,7 +180,6 @@ class VideoCapture:
             pass
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg muxing failed: {result.stderr}")
-        self._h264_path.unlink()
         self._frame_count = self._count_frames_ffprobe()
 
     def _count_frames_ffprobe(self) -> int:
