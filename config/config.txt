@@ -52,18 +52,18 @@ dtoverlay=dwc2,dr_mode=host
 [all]
 #dtoverlay=imx219 #IMX219
 #dtoverlay=arducam-pivariety
-#beta
-#dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=23,i2c_gpio_scl=24
 
-# AS5600 angle sensors on separate buses
-#beta
-#dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=5,i2c_gpio_scl=6
-#dtoverlay=i2c-gpio,bus=5,i2c_gpio_sda=12,i2c_gpio_scl=13
-
-#V1
+#V1 (legacy, Grove HAT, BMI088 IMU + bit-banged I2C)
 # IMU on grove D5
-dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=6,i2c_gpio_scl=5
+#dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=6,i2c_gpio_scl=5
 # Angle sensor 1 on D16
-dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=17,i2c_gpio_scl=16
+#dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=17,i2c_gpio_scl=16
 # Angle sensor 2 on D18
-dtoverlay=i2c-gpio,bus=5,i2c_gpio_sda=19,i2c_gpio_scl=18
+#dtoverlay=i2c-gpio,bus=5,i2c_gpio_sda=19,i2c_gpio_scl=18
+
+#V2 (custom HAT, OAK-D SR over USB3 — IMU dropped from RPi)
+# Angle sensor "distal" on hardware i2c3 (GPIO 4 SDA / GPIO 5 SCL)
+dtoverlay=i2c3,pins_4_5
+# Angle sensor "proximal" on hardware i2c4 (GPIO 8 SDA / GPIO 9 SCL)
+dtoverlay=i2c4,pins_8_9
+# Switch on GPIO 10 (input), LED on GPIO 11 (output) — handled in software, no overlay needed

@@ -28,6 +28,10 @@ class AngleCapture:
     """Captures angle data from two AS5600 magnetic rotary position sensors.
 
     Each AS5600 is on a separate I2C bus (they have the same fixed address 0x36).
+
+    V2 hardware (rgbd branch): hardware I2C peripherals on the BCM2711.
+        - Bus 1 (distal):   /dev/i2c-3 (GPIO 4/5),  dtoverlay=i2c3,pins_4_5
+        - Bus 2 (proximal): /dev/i2c-4 (GPIO 8/9),  dtoverlay=i2c4,pins_8_9
     """
 
     DEFAULT_SAMPLE_RATE_HZ = 100
@@ -37,8 +41,8 @@ class AngleCapture:
     def __init__(
         self,
         sync_manager: SyncManager,
-        i2c_bus_1: int = 4,
-        i2c_bus_2: int = 5,
+        i2c_bus_1: int = 3,
+        i2c_bus_2: int = 4,
         sample_rate_hz: int = DEFAULT_SAMPLE_RATE_HZ,
     ):
         self.sync = sync_manager

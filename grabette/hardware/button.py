@@ -1,10 +1,14 @@
-"""Grove LED Button controller using gpiod v2.
+"""LED + button (switch) controller using gpiod v2.
 
-Ported from grabette-capture/grabette_capture/button.py.
+V1 hardware (Grove HAT, legacy): Grove LED Button on D22 connector
+    - GPIO22 = LED (active HIGH)
+    - GPIO23 = Button (active LOW with internal pull-up)
 
-Hardware: Grove LED Button on D22 connector
-- GPIO22 = SIG1 = LED control (active HIGH)
-- GPIO23 = SIG2 = Button input (active LOW with internal pull-up)
+V2 hardware (custom HAT, rgbd branch):
+    - GPIO11 = LED (active HIGH)
+    - GPIO10 = Switch (active LOW with internal pull-up)
+
+Same protocol on both — only pin numbers differ. Defaults below match V2.
 """
 
 from __future__ import annotations
@@ -18,10 +22,10 @@ from gpiod.line import Bias, Direction, Value
 
 
 class LedButton:
-    """Grove LED Button controller using gpiod v2."""
+    """LED + button/switch controller using gpiod v2."""
 
-    LED_PIN = 22
-    BUTTON_PIN = 23
+    LED_PIN = 11
+    BUTTON_PIN = 10
     # Pi 4 and earlier use gpiochip0, Pi 5 uses gpiochip4
     CHIP_PATHS = ["/dev/gpiochip0", "/dev/gpiochip4"]
 
