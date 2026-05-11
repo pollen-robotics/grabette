@@ -1,30 +1,31 @@
 """OAK-D SR capture using depthai v3.
 
-Minimal v1: stereo mono (CAM_B + CAM_C) + IMU (raw accel/gyro/rotation vector).
-Frames saved as PNG sequence per camera; IMU and timestamps as JSON.
-No depth and no on-device H.264 encoding yet (deferred to v2).
+v2: stereo mono (CAM_B + CAM_C) → on-device H.264 encoder → host writers
+    + BNO086 IMU (raw accel/gyro + rotation vector)
+
+The H.264 elementary streams are written to .h264 files during capture, then
+muxed to .mp4 on stop() so the result is a proper MP4 container. Per-frame
+timestamps are still saved in a separate JSON sidecar (the mp4 fps metadata
+alone isn't enough for accurate offline sync).
 
 Output layout per episode:
-    oakd_left/<seq>.png         GRAY8, 1280x800
-    oakd_right/<seq>.png        GRAY8, 1280x800
+    oakd_left.mp4               H.264 mono left, ~1280x800
+    oakd_right.mp4              H.264 mono right, ~1280x800
     oakd_left_timestamps.json   {"samples": [{"seq", "device_us", "host_ms"}]}
     oakd_right_timestamps.json  same shape
     oakd_imu.json               raw accel + gyro + rotation vector + per-sample timestamps
     oakd_calib.json             factory intrinsics + extrinsics
-    oakd_clock_pairs.json       periodic (host_ms, device_us) pairs for offline drift fit
+    oakd_clock_pairs.json       first device_us ↔ host_ms pair per stream
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import queue
+import subprocess
 import threading
 import time
 from pathlib import Path
-
-import cv2
-import numpy as np
 
 from .sync import SyncManager
 
@@ -37,17 +38,17 @@ def _device_us(ts) -> int:
 
 
 class OakdCapture:
-    """Captures stereo mono + IMU from OAK-D SR over USB3.
+    """Captures stereo mono (H.264) + IMU from OAK-D SR over USB3.
 
-    Pipeline runs on the OAK-D; host pulls frames/IMU into queues and
-    writer threads drain them to disk. The device clock and the SyncManager
-    monotonic clock are paired periodically for offline alignment.
+    The pipeline runs on the OAK-D's RVC2; the host pulls H.264 packets and
+    IMU samples into queues, and writer threads drain them to disk.
     """
 
     DEFAULT_FPS = 30
     DEFAULT_RESOLUTION = (1280, 800)
     DEFAULT_IMU_HZ = 200
-    DEFAULT_PNG_COMPRESSION = 1  # 0..9; 1 is fast, files larger
+    DEFAULT_BITRATE_BPS = 8_000_000   # 8 Mbps per camera; near-lossless for SLAM
+    DEFAULT_KEYFRAME_EVERY = 30       # 1 I-frame every N frames
 
     def __init__(
         self,
@@ -55,13 +56,15 @@ class OakdCapture:
         fps: int = DEFAULT_FPS,
         resolution: tuple[int, int] = DEFAULT_RESOLUTION,
         imu_rate_hz: int = DEFAULT_IMU_HZ,
-        png_compression: int = DEFAULT_PNG_COMPRESSION,
+        bitrate_bps: int = DEFAULT_BITRATE_BPS,
+        keyframe_every: int = DEFAULT_KEYFRAME_EVERY,
     ) -> None:
         self.sync = sync_manager
         self.fps = fps
         self.resolution = resolution
         self.imu_rate_hz = imu_rate_hz
-        self.png_compression = png_compression
+        self.bitrate_bps = bitrate_bps
+        self.keyframe_every = keyframe_every
 
         self._pipeline = None
         self._left_q = None
@@ -77,22 +80,18 @@ class OakdCapture:
         self._imu_samples: list[dict] = []
         self._clock_pairs: list[dict] = []
 
-        # Writer threads
         self._threads: list[threading.Thread] = []
         self._stop_event = threading.Event()
 
-        # Calibration (captured once at init)
         self._calibration_json: dict | None = None
 
     # ------------------------------------------------------------------ init
 
     def init_device(self) -> None:
-        """Connect to OAK-D and build the pipeline (no streaming yet)."""
+        """Connect briefly to read calibration, then build the pipeline."""
         import depthai as dai
 
-        logger.info("Connecting to OAK-D...")
-        # A short-lived Device connection just to read calibration once.
-        # The real pipeline below holds its own device connection.
+        logger.info("Connecting to OAK-D for calibration read...")
         with dai.Device() as device:
             self._device_id = device.getDeviceId()
             self._product_name = device.getProductName()
@@ -104,21 +103,40 @@ class OakdCapture:
                 self._product_name, self._device_id, self._usb_speed, self._imu_type,
             )
 
-        # Build pipeline (doesn't start the device yet — that happens on pipeline.start())
+        # --- Pipeline ---
         self._pipeline = dai.Pipeline()
 
+        # Left camera + H.264 encoder
         camB = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
-        leftOut = camB.requestOutput(
-            self.resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
+        leftRaw = camB.requestOutput(
+            self.resolution, type=dai.ImgFrame.Type.NV12, fps=self.fps,
         )
-        self._left_q = leftOut.createOutputQueue(maxSize=8, blocking=False)
+        leftEnc = self._pipeline.create(dai.node.VideoEncoder).build(
+            input=leftRaw,
+            bitrate=self.bitrate_bps,
+            frameRate=float(self.fps),
+            profile=dai.VideoEncoderProperties.Profile.H264_MAIN,
+            keyframeFrequency=self.keyframe_every,
+        )
+        leftEnc.setNumBFrames(0)  # no reordering — preserves stream order in mp4
+        self._left_q = leftEnc.out.createOutputQueue(maxSize=32, blocking=False)
 
+        # Right camera + H.264 encoder
         camC = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
-        rightOut = camC.requestOutput(
-            self.resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
+        rightRaw = camC.requestOutput(
+            self.resolution, type=dai.ImgFrame.Type.NV12, fps=self.fps,
         )
-        self._right_q = rightOut.createOutputQueue(maxSize=8, blocking=False)
+        rightEnc = self._pipeline.create(dai.node.VideoEncoder).build(
+            input=rightRaw,
+            bitrate=self.bitrate_bps,
+            frameRate=float(self.fps),
+            profile=dai.VideoEncoderProperties.Profile.H264_MAIN,
+            keyframeFrequency=self.keyframe_every,
+        )
+        rightEnc.setNumBFrames(0)
+        self._right_q = rightEnc.out.createOutputQueue(maxSize=32, blocking=False)
 
+        # IMU (BNO086 on this device — 9-axis with onboard fusion)
         imu = self._pipeline.create(dai.node.IMU)
         imu.enableIMUSensor(
             [
@@ -140,7 +158,6 @@ class OakdCapture:
             if not hasattr(handler, "eepromToJson"):
                 return {}
             data = handler.eepromToJson()
-            # depthai v3 returns a dict already; some versions return a JSON string.
             if isinstance(data, str):
                 return json.loads(data)
             if isinstance(data, dict):
@@ -161,10 +178,12 @@ class OakdCapture:
             raise RuntimeError("SyncManager must be started before OakdCapture")
 
         self._output_dir = Path(output_dir).absolute()
-        (self._output_dir / "oakd_left").mkdir(parents=True, exist_ok=True)
-        (self._output_dir / "oakd_right").mkdir(parents=True, exist_ok=True)
+        self._output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write calibration once
+        # Stream files (raw H.264 elementary streams; muxed to mp4 on stop)
+        self._left_h264 = self._output_dir / "oakd_left.h264"
+        self._right_h264 = self._output_dir / "oakd_right.h264"
+
         if self._calibration_json:
             (self._output_dir / "oakd_calib.json").write_text(
                 json.dumps(self._calibration_json, indent=2)
@@ -177,20 +196,18 @@ class OakdCapture:
         self._clock_pairs.clear()
         self._stop_event.clear()
 
-        # Start pipeline (connects to device, begins streaming)
         self._pipeline.start()
         self._recording = True
 
-        # Launch writer threads
         self._threads = [
             threading.Thread(
                 target=self._writer_loop_video,
-                args=(self._left_q, "left", self._left_ts),
+                args=(self._left_q, "left", self._left_h264, self._left_ts),
                 daemon=True,
             ),
             threading.Thread(
                 target=self._writer_loop_video,
-                args=(self._right_q, "right", self._right_ts),
+                args=(self._right_q, "right", self._right_h264, self._right_ts),
                 daemon=True,
             ),
             threading.Thread(
@@ -206,55 +223,45 @@ class OakdCapture:
     # -------------------------------------------------------------- writers
 
     def _writer_loop_video(
-        self, q, name: str, ts_buffer: list[dict],
+        self, q, name: str, h264_path: Path, ts_buffer: list[dict],
     ) -> None:
-        """Pull frames from a queue, write as PNG, record timestamps.
-
-        Exits when stop_event is set AND queue is drained, or when the
-        queue is closed (pipeline stop).
-        """
-        out_dir = self._output_dir / f"oakd_{name}"
-        png_params = [cv2.IMWRITE_PNG_COMPRESSION, self.png_compression]
+        """Pull H.264 packets from the encoder queue, append to .h264 file."""
         n = 0
-        while True:
-            try:
-                if not q.has():
-                    if self._stop_event.is_set():
-                        break
-                    time.sleep(0.001)
+        with open(h264_path, "wb") as f:
+            while True:
+                try:
+                    if not q.has():
+                        if self._stop_event.is_set():
+                            break
+                        time.sleep(0.001)
+                        continue
+                    pkt = q.tryGet()
+                except Exception:
+                    break
+
+                if pkt is None:
                     continue
-                frame = q.tryGet()
-            except Exception:
-                # MessageQueue closed (pipeline stopped) — exit cleanly
-                break
 
-            if frame is None:
-                continue
+                host_ms = self.sync.get_timestamp_ms()
+                seq = pkt.getSequenceNum()
+                device_us = _device_us(pkt.getTimestampDevice())
 
-            host_ms = self.sync.get_timestamp_ms()
-            seq = frame.getSequenceNum()
-            device_us = _device_us(frame.getTimestampDevice())
+                if not self._clock_pairs:
+                    self._clock_pairs.append({
+                        "stream": name,
+                        "seq": int(seq),
+                        "device_us": device_us,
+                        "host_ms": host_ms,
+                    })
 
-            # Save first clock pair (device <-> sync mapping)
-            if not self._clock_pairs:
-                self._clock_pairs.append({
-                    "stream": name,
+                f.write(pkt.getData())
+                ts_buffer.append({
                     "seq": int(seq),
                     "device_us": device_us,
                     "host_ms": host_ms,
                 })
-
-            img = frame.getCvFrame()
-            cv2.imwrite(
-                str(out_dir / f"{seq:08d}.png"), img, png_params,
-            )
-            ts_buffer.append({
-                "seq": int(seq),
-                "device_us": device_us,
-                "host_ms": host_ms,
-            })
-            n += 1
-        logger.info("oakd %s writer: %d frames", name, n)
+                n += 1
+        logger.info("oakd %s writer: %d packets", name, n)
 
     def _writer_loop_imu(self) -> None:
         """Pull IMU batches from queue, flatten into per-sample dicts."""
@@ -274,7 +281,6 @@ class OakdCapture:
                     continue
                 host_ms = self.sync.get_timestamp_ms()
                 for packet in msg.packets:
-                    # Accel
                     if hasattr(packet, "acceleroMeter") and packet.acceleroMeter:
                         a = packet.acceleroMeter
                         self._imu_samples.append({
@@ -284,7 +290,6 @@ class OakdCapture:
                             "value": [a.x, a.y, a.z],
                         })
                         n_acc += 1
-                    # Gyro
                     if hasattr(packet, "gyroscope") and packet.gyroscope:
                         g = packet.gyroscope
                         self._imu_samples.append({
@@ -294,7 +299,6 @@ class OakdCapture:
                             "value": [g.x, g.y, g.z],
                         })
                         n_gyr += 1
-                    # Rotation vector (quaternion + accuracy)
                     if hasattr(packet, "rotationVector") and packet.rotationVector:
                         r = packet.rotationVector
                         self._imu_samples.append({
@@ -312,13 +316,11 @@ class OakdCapture:
     # ------------------------------------------------------------------ stop
 
     def stop(self) -> dict:
-        """Stop streaming, flush writers, dump JSON files."""
+        """Stop streaming, flush writers, mux H.264 → mp4, dump JSON sidecars."""
         if not self._recording:
             return {}
 
-        # Signal writers to flush remaining queue contents and exit
         self._stop_event.set()
-        # Allow a brief moment for the queues to drain
         for t in self._threads:
             t.join(timeout=5.0)
 
@@ -330,7 +332,15 @@ class OakdCapture:
 
         self._recording = False
 
-        # Write JSON sidecars
+        # Mux raw .h264 streams into proper .mp4 containers.
+        # Compute actual fps from timestamps for the muxer.
+        for h264_path, ts_buffer, name in [
+            (self._left_h264, self._left_ts, "left"),
+            (self._right_h264, self._right_ts, "right"),
+        ]:
+            self._mux_h264_to_mp4(h264_path, ts_buffer, name)
+
+        # JSON sidecars
         if self._output_dir:
             (self._output_dir / "oakd_left_timestamps.json").write_text(
                 json.dumps({"samples": self._left_ts})
@@ -352,6 +362,35 @@ class OakdCapture:
         }
         logger.info("OakdCapture stopped: %s", stats)
         return stats
+
+    def _mux_h264_to_mp4(
+        self, h264_path: Path, ts_buffer: list[dict], name: str,
+    ) -> None:
+        """Mux raw H.264 elementary stream into .mp4. Uses ffmpeg, like VideoCapture."""
+        if not h264_path.exists() or h264_path.stat().st_size == 0:
+            logger.warning("oakd %s: no h264 data, skipping mux", name)
+            return
+
+        mp4_path = h264_path.with_suffix(".mp4")
+        actual_fps = float(self.fps)
+        if len(ts_buffer) >= 2:
+            duration_us = ts_buffer[-1]["device_us"] - ts_buffer[0]["device_us"]
+            if duration_us > 0:
+                actual_fps = (len(ts_buffer) - 1) / (duration_us / 1_000_000.0)
+
+        cmd = [
+            "ffmpeg", "-y", "-fflags", "+genpts",
+            "-r", f"{actual_fps:.3f}", "-i", str(h264_path),
+            "-c", "copy", "-video_track_timescale", "90000",
+            str(mp4_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            h264_path.unlink()
+        except OSError:
+            pass
+        if result.returncode != 0:
+            logger.error("ffmpeg muxing failed for %s: %s", name, result.stderr[-300:])
 
     @property
     def is_recording(self) -> bool:
