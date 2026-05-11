@@ -31,3 +31,7 @@ class Backend(ABC):
 
     @abstractmethod
     def get_frame_jpeg(self) -> bytes | None: ...
+
+    def get_depth_jpeg(self) -> bytes | None:
+        """Optional: colorized OAK-D depth JPEG for live view. Default: None."""
+        return None

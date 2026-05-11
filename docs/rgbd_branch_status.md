@@ -109,10 +109,17 @@ Open follow-ups (not blockers):
 - Periodic clock pairs: only the first per-stream pair is logged today. Add `(device_us, host_ms)` every N frames if offline tools want drift correction beyond a single offset.
 - Bitrate (8 Mbps), keyframe frequency (30), depth PNG compression (1) are reasonable defaults.
 
-### Still TODO
+### `grabette/backend/rpi.py` integration — DONE
 
-- **Sync update**: keep `SyncManager` (monotonic) as master; OAK-D timestamps stored as `{device_us, host_ms}` pairs; offline tools fit linear (drift) correction.
-- **`grabette/backend/rpi.py`** — wire `OakdCapture` into the capture session. Update `start_capture` / `stop_capture` to drive it alongside the RPi camera and angle sensors.
+`OakdCapture` now wired into the `RpiBackend` lifecycle:
+- `start()` → `OakdCapture.init_device()` (pipeline runs continuously from here)
+- `start_capture()` → `OakdCapture.start_recording(session_dir)` (toggles disk writes on)
+- `stop_capture()` → `OakdCapture.stop_recording()` (toggles disk writes off; pipeline keeps running)
+- `stop()` → `OakdCapture.shutdown()` (closes the pipeline + device)
+- Added `RpiBackend.get_depth_jpeg()` and `Backend.get_depth_jpeg()` abstract default; mock backend inherits default `None`.
+- Added FastAPI routes: `GET /api/camera/depth` (snapshot) and `WS /api/camera/depth_ws` (~15 fps live stream of colorized depth).
+- `OakdCapture` flag `enable_oakd=True` mirrors `enable_angle`; off-by-default tolerance is in `_init_oakd` which catches exceptions and logs a warning if the OAK-D isn't present.
+- `metadata.json` gets an `oakd` key with `{left_frames, right_frames, depth_frames, imu_samples}` if OAK-D recorded.
 - **Output schema** per episode (as produced by `OakdCapture` standalone):
   ```
   raw_video.mp4                  RPi fisheye (unchanged)

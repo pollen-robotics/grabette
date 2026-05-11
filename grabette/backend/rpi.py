@@ -1,7 +1,7 @@
 """Real RPi hardware backend.
 
-V2 (rgbd branch): RPi camera + AS5600 angle sensors. The BMI088 IMU was
-dropped — IMU data now comes from the OAK-D SR (added in Phase 2).
+V2 (rgbd branch): RPi camera + AS5600 angle sensors + OAK-D SR.
+The legacy BMI088 IMU was dropped — IMU data now comes from the OAK-D.
 """
 
 from __future__ import annotations
@@ -21,18 +21,22 @@ FPS = 46
 
 
 class RpiBackend(Backend):
-    """Backend using real RPi camera and AS5600 angle sensors."""
+    """Backend using real RPi camera + AS5600 angle sensors + OAK-D SR."""
 
-    def __init__(self, enable_angle: bool = False) -> None:
+    def __init__(
+        self, enable_angle: bool = False, enable_oakd: bool = True,
+    ) -> None:
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
         self._capture_session_dir: Path | None = None
         self._enable_angle = enable_angle
+        self._enable_oakd = enable_oakd
 
         self._sync = None
         self._camera = None
         self._angle = None
+        self._oakd = None
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
@@ -47,9 +51,23 @@ class RpiBackend(Backend):
         if self._enable_angle:
             self._init_angle_sensors()
 
+        if self._enable_oakd:
+            self._init_oakd()
+
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
+
+    def _init_oakd(self) -> None:
+        """Initialize OAK-D SR (always-on pipeline, used for live view + recording)."""
+        try:
+            from grabette.hardware.oakd import OakdCapture
+            self._oakd = OakdCapture(self._sync)
+            self._oakd.init_device()
+            logger.info("OAK-D SR initialized")
+        except Exception as e:
+            logger.warning("OAK-D not available, continuing without it: %s", e)
+            self._oakd = None
 
     def _init_angle_sensors(self) -> None:
         try:
@@ -64,6 +82,11 @@ class RpiBackend(Backend):
     async def stop(self) -> None:
         if self._capturing:
             await self.stop_capture()
+        if self._oakd:
+            try:
+                self._oakd.shutdown()
+            except Exception as e:
+                logger.warning("OAK-D shutdown error: %s", e)
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
@@ -114,6 +137,8 @@ class RpiBackend(Backend):
         self._sync.start()
         if self._angle:
             self._angle.start_capture()
+        if self._oakd and self._oakd.is_initialized:
+            self._oakd.start_recording(session_dir)
         self._camera.start_recording(session_dir / "raw_video.mp4")
 
         logger.info("RpiBackend capture started → %s", session_dir)
@@ -139,6 +164,9 @@ class RpiBackend(Backend):
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
+        oakd_stats = None
+        if self._oakd and self._oakd.is_recording:
+            oakd_stats = self._oakd.stop_recording()
         frame_timestamps = self._camera.stop()
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
@@ -184,6 +212,8 @@ class RpiBackend(Backend):
                 "fps": actual_fps,
                 "backend": "rpi",
             }
+            if oakd_stats:
+                meta["oakd"] = oakd_stats
             (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
         self._sync.reset()
@@ -236,4 +266,18 @@ class RpiBackend(Backend):
                 return buf.getvalue()
             except Exception as e:
                 logger.debug("Failed to capture JPEG: %s", e)
+        return None
+
+    def get_depth_jpeg(self) -> bytes | None:
+        """Return latest OAK-D depth frame as a colorized JPEG.
+
+        Available both during capture and at idle (the OAK-D pipeline runs
+        continuously after start()). Returns None if OAK-D is not present
+        or no depth frame has arrived yet.
+        """
+        if self._oakd and self._oakd.is_initialized:
+            try:
+                return self._oakd.get_depth_jpeg()
+            except Exception as e:
+                logger.debug("Failed to get depth JPEG: %s", e)
         return None
