@@ -615,6 +615,9 @@ class OakdCapture:
         """Return latest depth as colorized JPEG (turbo colormap, 0.2-3m).
 
         Returns None if no depth frame has arrived yet.
+
+        The frame is rotated 180° for display only — recorded depth on disk
+        keeps the pipeline orientation so calibration intrinsics stay valid.
         """
         depth = self._latest_depth  # atomic read
         if depth is None:
@@ -626,6 +629,7 @@ class OakdCapture:
         d_norm = (255.0 * (d_max - d_clip) / (d_max - d_min)).astype(np.uint8)
         d_norm[~mask] = 0
         colorized = cv2.applyColorMap(d_norm, cv2.COLORMAP_TURBO)
+        colorized = cv2.rotate(colorized, cv2.ROTATE_180)
         ok, buf = cv2.imencode(".jpg", colorized, [cv2.IMWRITE_JPEG_QUALITY, quality])
         return buf.tobytes() if ok else None
 
