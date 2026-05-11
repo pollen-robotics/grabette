@@ -32,6 +32,15 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def get_depth_snapshot(self) -> bytes | None:
+        try:
+            r = self._http.get("/api/camera/depth")
+            if r.status_code != 200:
+                return None
+            return r.content
+        except Exception:
+            return None
+
     # -- Sensor state --
 
     def get_state(self) -> dict | None:

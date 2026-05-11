@@ -27,6 +27,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         except Exception:
             return None
 
+    def get_depth_frame():
+        data = client.get_depth_snapshot()
+        if data is None:
+            return None
+        try:
+            return Image.open(io.BytesIO(data))
+        except Exception:
+            return None
+
     def get_sensor_state():
         state = client.get_state()
         if state is None:
@@ -403,6 +412,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     label="Camera Live View",
                     height="25vh",
                 )
+                depth_img = gr.Image(
+                    label="OAK-D Depth (0.2-3m, turbo)",
+                    height="25vh",
+                )
                 replay_video = gr.HTML(visible=False)
             with gr.Column(scale=1):
                 viewer_iframe = gr.HTML(
@@ -644,6 +657,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # ── Periodic updates (Gradio 6 Timer) ─────────────────────────
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
+
+        depth_timer = gr.Timer(0.2)
+        depth_timer.tick(fn=get_depth_frame, outputs=depth_img)
 
         state_timer = gr.Timer(0.5)
         state_timer.tick(
