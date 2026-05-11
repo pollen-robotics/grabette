@@ -19,9 +19,9 @@ SLAM-ready (rectified + undistorted). On-device `setImageOrientation(ROTATE_180)
 flips both sensors before stereo, since the OAK-D SR is mounted upside-down on
 the grabette.
 
-Output layout per episode:
-    oakd_left.mp4               H.264, 1280×800, rectified
-    oakd_right.mp4              H.264, 1280×800, rectified
+Output layout per episode (resolution = depth_resolution, default 640×400):
+    oakd_left.mp4               H.264 mono, rectified (CAM_B = mono global-shutter)
+    oakd_right.mp4              H.264 mono, rectified (CAM_C = mono global-shutter)
     oakd_depth/<seq>.png        uint16 mm (mask-applied if oak_mask.png present)
     oakd_*_timestamps.json      per-stream device_us + host_ms
     oakd_imu.json               accel + gyro + rotation_vector
@@ -689,3 +689,9 @@ class OakdCapture:
     @property
     def is_initialized(self) -> bool:
         return self._initialized
+
+    @property
+    def imu_sample_count(self) -> int:
+        """Live count of IMU samples appended during the current recording.
+        Reset to 0 between recordings."""
+        return len(self._imu_samples)

@@ -193,7 +193,7 @@ class RpiBackend(Backend):
             session_id=self._capture_session_dir.name if self._capture_session_dir else None,
             duration_seconds=duration,
             frame_count=self._camera.frame_count,
-            imu_sample_count=0,
+            imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
             angle_sample_count=angle_count,
         )
 
@@ -242,13 +242,14 @@ class RpiBackend(Backend):
 
         frame_count = self._camera.frame_count if self._camera else 0
         angle_count = self._angle.sample_count if self._angle else 0
+        imu_count = self._oakd.imu_sample_count if (self._oakd and self._oakd.is_recording) else 0
 
         return CaptureStatus(
             is_capturing=self._capturing,
             session_id=self._capture_session_dir.name if self._capture_session_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,
-            imu_sample_count=0,
+            imu_sample_count=imu_count,
             angle_sample_count=angle_count,
         )
 
