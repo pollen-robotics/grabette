@@ -28,7 +28,8 @@ class OakCapture:
         calib_offline.json  — intrinsics + IMU extrinsics for offline_vslam
     """
 
-    def __init__(self) -> None:
+    def __init__(self, sync) -> None:
+        self._sync = sync
         self._thread: threading.Thread | None = None
         self._pipeline = None          # set inside thread, guarded by _lock
         self._pipeline_started = False # True only after pipeline.start() returns
@@ -75,6 +76,11 @@ class OakCapture:
         except ImportError as e:
             logger.error("OAK dependency not installed (%s) — OAK capture disabled", e)
             return
+
+        _mask_path = Path(__file__).parent / "oak_mask.png"
+        self._mask = cv2.imread(str(_mask_path), cv2.IMREAD_GRAYSCALE) if _mask_path.exists() else None
+        if self._mask is None:
+            logger.warning("OAK mask not found at %s — capturing without mask", _mask_path)
 
         try:
             with dai.Pipeline() as pipeline:
@@ -147,6 +153,8 @@ class OakCapture:
                     pending_rect:  dict = {}
                     pending_depth: dict = {}
                     frame_idx = 0
+                    oak_t0: float | None = None
+                    sync_t0_ms: float = 0.0
 
                     while pipeline.isRunning():
                         try:
@@ -160,16 +168,24 @@ class OakCapture:
                             for seq in sorted(set(pending_rect) & set(pending_depth)):
                                 r = pending_rect.pop(seq)
                                 d = pending_depth.pop(seq)
-                                stamp_ns = int(r.getTimestampDevice().total_seconds() * 1e9)
+                                if oak_t0 is None:
+                                    oak_t0     = r.getTimestamp().total_seconds()
+                                    sync_t0_ms = self._sync.get_timestamp_ms()
+                                stamp_ns = int(((r.getTimestamp().total_seconds() - oak_t0) * 1000 + sync_t0_ms) * 1e6)
 
+                                gray  = cv2.rotate(r.getCvFrame(), cv2.ROTATE_180)
+                                depth = cv2.rotate(d.getCvFrame(), cv2.ROTATE_180)
+                                if self._mask is not None:
+                                    gray  = cv2.bitwise_and(gray,  self._mask)
+                                    depth = depth * (self._mask > 0).astype(depth.dtype)
                                 cv2.imwrite(
                                     str(oak_dir / "frames" / f"{frame_idx:06d}.png"),
-                                    r.getCvFrame(),
+                                    gray,
                                     [cv2.IMWRITE_PNG_COMPRESSION, 0],
                                 )
                                 cv2.imwrite(
                                     str(oak_dir / "depth" / f"{frame_idx:06d}.png"),
-                                    d.getCvFrame(),
+                                    depth,
                                     [cv2.IMWRITE_PNG_COMPRESSION, 0],
                                 )
                                 ts_f.write(f"{frame_idx},{stamp_ns}\n")
@@ -185,14 +201,14 @@ class OakCapture:
                                 for pkt in imu_data.packets:
                                     acc  = pkt.acceleroMeter
                                     gyro = pkt.gyroscope
-                                    acc_f.write(
-                                        f"{int(acc.getTimestampDevice().total_seconds()*1e9)}"
-                                        f",{acc.x},{acc.y},{acc.z}\n"
-                                    )
-                                    gyro_f.write(
-                                        f"{int(gyro.getTimestampDevice().total_seconds()*1e9)}"
-                                        f",{gyro.x},{gyro.y},{gyro.z}\n"
-                                    )
+                                    if oak_t0 is not None:
+                                        acc_ns  = int(((acc.getTimestamp().total_seconds()  - oak_t0) * 1000 + sync_t0_ms) * 1e6)
+                                        gyro_ns = int(((gyro.getTimestamp().total_seconds() - oak_t0) * 1000 + sync_t0_ms) * 1e6)
+                                    else:
+                                        acc_ns  = int(acc.getTimestamp().total_seconds()  * 1e9)
+                                        gyro_ns = int(gyro.getTimestamp().total_seconds() * 1e9)
+                                    acc_f.write(f"{acc_ns},{acc.x},{acc.y},{acc.z}\n")
+                                    gyro_f.write(f"{gyro_ns},{gyro.x},{gyro.y},{gyro.z}\n")
                         except Exception:
                             break  # pipeline was stopped, queues are closed
 

@@ -55,7 +55,7 @@ class RpiBackend(Backend):
 
         if self._enable_oak:
             from grabette.hardware.oak_capture import OakCapture
-            self._oak = OakCapture()
+            self._oak = OakCapture(sync=self._sync)
             logger.info("OAK-D capture ready")
 
         self._running = True
