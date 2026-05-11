@@ -14,13 +14,20 @@ Streams:
   (GRAY8) output of each camera → uint16 depth → PNG sequence on disk
 - BNO086 IMU at ~200 Hz → JSON
 
+Frames are encoded from `stereo.rectifiedLeft/Right` so the mp4s are already
+SLAM-ready (rectified + undistorted). On-device `setImageOrientation(ROTATE_180)`
+flips both sensors before stereo, since the OAK-D SR is mounted upside-down on
+the grabette.
+
 Output layout per episode:
-    oakd_left.mp4               H.264, 1280×800
-    oakd_right.mp4              H.264, 1280×800
-    oakd_depth/<seq>.png        uint16 mm
+    oakd_left.mp4               H.264, 1280×800, rectified
+    oakd_right.mp4              H.264, 1280×800, rectified
+    oakd_depth/<seq>.png        uint16 mm (mask-applied if oak_mask.png present)
     oakd_*_timestamps.json      per-stream device_us + host_ms
     oakd_imu.json               accel + gyro + rotation_vector
-    oakd_calib.json             factory intrinsics + extrinsics
+    oakd_calib.json             full factory calibration (eeprom dump)
+    oakd_calib_offline.json     flat fx/fy/cx/cy/baseline/imu_to_cam for offline SLAM
+    oak_mask.png                body mask (copied from hardware/oak_mask.png)
     oakd_clock_pairs.json       first device_us ↔ host_ms pair per stream
 """
 
@@ -28,6 +35,7 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 import subprocess
 import threading
 import time
@@ -39,6 +47,8 @@ import numpy as np
 from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
+
+_MASK_PATH = Path(__file__).parent / "oak_mask.png"
 
 
 def _device_us(ts) -> int:
@@ -121,6 +131,10 @@ class OakdCapture:
         self._stop_event = threading.Event()
 
         self._calibration_json: dict | None = None
+        self._calib_offline: dict | None = None
+        # 8-bit GRAY mask (depth_resolution-sized) that blacks out the
+        # grabette body from SLAM frames. Loaded in init_device.
+        self._mask: np.ndarray | None = None
 
     # ------------------------------------------------------------------ init
 
@@ -135,20 +149,68 @@ class OakdCapture:
             self._usb_speed = str(device.getUsbSpeed())
             self._imu_type = str(device.getConnectedIMU())
             self._calibration_json = self._dump_calibration(device)
+            self._calib_offline = self._dump_calib_offline(device, self.depth_resolution)
             logger.info(
                 "OAK-D ready: %s id=%s usb=%s imu=%s",
                 self._product_name, self._device_id, self._usb_speed, self._imu_type,
             )
 
+        # Body mask (8-bit GRAY, depth_resolution-sized). Applied to depth on
+        # host before PNG write; also copied to session dir so downstream
+        # SLAM can mask the mp4 frames.
+        if _MASK_PATH.exists():
+            mask = cv2.imread(str(_MASK_PATH), cv2.IMREAD_GRAYSCALE)
+            if mask is not None and mask.shape == (self.depth_resolution[1], self.depth_resolution[0]):
+                self._mask = mask
+            else:
+                logger.warning(
+                    "oak_mask.png shape %s != depth_resolution %s — mask disabled",
+                    None if mask is None else mask.shape, self.depth_resolution,
+                )
+        else:
+            logger.warning("oak_mask.png not found at %s — capturing without mask", _MASK_PATH)
+
         # --- Build pipeline ---
+        # Stereo input resolution dictates everything downstream:
+        # cameras → (rotated 180° on-device) → stereo → rectifiedLeft/Right → H.264
+        #                                            ↘ depth → host
+        # The OAK-D SR is physically mounted upside-down on the grabette;
+        # ROTATE_180_DEG on each sensor makes rectified frames + depth right-side-up
+        # for downstream SLAM. Calibration (intrinsics, imu_to_cam) is computed
+        # by depthai with the rotation already applied.
         self._pipeline = dai.Pipeline()
 
         camB = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
-        leftRaw = camB.requestOutput(
-            self.resolution, type=dai.ImgFrame.Type.NV12, fps=self.fps,
+        camB.setImageOrientation(dai.CameraImageOrientation.ROTATE_180_DEG)
+        leftStereoIn = camB.requestOutput(
+            self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
         )
+
+        camC = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+        camC.setImageOrientation(dai.CameraImageOrientation.ROTATE_180_DEG)
+        rightStereoIn = camC.requestOutput(
+            self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
+        )
+
+        # StereoDepth — exposes rectifiedLeft / rectifiedRight / depth.
+        # PresetMode.ROBOTICS is tuned for manipulation/close-range use.
+        stereo = self._pipeline.create(dai.node.StereoDepth).build(
+            left=leftStereoIn,
+            right=rightStereoIn,
+            presetMode=dai.node.StereoDepth.PresetMode.ROBOTICS,
+        )
+        stereo.setOutputSize(*self.depth_resolution)
+        stereo.setLeftRightCheck(True)
+        stereo.setExtendedDisparity(False)
+        stereo.setRectifyEdgeFillColor(0)
+        stereo.enableDistortionCorrection(True)
+        stereo.initialConfig.setLeftRightCheckThreshold(10)
+        stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)
+
+        # H.264-encode the rectified outputs so the mp4 frames are SLAM-ready
+        # (already stereo-aligned and undistorted).
         leftEnc = self._pipeline.create(dai.node.VideoEncoder).build(
-            input=leftRaw,
+            input=stereo.rectifiedLeft,
             bitrate=self.bitrate_bps,
             frameRate=float(self.fps),
             profile=dai.VideoEncoderProperties.Profile.H264_MAIN,
@@ -157,12 +219,8 @@ class OakdCapture:
         leftEnc.setNumBFrames(0)
         self._left_q = leftEnc.out.createOutputQueue(maxSize=32, blocking=False)
 
-        camC = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
-        rightRaw = camC.requestOutput(
-            self.resolution, type=dai.ImgFrame.Type.NV12, fps=self.fps,
-        )
         rightEnc = self._pipeline.create(dai.node.VideoEncoder).build(
-            input=rightRaw,
+            input=stereo.rectifiedRight,
             bitrate=self.bitrate_bps,
             frameRate=float(self.fps),
             profile=dai.VideoEncoderProperties.Profile.H264_MAIN,
@@ -172,18 +230,6 @@ class OakdCapture:
         self._right_q = rightEnc.out.createOutputQueue(maxSize=32, blocking=False)
 
         if self.enable_depth:
-            leftStereoIn = camB.requestOutput(
-                self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
-            )
-            rightStereoIn = camC.requestOutput(
-                self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
-            )
-            stereo = self._pipeline.create(dai.node.StereoDepth).build(
-                left=leftStereoIn,
-                right=rightStereoIn,
-                presetMode=dai.node.StereoDepth.PresetMode.ROBOTICS,
-            )
-            stereo.setOutputSize(*self.depth_resolution)
             self._depth_q = stereo.depth.createOutputQueue(maxSize=8, blocking=False)
 
         imu = self._pipeline.create(dai.node.IMU)
@@ -246,6 +292,41 @@ class OakdCapture:
             logger.warning("Could not read OAK-D calibration: %s", e)
             return {}
 
+    @staticmethod
+    def _dump_calib_offline(device, resolution: tuple[int, int]) -> dict:
+        """Flat intrinsics + IMU extrinsics for the rgbd-for-slam offline pipeline.
+
+        Schema matches what grabette-data/docker/oak_vslam expects:
+        width, height, fx, fy, cx, cy, baseline (m), imu_to_cam (4x4).
+
+        Note: depthai returns factory intrinsics for the un-rotated sensor.
+        We apply setImageOrientation(ROTATE_180) on-device, but for OAK-D SR
+        the lens is well-centered and the cx/cy offset is sub-pixel — this
+        matches the convention used by the grabette-data rgbd-for-slam pipeline.
+        """
+        import depthai as dai
+        try:
+            calib = device.readCalibration()
+            w, h = resolution
+            intr = calib.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B, w, h)
+            imu_extr = calib.getImuToCameraExtrinsics(dai.CameraBoardSocket.CAM_B, True)
+            baseline_m = calib.getBaselineDistance(
+                dai.CameraBoardSocket.CAM_C, dai.CameraBoardSocket.CAM_B
+            ) / 100.0
+            return {
+                "width": w,
+                "height": h,
+                "fx": intr[0][0],
+                "fy": intr[1][1],
+                "cx": intr[0][2],
+                "cy": intr[1][2],
+                "baseline": baseline_m,
+                "imu_to_cam": imu_extr,
+            }
+        except Exception as e:
+            logger.warning("Could not extract OAK-D offline calib: %s", e)
+            return {}
+
     # ------------------------------------------------------ recording on/off
 
     def start_recording(self, output_dir: Path) -> None:
@@ -268,6 +349,17 @@ class OakdCapture:
             (self._output_dir / "oakd_calib.json").write_text(
                 json.dumps(self._calibration_json, indent=2)
             )
+        if self._calib_offline:
+            (self._output_dir / "oakd_calib_offline.json").write_text(
+                json.dumps(self._calib_offline, indent=2)
+            )
+        # Copy mask alongside the episode so downstream SLAM can mask mp4 frames
+        # (we can't mask H.264-encoded streams in-flight).
+        if self._mask is not None:
+            try:
+                shutil.copyfile(_MASK_PATH, self._output_dir / "oak_mask.png")
+            except OSError as e:
+                logger.warning("Could not copy oak_mask.png to session dir: %s", e)
 
         # Clear buffers
         self._left_ts.clear()
@@ -385,6 +477,7 @@ class OakdCapture:
         """Always pull depth; cache latest for live view; PNG to disk when recording."""
         n = 0
         png_params = [cv2.IMWRITE_PNG_COMPRESSION, self.depth_png_compression]
+        warned_shape = False
         while True:
             try:
                 if not self._depth_q.has():
@@ -398,8 +491,22 @@ class OakdCapture:
             if frame is None:
                 continue
 
+            depth = frame.getCvFrame()
+            if self._mask is not None:
+                if depth.shape == self._mask.shape:
+                    # Zero out pixels where mask==0 (the grabette body region).
+                    # Multiplying by a uint8 boolean is faster than bitwise_and
+                    # for uint16 depth and avoids dtype promotion.
+                    depth = depth * (self._mask > 0).astype(depth.dtype)
+                elif not warned_shape:
+                    logger.warning(
+                        "Depth shape %s != mask shape %s — mask skipped. "
+                        "Check StereoDepth.setOutputSize / subpixel settings.",
+                        depth.shape, self._mask.shape,
+                    )
+                    warned_shape = True
             # Cache latest frame for live preview (atomic reference swap)
-            self._latest_depth = frame.getCvFrame()
+            self._latest_depth = depth
 
             if not self._recording:
                 continue
@@ -410,7 +517,7 @@ class OakdCapture:
 
             cv2.imwrite(
                 str(self._output_dir / "oakd_depth" / f"{seq:08d}.png"),
-                self._latest_depth, png_params,
+                depth, png_params,
             )
             self._depth_ts.append({
                 "seq": int(seq), "device_us": device_us, "host_ms": host_ms,
