@@ -83,27 +83,37 @@ No software impact yet. Will need to fix before any meaningful angle data can be
 
 ## Phase 2 — IN PROGRESS
 
-### `grabette/hardware/oakd.py` — DONE (v2, H.264)
+### `grabette/hardware/oakd.py` — DONE (v3: H.264 + depth)
 
-`OakdCapture` class wrapping depthai v3. Pipeline = 2× Camera (CAM_B/CAM_C @ NV12) → 2× VideoEncoder (H.264, 8 Mbps, no B-frames, keyframe every 30) → host queues; plus IMU node streaming accel/gyro/rotation_vector at 200 Hz. Writer threads dump:
-- left/right H.264 elementary streams → muxed to `.mp4` on stop (uses ffmpeg, same approach as `VideoCapture`)
-- IMU samples → `oakd_imu.json` (flat list with `kind`, `device_us`, `host_ms`, `value`)
-- Per-frame timestamps → `oakd_left_timestamps.json` / `oakd_right_timestamps.json` (independent of mp4 container fps metadata)
-- Factory calibration → `oakd_calib.json` (handler.eepromToJson())
-- First per-stream device↔host clock pair → `oakd_clock_pairs.json` (offline tools fit drift correction from this; add more pairs in v3 if drift becomes an issue)
+`OakdCapture` class wrapping depthai v3. Pipeline:
 
-Verified end-to-end on device: 3 s capture = 88+89 frames at 30 fps, ~6 MB total, valid mp4 playable in ffprobe. ~32× smaller than the v1 PNG-sequence prototype.
+- 2× `Camera` (CAM_B/CAM_C) — each produces TWO outputs:
+  - Full-res NV12 (1280×800) → `VideoEncoder` (H.264, 8 Mbps, no B-frames, keyframe every 30) → host queue → `.h264` file → muxed to `.mp4` on stop
+  - Half-res GRAY8 (640×400) → `StereoDepth` left/right input
+- `StereoDepth` (PresetMode = ROBOTICS) → uint16 depth output → host queue → PNG sequence in `oakd_depth/`
+- `IMU` node streaming accel/gyro/rotation_vector at 200 Hz → host queue → flat JSON list
+
+Writer threads (one per stream) drain queues to disk. Same shutdown protocol as `VideoCapture`: stop_event → drain → ffmpeg mux.
+
+**Why feed StereoDepth a separate low-res output**: feeding the full 1280×800 NV12 to both the encoder and StereoDepth maxed out the RVC2's stereo matcher and backpressured the cameras to ~18fps. Giving StereoDepth its own 640×400 GRAY8 input restores full 30fps on all streams.
+
+**Verified on device**, 3-second capture:
+- Left mono: 88 frames @ 29.3 fps, 2.9 MB
+- Right mono: 89 frames @ 29.7 fps, 3.0 MB
+- Depth: 87 frames @ 29 fps, 320×200 uint16 mm, 1.7 MB
+- IMU: 1662 samples @ 185 Hz per kind
+- Total: ~7.9 MB per 3 s → ~158 MB per 60 s
 
 Open follow-ups (not blockers):
-- Depth stream not yet captured. To add: `StereoDepth` node fed from both cameras; depth output → uint16 PNG sequence in `oakd_depth/` (no codec preserves uint16 well).
-- Periodic clock pairs (currently only the first pair per stream is logged). Add `(device_us, host_ms)` every N frames if offline tools want drift correction beyond a single offset.
-- Bitrate (8 Mbps) and keyframe frequency (every 30 frames) are reasonable defaults; tune later if needed.
+- Depth output is `320×200` despite `setOutputSize(640, 400)` — appears to be an automatic 2× downsample inside StereoDepth (likely tied to subpixel/extended config). Resolution is still useful for SLAM. Investigate if higher-res depth is needed.
+- Periodic clock pairs: only the first per-stream pair is logged today. Add `(device_us, host_ms)` every N frames if offline tools want drift correction beyond a single offset.
+- Bitrate (8 Mbps), keyframe frequency (30), depth PNG compression (1) are reasonable defaults.
 
 ### Still TODO
 
 - **Sync update**: keep `SyncManager` (monotonic) as master; OAK-D timestamps stored as `{device_us, host_ms}` pairs; offline tools fit linear (drift) correction.
 - **`grabette/backend/rpi.py`** — wire `OakdCapture` into the capture session. Update `start_capture` / `stop_capture` to drive it alongside the RPi camera and angle sensors.
-- **Output schema** per episode (current — as produced by `OakdCapture` standalone; depth still pending):
+- **Output schema** per episode (as produced by `OakdCapture` standalone):
   ```
   raw_video.mp4                  RPi fisheye (unchanged)
   metadata.json                  capture summary
@@ -113,12 +123,11 @@ Open follow-ups (not blockers):
   oakd_right.mp4                 1280x800 mono right, H.264 ~8 Mbps
   oakd_left_timestamps.json      per-frame device_us + host_ms
   oakd_right_timestamps.json     same shape
+  oakd_depth/<seq>.png           uint16 mm depth, ~320x200 (observed)
+  oakd_depth_timestamps.json     per-frame ts
   oakd_imu.json                  accel/gyro/rotation_vector, ~200Hz, kind+device_us+host_ms+value
   oakd_calib.json                factory intrinsics + extrinsics (eepromToJson dump)
   oakd_clock_pairs.json          first device_us ↔ host_ms pair per stream
-  # TODO when depth lands:
-  oakd_depth/                    uint16 PNG sequence
-  oakd_depth_timestamps.json     per-frame ts
   ```
 - **Restore replay/upload paths**: update `replay.py`, `app/routers/replay.py`, `hf.py` to handle the new schema (no more `imu_data.json` from rpi backend; OAK-D files in their place).
 

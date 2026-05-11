@@ -1,19 +1,23 @@
 """OAK-D SR capture using depthai v3.
 
-v2: stereo mono (CAM_B + CAM_C) → on-device H.264 encoder → host writers
+v3: stereo mono (CAM_B + CAM_C) → on-device H.264 encoder → host writers
+    + StereoDepth (uint16 depth, ROBOTICS preset) → uint16 PNG sequence
     + BNO086 IMU (raw accel/gyro + rotation vector)
 
 The H.264 elementary streams are written to .h264 files during capture, then
-muxed to .mp4 on stop() so the result is a proper MP4 container. Per-frame
-timestamps are still saved in a separate JSON sidecar (the mp4 fps metadata
-alone isn't enough for accurate offline sync).
+muxed to .mp4 on stop() so the result is a proper MP4 container. Depth is
+saved as a uint16 PNG sequence (no codec preserves uint16 well). Per-frame
+timestamps live in JSON sidecars (the mp4 fps metadata alone isn't enough
+for accurate offline sync).
 
 Output layout per episode:
-    oakd_left.mp4               H.264 mono left, ~1280x800
-    oakd_right.mp4              H.264 mono right, ~1280x800
+    oakd_left.mp4               H.264 mono left, 1280x800
+    oakd_right.mp4              H.264 mono right, 1280x800
     oakd_left_timestamps.json   {"samples": [{"seq", "device_us", "host_ms"}]}
     oakd_right_timestamps.json  same shape
-    oakd_imu.json               raw accel + gyro + rotation vector + per-sample timestamps
+    oakd_depth/<seq>.png        uint16 depth maps, 1280x800, mm units
+    oakd_depth_timestamps.json  per-frame device/host timestamps
+    oakd_imu.json               accel + gyro + rotation_vector samples
     oakd_calib.json             factory intrinsics + extrinsics
     oakd_clock_pairs.json       first device_us ↔ host_ms pair per stream
 """
@@ -26,6 +30,8 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+
+import cv2
 
 from .sync import SyncManager
 
@@ -46,29 +52,38 @@ class OakdCapture:
 
     DEFAULT_FPS = 30
     DEFAULT_RESOLUTION = (1280, 800)
+    DEFAULT_DEPTH_RESOLUTION = (640, 400)  # Half-res depth keeps RVC2 from bottlenecking
     DEFAULT_IMU_HZ = 200
     DEFAULT_BITRATE_BPS = 8_000_000   # 8 Mbps per camera; near-lossless for SLAM
     DEFAULT_KEYFRAME_EVERY = 30       # 1 I-frame every N frames
+    DEFAULT_DEPTH_PNG_COMPRESSION = 1  # uint16 PNG compression (0-9); 1 = fast
 
     def __init__(
         self,
         sync_manager: SyncManager,
         fps: int = DEFAULT_FPS,
         resolution: tuple[int, int] = DEFAULT_RESOLUTION,
+        depth_resolution: tuple[int, int] = DEFAULT_DEPTH_RESOLUTION,
         imu_rate_hz: int = DEFAULT_IMU_HZ,
         bitrate_bps: int = DEFAULT_BITRATE_BPS,
         keyframe_every: int = DEFAULT_KEYFRAME_EVERY,
+        enable_depth: bool = True,
+        depth_png_compression: int = DEFAULT_DEPTH_PNG_COMPRESSION,
     ) -> None:
         self.sync = sync_manager
         self.fps = fps
         self.resolution = resolution
+        self.depth_resolution = depth_resolution
         self.imu_rate_hz = imu_rate_hz
         self.bitrate_bps = bitrate_bps
         self.keyframe_every = keyframe_every
+        self.enable_depth = enable_depth
+        self.depth_png_compression = depth_png_compression
 
         self._pipeline = None
         self._left_q = None
         self._right_q = None
+        self._depth_q = None
         self._imu_q = None
 
         self._output_dir: Path | None = None
@@ -77,6 +92,7 @@ class OakdCapture:
         # In-memory buffers populated by writer threads
         self._left_ts: list[dict] = []
         self._right_ts: list[dict] = []
+        self._depth_ts: list[dict] = []
         self._imu_samples: list[dict] = []
         self._clock_pairs: list[dict] = []
 
@@ -136,6 +152,27 @@ class OakdCapture:
         rightEnc.setNumBFrames(0)
         self._right_q = rightEnc.out.createOutputQueue(maxSize=32, blocking=False)
 
+        # StereoDepth: request SEPARATE lower-resolution camera outputs to
+        # feed it. Stereo matching cost scales with input pixels — feeding
+        # 1280x800 inputs maxes the RVC2 stereo matcher and backpressures
+        # the cameras (limiting H.264 to ~18fps). A 640x400 stereo input
+        # is plenty for SLAM depth and runs comfortably at 30fps.
+        # PresetMode.ROBOTICS is tuned for manipulation/close-range use.
+        if self.enable_depth:
+            leftStereoIn = camB.requestOutput(
+                self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
+            )
+            rightStereoIn = camC.requestOutput(
+                self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
+            )
+            stereo = self._pipeline.create(dai.node.StereoDepth).build(
+                left=leftStereoIn,
+                right=rightStereoIn,
+                presetMode=dai.node.StereoDepth.PresetMode.ROBOTICS,
+            )
+            stereo.setOutputSize(*self.depth_resolution)
+            self._depth_q = stereo.depth.createOutputQueue(maxSize=8, blocking=False)
+
         # IMU (BNO086 on this device — 9-axis with onboard fusion)
         imu = self._pipeline.create(dai.node.IMU)
         imu.enableIMUSensor(
@@ -179,6 +216,8 @@ class OakdCapture:
 
         self._output_dir = Path(output_dir).absolute()
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        if self.enable_depth:
+            (self._output_dir / "oakd_depth").mkdir(parents=True, exist_ok=True)
 
         # Stream files (raw H.264 elementary streams; muxed to mp4 on stop)
         self._left_h264 = self._output_dir / "oakd_left.h264"
@@ -192,6 +231,7 @@ class OakdCapture:
         # Clear buffers
         self._left_ts.clear()
         self._right_ts.clear()
+        self._depth_ts.clear()
         self._imu_samples.clear()
         self._clock_pairs.clear()
         self._stop_event.clear()
@@ -215,6 +255,11 @@ class OakdCapture:
                 daemon=True,
             ),
         ]
+        if self.enable_depth:
+            self._threads.append(threading.Thread(
+                target=self._writer_loop_depth,
+                daemon=True,
+            ))
         for t in self._threads:
             t.start()
 
@@ -262,6 +307,42 @@ class OakdCapture:
                 })
                 n += 1
         logger.info("oakd %s writer: %d packets", name, n)
+
+    def _writer_loop_depth(self) -> None:
+        """Pull depth frames (uint16) from queue, save as PNG sequence."""
+        out_dir = self._output_dir / "oakd_depth"
+        png_params = [cv2.IMWRITE_PNG_COMPRESSION, self.depth_png_compression]
+        n = 0
+        while True:
+            try:
+                if not self._depth_q.has():
+                    if self._stop_event.is_set():
+                        break
+                    time.sleep(0.001)
+                    continue
+                frame = self._depth_q.tryGet()
+            except Exception:
+                break
+
+            if frame is None:
+                continue
+
+            host_ms = self.sync.get_timestamp_ms()
+            seq = frame.getSequenceNum()
+            device_us = _device_us(frame.getTimestampDevice())
+
+            # uint16 depth (mm). cv2 preserves bit depth when filename is .png.
+            depth = frame.getCvFrame()
+            cv2.imwrite(
+                str(out_dir / f"{seq:08d}.png"), depth, png_params,
+            )
+            self._depth_ts.append({
+                "seq": int(seq),
+                "device_us": device_us,
+                "host_ms": host_ms,
+            })
+            n += 1
+        logger.info("oakd depth writer: %d frames", n)
 
     def _writer_loop_imu(self) -> None:
         """Pull IMU batches from queue, flatten into per-sample dicts."""
@@ -348,6 +429,10 @@ class OakdCapture:
             (self._output_dir / "oakd_right_timestamps.json").write_text(
                 json.dumps({"samples": self._right_ts})
             )
+            if self.enable_depth:
+                (self._output_dir / "oakd_depth_timestamps.json").write_text(
+                    json.dumps({"samples": self._depth_ts})
+                )
             (self._output_dir / "oakd_imu.json").write_text(
                 json.dumps({"samples": self._imu_samples})
             )
@@ -358,6 +443,7 @@ class OakdCapture:
         stats = {
             "left_frames": len(self._left_ts),
             "right_frames": len(self._right_ts),
+            "depth_frames": len(self._depth_ts) if self.enable_depth else None,
             "imu_samples": len(self._imu_samples),
         }
         logger.info("OakdCapture stopped: %s", stats)
