@@ -15,7 +15,7 @@ Migrate from V1 (Grove HAT + bit-banged I2C + BMI088 IMU) to V2 (custom HAT + ha
 | AS5600L proximal | hw I2C4 | GPIO 8 SDA / 9 SCL | 0x40 | `dtoverlay=i2c4,pins_8_9` |
 | Switch | direct GPIO | GPIO 10 | — | input, active-low, internal pull-up (some bounce on press, see notes) |
 | LED | direct GPIO | GPIO 11 | — | output, **active-low** (inverted from V1 — `gpioset 11=inactive` lights the LED on the wire) |
-| OAK-D SR | USB3 | — | — | stereo + depth + IMU |
+| OAK-D SR | USB3 | — | — | stereo CAM_B + CAM_C + BNO086 IMU (9-axis w/ fusion). Bootloader endpoint stays USB 2.0; streaming endpoint at USB 3.0 SuperSpeed (use `device.getUsbSpeed()` as authoritative). |
 | BMI088 (on HAT, unused) | hw I2C1 | GPIO 2/3 | 0x18, 0x19, 0x68 | leftover on HAT, ignore |
 | Audio codec (on HAT, unused) | hw I2C1 | GPIO 2/3 | 0x40 | not used in software |
 
@@ -61,14 +61,16 @@ Notes for future:
 - The AS5600L supports a **user-programmable I2C address** via register `0x20` (OTP-burnable) or `0x21` (volatile). This would allow both sensors on one I2C bus and free up the second bus. Considered as "Option B" but not adopted — the dual-bus setup works and avoids OTP burns. Worth revisiting if a HAT revision wants cleaner cable management.
 - OTP burn details: write `0x40` to register `0xFF` to execute BURN_SETTING (programs MANG, CONFIG, I2CADDR). Bit-by-bit one-way (0→1 only), so from default `0x40` you can burn to e.g. `0x41`, `0x44`, `0x60`, etc. but not back to `0x36`.
 
-## Open issue — OAK-D running at USB 2.0
+## Resolved — OAK-D USB 2.0 was the bootloader endpoint
 
-`lsusb -t` shows OAK-D (`03e7:2485 Intel Movidius MyriadX`) on Bus 001 at 480 Mbps. Bus 002 (USB 3.0, 5000 Mbps) is empty. For stereo + depth at 30fps we need USB 3.0.
+`lsusb -t` showing the device on Bus 001 (480 Mbps) is **expected behavior** for OAK-D devices. Quoting the Luxonis docs:
 
-Likely causes (in priority):
-1. **Insufficient power** — Pi is currently being run from a generic USB-C wall supply, not the official 5V/3A PSU. OAK-D under load can sag the bus voltage enough that USB negotiation falls back to 2.0. **User will swap to a better PSU before next test session.**
-2. OAK-D plugged into a black USB 2.0 port instead of a blue USB 3.0 port on the Pi.
-3. USB-C cable to OAK-D is USB 2.0 only (most generic ones are).
+> Initial boot phase: "For showing up when plugged in. We use this endpoint to load the firmware onto the device, which is a usb-boot technique. This device is USB2."
+> Runtime phase: "For running the actual code. This shows up after USB booting and is USB3."
+
+After `depthai.Device()` connects, `device.getUsbSpeed()` returns `UsbSpeed.SUPER` (USB 3.0). The bootloader interface remains visible in `lsusb -t` on Bus 001; the SuperSpeed data path goes through Bus 002 but isn't exposed the same way to lsusb. Use `device.getUsbSpeed()` to verify.
+
+Confirmed working on the battery-powered device.
 
 ## Open issue — magnets too weak
 
