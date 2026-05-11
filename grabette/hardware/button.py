@@ -5,10 +5,12 @@ V1 hardware (Grove HAT, legacy): Grove LED Button on D22 connector
     - GPIO23 = Button (active LOW with internal pull-up)
 
 V2 hardware (custom HAT, rgbd branch):
-    - GPIO11 = LED (active HIGH)
+    - GPIO11 = LED (active LOW — wire LOW lights the LED)
     - GPIO10 = Switch (active LOW with internal pull-up)
 
-Same protocol on both — only pin numbers differ. Defaults below match V2.
+The LED polarity differs between V1 and V2. We pass `active_low=True` to
+gpiod for V2 so the API stays the same (`led_on()` lights the LED on both
+boards). Defaults below match V2.
 """
 
 from __future__ import annotations
@@ -30,7 +32,10 @@ class LedButton:
     CHIP_PATHS = ["/dev/gpiochip0", "/dev/gpiochip4"]
 
     def __init__(
-        self, led_pin: int = LED_PIN, button_pin: int = BUTTON_PIN,
+        self,
+        led_pin: int = LED_PIN,
+        button_pin: int = BUTTON_PIN,
+        led_active_low: bool = True,  # V2 wiring; set False for V1 Grove HAT
     ) -> None:
         self._led_pin = led_pin
         self._button_pin = button_pin
@@ -40,7 +45,10 @@ class LedButton:
         self._led_request = gpiod.request_lines(
             chip_path,
             consumer="grabette-led",
-            config={led_pin: gpiod.LineSettings(direction=Direction.OUTPUT)},
+            config={led_pin: gpiod.LineSettings(
+                direction=Direction.OUTPUT,
+                active_low=led_active_low,
+            )},
         )
         self._button_request = gpiod.request_lines(
             chip_path,

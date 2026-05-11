@@ -1,6 +1,9 @@
-"""Angle sensor capture using AS5600 magnetic rotary position sensors over I2C.
+"""Angle sensor capture using AS5600L magnetic rotary position sensors over I2C.
 
-Ported from grabette-capture/grabette_capture/angle.py.
+V1 hardware used AS5600 (fixed address 0x36); V2 HAT uses AS5600L which has
+the same register layout but defaults to address 0x40 and supports user-
+programmable addresses (so multiple sensors can share one I2C bus). For now
+we keep one sensor per bus and use the default 0x40.
 """
 
 import json
@@ -25,17 +28,20 @@ class AngleSamples:
 
 
 class AngleCapture:
-    """Captures angle data from two AS5600 magnetic rotary position sensors.
+    """Captures angle data from two AS5600L magnetic rotary position sensors.
 
-    Each AS5600 is on a separate I2C bus (they have the same fixed address 0x36).
+    Each AS5600L is on a separate I2C bus (both at default address 0x40).
 
     V2 hardware (rgbd branch): hardware I2C peripherals on the BCM2711.
         - Bus 1 (distal):   /dev/i2c-3 (GPIO 4/5),  dtoverlay=i2c3,pins_4_5
         - Bus 2 (proximal): /dev/i2c-4 (GPIO 8/9),  dtoverlay=i2c4,pins_8_9
+
+    Register layout matches the original AS5600 (RAW ANGLE at 0x0C-0x0D,
+    ANGLE at 0x0E-0x0F).
     """
 
     DEFAULT_SAMPLE_RATE_HZ = 100
-    AS5600_ADDRESS = 0x36
+    AS5600_ADDRESS = 0x40  # AS5600L default; AS5600 (non-L) was 0x36
     ANGLE_REGISTER = 0x0C
 
     def __init__(
