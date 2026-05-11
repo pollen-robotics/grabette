@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from grabette.backend.base import Backend
-from grabette.models import AngleSample, CaptureStatus, SensorState
+from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +109,8 @@ class RpiBackend(Backend):
                 try:
                     raw1 = self._angle._read_angle_raw(self._angle._i2c_1)
                     raw2 = self._angle._read_angle_raw(self._angle._i2c_2)
-                    cal1 = self._angle._normalize_angle(raw1 - self._angle._offset_1_deg)
-                    cal2 = self._angle._normalize_angle(raw2 - self._angle._offset_2_deg)
+                    cal1 = self._angle._normalize_angle(raw1 - self._angle._offset_1_deg) * self._angle.DISTAL_SIGN
+                    cal2 = self._angle._normalize_angle(raw2 - self._angle._offset_2_deg) * self._angle.PROXIMAL_SIGN
                     angle = AngleSample(
                         timestamp_ms=time.time() * 1000,
                         proximal=math.radians(cal2),
@@ -119,7 +119,13 @@ class RpiBackend(Backend):
                 except Exception:
                     pass
 
-        return SensorState(imu=None, angle=angle, capture=self.get_capture_status())
+        imu = None
+        if self._oakd is not None and self._oakd.is_initialized:
+            raw_imu = self._oakd.get_latest_imu()
+            if raw_imu is not None:
+                imu = IMUSample(**raw_imu)
+
+        return SensorState(imu=imu, angle=angle, capture=self.get_capture_status())
 
     async def start_capture(self, session_dir: Path) -> None:
         if self._capturing:

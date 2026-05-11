@@ -126,6 +126,10 @@ class OakdCapture:
 
         # Latest-frame cache for live preview (lock-free reads via reference swap)
         self._latest_depth: np.ndarray | None = None  # uint16 (H,W)
+        # Latest IMU values for live dashboard (always-on, independent of recording).
+        # Each is (host_ms, (x, y, z)) or None until first packet arrives.
+        self._latest_accel: tuple[float, tuple[float, float, float]] | None = None
+        self._latest_gyro: tuple[float, tuple[float, float, float]] | None = None
 
         self._threads: list[threading.Thread] = []
         self._stop_event = threading.Event()
@@ -539,9 +543,21 @@ class OakdCapture:
                 break
             if msg is None:
                 continue
-            if not self._recording:
-                continue
             try:
+                # time.time() (not sync) because the pipeline runs continuously,
+                # but SyncManager only ticks during a capture session.
+                live_ms = time.time() * 1000.0
+                for packet in msg.packets:
+                    if hasattr(packet, "acceleroMeter") and packet.acceleroMeter:
+                        a = packet.acceleroMeter
+                        self._latest_accel = (live_ms, (a.x, a.y, a.z))
+                    if hasattr(packet, "gyroscope") and packet.gyroscope:
+                        g = packet.gyroscope
+                        self._latest_gyro = (live_ms, (g.x, g.y, g.z))
+
+                if not self._recording:
+                    continue
+
                 host_ms = self.sync.get_timestamp_ms()
                 for packet in msg.packets:
                     if hasattr(packet, "acceleroMeter") and packet.acceleroMeter:
@@ -577,6 +593,23 @@ class OakdCapture:
         logger.info("oakd imu recorded: accel=%d gyro=%d rotation=%d", n_acc, n_gyr, n_rot)
 
     # ------------------------------------------------------------- live view
+
+    def get_latest_imu(self) -> dict | None:
+        """Latest accel + gyro sample for live dashboard.
+
+        Returns None until both first accel and first gyro packets have arrived.
+        Timestamp is host-side time.time()*1000 at packet arrival, since the
+        SyncManager only ticks during a capture session.
+        """
+        acc = self._latest_accel
+        gyr = self._latest_gyro
+        if acc is None or gyr is None:
+            return None
+        return {
+            "timestamp_ms": max(acc[0], gyr[0]),
+            "accel": acc[1],
+            "gyro": gyr[1],
+        }
 
     def get_depth_jpeg(self, quality: int = 80) -> bytes | None:
         """Return latest depth as colorized JPEG (turbo colormap, 0.2-3m).

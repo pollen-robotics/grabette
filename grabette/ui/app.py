@@ -250,6 +250,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             parts.append(f"{info['disk_free_gb']}GB free")
         if "ip" in info:
             parts.append(info["ip"])
+        # Surface mock-mode prominently so we never silently run on fake data.
+        status = client.get_daemon_status()
+        if status and status.get("backend") != "RpiBackend":
+            parts.insert(0, f"\u26a0 {status.get('backend', '?')} (NOT REAL HARDWARE)")
         return " | ".join(parts)
 
     # ── HuggingFace ───────────────────────────────────────────────────

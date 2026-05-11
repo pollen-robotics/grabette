@@ -43,6 +43,12 @@ class AngleCapture:
     DEFAULT_SAMPLE_RATE_HZ = 100
     AS5600_ADDRESS = 0x40  # AS5600L default; AS5600 (non-L) was 0x36
     ANGLE_REGISTER = 0x0C
+    # V2 mechanical: the distal sensor is mounted such that the magnet rotates
+    # opposite to the proximal one. Applied to cal1 (bus 3 = distal) after
+    # offset+normalize so user-calibrated offsets stay valid under the new
+    # mounting (recalibrate after changing this).
+    DISTAL_SIGN = -1
+    PROXIMAL_SIGN = 1
 
     def __init__(
         self,
@@ -114,8 +120,8 @@ class AngleCapture:
                 ts = self.sync.get_timestamp_ms()
                 raw1 = self._read_angle_raw(self._i2c_1)
                 raw2 = self._read_angle_raw(self._i2c_2)
-                cal1 = self._normalize_angle(raw1 - self._offset_1_deg)
-                cal2 = self._normalize_angle(raw2 - self._offset_2_deg)
+                cal1 = self._normalize_angle(raw1 - self._offset_1_deg) * self.DISTAL_SIGN
+                cal2 = self._normalize_angle(raw2 - self._offset_2_deg) * self.PROXIMAL_SIGN
 
                 self._samples.samples.append({
                     "cts": ts,
