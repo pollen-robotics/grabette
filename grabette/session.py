@@ -206,7 +206,7 @@ class SessionManager:
             meta = json.loads(meta_path.read_text())
             duration = meta.get("duration_seconds", 0.0)
             frame_count = meta.get("frame_count", 0)
-            imu_sample_count = meta.get("imu_sample_count", 0)
+            imu_sample_count = meta.get("imu_sample_count") or meta.get("oakd", {}).get("imu_samples", 0)
             angle_sample_count = meta.get("angle_sample_count", 0)
 
         return EpisodeInfo(

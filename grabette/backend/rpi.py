@@ -214,6 +214,7 @@ class RpiBackend(Backend):
             meta = {
                 "duration_seconds": status.duration_seconds,
                 "frame_count": status.frame_count,
+                "imu_sample_count": status.imu_sample_count,
                 "angle_sample_count": status.angle_sample_count,
                 "fps": actual_fps,
                 "backend": "rpi",
