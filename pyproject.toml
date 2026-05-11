@@ -17,6 +17,8 @@ rpi = [
     "adafruit-extended-bus",
     "gpiod>=2.0.0",
     "numpy<2",  # system simplejpeg is compiled against numpy 1.x
+    "depthai>=3.6,<4",
+    "opencv-python-headless>=4.8",
 ]
 hf = [
     "huggingface-hub>=0.20.0",
