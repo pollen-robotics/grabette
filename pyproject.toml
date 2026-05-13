@@ -16,7 +16,12 @@ rpi = [
     "picamera2",
     "adafruit-extended-bus",
     "gpiod>=2.0.0",
-    "numpy<2",  # system simplejpeg is compiled against numpy 1.x
+    # numpy intentionally not pinned — comes from system via --system-site-packages.
+    # Older Pi OS shipped numpy 1.x and apt simplejpeg was numpy-1-built; on
+    # current Pi OS (and Trixie) both are numpy 2.x and agree. Pinning to
+    # numpy<2 here forces uv to install 1.26.4 in the venv (shadowing system),
+    # and on recent Pi OS Bookworm aarch64 + cpython 3.11.15 there's no wheel,
+    # so uv builds from source for ~30 min. Don't.
     "depthai>=3.6,<4",
     "opencv-python-headless>=4.8",
 ]

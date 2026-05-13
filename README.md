@@ -66,29 +66,35 @@ uv run python main.py
 
 ### Raspberry Pi
 
+Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. No specific Pi OS version is pinned — the Makefile target uses whatever system Python is at `/usr/bin/python3` (3.11 on Bookworm, 3.13 on Trixie).
+
+Prerequisite: install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once (requires reboot):
 ```bash
 sudo cp config/config.txt /boot/firmware
+sudo reboot
 ```
-Then reboot
 
+Then one-shot bring-up:
 ```bash
-sudo apt update && sudo apt install libcap-dev
-uv venv --python 3.11 --system-site-packages
-uv sync --extra rpi --extra ui
+make install-rpi
 uv run python -m grabette
 ```
 
-System Python 3.11 is required for `libcamera` access. The `--system-site-packages` flag makes `picamera2` and `numpy` available from the system installation.
+`make install-rpi` does the following — automating the steps that are easy to get subtly wrong by hand:
+- `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg`
+- Installs the OAK-D / Movidius USB udev rule (`/etc/udev/rules.d/80-movidius.rules`)
+- Creates the venv with `uv venv --python /usr/bin/python3 --system-site-packages` — **both flags matter**:
+  - `--python /usr/bin/python3` ensures uv uses the apt-managed Python (which owns `python3-libcamera`/`python3-picamera2`), not uv's own managed Python under `~/.local/share/uv/python/...`.
+  - `--system-site-packages` makes the apt-installed `libcamera` and `numpy` visible to the venv.
+- Runs `uv sync --extra rpi --extra ui` and verifies all imports succeed.
+
+If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the venv setup didn't take — `make install-rpi` will fix it on a re-run.
 
 ### systemd (auto-start on boot)
 
 ```bash
-sudo cp systemd/grabette.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now grabette
-
-# View logs
-journalctl -u grabette -f
+make install-systemd
+journalctl -u grabette -f   # logs
 ```
 
 ### Bluetooth WiFi configuration
