@@ -273,9 +273,19 @@ def main() -> int:
                 rr.set_time("time", duration=t_rel)
                 trajectory_pts.append([tx, ty, tz])
                 rr.log("world/trajectory", rr.LineStrips3D([trajectory_pts], colors=[0, 200, 255]))
+                # Position+orient the camera entity (Transform3D inherits to children).
                 rr.log("world/camera", rr.Transform3D(
                     translation=[tx, ty, tz], quaternion=[qx, qy, qz, qw],
-                    axis_length=0.05,
+                ))
+                # Draw the camera's local axes via Arrows3D — children inherit the
+                # Transform3D above, so these appear at the camera's pose in world.
+                # Done this way (not via Transform3D's axis_length kwarg) because
+                # axis_length is only available on newer rerun versions.
+                _AXIS = 0.05
+                rr.log("world/camera/axes", rr.Arrows3D(
+                    origins=[[0, 0, 0]] * 3,
+                    vectors=[[_AXIS, 0, 0], [0, _AXIS, 0], [0, 0, _AXIS]],
+                    colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
                 ))
                 # Delta scalars (frame-to-frame motion magnitude)
                 d_t_mm = float(np.linalg.norm(dt)) * 1000.0
