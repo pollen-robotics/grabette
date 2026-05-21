@@ -60,6 +60,21 @@ WIDTH, HEIGHT = 640, 400
 FPS = 30
 IMU_HZ = 200
 
+# Basalt's transform output is in FRD camera-local (X-forward, Y-right, Z-down).
+# Our project standard (and what offline rtabmap produces after R_camera_fix)
+# is OpenCV optical RDF (X-right, Y-down, Z-forward). Right-multiply each pose
+# by this matrix to re-express its local basis as optical:
+#   pose_optical = pose_FRD * BASALT_TO_OPTICAL
+# Columns of BASALT_TO_OPTICAL are the optical basis vectors expressed in FRD:
+#   RDF +X (right)   = FRD +Y → (0, 1, 0)
+#   RDF +Y (down)    = FRD +Z → (0, 0, 1)
+#   RDF +Z (forward) = FRD +X → (1, 0, 0)
+BASALT_TO_OPTICAL = np.array([
+    [0, 0, 1],
+    [1, 0, 0],
+    [0, 1, 0],
+])
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -248,14 +263,24 @@ def main() -> int:
             tx, ty, tz = p.getTranslation().x, p.getTranslation().y, p.getTranslation().z
             qx, qy, qz, qw = (p.getQuaternion().qx, p.getQuaternion().qy,
                               p.getQuaternion().qz, p.getQuaternion().qw)
+
+            # Build the pose matrix, then fix the camera frame convention
+            # so downstream (TUM, deltas, rerun) all see OpenCV optical RDF
+            # regardless of which VIO backend produced the pose.
+            T_curr = np.eye(4)
+            T_curr[:3, :3] = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
+            T_curr[:3, 3] = [tx, ty, tz]
+            if args.backend == "basalt":
+                # Right-multiply: change camera-local basis FRD → optical.
+                # Translation unchanged (world-frame position of camera origin).
+                T_curr[:3, :3] = T_curr[:3, :3] @ BASALT_TO_OPTICAL
+                qx, qy, qz, qw = Rotation.from_matrix(T_curr[:3, :3]).as_quat()
+
             tum_fp.write(f"{t_tum:.6f} {tx:.6f} {ty:.6f} {tz:.6f} "
                          f"{qx:.6f} {qy:.6f} {qz:.6f} {qw:.6f}\n")
 
             # Camera-local delta (per LeRobot §10.3 convention).
             # T_curr = world←cam_curr.  delta = T_prev⁻¹ · T_curr
-            T_curr = np.eye(4)
-            T_curr[:3, :3] = Rotation.from_quat([qx, qy, qz, qw]).as_matrix()
-            T_curr[:3, 3] = [tx, ty, tz]
             if prev_pose is None:
                 d = np.eye(4)
             else:
