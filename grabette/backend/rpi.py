@@ -37,6 +37,9 @@ class RpiBackend(Backend):
         self._camera = None
         self._angle = None
         self._oakd = None
+        # Teleop mode (mutually exclusive with the recording-mode OakdCapture).
+        # When teleop is active, _oakd is shut down and _teleop owns the OAK.
+        self._teleop = None
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
@@ -82,6 +85,12 @@ class RpiBackend(Backend):
     async def stop(self) -> None:
         if self._capturing:
             await self.stop_capture()
+        if self._teleop is not None:
+            try:
+                self._teleop.shutdown()
+            except Exception as e:
+                logger.warning("OakdTeleop shutdown error: %s", e)
+            self._teleop = None
         if self._oakd:
             try:
                 self._oakd.shutdown()
@@ -90,6 +99,82 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
+
+    # ── Teleop mode (mutually exclusive with recording) ───────────────────────
+
+    async def start_teleop(self) -> None:
+        if self._capturing:
+            raise RuntimeError("cannot enter teleop while a capture is running; stop capture first")
+        if self._teleop is not None and self._teleop.is_running:
+            logger.info("teleop already running")
+            return
+
+        # Release the OAK from recording-mode OakdCapture
+        if self._oakd is not None:
+            try:
+                self._oakd.shutdown()
+            except Exception as e:
+                logger.warning("OakdCapture shutdown before teleop: %s", e)
+            self._oakd = None
+
+        from grabette.hardware.oakd_teleop import OakdTeleop
+        self._teleop = OakdTeleop()
+        # Run blocking OAK build/start in the executor to keep the event loop free
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._teleop.init_device)
+        await loop.run_in_executor(None, self._teleop.start)
+        logger.info("Teleop mode started")
+
+    async def stop_teleop(self) -> None:
+        if self._teleop is None:
+            return
+        import asyncio
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self._teleop.shutdown)
+        self._teleop = None
+        # Re-init the recording-mode OAK pipeline so next capture works
+        if self._enable_oakd:
+            await loop.run_in_executor(None, self._init_oakd)
+        logger.info("Teleop mode stopped")
+
+    @property
+    def is_teleop_active(self) -> bool:
+        return self._teleop is not None and self._teleop.is_running
+
+    def get_teleop_delta(self) -> dict | None:
+        if self._teleop is None:
+            return None
+        d = self._teleop.latest_delta
+        if d is None:
+            return None
+        return {
+            "t_host": d.t_host,
+            "dx": d.dx, "dy": d.dy, "dz": d.dz,
+            "dqx": d.dqx, "dqy": d.dqy, "dqz": d.dqz, "dqw": d.dqw,
+        }
+
+    def get_teleop_pose(self) -> dict | None:
+        if self._teleop is None:
+            return None
+        p = self._teleop.latest_pose
+        if p is None:
+            return None
+        return {
+            "t_host": p.t_host,
+            "tx": float(p.translation[0]),
+            "ty": float(p.translation[1]),
+            "tz": float(p.translation[2]),
+            "qx": float(p.quaternion[0]),
+            "qy": float(p.quaternion[1]),
+            "qz": float(p.quaternion[2]),
+            "qw": float(p.quaternion[3]),
+        }
+
+    def get_teleop_stats(self) -> dict:
+        if self._teleop is None:
+            return {}
+        return self._teleop.stats()
 
     def get_state(self) -> SensorState:
         angle = None
