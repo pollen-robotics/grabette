@@ -94,8 +94,12 @@ def main() -> int:
     imu.setBatchReportThreshold(1)
     imu.setMaxBatchReports(10)
 
-    if args.backend == "rtabmap":
-        # rtabmap consumes rectified + depth, so we need a StereoDepth node.
+    # StereoDepth is needed for rtabmap (it consumes rect+depth) and for
+    # --save-frames in any backend (the offline rtabmap pipeline needs the
+    # same rect+depth+imu layout). Basalt-only without --save-frames skips it
+    # entirely, which is the lightest pipeline.
+    need_stereo = (args.backend == "rtabmap") or args.save_frames
+    if need_stereo:
         stereo = pipeline.create(dai.node.StereoDepth).build(
             left=leftIn, right=rightIn,
             presetMode=dai.node.StereoDepth.PresetMode.ROBOTICS,
@@ -107,27 +111,26 @@ def main() -> int:
         stereo.enableDistortionCorrection(True)
         stereo.initialConfig.setLeftRightCheckThreshold(10)
         stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)
+    else:
+        stereo = None
 
+    if args.backend == "rtabmap":
         vio = pipeline.create(dai.node.RTABMapVIO)
         stereo.rectifiedLeft.link(vio.rect)
         stereo.depth.link(vio.depth)
         imu.out.link(vio.imu)
-    else:
-        # Basalt consumes raw stereo + IMU and does its own rectification.
-        stereo = None
+    else:  # basalt
         vio = pipeline.create(dai.node.BasaltVIO)
         leftIn.link(vio.left)
         rightIn.link(vio.right)
         imu.out.link(vio.imu)
 
     q_pose = vio.transform.createOutputQueue(maxSize=8, blocking=False)
-    print(f"VIO backend: {args.backend}")
+    print(f"VIO backend: {args.backend}  (StereoDepth branch: {'yes' if need_stereo else 'no'})")
 
-    # Optional: save raw frames + IMU for offline rerun (only with rtabmap backend
-    # — Basalt doesn't expose rectified/depth, would need a parallel StereoDepth node)
-    if args.save_frames and args.backend != "rtabmap":
-        print("--save-frames only supported with --backend rtabmap; ignoring")
-        args.save_frames = False
+    # Optional: save raw frames + IMU for offline rerun. With --backend basalt,
+    # the StereoDepth branch is parallel to BasaltVIO — VIO consumes raw stereo,
+    # StereoDepth produces the rect+depth we save for offline comparison.
     if args.save_frames:
         # H.264 encode rectified left for video
         enc = pipeline.create(dai.node.VideoEncoder).build(
