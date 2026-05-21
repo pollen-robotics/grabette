@@ -23,9 +23,14 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
+
+
+class _SendBody(BaseModel):
+    on: bool
 
 router = APIRouter(prefix="/api/teleop", tags=["teleop"])
 
@@ -53,10 +58,24 @@ async def stop_teleop(backend: Backend = Depends(get_backend)):
     return {"active": False}
 
 
+@router.post("/send")
+async def teleop_send(body: _SendBody, backend: Backend = Depends(get_backend)):
+    """Toggle whether the WS stream marks deltas with send=True.
+
+    Default is off when teleop starts — the user presses the hardware
+    button (or POSTs here) to begin driving the robot.
+    """
+    if not backend.is_teleop_active:
+        raise HTTPException(status_code=409, detail="teleop is not active")
+    backend.set_teleop_send(body.on)
+    return {"sending": backend.is_teleop_sending}
+
+
 @router.get("/status")
 def teleop_status(backend: Backend = Depends(get_backend)):
     return {
         "active": backend.is_teleop_active,
+        "sending": backend.is_teleop_sending,
         "stats": backend.get_teleop_stats(),
         "pose": backend.get_teleop_pose(),
     }
@@ -80,6 +99,7 @@ async def teleop_stream(ws: WebSocket):
             backend: Backend | None = daemon.backend if daemon else None
             if backend is not None and backend.is_teleop_active:
                 d = backend.get_teleop_delta()
+                sending = backend.is_teleop_sending
                 if d is None:
                     msg = {
                         "t": 0.0, "send": False, "lost": True,
@@ -89,7 +109,7 @@ async def teleop_stream(ws: WebSocket):
                 else:
                     msg = {
                         "t": d["t_host"],
-                        "send": True,        # button gating goes here in Phase 2.4
+                        "send": sending,
                         "lost": False,
                         "dx": d["dx"], "dy": d["dy"], "dz": d["dz"],
                         "dqx": d["dqx"], "dqy": d["dqy"],

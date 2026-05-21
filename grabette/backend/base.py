@@ -54,6 +54,21 @@ class Backend(ABC):
         """True if teleop mode is currently running."""
         return False
 
+    @property
+    def is_teleop_sending(self) -> bool:
+        """True if the daemon should emit deltas with send=True.
+
+        Defaults False — `start_teleop()` activates the mode but does NOT
+        immediately start sending. The hardware button (or a future UI
+        control) toggles this so the user can reposition the grabette
+        without driving the robot.
+        """
+        return False
+
+    def set_teleop_send(self, on: bool) -> None:
+        """Turn delta-sending on or off (no-op when teleop is inactive)."""
+        pass
+
     def get_teleop_delta(self) -> dict | None:
         """Most recent camera-local delta. None if no pose yet or teleop is off."""
         return None

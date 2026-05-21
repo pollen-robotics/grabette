@@ -59,6 +59,36 @@ class GrabetteClient:
         except Exception:
             return None
 
+    # -- Teleop --
+
+    def get_teleop_status(self) -> dict | None:
+        try:
+            r = self._http.get("/api/teleop/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
+    def start_teleop(self) -> dict:
+        try:
+            r = self._http.post("/api/teleop/start")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def stop_teleop(self) -> dict:
+        try:
+            r = self._http.post("/api/teleop/stop")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- Capture --
 
     def start_capture(self) -> dict:

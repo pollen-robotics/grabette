@@ -85,6 +85,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         else:
             cap_text = "\u25cb Idle"
 
+        # Teleop status overrides idle text (mode is mutually exclusive with capture).
+        tstatus = client.get_teleop_status() or {}
+        if tstatus.get("active"):
+            sending = "YES" if tstatus.get("sending") else "no"
+            stats = tstatus.get("stats", {}) or {}
+            hz = stats.get("mean_hz", 0)
+            cap_text = (
+                f"\u25cf TELEOP ON   sending: {sending}\n"
+                f"VIO: {hz:.1f} Hz  |  {stats.get('n_poses', 0)} poses\n"
+                f"Press hardware button to toggle send"
+            )
+
         camera_active = not capturing
         return (imu_text, angle_text, cap_text,
                 gr.update(active=camera_active))
@@ -104,6 +116,40 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if "error" in result:
                 return f"Error: {result['error']}", gr.update(value="Start Capture", variant="primary")
             return f"Started: {result.get('episode_id', '?')}", gr.update(value="Stop Capture", variant="stop")
+
+    def on_toggle_teleop():
+        """Single-button toggle: enter teleop mode if off, exit if on.
+
+        Teleop mode is unavailable in mock backend; the daemon returns 501
+        and the UI surfaces that as a message. Returns (msg, btn_update,
+        capture_btn_update) so the capture button can be greyed out while
+        teleop is active (mutex made visible in the UI).
+        """
+        status = client.get_teleop_status() or {}
+        active = bool(status.get("active"))
+        daemon = client.get_daemon_status() or {}
+        if daemon.get("backend") != "RpiBackend":
+            return ("Teleop not available (mock backend)",
+                    gr.update(value="Enter Teleop Mode", variant="secondary", interactive=False),
+                    gr.update())
+        if active:
+            result = client.stop_teleop()
+            if "error" in result:
+                return (f"Stop error: {result['error']}",
+                        gr.update(value="Exit Teleop Mode", variant="stop"),
+                        gr.update(interactive=True))
+            return ("Teleop OFF",
+                    gr.update(value="Enter Teleop Mode", variant="secondary"),
+                    gr.update(interactive=True))
+        else:
+            result = client.start_teleop()
+            if "error" in result:
+                return (f"Start error: {result['error']}",
+                        gr.update(value="Enter Teleop Mode", variant="secondary"),
+                        gr.update())
+            return ("Teleop ON (press button to send deltas)",
+                    gr.update(value="Exit Teleop Mode", variant="stop"),
+                    gr.update(interactive=False))
 
     # ── Session helpers ───────────────────────────────────────────────
 
@@ -433,6 +479,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     interactive=False,
                 )
                 toggle_btn = gr.Button("Start Capture", variant="primary")
+                teleop_btn = gr.Button("Enter Teleop Mode", variant="secondary")
+                teleop_msg = gr.Textbox(
+                    show_label=False, interactive=False, max_lines=1,
+                )
                 capture_msg = gr.Textbox(
                     show_label=False, interactive=False, max_lines=1,
                 )
@@ -578,6 +628,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ).then(
             fn=refresh_sessions,
             outputs=[session_dd, episodes_table, move_target_dd, sessions_cbg],
+        )
+
+        # Teleop mode toggle. When teleop is ON, the capture button is greyed
+        # out (mutex). The hardware button is what flips send on/off.
+        teleop_btn.click(
+            fn=on_toggle_teleop,
+            outputs=[teleop_msg, teleop_btn, toggle_btn],
         )
 
         # Session selection

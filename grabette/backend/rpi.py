@@ -40,6 +40,10 @@ class RpiBackend(Backend):
         # Teleop mode (mutually exclusive with the recording-mode OakdCapture).
         # When teleop is active, _oakd is shut down and _teleop owns the OAK.
         self._teleop = None
+        # Whether deltas should currently be marked send=True on the WS stream.
+        # Reset to False whenever start_teleop() runs, so entering teleop
+        # never immediately drives the robot.
+        self._teleop_sending = False
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
@@ -119,12 +123,15 @@ class RpiBackend(Backend):
 
         from grabette.hardware.oakd_teleop import OakdTeleop
         self._teleop = OakdTeleop()
+        # Always start in "not sending" state — user presses button to begin
+        # sending, allowing free repositioning without moving the robot.
+        self._teleop_sending = False
         # Run blocking OAK build/start in the executor to keep the event loop free
         import asyncio
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._teleop.init_device)
         await loop.run_in_executor(None, self._teleop.start)
-        logger.info("Teleop mode started")
+        logger.info("Teleop mode started (sending=False)")
 
     async def stop_teleop(self) -> None:
         if self._teleop is None:
@@ -133,10 +140,22 @@ class RpiBackend(Backend):
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, self._teleop.shutdown)
         self._teleop = None
+        self._teleop_sending = False
         # Re-init the recording-mode OAK pipeline so next capture works
         if self._enable_oakd:
             await loop.run_in_executor(None, self._init_oakd)
         logger.info("Teleop mode stopped")
+
+    @property
+    def is_teleop_sending(self) -> bool:
+        return self._teleop_sending and self.is_teleop_active
+
+    def set_teleop_send(self, on: bool) -> None:
+        if not self.is_teleop_active:
+            logger.warning("set_teleop_send ignored — teleop not active")
+            return
+        self._teleop_sending = bool(on)
+        logger.info("Teleop sending = %s", self._teleop_sending)
 
     @property
     def is_teleop_active(self) -> bool:
