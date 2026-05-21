@@ -23,6 +23,20 @@ _ANGLE_IFRAME_HTML = (
     'style="width:100%;height:20vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
+# Replacement HTML used while teleop is active. gr.update(value="") doesn't
+# seem to force a DOM swap (Gradio may treat empty as no-op), so we use an
+# explicit non-empty placeholder. Same height as the real iframes to avoid
+# layout shift; src=about:blank guarantees no /api/state/history polling.
+_IMU_IFRAME_PAUSED = (
+    '<iframe src="about:blank" '
+    'style="width:100%;height:42vh;border:none;'
+    'border-radius:8px;background:#1a1a1a;"></iframe>'
+)
+_ANGLE_IFRAME_PAUSED = (
+    '<iframe src="about:blank" '
+    'style="width:100%;height:20vh;border:none;'
+    'border-radius:8px;background:#1a1a1a;"></iframe>'
+)
 
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
@@ -137,17 +151,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_toggle_teleop():
         """Single-button toggle: enter teleop mode if off, exit if on.
 
-        Entering teleop pauses ALL live-view sources so uvicorn's event loop
-        is free for /api/teleop/stream:
-          - Gradio Timers (camera, depth, state) → active=False
-          - IMU/angle chart iframes → value cleared (their internal JS was
-            polling /api/state/history from the browser directly, bypassing
-            Gradio's Timer system — that was the actual WS-burst culprit)
+        Entering teleop pauses ALL UI live-view sources so uvicorn's event
+        loop is free for /api/teleop/stream:
+          - Gradio Timers (camera, depth, state, teleop_status) → interval
+            set to a huge value (Gradio's active=False propagation is
+            unreliable for gr.Timer at runtime; bumping the interval is a
+            deterministic kill switch)
+          - IMU/angle chart iframes → swapped to about:blank placeholders
+            so their JS stops polling /api/state/history
 
         Returns: (teleop_msg, teleop_btn, capture_btn, camera_timer,
-        depth_timer, state_timer, imu_iframe, angle_iframe). Timer + iframe
-        updates are no-ops on error / mock-backend paths so a failed call
-        doesn't accidentally leave the dashboard half-paused.
+        depth_timer, state_timer, teleop_timer, imu_iframe, angle_iframe).
+        Timer + iframe updates are no-ops on error / mock-backend paths.
         """
         status = client.get_teleop_status() or {}
         active = bool(status.get("active"))
@@ -156,7 +171,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return ("Teleop not available (mock backend)",
                     gr.update(value="Enter Teleop Mode", variant="secondary", interactive=False),
                     gr.update(),
-                    gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(), gr.update(),
                     gr.update(), gr.update())
         if active:
             result = client.stop_teleop()
@@ -164,15 +179,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return (f"Stop error: {result['error']}",
                         gr.update(value="Exit Teleop Mode", variant="stop"),
                         gr.update(interactive=True),
-                        gr.update(), gr.update(), gr.update(),
+                        gr.update(), gr.update(), gr.update(), gr.update(),
                         gr.update(), gr.update())
             # Exiting teleop — resume live-view timers and restore iframes.
             return ("Teleop OFF",
                     gr.update(value="Enter Teleop Mode", variant="secondary"),
                     gr.update(interactive=True),
-                    gr.update(active=True),
-                    gr.update(active=True),
-                    gr.update(active=True),
+                    gr.update(value=0.2),    # camera_timer
+                    gr.update(value=0.2),    # depth_timer
+                    gr.update(value=0.5),    # state_timer
+                    gr.update(value=1.0),    # teleop_timer
                     gr.update(value=_IMU_IFRAME_HTML),
                     gr.update(value=_ANGLE_IFRAME_HTML))
         else:
@@ -181,17 +197,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return (f"Start error: {result['error']}",
                         gr.update(value="Enter Teleop Mode", variant="secondary"),
                         gr.update(),
-                        gr.update(), gr.update(), gr.update(),
+                        gr.update(), gr.update(), gr.update(), gr.update(),
                         gr.update(), gr.update())
-            # Entering teleop — pause timers and remove chart iframes.
+            # Entering teleop — disable ALL live-view timers via huge intervals.
             return ("Teleop ON (press button to send deltas)",
                     gr.update(value="Exit Teleop Mode", variant="stop"),
                     gr.update(interactive=False),
-                    gr.update(active=False),
-                    gr.update(active=False),
-                    gr.update(active=False),
-                    gr.update(value=""),
-                    gr.update(value=""))
+                    gr.update(value=86400),  # camera_timer
+                    gr.update(value=86400),  # depth_timer
+                    gr.update(value=86400),  # state_timer
+                    gr.update(value=86400),  # teleop_timer
+                    gr.update(value=_IMU_IFRAME_PAUSED),
+                    gr.update(value=_ANGLE_IFRAME_PAUSED))
 
     # ── Session helpers ───────────────────────────────────────────────
 
@@ -773,7 +790,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         teleop_btn.click(
             fn=on_toggle_teleop,
             outputs=[teleop_msg, teleop_btn, toggle_btn,
-                     camera_timer, depth_timer, state_timer,
+                     camera_timer, depth_timer, state_timer, teleop_timer,
                      imu_iframe, angle_iframe],
         )
 

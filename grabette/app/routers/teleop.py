@@ -21,9 +21,13 @@ always True while teleop is active.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
@@ -93,6 +97,13 @@ async def teleop_stream(ws: WebSocket):
     # Lazy import to avoid circular dep (router → main → router)
     from grabette.app.main import get_daemon_instance
 
+    # Diagnostic: log sleep overruns. If the event loop is being blocked
+    # (GIL contention, sync work on the loop thread, etc.), the gap between
+    # consecutive wake-ups will exceed _STREAM_DT. Log only outliers so the
+    # signal-to-noise is good.
+    last_wake = time.monotonic()
+    overrun_count = 0
+    next_report = last_wake + 5.0
     try:
         while True:
             daemon = get_daemon_instance()
@@ -117,5 +128,19 @@ async def teleop_stream(ws: WebSocket):
                     }
                 await ws.send_json(msg)
             await asyncio.sleep(_STREAM_DT)
+
+            now = time.monotonic()
+            gap = now - last_wake
+            if gap > _STREAM_DT * 1.8:  # > ~60 ms when target is 33 ms
+                overrun_count += 1
+            last_wake = now
+            if now >= next_report:
+                if overrun_count:
+                    logger.warning(
+                        "teleop_stream: %d sleep overruns in last 5s (>%.0fms gap)",
+                        overrun_count, _STREAM_DT * 1.8 * 1000,
+                    )
+                overrun_count = 0
+                next_report = now + 5.0
     except WebSocketDisconnect:
         pass

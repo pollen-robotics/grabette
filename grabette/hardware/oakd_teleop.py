@@ -217,46 +217,56 @@ class OakdTeleop:
     # ── Internals ──────────────────────────────────────────────────────────────
 
     def _drain_loop(self) -> None:
-        """Background thread: pulls poses from OAK, computes deltas, caches."""
+        """Background thread: pulls poses from OAK, computes deltas, caches.
+
+        depthai delivers poses from the USB transport in bursts (3-4 poses
+        arrive together every ~50-150 ms). If we process the whole burst
+        back-to-back, the GIL stays held the whole time and the asyncio
+        event loop — including the /api/teleop/stream WS sender — can't
+        run, which produces visible bursts at the WS consumer. A short
+        time.sleep at the end of every iteration (pose or no pose) forces
+        the GIL to be released, letting asyncio catch up between poses.
+        """
         while not self._stop_event.is_set():
             try:
                 p = self._pose_q.tryGet()
             except Exception:
                 break
-            if p is None:
-                time.sleep(0.001)
-                continue
+            if p is not None:
+                t_host = time.monotonic() - (self._t_start or 0.0)
+                tr = p.getTranslation()
+                tx, ty, tz = tr.x, tr.y, tr.z
+                qd = p.getQuaternion()
+                qx, qy, qz, qw = qd.qx, qd.qy, qd.qz, qd.qw
 
-            t_host = time.monotonic() - (self._t_start or 0.0)
-            tr = p.getTranslation()
-            tx, ty, tz = tr.x, tr.y, tr.z
-            qd = p.getQuaternion()
-            qx, qy, qz, qw = qd.qx, qd.qy, qd.qz, qd.qw
+                # Build pose matrix, then fix the camera basis FRD → optical.
+                T_curr = np.eye(4)
+                T_curr[:3, :3] = Rotation.from_quat([qx, qy, qz, qw]).as_matrix() @ BASALT_TO_OPTICAL
+                T_curr[:3, 3] = [tx, ty, tz]
+                quat_optical = Rotation.from_matrix(T_curr[:3, :3]).as_quat()
 
-            # Build pose matrix, then fix the camera basis FRD → optical.
-            T_curr = np.eye(4)
-            T_curr[:3, :3] = Rotation.from_quat([qx, qy, qz, qw]).as_matrix() @ BASALT_TO_OPTICAL
-            T_curr[:3, 3] = [tx, ty, tz]
-            quat_optical = Rotation.from_matrix(T_curr[:3, :3]).as_quat()
+                # Camera-local delta = prev⁻¹ · curr
+                if self._prev_pose_mat is None:
+                    d = np.eye(4)
+                else:
+                    d = np.linalg.inv(self._prev_pose_mat) @ T_curr
+                dq = Rotation.from_matrix(d[:3, :3]).as_quat()
 
-            # Camera-local delta = prev⁻¹ · curr
-            if self._prev_pose_mat is None:
-                d = np.eye(4)
-            else:
-                d = np.linalg.inv(self._prev_pose_mat) @ T_curr
-            dq = Rotation.from_matrix(d[:3, :3]).as_quat()
+                self._latest_pose = Pose(
+                    t_host=t_host,
+                    translation=np.array([tx, ty, tz]),
+                    quaternion=np.asarray(quat_optical),
+                )
+                self._latest_delta = Delta(
+                    t_host=t_host,
+                    dx=float(d[0, 3]), dy=float(d[1, 3]), dz=float(d[2, 3]),
+                    dqx=float(dq[0]), dqy=float(dq[1]),
+                    dqz=float(dq[2]), dqw=float(dq[3]),
+                )
+                self._prev_pose_mat = T_curr
+                self._n_poses += 1
+                self._pose_arrival_times.append(time.monotonic())
 
-            self._latest_pose = Pose(
-                t_host=t_host,
-                translation=np.array([tx, ty, tz]),
-                quaternion=np.asarray(quat_optical),
-            )
-            self._latest_delta = Delta(
-                t_host=t_host,
-                dx=float(d[0, 3]), dy=float(d[1, 3]), dz=float(d[2, 3]),
-                dqx=float(dq[0]), dqy=float(dq[1]),
-                dqz=float(dq[2]), dqw=float(dq[3]),
-            )
-            self._prev_pose_mat = T_curr
-            self._n_poses += 1
-            self._pose_arrival_times.append(time.monotonic())
+            # Always yield the GIL — caps drain to ~1 kHz (far above the
+            # 22-30 Hz pose rate) and keeps asyncio's WS schedule on time.
+            time.sleep(0.001)
