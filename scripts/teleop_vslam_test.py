@@ -167,7 +167,19 @@ def main() -> int:
         try:
             import rerun as rr_mod
             rr_mod.init(f"grabette_teleop_{args.backend}", spawn=False)
-            rr_mod.connect_tcp(args.rerun_host)
+            # rerun renamed its connect APIs across versions. Try the new gRPC
+            # form first (rerun >=0.19), then the older tcp form, then the
+            # legacy connect() — whichever the installed SDK exposes.
+            if hasattr(rr_mod, "connect_grpc"):
+                rr_mod.connect_grpc(f"rerun+http://{args.rerun_host}/proxy")
+            elif hasattr(rr_mod, "connect_tcp"):
+                rr_mod.connect_tcp(args.rerun_host)
+            elif hasattr(rr_mod, "connect"):
+                rr_mod.connect(args.rerun_host)
+            else:
+                raise RuntimeError(
+                    f"no known connect API on rerun {rr_mod.__version__}"
+                )
             rr_mod.log("world", rr_mod.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
             rr_mod.log("world/axes", rr_mod.Arrows3D(
                 origins=[[0, 0, 0]] * 3,
