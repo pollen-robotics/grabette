@@ -37,3 +37,13 @@ urdf = [
 ui = [
     "gradio>=5.0.0",
 ]
+teleop_bridge = [
+    # Workstation-side bridge: scripts/teleop_bridge.py consumes the
+    # grabette teleop WS and forwards deltas/gripper goals to the OpenArm
+    # gRPC sim. websockets is already pulled in by uvicorn[standard].
+    "grpcio>=1.60",
+    "protobuf>=4.25",
+    "httpx>=0.27",
+    "scipy",
+    "numpy",
+]
