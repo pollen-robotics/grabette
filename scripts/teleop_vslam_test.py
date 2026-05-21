@@ -141,6 +141,10 @@ def main() -> int:
         imu.out.link(vio.imu)
     else:  # basalt
         vio = pipeline.create(dai.node.BasaltVIO)
+        # Tell Basalt the IMU rate. Without this, the IMU integration is
+        # timestep-blind, which produces drift that looks like "pure IMU"
+        # because the optimizer can't reconcile visual and inertial data.
+        vio.setImuUpdateRate(IMU_HZ)
         leftIn.link(vio.left)
         rightIn.link(vio.right)
         imu.out.link(vio.imu)
