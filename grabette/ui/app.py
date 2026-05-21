@@ -85,21 +85,26 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         else:
             cap_text = "\u25cb Idle"
 
-        # Teleop status overrides idle text (mode is mutually exclusive with capture).
-        tstatus = client.get_teleop_status() or {}
-        if tstatus.get("active"):
-            sending = "YES" if tstatus.get("sending") else "no"
-            stats = tstatus.get("stats", {}) or {}
-            hz = stats.get("mean_hz", 0)
-            cap_text = (
-                f"\u25cf TELEOP ON   sending: {sending}\n"
-                f"VIO: {hz:.1f} Hz  |  {stats.get('n_poses', 0)} poses\n"
-                f"Press hardware button to toggle send"
-            )
-
         camera_active = not capturing
         return (imu_text, angle_text, cap_text,
                 gr.update(active=camera_active))
+
+    def get_teleop_display():
+        """Polled on a slow (~1 Hz) timer, separately from get_sensor_state.
+
+        Returns the teleop_msg text. When teleop is off, the textbox is
+        cleared so it doesn't visually compete with the capture box.
+        Doing this on the main state_timer caused HTTP backpressure that
+        made the IMU / Angle markdown flicker and bursted the WS stream.
+        """
+        tstatus = client.get_teleop_status() or {}
+        if not tstatus.get("active"):
+            return ""
+        sending = "YES" if tstatus.get("sending") else "no"
+        stats = tstatus.get("stats", {}) or {}
+        hz = stats.get("mean_hz", 0)
+        n = stats.get("n_poses", 0)
+        return f"\u25cf TELEOP ON   sending: {sending}   VIO: {hz:.1f} Hz   {n} poses"
 
     def on_toggle_capture():
         state = client.get_state()
@@ -726,6 +731,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         system_timer = gr.Timer(10)
         system_timer.tick(fn=get_system_bar, outputs=system_bar)
+
+        # Teleop status polled at 1 Hz on its own timer — kept off the
+        # main state_timer to avoid HTTP backpressure that caused Markdown
+        # flicker and WS-stream bursting in earlier revisions.
+        teleop_timer = gr.Timer(1.0)
+        teleop_timer.tick(fn=get_teleop_display, outputs=teleop_msg)
 
         # One-shot loads on page open
         demo.load(
