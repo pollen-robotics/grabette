@@ -42,31 +42,31 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return ("Disconnected", "Disconnected", "Disconnected",
                     gr.update(active=True))
 
-        # IMU
+        # IMU — content only; the "## IMU Live" heading lives in a separate
+        # static Markdown component so it doesn't re-render every tick (which
+        # was the visible grey/normal flicker source).
         imu = state.get("imu")
         if imu:
             a = imu["accel"]
             g = imu["gyro"]
             imu_text = (
-                f"## IMU Live\n"
                 f"`Accel: [{a[0]:+8.3f}, {a[1]:+8.3f}, {a[2]:+8.3f}] m/s²`\n\n"
                 f"`Gyro:  [{g[0]:+8.4f}, {g[1]:+8.4f}, {g[2]:+8.4f}] rad/s`"
             )
         else:
-            imu_text = "## IMU Live\n*No IMU data*"
+            imu_text = "*No IMU data*"
 
-        # Angle sensors
+        # Angle sensors — same split-heading rationale as IMU.
         angle = state.get("angle")
         if angle:
             p_deg = math.degrees(angle["proximal"])
             d_deg = math.degrees(angle["distal"])
             angle_text = (
-                f"## Angle Sensors\n"
                 f"`Proximal: {p_deg:+7.2f}°  ({angle['proximal']:+.4f} rad)`\n\n"
                 f"`Distal:   {d_deg:+7.2f}°  ({angle['distal']:+.4f} rad)`"
             )
         else:
-            angle_text = "### Angle Sensors\n*No angle data*"
+            angle_text = "*No angle data*"
 
         # Capture
         cap = state.get("capture", {})
@@ -125,10 +125,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_toggle_teleop():
         """Single-button toggle: enter teleop mode if off, exit if on.
 
-        Teleop mode is unavailable in mock backend; the daemon returns 501
-        and the UI surfaces that as a message. Returns (msg, btn_update,
-        capture_btn_update) so the capture button can be greyed out while
-        teleop is active (mutex made visible in the UI).
+        While teleop is active we pause ALL live-view timers (camera, depth,
+        state). That removes ~12 HTTP/sec of UI polling against the same
+        uvicorn process that serves the /api/teleop/stream WebSocket — that
+        polling was bursting the WS stream and was also keeping the Markdown
+        components in a constant re-render churn. The teleop_timer stays at
+        1 Hz so the user still sees ON/sending/Hz feedback.
+
+        Returns: (teleop_msg, teleop_btn, capture_btn, camera_timer,
+        depth_timer, state_timer). The three timer updates are no-ops
+        (gr.update()) for error / mock-backend paths so we don't accidentally
+        leave them paused if the start/stop call failed.
         """
         status = client.get_teleop_status() or {}
         active = bool(status.get("active"))
@@ -136,25 +143,37 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if daemon.get("backend") != "RpiBackend":
             return ("Teleop not available (mock backend)",
                     gr.update(value="Enter Teleop Mode", variant="secondary", interactive=False),
-                    gr.update())
+                    gr.update(),
+                    gr.update(), gr.update(), gr.update())
         if active:
             result = client.stop_teleop()
             if "error" in result:
                 return (f"Stop error: {result['error']}",
                         gr.update(value="Exit Teleop Mode", variant="stop"),
-                        gr.update(interactive=True))
+                        gr.update(interactive=True),
+                        gr.update(), gr.update(), gr.update())
+            # Exiting teleop — resume live-view timers.
             return ("Teleop OFF",
                     gr.update(value="Enter Teleop Mode", variant="secondary"),
-                    gr.update(interactive=True))
+                    gr.update(interactive=True),
+                    gr.update(active=True),
+                    gr.update(active=True),
+                    gr.update(active=True))
         else:
             result = client.start_teleop()
             if "error" in result:
                 return (f"Start error: {result['error']}",
                         gr.update(value="Enter Teleop Mode", variant="secondary"),
-                        gr.update())
+                        gr.update(),
+                        gr.update(), gr.update(), gr.update())
+            # Entering teleop — pause live-view timers so the WS stream
+            # gets uvicorn's undivided attention.
             return ("Teleop ON (press button to send deltas)",
                     gr.update(value="Exit Teleop Mode", variant="stop"),
-                    gr.update(interactive=False))
+                    gr.update(interactive=False),
+                    gr.update(active=False),
+                    gr.update(active=False),
+                    gr.update(active=False))
 
     # ── Session helpers ───────────────────────────────────────────────
 
@@ -494,7 +513,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         with gr.Row():
             with gr.Column(scale=1):
-                imu_box = gr.Markdown("## IMU Live")
+                gr.Markdown("## IMU Live")            # static heading
+                imu_box = gr.Markdown("")             # dynamic data only
                 gr.HTML(
                     value=(
                         '<iframe src="/charts/imu" '
@@ -503,7 +523,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     ),
                 )
             with gr.Column(scale=1):
-                angle_box = gr.Markdown("## Angle Sensors")
+                gr.Markdown("## Angle Sensors")       # static heading
+                angle_box = gr.Markdown("")           # dynamic data only
                 gr.HTML(
                     value=(
                         '<iframe src="/charts/angle" '
@@ -635,12 +656,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[session_dd, episodes_table, move_target_dd, sessions_cbg],
         )
 
-        # Teleop mode toggle. When teleop is ON, the capture button is greyed
-        # out (mutex). The hardware button is what flips send on/off.
-        teleop_btn.click(
-            fn=on_toggle_teleop,
-            outputs=[teleop_msg, teleop_btn, toggle_btn],
-        )
+        # Teleop mode toggle is wired below, after the live-view timers
+        # are created — its outputs include those timers (paused on entry,
+        # resumed on exit).
 
         # Session selection
         session_dd.change(
@@ -737,6 +755,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # flicker and WS-stream bursting in earlier revisions.
         teleop_timer = gr.Timer(1.0)
         teleop_timer.tick(fn=get_teleop_display, outputs=teleop_msg)
+
+        # Teleop mode toggle (wired here so the timer references resolve).
+        # When teleop is ON: capture button greyed out (mutex), and the
+        # live-view timers are paused so uvicorn has headroom for the WS.
+        teleop_btn.click(
+            fn=on_toggle_teleop,
+            outputs=[teleop_msg, teleop_btn, toggle_btn,
+                     camera_timer, depth_timer, state_timer],
+        )
 
         # One-shot loads on page open
         demo.load(
