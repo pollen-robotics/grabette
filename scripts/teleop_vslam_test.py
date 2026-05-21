@@ -201,10 +201,15 @@ def main() -> int:
                 break
             t_arrive = time.monotonic()
             t_device = p.getTimestamp().total_seconds()
+            # TUM timestamps in HOST monotonic seconds (matches the offline
+            # rtabmap pipeline, which uses host_ms via oakd.py / SyncManager).
+            # Using device time here causes evo to find zero matches because
+            # the clocks have unrelated reference points.
+            t_tum = t_arrive
             tx, ty, tz = p.getTranslation().x, p.getTranslation().y, p.getTranslation().z
             qx, qy, qz, qw = (p.getQuaternion().qx, p.getQuaternion().qy,
                               p.getQuaternion().qz, p.getQuaternion().qw)
-            tum_fp.write(f"{t_device:.6f} {tx:.6f} {ty:.6f} {tz:.6f} "
+            tum_fp.write(f"{t_tum:.6f} {tx:.6f} {ty:.6f} {tz:.6f} "
                          f"{qx:.6f} {qy:.6f} {qz:.6f} {qw:.6f}\n")
 
             # Camera-local delta (per LeRobot §10.3 convention).
