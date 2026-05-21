@@ -72,6 +72,11 @@ def main() -> int:
                     help="print a status line every N poses (0 = silent)")
     ap.add_argument("--backend", choices=["rtabmap", "basalt"], default="rtabmap",
                     help="VIO backend node to test (depthai 3.6.1 exposes both)")
+    ap.add_argument("--rerun-host", default=None,
+                    help="Stream live trajectory + deltas to a rerun viewer at "
+                         "this host:port (e.g. 192.168.1.5:9876). Start the viewer "
+                         "with `rerun --port 9876 --bind 0.0.0.0` on the target host. "
+                         "If omitted, no live viz.")
     args = ap.parse_args()
 
     out = args.output_dir
@@ -156,6 +161,28 @@ def main() -> int:
         h264_fp = None
         left_ts_samples = depth_ts_samples = imu_samples = []  # unused
 
+    # ── Optional: live visualization via rerun ─────────────────────────────────
+    rr = None
+    if args.rerun_host:
+        try:
+            import rerun as rr_mod
+            rr_mod.init(f"grabette_teleop_{args.backend}", spawn=False)
+            rr_mod.connect_tcp(args.rerun_host)
+            rr_mod.log("world", rr_mod.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
+            rr_mod.log("world/axes", rr_mod.Arrows3D(
+                origins=[[0, 0, 0]] * 3,
+                vectors=[[0.1, 0, 0], [0, 0.1, 0], [0, 0, 0.1]],
+                colors=[[255, 0, 0], [0, 255, 0], [0, 0, 255]],
+            ), static=True)
+            rr = rr_mod
+            print(f"rerun: streaming to {args.rerun_host}")
+        except ImportError:
+            print("rerun-sdk not installed — install with: uv pip install rerun-sdk")
+        except Exception as e:
+            print(f"rerun: failed to connect to {args.rerun_host}: {e}")
+
+    trajectory_pts: list[list[float]] = []  # accumulated positions for the line strip
+
     # ── Start pipeline ─────────────────────────────────────────────────────────
     print("Starting pipeline...")
     pipeline.start()
@@ -227,6 +254,24 @@ def main() -> int:
                             f"{dt[0]:.6f},{dt[1]:.6f},{dt[2]:.6f},"
                             f"{dq[0]:.6f},{dq[1]:.6f},{dq[2]:.6f},{dq[3]:.6f}\n")
             prev_pose = T_curr
+
+            # Live viz: push to rerun if connected
+            if rr is not None:
+                t_rel = t_arrive - t_start
+                rr.set_time("time", duration=t_rel)
+                trajectory_pts.append([tx, ty, tz])
+                rr.log("world/trajectory", rr.LineStrips3D([trajectory_pts], colors=[0, 200, 255]))
+                rr.log("world/camera", rr.Transform3D(
+                    translation=[tx, ty, tz], quaternion=[qx, qy, qz, qw],
+                    axis_length=0.05,
+                ))
+                # Delta scalars (frame-to-frame motion magnitude)
+                d_t_mm = float(np.linalg.norm(dt)) * 1000.0
+                d_r_deg = float(np.linalg.norm(
+                    Rotation.from_quat(dq).as_rotvec()
+                )) * (180.0 / np.pi)
+                rr.log("delta/translation_mm", rr.Scalars(d_t_mm))
+                rr.log("delta/rotation_deg", rr.Scalars(d_r_deg))
 
             pose_arrival_times.append(t_arrive)
             process_latencies.append(t_arrive - t_start - t_device + pose_arrival_times[0] - t_start)

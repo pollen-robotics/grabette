@@ -25,6 +25,7 @@ rpi = [
     "depthai>=3.6,<4",
     "opencv-python-headless>=4.8",
     "scipy",  # quaternion + rotation math (teleop, dataset processing)
+    "rerun-sdk",  # live trajectory visualization for teleop
 ]
 hf = [
     "huggingface-hub>=0.20.0",
