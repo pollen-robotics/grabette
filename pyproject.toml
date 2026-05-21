@@ -24,6 +24,7 @@ rpi = [
     # so uv builds from source for ~30 min. Don't.
     "depthai>=3.6,<4",
     "opencv-python-headless>=4.8",
+    "scipy",  # quaternion + rotation math (teleop, dataset processing)
 ]
 hf = [
     "huggingface-hub>=0.20.0",
