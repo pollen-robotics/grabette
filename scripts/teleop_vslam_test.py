@@ -70,6 +70,8 @@ def main() -> int:
                     help="also save rect+depth+imu for offline rtabmap comparison")
     ap.add_argument("--print-every", type=int, default=30,
                     help="print a status line every N poses (0 = silent)")
+    ap.add_argument("--backend", choices=["rtabmap", "basalt"], default="rtabmap",
+                    help="VIO backend node to test (depthai 3.6.1 exposes both)")
     args = ap.parse_args()
 
     out = args.output_dir
@@ -84,18 +86,6 @@ def main() -> int:
     leftIn  = camB.requestOutput((WIDTH, HEIGHT), type=dai.ImgFrame.Type.GRAY8, fps=FPS)
     rightIn = camC.requestOutput((WIDTH, HEIGHT), type=dai.ImgFrame.Type.GRAY8, fps=FPS)
 
-    stereo = pipeline.create(dai.node.StereoDepth).build(
-        left=leftIn, right=rightIn,
-        presetMode=dai.node.StereoDepth.PresetMode.ROBOTICS,
-    )
-    stereo.setOutputSize(WIDTH, HEIGHT)
-    stereo.setLeftRightCheck(True)
-    stereo.setExtendedDisparity(False)
-    stereo.setRectifyEdgeFillColor(0)
-    stereo.enableDistortionCorrection(True)
-    stereo.initialConfig.setLeftRightCheckThreshold(10)
-    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)
-
     imu = pipeline.create(dai.node.IMU)
     imu.enableIMUSensor(
         [dai.IMUSensor.ACCELEROMETER_RAW, dai.IMUSensor.GYROSCOPE_RAW],
@@ -104,14 +94,40 @@ def main() -> int:
     imu.setBatchReportThreshold(1)
     imu.setMaxBatchReports(10)
 
-    vio = pipeline.create(dai.node.RTABMapVIO)
-    stereo.rectifiedLeft.link(vio.rect)
-    stereo.depth.link(vio.depth)
-    imu.out.link(vio.imu)
+    if args.backend == "rtabmap":
+        # rtabmap consumes rectified + depth, so we need a StereoDepth node.
+        stereo = pipeline.create(dai.node.StereoDepth).build(
+            left=leftIn, right=rightIn,
+            presetMode=dai.node.StereoDepth.PresetMode.ROBOTICS,
+        )
+        stereo.setOutputSize(WIDTH, HEIGHT)
+        stereo.setLeftRightCheck(True)
+        stereo.setExtendedDisparity(False)
+        stereo.setRectifyEdgeFillColor(0)
+        stereo.enableDistortionCorrection(True)
+        stereo.initialConfig.setLeftRightCheckThreshold(10)
+        stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)
+
+        vio = pipeline.create(dai.node.RTABMapVIO)
+        stereo.rectifiedLeft.link(vio.rect)
+        stereo.depth.link(vio.depth)
+        imu.out.link(vio.imu)
+    else:
+        # Basalt consumes raw stereo + IMU and does its own rectification.
+        stereo = None
+        vio = pipeline.create(dai.node.BasaltVIO)
+        leftIn.link(vio.left)
+        rightIn.link(vio.right)
+        imu.out.link(vio.imu)
 
     q_pose = vio.transform.createOutputQueue(maxSize=8, blocking=False)
+    print(f"VIO backend: {args.backend}")
 
-    # Optional: save raw frames + IMU for offline rerun
+    # Optional: save raw frames + IMU for offline rerun (only with rtabmap backend
+    # — Basalt doesn't expose rectified/depth, would need a parallel StereoDepth node)
+    if args.save_frames and args.backend != "rtabmap":
+        print("--save-frames only supported with --backend rtabmap; ignoring")
+        args.save_frames = False
     if args.save_frames:
         # H.264 encode rectified left for video
         enc = pipeline.create(dai.node.VideoEncoder).build(
