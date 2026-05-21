@@ -198,7 +198,7 @@ class RpiBackend(Backend):
             is_capturing=False,
             session_id=self._capture_session_dir.name if self._capture_session_dir else None,
             duration_seconds=duration,
-            frame_count=len(frame_timestamps),
+            frame_count=self._camera.frame_count,
             imu_sample_count=len(imu_samples.accel),
             angle_sample_count=angle_count,
         )

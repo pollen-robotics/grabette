@@ -183,6 +183,15 @@ class SessionManager:
             tar.add(ep_dir, arcname=episode_id)
         return archive_path
 
+    def create_episodes_zip(self, episode_ids: list[str]) -> Path:
+        archive_path = Path(tempfile.mktemp(suffix=".tar.gz"))
+        with tarfile.open(archive_path, "w:gz") as tar:
+            for episode_id in episode_ids:
+                ep_dir = self.episode_dir(episode_id)
+                if ep_dir.exists():
+                    tar.add(ep_dir, arcname=episode_id)
+        return archive_path
+
     def _get_episode_info(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)
         video_path = ep_dir / "raw_video.mp4"

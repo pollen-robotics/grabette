@@ -102,11 +102,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now grabette-bluetooth
 ```
 
-**Important**: set `ControllerMode = le` in `/etc/bluetooth/main.conf` to disable classic Bluetooth (prevents audio profile interference and hostname leak). See the gripette [Bluetooth setup guide](https://github.com/SteveNguyen/gripette/blob/main/docs/bluetooth_setup.md) for detailed instructions.
+**Important**: set `ControllerMode = le` in `/etc/bluetooth/main.conf` to disable classic Bluetooth (prevents audio profile interference and hostname leak). See the gripette [Bluetooth setup guide](https://github.com/pollen-robotics/gripette/blob/main/docs/bluetooth_setup.md) for detailed instructions.
 
 PIN is configurable via `GRABETTE_BT_PIN` env var (default: `00000`).
 
-**Web Bluetooth client**: open the [BT Tool](https://stevenguyen.github.io/gripette/) in Chrome/Edge — select "Grabette" from the dropdown to connect (also available locally at `docs/index.html`).
+**Web Bluetooth client**: open the [BT Tool](https://pollen-robotics.github.io/gripette/) in Chrome/Edge — select "Grabette" from the dropdown to connect (also available locally at `docs/index.html`).
 
 ## Configuration
 
@@ -183,8 +183,8 @@ RPi (camera + BMI088 + AS5600)
 
 | Project | Description |
 |---|---|
-| [gripette](https://github.com/SteveNguyen/gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
-| [grabette-data](https://github.com/SteveNguyen/grabette-data) | grabette data processing (ORB-SLAM3, Docker) |
+| [gripette](https://github.com/pollen-robotics/gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
+| [grabette-data](https://github.com/pollen-robotics/grabette-data) | grabette data processing (ORB-SLAM3, Docker) |
 
 ## Calibration
 

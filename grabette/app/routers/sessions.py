@@ -127,6 +127,19 @@ def download_episode(episode_id: str, sm: SessionManager = Depends(get_session_m
     )
 
 
+class DownloadEpisodesRequest(BaseModel):
+    episode_ids: list[str]
+
+
+@router.post("/api/episodes/download")
+def download_episodes(req: DownloadEpisodesRequest, sm: SessionManager = Depends(get_session_manager)):
+    if not req.episode_ids:
+        raise HTTPException(status_code=400, detail="No episode IDs provided")
+    archive_path = sm.create_episodes_zip(req.episode_ids)
+    filename = f"episodes_{req.episode_ids[0]}.tar.gz" if len(req.episode_ids) == 1 else "episodes.tar.gz"
+    return FileResponse(archive_path, media_type="application/gzip", filename=filename)
+
+
 @router.get("/api/episodes/{episode_id}/video")
 def stream_video(episode_id: str, sm: SessionManager = Depends(get_session_manager)):
     video_path = sm.episode_dir(episode_id) / "raw_video.mp4"
