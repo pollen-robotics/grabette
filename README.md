@@ -191,3 +191,26 @@ RPi (camera + BMI088 + AS5600)
 - **Camera intrinsics**: `../universal_manipulation_interface/example/calibration/rpi_camera_intrinsics.json` (0.41px reproj error)
 - **IMU-to-camera transform (T_b_c1)**: 180° rotation around x-axis (back-to-back mounting), 11.15mm translation along z
 - **Angle sensor offsets**: `scripts/calibrate_angles.py` → stored in `~/.grabette/angle_calibration.json`
+
+### Pose-tracking source and the camera-frame convention
+
+The downstream pipeline (`grabette-data` → lerobot training) expects each
+frame's pose to be the **camera-site SE(3) in a Z-up world frame**. There
+are two tracking setups, with different obligations:
+
+- **Camera-SLAM** (RPi camera + BMI088 → ORB-SLAM3, OAK-D, etc.): the SLAM
+  trajectory IS the camera-site pose. No extra calibration needed.
+- **Quest-controller tracking** (quest branch of this repo): the Quest
+  reports the **right-hand controller's** pose, not the camera's. The
+  controller is rigidly mounted on the Grabette body but at a non-trivial
+  fixed rotation/translation. The recording produces `r_hand_traj.json`
+  (raw controller pose) — this is **not** the camera frame.
+
+For the Quest path you must apply the offline controller→camera calibration
+before any further dataset conversion. The transform is stored in
+`grabette-data/config/quest_to_camera_calibration.json` (on the `quest`
+branch) and is applied by `batch_transform_quest.py` /
+`transform_quest_trajectory.py`, which write a `camera_trajectory.csv` per
+episode. Skipping this step is the most common cause of a model that almost
+works on the real arm but is rotated/offset relative to where the cube is.
+See `grabette-data/README.md` for the workflow.
