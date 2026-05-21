@@ -64,7 +64,7 @@ IMU_HZ = 200
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--duration", type=float, default=30.0, help="recording duration (s)")
-    ap.add_argument("--output-dir", type=Path, default=Path("/tmp/teleop_vslam_test"),
+    ap.add_argument("-o", "--output-dir", type=Path, default=Path("/tmp/teleop_vslam_test"),
                     help="where to write outputs")
     ap.add_argument("--save-frames", action="store_true",
                     help="also save rect+depth+imu for offline rtabmap comparison")
