@@ -86,9 +86,17 @@ G_STANDARD = 9.80665
 
 @dataclass
 class SharedState:
-    """Cross-task state. Single writer (state_loop) → single reader (arm_loop)."""
+    """Cross-task state.
+
+    - is_static / last_motion_t: written by state_loop (IMU gate), read by arm_loop
+    - send_enabled: written by arm_loop (mirrors the WS 'send' field driven by the
+      hardware button on the grabette), read by state_loop to gate gripper commands
+      on the same toggle. Default False so the gripper stays still until the button
+      is actually pressed.
+    """
     is_static: bool = False
     last_motion_t: float = 0.0  # time.monotonic()
+    send_enabled: bool = False
 
 
 def quat_delta_to_dr6d(qx: float, qy: float, qz: float, qw: float) -> list[float]:
@@ -129,6 +137,14 @@ async def arm_loop(
     """
     backoff = 1.0
     last_t = None
+    # Latency instrumentation. Helps diagnose where lag comes from:
+    #   - rpc_us: per-call gRPC round-trip (server IK + sim step)
+    #   - inter_recv_us: gap between consecutive WS messages from the
+    #     bridge's POV. If this is consistently much smaller than 33 ms,
+    #     the bridge is draining a backlog faster than real-time → the
+    #     bridge has fallen behind and the lag is between WS receive
+    #     buffer + bridge throughput, not VIO.
+    last_recv = None
     while True:
         try:
             logger.info("connecting WS: %s", ws_uri)
@@ -136,7 +152,16 @@ async def arm_loop(
                 logger.info("WS connected")
                 backoff = 1.0
                 last_t = None  # reset on reconnect
+                last_recv = None
+                shared.send_enabled = False  # safe default until first msg
                 async for raw in ws:
+                    now = time.monotonic()
+                    if last_recv is not None:
+                        gap_ms = (now - last_recv) * 1000.0
+                        # 33 ms target at 30 Hz; flag fast-drain (backlog).
+                        if gap_ms < 10.0:
+                            stats["arm_recv_fast_drain"] += 1
+                    last_recv = now
                     stats["ws_recv"] += 1
                     msg = json.loads(raw)
 
@@ -145,6 +170,11 @@ async def arm_loop(
                         stats["arm_skipped_duplicate"] += 1
                         continue
                     last_t = t
+
+                    # Publish the send flag for state_loop (gripper gate)
+                    # before any continue branch — gripper must mirror this
+                    # state even on lost / no-send messages.
+                    shared.send_enabled = bool(msg.get("send"))
 
                     if msg.get("lost"):
                         stats["arm_skipped_lost"] += 1
@@ -172,6 +202,8 @@ async def arm_loop(
 
                     # Per-step deadband — zero components below the SLAM
                     # noise floor. Position and rotation are independent.
+                    # Deadband is on the RAW magnitudes (SLAM noise floor
+                    # is invariant to the user-facing scale).
                     pos_zeroed = False
                     rot_zeroed = False
                     pos_mag = math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -197,9 +229,27 @@ async def arm_loop(
                         stats["arm_skipped_deadband"] += 1
                         continue
 
-                    # Safety cap (after deadband, before send). SLAM
-                    # re-acquisition spikes can produce >1m jumps; scale
-                    # to keep direction.
+                    # Apply user-facing scale. < 1 attenuates motion (real
+                    # robot looked over-amplified vs grabette motion);
+                    # > 1 amplifies. Position scale is linear on the
+                    # translation components; rotation scale acts on the
+                    # rotation angle via the axis-angle (rotvec) form so
+                    # the rotation axis is preserved.
+                    if not pos_zeroed and cfg.pos_scale != 1.0:
+                        dx *= cfg.pos_scale
+                        dy *= cfg.pos_scale
+                        dz *= cfg.pos_scale
+                        pos_mag *= abs(cfg.pos_scale)
+                    if not rot_zeroed and cfg.rot_scale != 1.0:
+                        rotvec = Rotation.from_quat(
+                            [qx, qy, qz, qw]
+                        ).as_rotvec() * cfg.rot_scale
+                        q = Rotation.from_rotvec(rotvec).as_quat()
+                        qx, qy, qz, qw = float(q[0]), float(q[1]), float(q[2]), float(q[3])
+
+                    # Safety cap on the OUTPUT (after scale). SLAM
+                    # re-acquisition spikes can produce >1m jumps even
+                    # after scaling; clamp to keep direction.
                     if pos_mag > cfg.max_delta_m:
                         s = cfg.max_delta_m / pos_mag
                         dx, dy, dz = dx * s, dy * s, dz * s
@@ -208,12 +258,31 @@ async def arm_loop(
                     dr6d = (_IDENTITY_DR6D if rot_zeroed
                             else quat_delta_to_dr6d(qx, qy, qz, qw))
 
+                    if cfg.dry_run:
+                        # Validate the rest of the pipeline without moving
+                        # the robot. Counts as "sent" for rate accounting.
+                        stats["arm_sent"] += 1
+                        if cfg.debug:
+                            logger.debug(
+                                "arm[DRY]: dx=%+.4f dy=%+.4f dz=%+.4f "
+                                "dr6d=[%+.3f,%+.3f,%+.3f,%+.3f,%+.3f,%+.3f]",
+                                dx, dy, dz, *dr6d,
+                            )
+                        continue
+
                     req = arm_pb2.CartesianDelta(
                         dx=dx, dy=dy, dz=dz, dr6d=dr6d,
                     )
                     # Sync gRPC call; ~1-3 ms locally, fine to block the loop.
+                    rpc_t0 = time.monotonic()
                     try:
                         resp = arm_stub.SendCartesianDelta(req, timeout=0.5)
+                        rpc_ms = (time.monotonic() - rpc_t0) * 1000.0
+                        # Track max + accumulate sum so stats_printer can
+                        # report the average and worst-case round-trip.
+                        stats["arm_rpc_sum_ms"] += rpc_ms
+                        if rpc_ms > stats["arm_rpc_max_ms"]:
+                            stats["arm_rpc_max_ms"] = rpc_ms
                         if not resp.success:
                             stats["arm_grpc_fail"] += 1
                             logger.warning("arm gRPC: %s", resp.error)
@@ -224,6 +293,10 @@ async def arm_loop(
                         logger.warning("arm gRPC error: %s", e.code())
         except (OSError, websockets.WebSocketException) as e:
             logger.warning("WS connection lost (%s); reconnecting in %.1fs", e, backoff)
+            # Disable gripper sending until we re-establish the stream —
+            # otherwise it would keep mirroring whatever the last seen
+            # send flag was.
+            shared.send_enabled = False
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, 10.0)
 
@@ -277,24 +350,35 @@ async def state_loop(
                             )
 
                 # ── Gripper command ────────────────────────────────────
-                if grip_stub is not None:
+                # Gated on shared.send_enabled (mirrors the WS `send` field,
+                # which is driven by the hardware button). When the user
+                # releases the button to reposition, both arm and gripper
+                # freeze together — that's the intended UX.
+                if grip_stub is not None and shared.send_enabled:
                     angle = data.get("angle")
                     if angle is not None:
                         m1 = proximal_sign * float(angle["proximal"])
                         m2 = distal_sign * float(angle["distal"])
-                        req = gripper_pb2.MotorCommand(
-                            motor1_goal=m1, motor2_goal=m2,
-                        )
-                        try:
-                            resp = grip_stub.SendMotorCommand(req, timeout=0.5)
-                            if not resp.success:
+                        if cfg.dry_run:
+                            stats["grip_sent"] += 1
+                            if cfg.debug:
+                                logger.debug(
+                                    "grip[DRY]: m1=%+.3f m2=%+.3f", m1, m2,
+                                )
+                        else:
+                            req = gripper_pb2.MotorCommand(
+                                motor1_goal=m1, motor2_goal=m2,
+                            )
+                            try:
+                                resp = grip_stub.SendMotorCommand(req, timeout=0.5)
+                                if not resp.success:
+                                    stats["grip_grpc_fail"] += 1
+                                    logger.warning("gripper gRPC: %s", resp.error)
+                                else:
+                                    stats["grip_sent"] += 1
+                            except grpc.RpcError as e:
                                 stats["grip_grpc_fail"] += 1
-                                logger.warning("gripper gRPC: %s", resp.error)
-                            else:
-                                stats["grip_sent"] += 1
-                        except grpc.RpcError as e:
-                            stats["grip_grpc_fail"] += 1
-                            logger.warning("gripper gRPC error: %s", e.code())
+                                logger.warning("gripper gRPC error: %s", e.code())
             except Exception as e:
                 stats["state_http_fail"] += 1
                 logger.debug("state poll error: %s", e)
@@ -306,24 +390,41 @@ async def state_loop(
 async def stats_printer(
     shared: SharedState,
     stats: dict,
-    interval_s: float = 5.0,
+    interval_s: float = 2.0,
 ) -> None:
     last = {k: 0 for k in stats}
     while True:
         await asyncio.sleep(interval_s)
+        # Skip the cumulative latency keys from the simple diff line —
+        # they're reported separately as averages so the line stays readable.
+        diff_keys = [k for k in stats if k not in ("arm_rpc_sum_ms", "arm_rpc_max_ms")]
         deltas = "  ".join(
-            f"{k}=+{stats[k] - last[k]}" for k in sorted(stats)
+            f"{k}=+{stats[k] - last[k]}" for k in sorted(diff_keys)
             if stats[k] != last[k]
         )
+        # gRPC latency over this window: average + worst.
+        sent_in_window = stats["arm_sent"] - last["arm_sent"]
+        sum_in_window = stats["arm_rpc_sum_ms"] - last["arm_rpc_sum_ms"]
+        avg_rpc_ms = (sum_in_window / sent_in_window) if sent_in_window else 0.0
+        # Reset max each window so it tracks recent peaks.
+        max_window = stats["arm_rpc_max_ms"]
+        stats["arm_rpc_max_ms"] = 0.0
         logger.info(
-            "state=%s  %s",
+            "═══ state=%s  rpc avg=%.1fms max=%.1fms  %s",
             "STATIC" if shared.is_static else "moving",
+            avg_rpc_ms, max_window,
             deltas if deltas else "(no activity)",
         )
         last = dict(stats)
 
 
 async def main_async(args: argparse.Namespace) -> None:
+    if args.dry_run:
+        logger.warning(
+            "═══ DRY-RUN MODE: gRPC commands will NOT be sent. "
+            "Robot will not move. Drop --dry-run to enable real motion. ═══"
+        )
+
     # Connect gRPC channels and ping. Bail loudly if either side is down —
     # better to fail at startup than to silently send into nothing.
     arm_channel = grpc.insecure_channel(args.arm)
@@ -351,6 +452,9 @@ async def main_async(args: argparse.Namespace) -> None:
         "arm_rot_deadband": 0,
         "arm_clamped": 0,
         "arm_grpc_fail": 0,
+        "arm_recv_fast_drain": 0,
+        "arm_rpc_sum_ms": 0.0,
+        "arm_rpc_max_ms": 0.0,
         "grip_sent": 0,
         "grip_grpc_fail": 0,
         "state_http_fail": 0,
@@ -436,9 +540,29 @@ def main() -> None:
         help="zero per-step rotation below this angle magnitude (radians). "
              "Default 5 mrad (~0.3°) catches static SLAM rotation noise.",
     )
+    # ── Output scaling (real-robot gain) ──────────────────────────────
+    p.add_argument(
+        "--pos-scale", type=float, default=1.0,
+        help="multiplier applied to translation deltas before sending. "
+             "<1 dampens motion (real robot was over-amplifying), >1 "
+             "amplifies. Applied AFTER deadband, BEFORE the max-delta cap.",
+    )
+    p.add_argument(
+        "--rot-scale", type=float, default=1.0,
+        help="multiplier applied to rotation angle before sending. Same "
+             "rationale as --pos-scale, but acts on the rotation angle "
+             "(axis is preserved).",
+    )
     p.add_argument(
         "--debug", action="store_true",
         help="print per-tick IMU values, gate decisions, and per-delta decisions",
+    )
+    p.add_argument(
+        "--dry-run", action="store_true",
+        help="connect to gRPC servers (Ping only) but do NOT call "
+             "SendCartesianDelta or SendMotorCommand. Useful as a first "
+             "pass on the real robot to validate IMU gate / deadband / "
+             "rate behaviour before any servo moves.",
     )
     args = p.parse_args()
 

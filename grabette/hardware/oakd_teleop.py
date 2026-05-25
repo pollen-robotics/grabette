@@ -35,7 +35,7 @@ from scipy.spatial.transform import Rotation
 
 logger = logging.getLogger(__name__)
 
-WIDTH, HEIGHT = 640, 400
+WIDTH, HEIGHT = 320, 200
 FPS = 30
 IMU_HZ = 200
 
