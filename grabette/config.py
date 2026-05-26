@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Angle sensors (AS5600 on I2C buses 4 & 5)
     angle_sensors: bool = True
 
+    # OAK-D SR — default OFF to save battery. Toggle from the UI to enable.
+    enable_oakd: bool = False
+
     # UI
     ui_enabled: bool = True
 

@@ -104,6 +104,43 @@ class RpiBackend(Backend):
         self._start_time = None
         logger.info("RpiBackend stopped")
 
+    # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
+
+    @property
+    def is_oakd_enabled(self) -> bool:
+        return self._enable_oakd
+
+    @property
+    def is_oakd_initialized(self) -> bool:
+        return self._oakd is not None and self._oakd.is_initialized
+
+    async def set_oakd_enabled(self, on: bool) -> None:
+        if self._capturing:
+            raise RuntimeError("cannot toggle OAK-D while a capture is running")
+        if self.is_teleop_active:
+            raise RuntimeError("cannot toggle OAK-D while teleop is active")
+
+        on = bool(on)
+        if on == self._enable_oakd and (on == self.is_oakd_initialized):
+            return  # already in the requested state
+
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        if on:
+            self._enable_oakd = True
+            await loop.run_in_executor(None, self._init_oakd)
+            logger.info("OAK-D enabled via UI")
+        else:
+            self._enable_oakd = False
+            if self._oakd is not None:
+                try:
+                    await loop.run_in_executor(None, self._oakd.shutdown)
+                except Exception as e:
+                    logger.warning("OAK-D shutdown error: %s", e)
+                self._oakd = None
+            logger.info("OAK-D disabled via UI")
+
     # ── Teleop mode (mutually exclusive with recording) ───────────────────────
 
     async def start_teleop(self) -> None:
@@ -234,6 +271,14 @@ class RpiBackend(Backend):
     async def start_capture(self, session_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
+
+        # Auto-connect the OAK-D if it's currently off — recording without
+        # depth/IMU is rarely what the user wants, and this matches the UI
+        # convention that toggling on/off is the "intent" flag. Errors during
+        # init are logged inside _init_oakd and leave _oakd=None; the rest
+        # of start_capture handles that gracefully.
+        if not self.is_oakd_initialized:
+            await self.set_oakd_enabled(True)
 
         self._capture_session_dir = session_dir
 
