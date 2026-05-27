@@ -19,12 +19,18 @@ logger = logging.getLogger(__name__)
 
 FPS = 46
 
+# How long start_capture waits for the OAK-D to produce valid (post-warmup)
+# frames before starting the recording clock. Safety fallback only — the OAK-D
+# normally becomes ready well within this.
+OAKD_READY_TIMEOUT_S = 5.0
+
 
 class RpiBackend(Backend):
     """Backend using real RPi camera + AS5600 angle sensors + OAK-D SR."""
 
     def __init__(
         self, enable_angle: bool = False, enable_oakd: bool = True,
+        oakd_keepalive_s: float = 30.0,
     ) -> None:
         self._running = False
         self._start_time: float | None = None
@@ -32,11 +38,19 @@ class RpiBackend(Backend):
         self._capture_session_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
+        self._oakd_keepalive_s = oakd_keepalive_s
 
         self._sync = None
         self._camera = None
         self._angle = None
         self._oakd = None
+        # True when the OAK-D is on because a capture auto-enabled it (the
+        # daemon owns its power and will auto-power-down when idle). Survives
+        # back-to-back captures; cleared on power-down or when the user takes
+        # ownership via the UI (set_oakd_enabled).
+        self._oakd_auto_enabled = False
+        # Pending "power the OAK-D down after the keep-alive window" timer.
+        self._oakd_keepalive_task = None
         # Teleop mode (mutually exclusive with the recording-mode OakdCapture).
         # When teleop is active, _oakd is shut down and _teleop owns the OAK.
         self._teleop = None
@@ -89,6 +103,9 @@ class RpiBackend(Backend):
     async def stop(self) -> None:
         if self._capturing:
             await self.stop_capture()
+        # After any stop_capture (which may re-arm the keep-alive), drop the
+        # pending power-down — we're shutting the OAK down directly below.
+        self._cancel_oakd_keepalive()
         if self._teleop is not None:
             try:
                 self._teleop.shutdown()
@@ -121,6 +138,13 @@ class RpiBackend(Backend):
             raise RuntimeError("cannot toggle OAK-D while teleop is active")
 
         on = bool(on)
+
+        # An explicit enable/disable cancels any pending auto power-down and
+        # hands power ownership to the caller (no auto-shutdown). start_capture
+        # re-claims auto-ownership after its own enable call.
+        self._cancel_oakd_keepalive()
+        self._oakd_auto_enabled = False
+
         if on == self._enable_oakd and (on == self.is_oakd_initialized):
             return  # already in the requested state
 
@@ -141,6 +165,36 @@ class RpiBackend(Backend):
                 self._oakd = None
             logger.info("OAK-D disabled via UI")
 
+    # ── OAK-D keep-alive (auto-power-down after a grace period) ────────────────
+
+    def _cancel_oakd_keepalive(self) -> None:
+        """Cancel a pending auto-power-down, if any."""
+        task = self._oakd_keepalive_task
+        self._oakd_keepalive_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    def _schedule_oakd_keepalive(self) -> None:
+        """Arm the auto-power-down timer (replaces any existing one)."""
+        import asyncio
+        self._cancel_oakd_keepalive()
+        self._oakd_keepalive_task = asyncio.create_task(self._oakd_keepalive_powerdown())
+
+    async def _oakd_keepalive_powerdown(self) -> None:
+        """Power the OAK-D down once the keep-alive window elapses, unless a new
+        capture/teleop session claimed it or the user took ownership meanwhile."""
+        import asyncio
+        try:
+            await asyncio.sleep(self._oakd_keepalive_s)
+        except asyncio.CancelledError:
+            return
+        # Clear our own ref first so set_oakd_enabled() below is a no-op cancel.
+        self._oakd_keepalive_task = None
+        if self._capturing or self.is_teleop_active or not self._oakd_auto_enabled:
+            return
+        logger.info("OAK-D keep-alive expired — powering down")
+        await self.set_oakd_enabled(False)
+
     # ── Teleop mode (mutually exclusive with recording) ───────────────────────
 
     async def start_teleop(self) -> None:
@@ -149,6 +203,11 @@ class RpiBackend(Backend):
         if self._teleop is not None and self._teleop.is_running:
             logger.info("teleop already running")
             return
+
+        # Teleop takes over the OAK — cancel any pending auto-power-down and
+        # drop ownership so the keep-alive timer never fires into teleop.
+        self._cancel_oakd_keepalive()
+        self._oakd_auto_enabled = False
 
         # Release the OAK from recording-mode OakdCapture
         if self._oakd is not None:
@@ -272,13 +331,29 @@ class RpiBackend(Backend):
         if self._capturing:
             raise RuntimeError("Already capturing")
 
+        import asyncio
+        loop = asyncio.get_event_loop()
+
+        # A new capture cancels any pending OAK-D keep-alive power-down.
+        self._cancel_oakd_keepalive()
+
         # Auto-connect the OAK-D if it's currently off — recording without
         # depth/IMU is rarely what the user wants, and this matches the UI
         # convention that toggling on/off is the "intent" flag. Errors during
         # init are logged inside _init_oakd and leave _oakd=None; the rest
-        # of start_capture handles that gracefully.
+        # of start_capture handles that gracefully. We then own its power and
+        # will auto-power-down after the keep-alive window once capture stops.
         if not self.is_oakd_initialized:
             await self.set_oakd_enabled(True)
+            self._oakd_auto_enabled = True
+
+        # Defer the recording clock until the OAK-D is producing valid frames
+        # (autoexposure + depth converged), so t=0 lands on good data instead
+        # of cold-boot warmup. No-op/fast if the OAK-D is already warm.
+        if self._oakd and self._oakd.is_initialized:
+            await loop.run_in_executor(
+                None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
+            )
 
         self._capture_session_dir = session_dir
 
@@ -326,6 +401,13 @@ class RpiBackend(Backend):
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
+
+        # If the daemon auto-enabled the OAK-D for this capture, keep it warm
+        # for the grace period so a back-to-back recording starts instantly,
+        # then power it down to save battery. A user-enabled OAK-D (auto flag
+        # cleared) is left on for live view.
+        if self._oakd_auto_enabled and self.is_oakd_initialized:
+            self._schedule_oakd_keepalive()
 
         duration = round(duration_ms / 1000.0, 2)
 

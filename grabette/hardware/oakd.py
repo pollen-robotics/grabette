@@ -333,6 +333,32 @@ class OakdCapture:
 
     # ------------------------------------------------------ recording on/off
 
+    def wait_until_ready(
+        self, timeout: float = 5.0, min_depth_coverage: float = 0.05,
+    ) -> bool:
+        """Block until the OAK-D is producing valid frames, or until timeout.
+
+        "Valid" means the IMU is streaming AND the depth map has converged
+        past cold-boot warmup (more than `min_depth_coverage` of pixels are
+        non-zero). The first frames after init_device() are autoexposure /
+        stereo warmup and are unusable for SLAM, so callers gate the recording
+        clock on this.
+
+        Returns True if ready within the timeout, False on timeout (the caller
+        proceeds anyway — a late-but-recording capture beats a hung one).
+        """
+        if not self._initialized:
+            return False
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            depth = self._latest_depth
+            if self._latest_accel is not None and depth is not None:
+                if float((depth > 0).mean()) >= min_depth_coverage:
+                    return True
+            time.sleep(0.02)
+        logger.warning("OAK-D not ready after %.1fs — starting capture anyway", timeout)
+        return False
+
     def start_recording(self, output_dir: Path) -> None:
         if not self._initialized:
             raise RuntimeError("OakdCapture not initialized. Call init_device() first.")

@@ -117,9 +117,10 @@ class ButtonListener:
     # -- Capture actions (scheduled on the async event loop) --
 
     def _do_start_capture(self) -> None:
-        # Indicate "request received" immediately — LED ON while the start
-        # coroutine runs (takes a couple seconds for SLAM init etc.).
-        self._button.led_on()
+        # Blink while the start coroutine runs — it may spend several seconds
+        # warming up the OAK-D before the recording clock starts. Go solid only
+        # when start_capture returns, i.e. recording is genuinely live.
+        self._button.led_blink()
         episode_id = self._session_manager.create_episode()
         episode_dir = self._session_manager.episode_dir(episode_id)
 
@@ -127,7 +128,8 @@ class ButtonListener:
             self._backend.start_capture(episode_dir), self._loop,
         )
         try:
-            future.result(timeout=10.0)
+            future.result(timeout=20.0)
+            self._button.led_on()
             logger.info("Button capture started: %s", episode_id)
         except Exception:
             logger.exception("Button start_capture failed")

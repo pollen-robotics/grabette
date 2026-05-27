@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     # OAK-D SR — default OFF to save battery. Toggle from the UI to enable.
     enable_oakd: bool = False
+    # After a capture that auto-enabled the OAK-D, keep it warm this many
+    # seconds before powering down — lets back-to-back recordings start
+    # instantly instead of paying the cold-boot warmup each time.
+    oakd_keepalive_s: float = 30.0
 
     # UI
     ui_enabled: bool = True

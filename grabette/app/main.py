@@ -39,6 +39,7 @@ def _create_backend():
         return RpiBackend(
             enable_angle=settings.angle_sensors,
             enable_oakd=settings.enable_oakd,
+            oakd_keepalive_s=settings.oakd_keepalive_s,
         )
     else:  # auto
         try:
@@ -48,6 +49,7 @@ def _create_backend():
             return RpiBackend(
                 enable_angle=settings.angle_sensors,
                 enable_oakd=settings.enable_oakd,
+                oakd_keepalive_s=settings.oakd_keepalive_s,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend
