@@ -462,8 +462,20 @@ class OakdCapture:
     # ---------------------------------------------------------------- writers
 
     def _writer_loop_video(self, q, name: str, fp_attr: str, ts_buffer: list[dict]) -> None:
-        """Always pull from queue. Append to .h264 file only when recording."""
+        """Always pull from queue. Append to .h264 file only when recording.
+
+        Recording is gated to begin on the first I-frame: the warm pipeline means
+        start_recording() usually lands mid-GOP, and ffmpeg's mux drops the leading
+        inter-frames before the first IDR as undecodable — which would leave the
+        mp4 shorter than its timestamps and misaligned with depth. Starting the
+        .h264 (and its timestamps) on a keyframe keeps mp4 frame count == timestamps.
+        """
+        import depthai as dai
+        IFRAME = dai.EncodedFrame.FrameType.I
         n = 0
+        was_recording = False
+        seen_keyframe = False
+        skipped = 0
         while True:
             try:
                 if not q.has():
@@ -477,9 +489,28 @@ class OakdCapture:
             if pkt is None:
                 continue
 
+            # Reset the keyframe gate on each recording-start edge.
+            recording = self._recording
+            if recording and not was_recording:
+                seen_keyframe = False
+                skipped = 0
+            was_recording = recording
+
             # Always drain, but only record if recording.
-            if not self._recording:
+            if not recording:
                 continue
+
+            # Wait for the first I-frame before writing anything. Safety net: if
+            # no keyframe shows within ~2 GOPs (e.g. getFrameType() unreliable),
+            # start anyway — an mp4 with some leading loss beats recording nothing.
+            if not seen_keyframe:
+                if pkt.getFrameType() != IFRAME and skipped < 2 * self.keyframe_every:
+                    skipped += 1
+                    continue
+                seen_keyframe = True
+                if skipped:
+                    logger.info("oakd %s: skipped %d pre-keyframe packet(s) at record start",
+                                name, skipped)
 
             host_ms = self.sync.get_timestamp_ms()
             seq = pkt.getSequenceNum()

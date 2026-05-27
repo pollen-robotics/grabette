@@ -140,6 +140,11 @@ class ButtonListener:
             logger.warning("Button stop ignored — not capturing")
             return
 
+        # Acknowledge the press immediately: capture stops at once, but
+        # stop_capture then spends a few seconds muxing the mp4s. Blink to
+        # show "saving" instead of leaving the LED solid (looks like it's
+        # still recording), then go off when the save completes.
+        self._button.led_blink()
         future = asyncio.run_coroutine_threadsafe(
             self._backend.stop_capture(), self._loop,
         )
