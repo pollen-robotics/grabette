@@ -51,6 +51,10 @@ class RpiBackend(Backend):
         self._oakd_auto_enabled = False
         # Pending "power the OAK-D down after the keep-alive window" timer.
         self._oakd_keepalive_task = None
+        # Set when stop_capture defers hardware re-init out of the stop path;
+        # start_capture then lazily re-inits the camera/angle (overlapped with
+        # the OAK-D warmup) so re-init never delays the LED/stop.
+        self._needs_reinit = False
         # Teleop mode (mutually exclusive with the recording-mode OakdCapture).
         # When teleop is active, _oakd is shut down and _teleop owns the OAK.
         self._teleop = None
@@ -347,6 +351,11 @@ class RpiBackend(Backend):
             await self.set_oakd_enabled(True)
             self._oakd_auto_enabled = True
 
+        # Safety net: the previous stop_capture schedules the camera re-init to
+        # run during idle (see stop_capture). If a restart beats it, do it now.
+        if self._needs_reinit:
+            self._reinit_hardware()
+
         # Defer the recording clock until the OAK-D is producing valid frames
         # (autoexposure + depth converged), so t=0 lands on good data instead
         # of cold-boot warmup. No-op/fast if the OAK-D is already warm.
@@ -394,10 +403,20 @@ class RpiBackend(Backend):
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
-        oakd_stats = None
+        # Finalize OAK and RPi camera concurrently. Both flip their "recording"
+        # flag immediately (capture stops at once) and then spend ~1-2s muxing
+        # H.264 → mp4. Running the OAK finalize in an executor while the camera
+        # finalize runs here overlaps the muxes (the OAK also muxes left/right
+        # in parallel internally), cutting the stop/save time to ~the single
+        # longest mux. Angle is already stopped above, so the "angle must stop
+        # before the camera mux" ordering still holds.
+        import asyncio
+        loop = asyncio.get_event_loop()
+        oakd_fut = None
         if self._oakd and self._oakd.is_recording:
-            oakd_stats = self._oakd.stop_recording()
+            oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         frame_timestamps = self._camera.stop()
+        oakd_stats = await oakd_fut if oakd_fut is not None else None
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
@@ -456,16 +475,33 @@ class RpiBackend(Backend):
 
         self._sync.reset()
 
-        # Re-initialize hardware for next capture
+        # Defer hardware re-init OUT of the stop path: re-creating the picamera2
+        # instance (~1-2s) is prep for the NEXT capture, not part of saving this
+        # one, so it must not delay the LED/stop. Schedule it to run right after
+        # this coroutine returns (LED already off). It still completes during
+        # idle — keeping the RPi live preview alive for framing the next shot —
+        # and blocks the loop no longer than the old in-stop re-init did.
+        self._needs_reinit = True
+        loop.call_soon(self._reinit_hardware)
+
+        self._capture_session_dir = None
+        logger.info("RpiBackend capture stopped")
+        return status
+
+    def _reinit_hardware(self) -> None:
+        """Re-create the RPi camera (picamera2 needs a fresh instance after a
+        stop) and re-init angle sensors, readying them for the next capture.
+        Deferred out of stop_capture so it never delays the stop/save; normally
+        runs during idle (scheduled via loop.call_soon), with start_capture as a
+        fast-restart fallback. Idempotent — the flag guards against double-run."""
+        if not self._needs_reinit:
+            return
         from grabette.hardware.camera import VideoCapture
         self._camera = VideoCapture(self._sync, fps=FPS)
         self._camera.init_camera()
         if self._enable_angle:
             self._init_angle_sensors()
-
-        self._capture_session_dir = None
-        logger.info("RpiBackend capture stopped")
-        return status
+        self._needs_reinit = False
 
     def get_capture_status(self) -> CaptureStatus:
         duration = 0.0

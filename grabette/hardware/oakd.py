@@ -424,12 +424,19 @@ class OakdCapture:
             self._left_h264_fp = None
             self._right_h264_fp = None
 
-        # Mux raw .h264 → .mp4 with actual fps inferred from timestamps
-        for h264_path, ts_buffer, name in [
+        # Mux raw .h264 → .mp4 (left + right in parallel; each is an ffmpeg
+        # -c copy subprocess, so it's I/O-bound and concurrency just overlaps
+        # the two process spawns) with actual fps inferred from timestamps.
+        import concurrent.futures
+        mux_jobs = [
             (self._left_h264_path, self._left_ts, "left"),
             (self._right_h264_path, self._right_ts, "right"),
-        ]:
-            self._mux_h264_to_mp4(h264_path, ts_buffer, name)
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            futures = [ex.submit(self._mux_h264_to_mp4, p, ts, name)
+                       for p, ts, name in mux_jobs]
+            for f in futures:
+                f.result()
 
         # Sidecars
         if self._output_dir:
