@@ -347,6 +347,11 @@ class RpiBackend(Backend):
         import asyncio
         loop = asyncio.get_event_loop()
 
+        # Per-step timing — collected into a single summary line at the
+        # bottom of this function so we can attribute the cost of each
+        # phase (OAK cold init dominates by an order of magnitude).
+        t_phases: dict[str, float] = {}
+
         # A new capture cancels any pending OAK-D keep-alive power-down.
         self._cancel_oakd_keepalive()
 
@@ -356,22 +361,28 @@ class RpiBackend(Backend):
         # init are logged inside _init_oakd and leave _oakd=None; the rest
         # of start_capture handles that gracefully. We then own its power and
         # will auto-power-down after the keep-alive window once capture stops.
+        _t = time.monotonic()
         if not self.is_oakd_initialized:
             await self.set_oakd_enabled(True)
             self._oakd_auto_enabled = True
+        t_phases["oakd_enable"] = (time.monotonic() - _t) * 1000
 
         # Safety net: the previous stop_capture schedules the camera re-init to
         # run during idle (see stop_capture). If a restart beats it, do it now.
+        _t = time.monotonic()
         if self._needs_reinit:
             self._reinit_hardware()
+        t_phases["reinit_safety_net"] = (time.monotonic() - _t) * 1000
 
         # Defer the recording clock until the OAK-D is producing valid frames
         # (autoexposure + depth converged), so t=0 lands on good data instead
         # of cold-boot warmup. No-op/fast if the OAK-D is already warm.
+        _t = time.monotonic()
         if self._oakd and self._oakd.is_initialized:
             await loop.run_in_executor(
                 None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
             )
+        t_phases["oakd_wait_ready"] = (time.monotonic() - _t) * 1000
 
         self._capture_session_dir = session_dir
         # Captured here so metadata.json can record when this episode
@@ -385,18 +396,30 @@ class RpiBackend(Backend):
 
         # Start synchronized capture — all streams share the same
         # SyncManager t=0 reference (time.monotonic based).
+        _t = time.monotonic()
         self._sync.start()
         if self._angle:
             self._angle.start_capture()
         if self._oakd and self._oakd.is_initialized:
             self._oakd.start_recording(session_dir)
         self._camera.start_recording(session_dir / "raw_video.mp4")
+        t_phases["start_streams"] = (time.monotonic() - _t) * 1000
 
-        logger.info("RpiBackend capture started → %s", session_dir)
+        total = sum(t_phases.values())
+        logger.info(
+            "RpiBackend capture started → %s  [timing ms: %s  total=%.0f]",
+            session_dir,
+            " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
+            total,
+        )
 
     async def stop_capture(self) -> CaptureStatus:
         if not self._capturing:
             raise RuntimeError("Not capturing")
+
+        # Per-step timing for a one-line summary at the end. Useful for
+        # diagnosing where the LED-blinks-too-long-on-stop time goes.
+        t_phases: dict[str, float] = {}
 
         # Keep _capturing = True until ALL streams have stopped, to
         # prevent the daemon poll loop (get_state) from doing direct
@@ -409,12 +432,15 @@ class RpiBackend(Backend):
         # Stop angle BEFORE camera. camera.stop() runs ffmpeg muxing
         # which takes ~1-2s — if angle capture is still running during
         # muxing, samples extend past the video duration.
+        _t = time.monotonic()
         angle_samples = None
         angle_count = 0
         if self._angle:
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
+        t_phases["angle_stop"] = (time.monotonic() - _t) * 1000
+
         # Finalize OAK and RPi camera concurrently. Both flip their "recording"
         # flag immediately (capture stops at once) and then spend ~1-2s muxing
         # H.264 → mp4. Running the OAK finalize in an executor while the camera
@@ -424,11 +450,23 @@ class RpiBackend(Backend):
         # before the camera mux" ordering still holds.
         import asyncio
         loop = asyncio.get_event_loop()
+        # Time each branch independently so we can see which mux dominates.
+        oakd_t0 = camera_t0 = time.monotonic()
         oakd_fut = None
+        oakd_done_cb_t: list[float] = []
         if self._oakd and self._oakd.is_recording:
+            def _oakd_done(fut):
+                oakd_done_cb_t.append(time.monotonic())
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
+            oakd_fut.add_done_callback(_oakd_done)
         frame_timestamps = self._camera.stop()
+        t_phases["camera_stop"] = (time.monotonic() - camera_t0) * 1000
         oakd_stats = await oakd_fut if oakd_fut is not None else None
+        # oakd_done_cb_t[0] (if present) is when stop_recording actually
+        # finished — gives the OAK's intrinsic mux time, decoupled from
+        # the time we spent awaiting it.
+        if oakd_done_cb_t:
+            t_phases["oakd_stop"] = (oakd_done_cb_t[0] - oakd_t0) * 1000
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
@@ -460,6 +498,7 @@ class RpiBackend(Backend):
         )
 
         # Write output files
+        _t = time.monotonic()
         if self._capture_session_dir:
             # Save per-frame timestamps (sync-clock-relative ms) for frame
             # drop detection and accurate video-trajectory alignment.
@@ -492,6 +531,7 @@ class RpiBackend(Backend):
             if sync_meta:
                 meta["sync"] = sync_meta
             (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        t_phases["json_writes"] = (time.monotonic() - _t) * 1000
 
         self._sync.reset()
 
@@ -505,7 +545,12 @@ class RpiBackend(Backend):
         loop.call_soon(self._reinit_hardware)
 
         self._capture_session_dir = None
-        logger.info("RpiBackend capture stopped")
+        total = sum(t_phases.values())
+        logger.info(
+            "RpiBackend capture stopped  [timing ms: %s  total=%.0f]",
+            " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
+            total,
+        )
         return status
 
     def _reinit_hardware(self) -> None:
@@ -513,15 +558,36 @@ class RpiBackend(Backend):
         stop) and re-init angle sensors, readying them for the next capture.
         Deferred out of stop_capture so it never delays the stop/save; normally
         runs during idle (scheduled via loop.call_soon), with start_capture as a
-        fast-restart fallback. Idempotent — the flag guards against double-run."""
+        fast-restart fallback. Idempotent — the flag guards against double-run.
+
+        Per-step timing logged for diagnosis: this is a SYNC function called
+        via loop.call_soon, which means while it runs the event loop is
+        blocked — anything else awaiting the loop (e.g. sync/stop's peer
+        fan-out continuing after stop_capture returns) waits for this to
+        finish. If reinit_hardware turns out to dominate the stop-blink
+        budget we'll convert it to asyncio.to_thread.
+        """
         if not self._needs_reinit:
             return
         from grabette.hardware.camera import VideoCapture
+        t_phases: dict[str, float] = {}
+        t0 = time.monotonic()
+        _t = time.monotonic()
         self._camera = VideoCapture(self._sync, fps=FPS)
         self._camera.init_camera()
+        t_phases["camera_reinit"] = (time.monotonic() - _t) * 1000
         if self._enable_angle:
+            _t = time.monotonic()
             self._init_angle_sensors()
+            t_phases["angle_reinit"] = (time.monotonic() - _t) * 1000
         self._needs_reinit = False
+        total = (time.monotonic() - t0) * 1000
+        logger.info(
+            "_reinit_hardware completed  [timing ms: %s  total=%.0f] "
+            "(NOTE: blocks event loop while running)",
+            " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
+            total,
+        )
 
     def get_capture_status(self) -> CaptureStatus:
         duration = 0.0
