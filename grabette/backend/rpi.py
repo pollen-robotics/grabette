@@ -10,9 +10,11 @@ import json
 import logging
 import math
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from grabette.backend.base import Backend
+from grabette.config import settings
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 
 logger = logging.getLogger(__name__)
@@ -372,6 +374,9 @@ class RpiBackend(Backend):
             )
 
         self._capture_session_dir = session_dir
+        # Captured here so metadata.json can record when this episode
+        # actually began (vs the sync-scheduled T₀ in `sync.scheduled_start_utc`).
+        self._wall_clock_start = datetime.now(timezone.utc).isoformat()
 
         # Set flag BEFORE starting streams so the daemon poll loop
         # (get_state) reads from capture buffers instead of doing
@@ -475,6 +480,8 @@ class RpiBackend(Backend):
                 "angle_sample_count": status.angle_sample_count,
                 "fps": actual_fps,
                 "backend": "rpi",
+                "device_id": settings.device_id,
+                "wall_clock_start_utc": getattr(self, "_wall_clock_start", None),
             }
             if oakd_stats:
                 meta["oakd"] = oakd_stats

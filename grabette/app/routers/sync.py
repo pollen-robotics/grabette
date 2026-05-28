@@ -147,10 +147,14 @@ def _build_rig(peers: list[Peer]) -> list[dict]:
     """The full multi-device topology: this device + configured peers.
 
     Each device receives this same list so any single metadata.json can
-    reconstruct the rig. 'self' is identified by device_id at analysis time.
+    reconstruct the rig. Self is identified by matching device_id at
+    analysis time, so the self-entry MUST have a stable, unique id —
+    fall back to hostname if GRABETTE_DEVICE_ID isn't set.
     """
+    import socket
+    self_id = settings.device_id or socket.gethostname()
     rig: list[dict] = [{
-        "device_id": settings.device_id or "self",
+        "device_id": self_id,
         "url": None,  # self URL not particularly useful; left for symmetry
     }]
     for p in peers:
