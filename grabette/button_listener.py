@@ -40,6 +40,13 @@ PRESS_DEADTIME_S = 1.0
 SYNC_START_TIMEOUT_S = 20.0
 SYNC_STOP_TIMEOUT_S = 30.0
 
+# How long to keep the LED blinking after sync/start succeeds while
+# waiting for the local backend to actually start capturing (the OAK-D
+# cold init lives between T₀ and is_capturing flipping True — ~7 s on
+# grabette, ~ms on casquette). Generous ceiling — real wait is bounded
+# by the OAK init or the scheduler's T₀ wait, whichever is longer.
+RECORDING_WAIT_TIMEOUT_S = 20.0
+
 
 class ButtonListener:
     """Watches the physical button and drives sync-mode capture start/stop."""
@@ -166,28 +173,57 @@ class ButtonListener:
         preflight + fan-out + rollback logic the REST API uses. With no
         peers configured, the endpoint degrades to a single-device
         scheduled start (still goes through T₀, but no fan-out).
+
+        LED states:
+          - Blink during HTTP RPC (sync acceptance) AND during the
+            hardware bring-up window between T₀ and is_capturing flipping
+            True (~7 s cold OAK-D). The LED is intentionally NOT promoted
+            to solid until the local backend is actually capturing —
+            otherwise the user sees "recording" while OAK-D is still
+            initializing.
+          - Solid when local backend.is_capturing == True.
+          - Off on failure.
         """
-        # Blink while the request runs — preflight + fan-out + slow
-        # hardware init (OAK-D ~5-8 s) all happen between dispatch and
-        # actual recording start. Go solid only on success.
         self._button.led_blink()
         try:
             with httpx.Client(timeout=SYNC_START_TIMEOUT_S) as c:
                 r = c.post(self._sync_url("/api/sync/start"))
-            if r.status_code == 200:
-                self._button.led_on()
-                data = r.json()
-                peers = data.get("peers", []) or []
-                logger.info(
-                    "Button sync start: local=%s, %d peer(s)",
-                    data.get("local_episode_id"), len(peers),
-                )
-            else:
+            if r.status_code != 200:
                 logger.warning(
                     "Button sync start failed: HTTP %d — %s",
                     r.status_code, r.text[:300],
                 )
                 self._button.led_off()
+                return
+
+            data = r.json()
+            peers = data.get("peers", []) or []
+            logger.info(
+                "Button sync start: local=%s, %d peer(s); waiting for recording…",
+                data.get("local_episode_id"), len(peers),
+            )
+
+            # Sync RPC returned, but the local schedule hasn't fired
+            # backend.start_capture yet (T₀ + OAK-D bring-up). Keep the
+            # LED blinking until is_capturing flips True so the visual
+            # signal reflects "actually recording" rather than "sync
+            # accepted". 20 s ceiling is generous safety; real cost is
+            # ~7 s cold OAK on grabette, <100 ms on casquette.
+            deadline = time.monotonic() + RECORDING_WAIT_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if self._backend.is_capturing:
+                    self._button.led_on()
+                    logger.info("Button sync start: recording live")
+                    return
+                time.sleep(0.1)
+
+            # Timed out — log loudly but don't lie with a solid LED.
+            logger.warning(
+                "Button sync start: backend.is_capturing never flipped "
+                "True within %.1fs — leaving LED off",
+                RECORDING_WAIT_TIMEOUT_S,
+            )
+            self._button.led_off()
         except Exception:
             logger.exception("Button sync start raised")
             self._button.led_off()

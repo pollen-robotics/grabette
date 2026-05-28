@@ -545,11 +545,23 @@ class RpiBackend(Backend):
         loop.call_soon(self._reinit_hardware)
 
         self._capture_session_dir = None
-        total = sum(t_phases.values())
+        # camera_stop and oakd_stop run in PARALLEL (executor + main),
+        # so the wall-clock cost of that step is max(the two), not their
+        # sum. Surface that in the reported total so the log is honest.
+        parallel = max(
+            t_phases.get("camera_stop", 0.0),
+            t_phases.get("oakd_stop", 0.0),
+        )
+        serial = (
+            t_phases.get("angle_stop", 0.0)
+            + t_phases.get("json_writes", 0.0)
+        )
+        total = serial + parallel
         logger.info(
-            "RpiBackend capture stopped  [timing ms: %s  total=%.0f]",
+            "RpiBackend capture stopped  [timing ms: %s  total=%.0f  "
+            "(camera_stop‖oakd_stop = max %.0f)]",
             " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
-            total,
+            total, parallel,
         )
         return status
 
