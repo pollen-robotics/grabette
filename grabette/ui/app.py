@@ -392,162 +392,170 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     with gr.Blocks(title="Grabette") as demo:
         gr.Markdown("# GRABETTE")
 
-        # ── Live view ─────────────────────────────────────────────────
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=1):
-                camera_img = gr.Image(
-                    label="Camera Live View",
-                    height="25vh",
-                )
-                replay_video = gr.HTML(visible=False)
-            with gr.Column(scale=1):
-                viewer_iframe = gr.HTML(
-                    value=(
-                        '<iframe id="urdf-viewer" src="/viewer" '
-                        'style="width:100%;height:30vh;border:none;'
-                        'border-radius:8px;background:#1a1a2e;"></iframe>'
-                    ),
-                    label="3D Model",
-                )
-            with gr.Column(scale=0.5):
-                capture_box = gr.Textbox(
-                    label="Capture Status",
-                    lines=3,
-                    interactive=False,
-                )
-                toggle_btn = gr.Button("Start Capture", variant="primary")
-                capture_msg = gr.Textbox(
-                    show_label=False, interactive=False, max_lines=1,
-                )
+        with gr.Tabs():
 
-        with gr.Row():
-            with gr.Column(scale=1):
-                imu_box = gr.Markdown("## IMU Live")
-                gr.HTML(
-                    value=(
-                        '<iframe src="/charts/imu" '
-                        'style="width:100%;height:42vh;border:none;'
-                        'border-radius:8px;background:transparent;"></iframe>'
-                    ),
+            # ══════════════════════════════════════════════════════════
+            # Tab 1 — Tasks
+            # ══════════════════════════════════════════════════════════
+            with gr.TabItem("Tasks"):
+
+                # ── Live view ─────────────────────────────────────────
+                with gr.Row(equal_height=True):
+                    with gr.Column(scale=1):
+                        camera_img = gr.Image(
+                            label="Camera Live View",
+                            height="25vh",
+                        )
+                        replay_video = gr.HTML(visible=False)
+                    with gr.Column(scale=1):
+                        viewer_iframe = gr.HTML(
+                            value=(
+                                '<iframe id="urdf-viewer" src="/viewer" '
+                                'style="width:100%;height:30vh;border:none;'
+                                'border-radius:8px;background:#1a1a2e;"></iframe>'
+                            ),
+                            label="3D Model",
+                        )
+                    with gr.Column(scale=0.5):
+                        capture_box = gr.Textbox(
+                            label="Capture Status",
+                            lines=3,
+                            interactive=False,
+                        )
+                        toggle_btn = gr.Button("Start Capture", variant="primary")
+                        capture_msg = gr.Textbox(
+                            show_label=False, interactive=False, max_lines=1,
+                        )
+
+                with gr.Row():
+                    with gr.Column(scale=1):
+                        imu_box = gr.Markdown("## IMU Live")
+                        gr.HTML(
+                            value=(
+                                '<iframe src="/charts/imu" '
+                                'style="width:100%;height:42vh;border:none;'
+                                'border-radius:8px;background:transparent;"></iframe>'
+                            ),
+                        )
+                    with gr.Column(scale=1):
+                        angle_box = gr.Markdown("## Angle Sensors")
+                        gr.HTML(
+                            value=(
+                                '<iframe src="/charts/angle" '
+                                'style="width:100%;height:20vh;border:none;'
+                                'border-radius:8px;background:transparent;"></iframe>'
+                            ),
+                        )
+
+                # ── Sessions + Episodes ───────────────────────────────
+                gr.HTML("<hr style='margin:24px 0;border:none;border-top:2px solid #333;'>")
+                gr.Markdown("# Sessions")
+                with gr.Row():
+                    session_dd = gr.Dropdown(
+                        label="Select a session", interactive=True, scale=4,
+                    )
+                    refresh_btn = gr.Button("↺ Refresh", size="sm", scale=1)
+                with gr.Row():
+                    with gr.Accordion("Rename Session", open=False):
+                        rename_input = gr.Textbox(
+                            label="New name", placeholder="New name", scale=3,
+                        )
+                        rename_btn = gr.Button("Rename", variant="huggingface", size="sm")
+
+                    with gr.Accordion("New Session", open=False):
+                        new_session_name = gr.Textbox(
+                            label="Name", placeholder="e.g. Kitchen Pick & Place",
+                        )
+                        new_session_desc = gr.Textbox(
+                            label="Description", placeholder="Optional",
+                        )
+                        create_session_btn = gr.Button("Create Session", variant="primary", size="sm")
+
+                    with gr.Accordion("Delete Sessions", open=False):
+                        sessions_cbg = gr.CheckboxGroup(
+                            label="Select sessions to delete", choices=[],
+                        )
+                        delete_session_btn = gr.Button("Delete selected", variant="stop", size="sm")
+
+                gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #222;'>")
+                gr.Markdown("## Episodes")
+                episodes_table = gr.Dataframe(
+                    headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
+                    datatype=["bool", "str", "str", "number", "number", "number"],
+                    interactive=True,
+                    col_count=(6, "fixed"),
+                    show_search='filter',
                 )
-            with gr.Column(scale=1):
-                angle_box = gr.Markdown("## Angle Sensors")
-                gr.HTML(
-                    value=(
-                        '<iframe src="/charts/angle" '
-                        'style="width:100%;height:20vh;border:none;'
-                        'border-radius:8px;background:transparent;"></iframe>'
-                    ),
-                )
+                with gr.Row():
+                    replay_btn = gr.Button("▶ Replay", size="md", scale=1)
+                    with gr.Accordion("Download", open=False):
+                        dl_btn = gr.Button("Download selected", size="sm", scale=1)
+                        dl_file = gr.File(label="Download")
+                    with gr.Accordion("Move to Session", open=False):
+                        move_target_dd = gr.Dropdown(
+                            label="Move to session", interactive=True, scale=3,
+                        )
+                        move_btn = gr.Button("Move", size="sm", scale=1)
+                    with gr.Accordion("Delete", open=False):
+                        del_episode_btn = gr.Button("Delete selected", variant="stop", size="sm", scale=1)
 
-        # ── Sessions + Episodes ───────────────────────────────────────
-        gr.HTML("<hr style='margin:24px 0;border:none;border-top:2px solid #333;'>")
-        gr.Markdown("# Sessions")
-        with gr.Row():
-            session_dd = gr.Dropdown(
-                label="Select a session", interactive=True, scale=4,
-            )
-            refresh_btn = gr.Button("↺ Refresh", size="sm", scale=1)
-        with gr.Row():
-            with gr.Accordion("Rename Session", open=False):
-                rename_input = gr.Textbox(
-                    label="New name", placeholder="New name", scale=3,
-                )
-                rename_btn = gr.Button("Rename", variant= "huggingface", size="sm")
+                episode_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
-            with gr.Accordion("New Session", open=False):
-                new_session_name = gr.Textbox(
-                    label="Name", placeholder="e.g. Kitchen Pick & Place",
-                )
-                new_session_desc = gr.Textbox(
-                    label="Description", placeholder="Optional",
-                )
-                create_session_btn = gr.Button("Create Session", variant="primary", size="sm")
+                # ── Replay panel (hidden until replay starts) ─────────
+                with gr.Group(visible=False) as replay_panel:
+                    gr.Markdown("#### Episode Replay")
+                    replay_slider = gr.Slider(
+                        minimum=0, maximum=1, step=1, value=0,
+                        label="Timeline (ms)", interactive=True,
+                    )
+                    replay_time_label = gr.Textbox(
+                        value="0.0s / 0.0s", show_label=False,
+                        interactive=False, max_lines=1,
+                    )
+                    with gr.Row():
+                        replay_pause_btn = gr.Button("Pause", size="sm")
+                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
+                replay_timer = gr.Timer(0.5, active=False)
 
-            with gr.Accordion("Delete Sessions", open=False):
-                # choice in the sessions list, with checkboxes to select multiple for deletion
-                sessions_cbg = gr.CheckboxGroup(
-                    label="Select sessions to delete", choices=[],
-                )
-                delete_session_btn = gr.Button("Delete selected", variant="stop", size="sm")
+            # ══════════════════════════════════════════════════════════
+            # Tab 2 — HF Account
+            # ══════════════════════════════════════════════════════════
+            with gr.TabItem("HF Account"):
 
-        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #222;'>")
-        gr.Markdown("## Episodes")
-        episodes_table = gr.Dataframe(
-            headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
-            datatype=["bool", "str", "str", "number", "number", "number"],
-            interactive=True,
-            col_count=(6, "fixed"),
-            show_search='filter'
-        )
-        with gr.Row():
-            replay_btn = gr.Button("▶ Replay", size="md", scale=1)
-            with gr.Accordion("Download", open=False):
-                dl_btn = gr.Button("Download selected", size="sm", scale=1)
-                dl_file = gr.File(label="Download")
-            with gr.Accordion("Move to Session", open=False):
-                move_target_dd = gr.Dropdown(
-                    label="Move to session", interactive=True, scale=3,
-                )
-                move_btn = gr.Button("Move", size="sm", scale=1)
-            with gr.Accordion("Delete", open=False):
-                del_episode_btn = gr.Button("Delete selected", variant="stop", size="sm", scale=1)
+                gr.Markdown("## HuggingFace")
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=1):
+                        hf_token = gr.Textbox(
+                            label="HF Token", type="password",
+                            placeholder="hf_...", scale=2,
+                        )
+                        hf_auth_btn = gr.Button("Authenticate", size="sm", scale=1, variant="secondary")
 
-        episode_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+                    with gr.Column(scale=1):
+                        hf_repo = gr.Textbox(
+                            label="Dataset Repo ID",
+                            placeholder="username/grabette-data",
+                            scale=2,
+                        )
+                        hf_upload_btn = gr.Button("Upload Episode", size="sm", scale=1, variant="huggingface")
 
-        # ── Replay panel (hidden until replay starts) ────────────────
-        with gr.Group(visible=False) as replay_panel:
-            gr.Markdown("#### Episode Replay")
-            replay_slider = gr.Slider(
-                minimum=0, maximum=1, step=1, value=0,
-                label="Timeline (ms)", interactive=True,
-            )
-            replay_time_label = gr.Textbox(
-                value="0.0s / 0.0s", show_label=False,
-                interactive=False, max_lines=1,
-            )
-            with gr.Row():
-                replay_pause_btn = gr.Button("Pause", size="sm")
-                replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
-        replay_timer = gr.Timer(0.5, active=False)
+                with gr.Row(equal_height=False):
+                    with gr.Column(scale=1):
+                        hf_status = gr.Textbox(label="HF Status", interactive=False, max_lines=1)
+                    with gr.Column(scale=1):
+                        hf_upload_msg = gr.Textbox(
+                            label="Upload Status", interactive=False, max_lines=1,
+                        )
 
-        # ── HuggingFace ───────────────────────────────────────────────
-        gr.HTML("<hr style='margin:24px 0;border:none;border-top:2px solid #333;'>")
-        gr.Markdown("# HuggingFace")
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1):
-                hf_token = gr.Textbox(
-                    label="HF Token", type="password",
-                    placeholder="hf_...", scale=2,
-                )
-                hf_auth_btn = gr.Button("Authenticate", size="sm", scale=1, variant="secondary")
+                # ── SLAM ──────────────────────────────────────────────
+                gr.Markdown("### SLAM Processing")
+                with gr.Row():
+                    slam_btn = gr.Button("Upload & Run SLAM", variant="primary", size="sm")
+                    slam_status = gr.Textbox(
+                        label="SLAM Status", interactive=False, scale=2,
+                    )
 
-            with gr.Column(scale=1):
-                hf_repo = gr.Textbox(
-                    label="Dataset Repo ID",
-                    placeholder="username/grabette-data",
-                    scale=2,
-                )
-                hf_upload_btn = gr.Button("Upload Episode", size="sm", scale=1, variant = "huggingface")
-            
-
-        with gr.Row(equal_height=False):
-            with gr.Column(scale=1):
-                hf_status = gr.Textbox(label="HF Status", interactive=False, max_lines=1)
-            with gr.Column(scale=1):
-                hf_upload_msg = gr.Textbox(
-                    label="Upload Status", interactive=False, max_lines=1,
-                )
-
-        # ── SLAM ──────────────────────────────────────────────────────
-        gr.Markdown("### SLAM Processing")
-        with gr.Row():
-            slam_btn = gr.Button("Upload & Run SLAM", variant="primary", size="sm")
-            slam_status = gr.Textbox(
-                label="SLAM Status", interactive=False, scale=2,
-            )
-
-        # ── System bar ────────────────────────────────────────────────
+        # ── System bar (always visible) ───────────────────────────────
         system_bar = gr.Textbox(
             show_label=False, interactive=False, max_lines=1,
         )
