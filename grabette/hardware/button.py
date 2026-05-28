@@ -15,12 +15,15 @@ boards). Defaults below match V2.
 
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
 
 import gpiod
 from gpiod.line import Bias, Direction, Value
+
+logger = logging.getLogger(__name__)
 
 
 class LedButton:
@@ -82,14 +85,46 @@ class LedButton:
         self._led_request.set_value(self._led_pin, Value.INACTIVE)
 
     def led_blink(self, interval: float = 0.3) -> None:
+        """Start the LED blinking at the given interval (seconds per state).
+
+        Diagnostic: the thread records each tick's wall time and logs a
+        summary on exit (called when led_on / led_off sets _blink_stop).
+        Lets us spot stalls — if a single state is held much longer than
+        `interval`, the thread was preempted or wedged.
+        """
+        # If a previous blink thread is still alive, stop it first.
+        # Otherwise we'd have two threads racing on the same GPIO.
+        if self._blink_thread is not None and self._blink_thread.is_alive():
+            self._blink_stop.set()
+            self._blink_thread.join(timeout=interval * 2)
         self._blink_stop.clear()
+
+        log = logger  # capture in closure
 
         def _blink() -> None:
             state = Value.INACTIVE
+            ticks = 0
+            t_start = time.monotonic()
+            t_prev = t_start
+            longest_gap = 0.0
             while not self._blink_stop.is_set():
                 self._led_request.set_value(self._led_pin, state)
                 state = Value.ACTIVE if state == Value.INACTIVE else Value.INACTIVE
                 time.sleep(interval)
+                now = time.monotonic()
+                gap = now - t_prev
+                if gap > longest_gap:
+                    longest_gap = gap
+                t_prev = now
+                ticks += 1
+            elapsed_ms = (time.monotonic() - t_start) * 1000
+            expected_ticks = max(1, int(elapsed_ms / (interval * 1000)))
+            log.info(
+                "led_blink: %d ticks in %.0fms (expected ~%d, "
+                "longest_gap=%.0fms, interval=%.0fms)",
+                ticks, elapsed_ms, expected_ticks,
+                longest_gap * 1000, interval * 1000,
+            )
 
         self._blink_thread = threading.Thread(target=_blink, daemon=True)
         self._blink_thread.start()
