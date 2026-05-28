@@ -36,13 +36,21 @@ def _create_backend():
     elif settings.backend == "rpi":
         from grabette.backend.rpi import RpiBackend
         logger.info("Using RpiBackend (forced by config)")
-        return RpiBackend(enable_angle=settings.angle_sensors)
+        return RpiBackend(
+            enable_angle=settings.angle_sensors,
+            enable_oakd=settings.enable_oakd,
+            oakd_keepalive_s=settings.oakd_keepalive_s,
+        )
     else:  # auto
         try:
             from grabette.backend.rpi import RpiBackend
             import picamera2  # noqa: F401
             logger.info("RPi hardware detected, using RpiBackend")
-            return RpiBackend(enable_angle=settings.angle_sensors)
+            return RpiBackend(
+                enable_angle=settings.angle_sensors,
+                enable_oakd=settings.enable_oakd,
+                oakd_keepalive_s=settings.oakd_keepalive_s,
+            )
         except ImportError:
             from grabette.backend.mock import MockBackend
             logger.info("No RPi hardware, using MockBackend")
@@ -116,8 +124,10 @@ def create_app() -> FastAPI:
         )
 
     from grabette.app.routers.charts import router as charts_router
+    from grabette.app.routers.oakd import router as oakd_router
     from grabette.app.routers.replay import router as replay_router
     from grabette.app.routers.viewer import router as viewer_router
+    from grabette.app.routers.teleop import router as teleop_router
 
     app.include_router(daemon_router)
     app.include_router(state_router)
@@ -128,6 +138,8 @@ def create_app() -> FastAPI:
     app.include_router(viewer_router)
     app.include_router(charts_router)
     app.include_router(replay_router)
+    app.include_router(teleop_router)
+    app.include_router(oakd_router)
 
     # Serve URDF model + STL meshes as static files
     _urdf_dir = Path(__file__).resolve().parent.parent.parent / "urdf"

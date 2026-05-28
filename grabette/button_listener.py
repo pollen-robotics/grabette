@@ -59,68 +59,68 @@ class ButtonListener:
         logger.info("Button listener stopped")
 
     def _run(self) -> None:
-        """Main loop: wait for press → start capture → wait for press → stop."""
+        """Main loop: each button press dispatches by current daemon mode.
+
+        - Teleop active : press toggles backend.is_teleop_sending
+        - Capturing     : press stops the capture
+        - Idle          : press starts a capture
+        """
         btn = self._button
         try:
             btn.led_off()
             while not self._stop_event.is_set():
-                self._wait_for_start()
+                self._wait_for_press()
                 if self._stop_event.is_set():
                     break
-
-                self._do_start_capture()
-                if self._stop_event.is_set():
-                    break
-
-                self._wait_for_stop()
-                if self._stop_event.is_set():
-                    break
-
-                self._do_stop_capture()
+                self._on_press()
         except Exception:
             logger.exception("Button listener error")
         finally:
             if btn is not None:
                 btn.led_off()
 
-    # -- Blocking waits (run in the button thread) --
+    # -- Blocking wait (runs in the button thread) --
 
-    def _wait_for_start(self) -> None:
-        """Wait for button press to start capture."""
+    def _wait_for_press(self) -> None:
+        """Wait for one button press (press → release + debounce)."""
         btn = self._button
-        # Poll with stop_event check so we can exit cleanly
-        # Wait for press-down
         while not self._stop_event.is_set():
             if btn.is_pressed():
-                btn.led_on()
-                logger.info("Button pressed — starting capture")
                 # Wait for release with debounce
-                while btn.is_pressed() and not self._stop_event.is_set():
-                    self._stop_event.wait(0.01)
-                self._stop_event.wait(0.05)  # debounce
-                return
-            self._stop_event.wait(0.01)
-
-    def _wait_for_stop(self) -> None:
-        """Wait for button press to stop capture."""
-        btn = self._button
-        while not self._stop_event.is_set():
-            if btn.is_pressed():
-                btn.led_off()
-                logger.info("Button pressed — stopping capture")
                 while btn.is_pressed() and not self._stop_event.is_set():
                     self._stop_event.wait(0.01)
                 self._stop_event.wait(0.05)
                 return
             self._stop_event.wait(0.01)
 
+    # -- Press dispatch --
+
+    def _on_press(self) -> None:
+        """Decide what a button press means given the current daemon mode."""
+        if self._backend.is_teleop_active:
+            self._toggle_teleop_send()
+        elif self._backend.is_capturing:
+            self._do_stop_capture()
+        else:
+            self._do_start_capture()
+
+    def _toggle_teleop_send(self) -> None:
+        new_state = not self._backend.is_teleop_sending
+        self._backend.set_teleop_send(new_state)
+        if new_state:
+            self._button.led_on()
+            logger.info("Button — teleop sending ON")
+        else:
+            self._button.led_off()
+            logger.info("Button — teleop sending OFF (reposition)")
+
     # -- Capture actions (scheduled on the async event loop) --
 
     def _do_start_capture(self) -> None:
-        if self._backend.is_capturing:
-            logger.warning("Button start ignored — already capturing")
-            return
-
+        # Blink while the start coroutine runs — it may spend several seconds
+        # warming up the OAK-D before the recording clock starts. Go solid only
+        # when start_capture returns, i.e. recording is genuinely live.
+        self._button.led_blink()
         episode_id = self._session_manager.create_episode()
         episode_dir = self._session_manager.episode_dir(episode_id)
 
@@ -128,7 +128,7 @@ class ButtonListener:
             self._backend.start_capture(episode_dir), self._loop,
         )
         try:
-            future.result(timeout=10.0)
+            future.result(timeout=20.0)
             self._button.led_on()
             logger.info("Button capture started: %s", episode_id)
         except Exception:
@@ -140,6 +140,11 @@ class ButtonListener:
             logger.warning("Button stop ignored — not capturing")
             return
 
+        # Acknowledge the press immediately: capture stops at once, but
+        # stop_capture then spends a few seconds muxing the mp4s. Blink to
+        # show "saving" instead of leaving the LED solid (looks like it's
+        # still recording), then go off when the save completes.
+        self._button.led_blink()
         future = asyncio.run_coroutine_threadsafe(
             self._backend.stop_capture(), self._loop,
         )

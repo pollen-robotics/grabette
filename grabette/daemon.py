@@ -113,10 +113,18 @@ class Daemon:
         await self.start()
 
     async def _poll_loop(self) -> None:
-        """Poll backend at ~50Hz and push samples into the ring buffer."""
+        """Poll backend at ~50Hz and push samples into the ring buffer.
+
+        backend.get_state() does blocking I2C reads on the angle sensor when
+        the daemon is idle (not capturing). Running it directly on the event
+        loop blocks every other async task — including the teleop WS stream,
+        UI HTTP responses, and any router endpoint — for ~5ms every 20ms.
+        We hand it off to the default thread pool so the loop stays free.
+        """
+        loop = asyncio.get_running_loop()
         while True:
             try:
-                state = self.backend.get_state()
+                state = await loop.run_in_executor(None, self.backend.get_state)
                 self.sample_ring.push_state(state)
             except Exception:
                 logger.debug("Poll loop sample error", exc_info=True)
