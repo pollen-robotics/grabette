@@ -75,7 +75,10 @@ async def lifespan(app: FastAPI):
             from grabette.button_listener import ButtonListener
             from grabette.app.routers.sessions import get_session_manager
 
-            _button_listener = ButtonListener(backend, get_session_manager())
+            _button_listener = ButtonListener(
+                backend, get_session_manager(),
+                daemon_port=settings.port,
+            )
             _button_listener.start(asyncio.get_running_loop())
         except Exception as e:
             logger.debug("Button listener not started: %s", e)

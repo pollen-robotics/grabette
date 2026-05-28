@@ -1,10 +1,14 @@
 """Background button listener for physical start/stop capture control.
 
-Runs in a daemon thread, polls the Grove LED Button, and triggers
-capture start/stop through the same code path as the REST API.
+Runs in a daemon thread, polls the Grove LED Button, and dispatches
+multi-device sync start/stop by HTTP-looping back through the local
+/api/sync endpoints. Going through the sync orchestrator means a single
+button press fans out to all configured peers with NTP-precision T0
+scheduling, and degrades to local-only capture when no peers are
+configured — same code path either way.
 
 LED feedback:
-  - Blink: daemon starting / sensors initializing
+  - Blink: daemon starting / sensors initializing / recording-being-saved
   - Off:   idle, ready for capture
   - Solid: recording in progress
 """
@@ -14,21 +18,47 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from pathlib import Path
+import time
+
+import httpx
 
 logger = logging.getLogger(__name__)
 
 
-class ButtonListener:
-    """Watches the physical button and drives capture start/stop."""
+# How long to ignore subsequent button presses after a press is
+# dispatched. Two purposes: (1) bouncy button — the in-loop debounce
+# already covers ms-scale bounce, but slower repeated taps could still
+# fire twice. (2) Cross-device race — when two grabettes' buttons are
+# pressed within ~1 s, both fan out sync/start concurrently. The
+# server-side 409 guard catches the conflict, but the local deadtime
+# prevents this device from also re-triggering during the race window.
+PRESS_DEADTIME_S = 1.0
 
-    def __init__(self, backend, session_manager) -> None:
+# Timeouts for the loopback HTTP calls. Start fans out to peers and
+# does preflight (timedatectl on each peer ~500 ms) — give it room.
+# Stop on grabette can include OAK-D + ffmpeg teardown (5-10 s).
+SYNC_START_TIMEOUT_S = 20.0
+SYNC_STOP_TIMEOUT_S = 30.0
+
+
+class ButtonListener:
+    """Watches the physical button and drives sync-mode capture start/stop."""
+
+    def __init__(
+        self, backend, session_manager,
+        daemon_port: int = 8000,
+    ) -> None:
         self._backend = backend
         self._session_manager = session_manager
+        self._daemon_port = daemon_port
         self._button = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        # Monotonic timestamp of the most recent dispatched press
+        # (regardless of success/failure). PRESS_DEADTIME_S after this
+        # we accept the next press.
+        self._last_press_t: float = 0.0
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start listening. Must be called from the async event loop thread."""
@@ -97,12 +127,22 @@ class ButtonListener:
 
     def _on_press(self) -> None:
         """Decide what a button press means given the current daemon mode."""
+        # Deadtime gate: ignore presses too soon after the last one.
+        now = time.monotonic()
+        if now - self._last_press_t < PRESS_DEADTIME_S:
+            logger.debug(
+                "Button press ignored (within %.1f s deadtime)",
+                PRESS_DEADTIME_S,
+            )
+            return
+        self._last_press_t = now
+
         if self._backend.is_teleop_active:
             self._toggle_teleop_send()
         elif self._backend.is_capturing:
-            self._do_stop_capture()
+            self._do_sync_stop()
         else:
-            self._do_start_capture()
+            self._do_sync_start()
 
     def _toggle_teleop_send(self) -> None:
         new_state = not self._backend.is_teleop_sending
@@ -114,47 +154,73 @@ class ButtonListener:
             self._button.led_off()
             logger.info("Button — teleop sending OFF (reposition)")
 
-    # -- Capture actions (scheduled on the async event loop) --
+    # -- Capture actions (HTTP loopback to local /api/sync/*) --
 
-    def _do_start_capture(self) -> None:
-        # Blink while the start coroutine runs — it may spend several seconds
-        # warming up the OAK-D before the recording clock starts. Go solid only
-        # when start_capture returns, i.e. recording is genuinely live.
+    def _sync_url(self, path: str) -> str:
+        return f"http://localhost:{self._daemon_port}{path}"
+
+    def _do_sync_start(self) -> None:
+        """Start a multi-device sync episode via the local /api/sync/start.
+
+        Going through the orchestrator means the same scheduling +
+        preflight + fan-out + rollback logic the REST API uses. With no
+        peers configured, the endpoint degrades to a single-device
+        scheduled start (still goes through T₀, but no fan-out).
+        """
+        # Blink while the request runs — preflight + fan-out + slow
+        # hardware init (OAK-D ~5-8 s) all happen between dispatch and
+        # actual recording start. Go solid only on success.
         self._button.led_blink()
-        episode_id = self._session_manager.create_episode()
-        episode_dir = self._session_manager.episode_dir(episode_id)
-
-        future = asyncio.run_coroutine_threadsafe(
-            self._backend.start_capture(episode_dir), self._loop,
-        )
         try:
-            future.result(timeout=20.0)
-            self._button.led_on()
-            logger.info("Button capture started: %s", episode_id)
+            with httpx.Client(timeout=SYNC_START_TIMEOUT_S) as c:
+                r = c.post(self._sync_url("/api/sync/start"))
+            if r.status_code == 200:
+                self._button.led_on()
+                data = r.json()
+                peers = data.get("peers", []) or []
+                logger.info(
+                    "Button sync start: local=%s, %d peer(s)",
+                    data.get("local_episode_id"), len(peers),
+                )
+            else:
+                logger.warning(
+                    "Button sync start failed: HTTP %d — %s",
+                    r.status_code, r.text[:300],
+                )
+                self._button.led_off()
         except Exception:
-            logger.exception("Button start_capture failed")
+            logger.exception("Button sync start raised")
             self._button.led_off()
 
-    def _do_stop_capture(self) -> None:
-        if not self._backend.is_capturing:
-            logger.warning("Button stop ignored — not capturing")
-            return
+    def _do_sync_stop(self) -> None:
+        """Stop the multi-device sync episode via /api/sync/stop.
 
-        # Acknowledge the press immediately: capture stops at once, but
-        # stop_capture then spends a few seconds muxing the mp4s. Blink to
-        # show "saving" instead of leaving the LED solid (looks like it's
-        # still recording), then go off when the save completes.
+        Mirrors _do_sync_start. The orchestrator will stop the local
+        scheduler AND fan out /api/episodes/stop to all configured
+        peers, even if our own state is somehow already idle.
+        """
+        # Blink to show "saving" — stop_capture spends seconds muxing
+        # the mp4s and tearing down OAK-D.
         self._button.led_blink()
-        future = asyncio.run_coroutine_threadsafe(
-            self._backend.stop_capture(), self._loop,
-        )
         try:
-            status = future.result(timeout=30.0)
+            with httpx.Client(timeout=SYNC_STOP_TIMEOUT_S) as c:
+                r = c.post(self._sync_url("/api/sync/stop"))
             self._button.led_off()
-            logger.info(
-                "Button capture stopped: %.1fs, %d frames",
-                status.duration_seconds, status.frame_count,
-            )
+            if r.status_code == 200:
+                data = r.json()
+                local = data.get("local") or {}
+                peers = data.get("peers", []) or []
+                logger.info(
+                    "Button sync stop: local=%s, %d peer(s)",
+                    local.get("status") or
+                    f"{local.get('duration_seconds')}s {local.get('frame_count')}fr",
+                    len(peers),
+                )
+            else:
+                logger.warning(
+                    "Button sync stop failed: HTTP %d — %s",
+                    r.status_code, r.text[:300],
+                )
         except Exception:
-            logger.exception("Button stop_capture failed")
+            logger.exception("Button sync stop raised")
             self._button.led_off()
