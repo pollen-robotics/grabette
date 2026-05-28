@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from grabette.app.dependencies import get_backend
+from grabette.app.dependencies import get_backend, get_scheduler
 from grabette.backend.base import Backend
+from grabette.scheduler import CaptureState, EpisodeScheduler
 from grabette.session import SessionManager
 
 router = APIRouter(tags=["sessions"])
@@ -85,24 +88,45 @@ class MoveEpisodesRequest(BaseModel):
     target_session_id: str
 
 
+class StartCaptureRequest(BaseModel):
+    # Optional ISO-8601 UTC. If present, the capture is *scheduled* — the
+    # daemon waits until this wall-clock instant, then begins recording.
+    # Used by the sync orchestrator to start multiple devices in lockstep.
+    start_at_utc: datetime | None = None
+
+
 @router.post("/api/episodes/start")
 async def start_capture(
-    backend: Backend = Depends(get_backend),
-    sm: SessionManager = Depends(get_session_manager),
+    body: StartCaptureRequest | None = None,
+    scheduler: EpisodeScheduler = Depends(get_scheduler),
 ):
-    if backend.is_capturing:
-        raise HTTPException(status_code=409, detail="Already capturing")
-    episode_id = sm.create_episode()
-    episode_dir = sm.episode_dir(episode_id)
-    await backend.start_capture(episode_dir)
-    return {"episode_id": episode_id, "status": "capturing"}
+    start_at = body.start_at_utc if body else None
+    try:
+        episode_id = await scheduler.start(start_at_utc=start_at)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if start_at is None:
+        return {"episode_id": episode_id, "status": "capturing"}
+    return {
+        "episode_id": episode_id,
+        "status": "scheduled",
+        "start_at_utc": start_at.isoformat(),
+    }
 
 
 @router.post("/api/episodes/stop")
-async def stop_capture(backend: Backend = Depends(get_backend)):
-    if not backend.is_capturing:
-        raise HTTPException(status_code=409, detail="Not capturing")
-    status = await backend.stop_capture()
+async def stop_capture(
+    scheduler: EpisodeScheduler = Depends(get_scheduler),
+):
+    try:
+        status = await scheduler.stop()
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if status is None:
+        return {"status": "cancelled"}
     return status
 
 

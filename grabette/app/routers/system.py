@@ -3,12 +3,61 @@ from __future__ import annotations
 import asyncio
 import os
 import platform
+import re
 import socket
 import subprocess
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+
+@router.get("/time")
+async def system_time():
+    """Current wall clock + NTP sync state. Used by the sync orchestrator's
+    preflight check across multi-device episodes."""
+    out = {
+        "now_utc": datetime.now(timezone.utc).isoformat(),
+        "ntp_synchronized": None,
+        "offset_us": None,
+        "ntp_server": None,
+    }
+    show = await _run_subproc(["timedatectl", "show"])
+    if show is not None:
+        for line in show.splitlines():
+            if line.startswith("NTPSynchronized="):
+                out["ntp_synchronized"] = line.split("=", 1)[1] == "yes"
+    ts = await _run_subproc(["timedatectl", "timesync-status"])
+    if ts is not None:
+        for line in ts.splitlines():
+            line = line.strip()
+            m = re.match(r"Offset:\s*([+-]?\d+)([um]?s)", line)
+            if m:
+                n, unit = int(m.group(1)), m.group(2)
+                out["offset_us"] = (
+                    n if unit == "us"
+                    else n * 1000 if unit == "ms"
+                    else n * 1_000_000
+                )
+            if line.startswith("Server:"):
+                out["ntp_server"] = line.split(":", 1)[1].strip()
+    return out
+
+
+async def _run_subproc(cmd: list[str]) -> str | None:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=1.0)
+        if proc.returncode != 0:
+            return None
+        return out.decode(errors="replace")
+    except Exception:
+        return None
 
 
 @router.get("/info")

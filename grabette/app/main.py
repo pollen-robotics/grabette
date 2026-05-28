@@ -96,6 +96,7 @@ def create_app() -> FastAPI:
     from grabette.app.routers.huggingface import router as hf_router
     from grabette.app.routers.sessions import router as sessions_router
     from grabette.app.routers.state import router as state_router
+    from grabette.app.routers.sync import router as sync_router
     from grabette.app.routers.system import router as system_router
 
     app = FastAPI(
@@ -135,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(camera_router)
     app.include_router(hf_router)
     app.include_router(system_router)
+    app.include_router(sync_router)
     app.include_router(viewer_router)
     app.include_router(charts_router)
     app.include_router(replay_router)
