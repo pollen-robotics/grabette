@@ -60,8 +60,13 @@ LEAD_MS = 500
 # 30 fps, well below where multi-device alignment would suffer noticeably.
 PREFLIGHT_OFFSET_MAX_US = 50_000
 
-# Per-peer HTTP timeouts.
+# Per-peer HTTP timeouts. Stop is bumped because hardware shutdown
+# (OAK-D pipeline teardown, ffmpeg muxing) can take 5-10 s on grabette
+# even when the local stop_capture completes correctly. The default
+# 2 s was triggering ReadTimeout on the orchestrator even though the
+# peer's recording stopped successfully.
 PEER_HTTP_TIMEOUT_S = 2.0
+PEER_HTTP_STOP_TIMEOUT_S = 15.0
 
 
 class Peer(BaseModel):
@@ -122,7 +127,7 @@ async def _peer_stop(
     try:
         r = await client.post(
             f"{peer.url}/api/episodes/stop",
-            timeout=PEER_HTTP_TIMEOUT_S,
+            timeout=PEER_HTTP_STOP_TIMEOUT_S,
         )
     except Exception as e:
         return peer, f"{type(e).__name__}: {e}"

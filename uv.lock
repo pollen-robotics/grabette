@@ -536,6 +536,7 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "uvicorn", extra = ["standard"] },
@@ -577,6 +578,7 @@ requires-dist = [
     { name = "gpiod", marker = "extra == 'rpi'", specifier = ">=2.0.0" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=5.0.0" },
     { name = "grpcio", marker = "extra == 'teleop-bridge'", specifier = ">=1.60" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'teleop-bridge'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'hf'", specifier = ">=0.20.0" },
     { name = "numpy", marker = "extra == 'teleop-bridge'" },
