@@ -140,11 +140,13 @@ class SyncStartResponse(BaseModel):
 @router.post("/start", response_model=SyncStartResponse)
 async def sync_start(scheduler: EpisodeScheduler = Depends(get_scheduler)):
     peers = _load_peers()
-    target = datetime.now(timezone.utc) + timedelta(milliseconds=LEAD_MS)
-    target_iso = target.isoformat()
 
     async with httpx.AsyncClient() as client:
         # ── Preflight (skipped if no peers) ──────────────────────────
+        # Each /api/system/time call shells out to timedatectl twice
+        # on the peer, which on a Pi takes a few hundred ms. We must do
+        # this BEFORE picking T₀ or T₀ will already be in the past by
+        # the time the peer receives it.
         if peers:
             results = await asyncio.gather(
                 *(_preflight_one(client, p) for p in peers)
@@ -162,6 +164,13 @@ async def sync_start(scheduler: EpisodeScheduler = Depends(get_scheduler)):
                         ],
                     },
                 )
+
+        # ── Pick T₀ AFTER preflight (before fan-out) ────────────────
+        # Only fan-out RTT separates this from the peer receiving the
+        # scheduled-start request — typically ~100 ms on LAN.
+        target = datetime.now(timezone.utc) + timedelta(milliseconds=LEAD_MS)
+        target_iso = target.isoformat()
+        logger.info("sync/start: T0 = %s (lead %d ms)", target_iso, LEAD_MS)
 
         # ── Fan-out start to all peers ──────────────────────────────
         peer_results: list[tuple[Peer, dict | None, str | None]] = []
