@@ -32,14 +32,13 @@ async def system_time():
     if ts is not None:
         for line in ts.splitlines():
             line = line.strip()
-            m = re.match(r"Offset:\s*([+-]?\d+)([um]?s)", line)
+            # Offset can be reported as "+835us", "+2.588ms", "-1.2s", etc.
+            # We always normalise to integer microseconds.
+            m = re.match(r"Offset:\s*([+-]?\d+(?:\.\d+)?)([um]?s)", line)
             if m:
-                n, unit = int(m.group(1)), m.group(2)
-                out["offset_us"] = (
-                    n if unit == "us"
-                    else n * 1000 if unit == "ms"
-                    else n * 1_000_000
-                )
+                n, unit = float(m.group(1)), m.group(2)
+                factor = {"us": 1, "ms": 1000, "s": 1_000_000}[unit]
+                out["offset_us"] = int(round(n * factor))
             if line.startswith("Server:"):
                 out["ntp_server"] = line.split(":", 1)[1].strip()
     return out
