@@ -40,5 +40,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Hotspot fallback (created when no home WiFi is available)
+    hotspot_ssid: str = "grabette"
+    hotspot_password: str = "grabette"
+    # File written by the BLE service (root) and read by the API (rasp user)
+    hotspot_credentials_file: Path = Path("/var/lib/grabette/wifi_credentials.json")
+
 
 settings = Settings()

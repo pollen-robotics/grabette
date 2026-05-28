@@ -438,21 +438,10 @@ def get_network_status() -> str:
 
 
 def _wifi_connect(ssid: str, password: str) -> str:
-    """Connect to a WiFi network using nmcli. Returns status message."""
-    try:
-        result = subprocess.run(
-            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode == 0:
-            return f"OK: Connecting to {ssid}"
-        else:
-            error = result.stderr.strip() or result.stdout.strip()
-            return f"ERROR: {error}"
-    except subprocess.TimeoutExpired:
-        return "ERROR: Connection timed out"
-    except Exception as e:
-        return f"ERROR: {e}"
+    """Connect to a WiFi network and persist credentials for grabette-screen."""
+    from grabette.config import settings
+    from grabette.wifi import wifi_connect
+    return wifi_connect(ssid, password, settings.hotspot_credentials_file)
 
 
 def _wifi_reset() -> str:

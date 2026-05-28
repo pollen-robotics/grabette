@@ -1,0 +1,18 @@
+[Unit]
+Description=Grabette - Hotspot fallback manager
+# Start after NetworkManager is up but don't require a network connection
+After=NetworkManager.service
+Requires=NetworkManager.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rasp/Project/Repo/grabette
+ExecStart=/home/rasp/Project/Repo/grabette/.venv/bin/python -m grabette.hotspot_manager
+Restart=on-failure
+RestartSec=10
+# Root required: nmcli connection add/up needs elevated privileges
+User=root
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
