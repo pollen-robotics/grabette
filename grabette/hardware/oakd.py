@@ -333,6 +333,32 @@ class OakdCapture:
 
     # ------------------------------------------------------ recording on/off
 
+    def wait_until_ready(
+        self, timeout: float = 5.0, min_depth_coverage: float = 0.05,
+    ) -> bool:
+        """Block until the OAK-D is producing valid frames, or until timeout.
+
+        "Valid" means the IMU is streaming AND the depth map has converged
+        past cold-boot warmup (more than `min_depth_coverage` of pixels are
+        non-zero). The first frames after init_device() are autoexposure /
+        stereo warmup and are unusable for SLAM, so callers gate the recording
+        clock on this.
+
+        Returns True if ready within the timeout, False on timeout (the caller
+        proceeds anyway — a late-but-recording capture beats a hung one).
+        """
+        if not self._initialized:
+            return False
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            depth = self._latest_depth
+            if self._latest_accel is not None and depth is not None:
+                if float((depth > 0).mean()) >= min_depth_coverage:
+                    return True
+            time.sleep(0.02)
+        logger.warning("OAK-D not ready after %.1fs — starting capture anyway", timeout)
+        return False
+
     def start_recording(self, output_dir: Path) -> None:
         if not self._initialized:
             raise RuntimeError("OakdCapture not initialized. Call init_device() first.")
@@ -398,12 +424,19 @@ class OakdCapture:
             self._left_h264_fp = None
             self._right_h264_fp = None
 
-        # Mux raw .h264 → .mp4 with actual fps inferred from timestamps
-        for h264_path, ts_buffer, name in [
+        # Mux raw .h264 → .mp4 (left + right in parallel; each is an ffmpeg
+        # -c copy subprocess, so it's I/O-bound and concurrency just overlaps
+        # the two process spawns) with actual fps inferred from timestamps.
+        import concurrent.futures
+        mux_jobs = [
             (self._left_h264_path, self._left_ts, "left"),
             (self._right_h264_path, self._right_ts, "right"),
-        ]:
-            self._mux_h264_to_mp4(h264_path, ts_buffer, name)
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+            futures = [ex.submit(self._mux_h264_to_mp4, p, ts, name)
+                       for p, ts, name in mux_jobs]
+            for f in futures:
+                f.result()
 
         # Sidecars
         if self._output_dir:
@@ -436,8 +469,20 @@ class OakdCapture:
     # ---------------------------------------------------------------- writers
 
     def _writer_loop_video(self, q, name: str, fp_attr: str, ts_buffer: list[dict]) -> None:
-        """Always pull from queue. Append to .h264 file only when recording."""
+        """Always pull from queue. Append to .h264 file only when recording.
+
+        Recording is gated to begin on the first I-frame: the warm pipeline means
+        start_recording() usually lands mid-GOP, and ffmpeg's mux drops the leading
+        inter-frames before the first IDR as undecodable — which would leave the
+        mp4 shorter than its timestamps and misaligned with depth. Starting the
+        .h264 (and its timestamps) on a keyframe keeps mp4 frame count == timestamps.
+        """
+        import depthai as dai
+        IFRAME = dai.EncodedFrame.FrameType.I
         n = 0
+        was_recording = False
+        seen_keyframe = False
+        skipped = 0
         while True:
             try:
                 if not q.has():
@@ -451,9 +496,28 @@ class OakdCapture:
             if pkt is None:
                 continue
 
+            # Reset the keyframe gate on each recording-start edge.
+            recording = self._recording
+            if recording and not was_recording:
+                seen_keyframe = False
+                skipped = 0
+            was_recording = recording
+
             # Always drain, but only record if recording.
-            if not self._recording:
+            if not recording:
                 continue
+
+            # Wait for the first I-frame before writing anything. Safety net: if
+            # no keyframe shows within ~2 GOPs (e.g. getFrameType() unreliable),
+            # start anyway — an mp4 with some leading loss beats recording nothing.
+            if not seen_keyframe:
+                if pkt.getFrameType() != IFRAME and skipped < 2 * self.keyframe_every:
+                    skipped += 1
+                    continue
+                seen_keyframe = True
+                if skipped:
+                    logger.info("oakd %s: skipped %d pre-keyframe packet(s) at record start",
+                                name, skipped)
 
             host_ms = self.sync.get_timestamp_ms()
             seq = pkt.getSequenceNum()

@@ -148,6 +148,43 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return f"Error: {result['error']}", gr.update(value="Start Capture", variant="primary")
             return f"Started: {result.get('episode_id', '?')}", gr.update(value="Stop Capture", variant="stop")
 
+    def _oakd_button_update():
+        """Compute the OAK-D toggle button's appearance from current state."""
+        s = client.get_oakd_status() or {}
+        if not s.get("supported"):
+            return gr.update(
+                value="OAK-D not available",
+                variant="secondary",
+                interactive=False,
+            )
+        enabled = bool(s.get("enabled"))
+        # Greyed out while capture or teleop holds the OAK — toggling is
+        # refused server-side anyway, but the visual cue prevents user
+        # confusion.
+        state = client.get_state() or {}
+        capturing = bool(state.get("capture", {}).get("is_capturing"))
+        tstatus = client.get_teleop_status() or {}
+        teleop = bool(tstatus.get("active"))
+        busy = capturing or teleop
+        if enabled:
+            label = "OAK-D: ON" + ("  (busy)" if busy else "  — click to disable")
+            variant = "primary"
+        else:
+            label = "OAK-D: OFF" + ("  (busy)" if busy else "  — click to enable")
+            variant = "secondary"
+        return gr.update(value=label, variant=variant, interactive=not busy)
+
+    def on_toggle_oakd():
+        s = client.get_oakd_status() or {}
+        enabled = bool(s.get("enabled"))
+        result = client.set_oakd(not enabled)
+        if "error" in result:
+            logger.warning("OAK-D toggle failed: %s", result["error"])
+        return _oakd_button_update()
+
+    def poll_oakd():
+        return _oakd_button_update()
+
     def on_toggle_teleop():
         """Single-button toggle: enter teleop mode if off, exit if on.
 
@@ -521,6 +558,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     label="OAK-D Depth (0.2-3m, turbo)",
                     height="25vh",
                 )
+                oakd_btn = gr.Button("OAK-D: OFF  — click to enable", size="sm")
                 replay_video = gr.HTML(visible=False)
             with gr.Column(scale=1):
                 viewer_iframe = gr.HTML(
@@ -682,6 +720,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ).then(
             fn=refresh_sessions,
             outputs=[session_dd, episodes_table, move_target_dd, sessions_cbg],
+        ).then(
+            fn=poll_oakd,
+            outputs=oakd_btn,
         )
 
         # Teleop mode toggle is wired below, after the live-view timers
@@ -783,6 +824,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # flicker and WS-stream bursting in earlier revisions.
         teleop_timer = gr.Timer(1.0)
         teleop_timer.tick(fn=get_teleop_display, outputs=teleop_msg)
+
+        # OAK-D toggle — slow poll (3 s) since the user is the only thing
+        # that flips it, except for the auto-on-at-record path which also
+        # only needs O(seconds) responsiveness.
+        oakd_timer = gr.Timer(3.0)
+        oakd_timer.tick(fn=poll_oakd, outputs=oakd_btn)
+        oakd_btn.click(fn=on_toggle_oakd, outputs=oakd_btn)
+        demo.load(fn=poll_oakd, outputs=oakd_btn)
 
         # Teleop mode toggle (wired here so the timer references resolve).
         # When teleop is ON: capture button greyed out (mutex), and the
