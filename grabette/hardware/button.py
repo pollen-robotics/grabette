@@ -91,6 +91,21 @@ class LedButton:
         summary on exit (called when led_on / led_off sets _blink_stop).
         Lets us spot stalls — if a single state is held much longer than
         `interval`, the thread was preempted or wedged.
+
+        Known issue: during a sync_start that involves OAK-D cold init,
+        depthai's C extension holds the Python GIL across long stretches
+        (~2-3 s) while uploading the pipeline blob over USB. The blink
+        thread's time.sleep returns on schedule but it can't re-acquire
+        the GIL until depthai releases it, so the LED appears to freeze
+        on its last state for the duration of the stall (visible as
+        "blink, then ~3 s of off or on, then resume").
+        Confirmed by the diagnostic log: tick count ≈ 26 of expected ~34
+        in 10 s, longest_gap ≈ 2.8 s vs the 300 ms interval — i.e. one
+        single tick was preempted by 2.5 s.
+        The actual recording is unaffected; it's a purely cosmetic LED
+        artifact. Fixing it would require moving the LED out of Python
+        (hardware PWM via /sys/class/pwm, or a separate process); we
+        accepted the cosmetic issue and live with the stall for now.
         """
         # If a previous blink thread is still alive, stop it first.
         # Otherwise we'd have two threads racing on the same GPIO.
