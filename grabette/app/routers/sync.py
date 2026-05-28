@@ -106,12 +106,13 @@ async def _preflight_one(client: httpx.AsyncClient, peer: Peer) -> tuple[Peer, s
 
 async def _peer_start(
     client: httpx.AsyncClient, peer: Peer, target_iso: str,
+    rig: list[dict],
 ) -> tuple[Peer, dict | None, str | None]:
     """Returns (peer, body_on_success, error_on_failure)."""
     try:
         r = await client.post(
             f"{peer.url}/api/episodes/start",
-            json={"start_at_utc": target_iso},
+            json={"start_at_utc": target_iso, "peers": rig},
             timeout=PEER_HTTP_TIMEOUT_S,
         )
     except Exception as e:
@@ -142,9 +143,25 @@ class SyncStartResponse(BaseModel):
     peers: list[dict]
 
 
+def _build_rig(peers: list[Peer]) -> list[dict]:
+    """The full multi-device topology: this device + configured peers.
+
+    Each device receives this same list so any single metadata.json can
+    reconstruct the rig. 'self' is identified by device_id at analysis time.
+    """
+    rig: list[dict] = [{
+        "device_id": settings.device_id or "self",
+        "url": None,  # self URL not particularly useful; left for symmetry
+    }]
+    for p in peers:
+        rig.append({"device_id": p.device_id, "url": p.url})
+    return rig
+
+
 @router.post("/start", response_model=SyncStartResponse)
 async def sync_start(scheduler: EpisodeScheduler = Depends(get_scheduler)):
     peers = _load_peers()
+    rig = _build_rig(peers)
 
     async with httpx.AsyncClient() as client:
         # ── Preflight (skipped if no peers) ──────────────────────────
@@ -181,7 +198,7 @@ async def sync_start(scheduler: EpisodeScheduler = Depends(get_scheduler)):
         peer_results: list[tuple[Peer, dict | None, str | None]] = []
         if peers:
             peer_results = list(await asyncio.gather(
-                *(_peer_start(client, p, target_iso) for p in peers)
+                *(_peer_start(client, p, target_iso, rig) for p in peers)
             ))
 
         successes = [(p, body) for p, body, err in peer_results if err is None]
@@ -209,7 +226,9 @@ async def sync_start(scheduler: EpisodeScheduler = Depends(get_scheduler)):
 
         # ── Local schedule (after peers are committed) ──────────────
         try:
-            local_episode_id = await scheduler.start(start_at_utc=target)
+            local_episode_id = await scheduler.start(
+                start_at_utc=target, peers=rig,
+            )
         except (RuntimeError, ValueError) as e:
             # Local refused → undo everything we just told peers to do.
             if successes:

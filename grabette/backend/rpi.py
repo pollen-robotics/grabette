@@ -22,6 +22,13 @@ FPS = 46
 # How long start_capture waits for the OAK-D to produce valid (post-warmup)
 # frames before starting the recording clock. Safety fallback only — the OAK-D
 # normally becomes ready well within this.
+#
+# TODO: this is a major contributor to the start-capture latency (cold OAK
+# total ~8 s = ~3 s init + up to ~5 s here). On feature-rich scenes depth
+# converges to >5% coverage in <500 ms, so 1.5 s would be ample. Lower this
+# (and possibly min_depth_coverage in oakd.wait_until_ready) once we have
+# empirical data showing it doesn't degrade SLAM quality on cold-boot frames.
+# Data quality first, UX second — keep at 5 s until we measure.
 OAKD_READY_TIMEOUT_S = 5.0
 
 
@@ -471,6 +478,12 @@ class RpiBackend(Backend):
             }
             if oakd_stats:
                 meta["oakd"] = oakd_stats
+            # Attach sync metadata (T₀, peers, sleep skew, start cost) if
+            # the EpisodeScheduler populated it. Lets workstation analysis
+            # group multi-device episodes without an external manifest.
+            sync_meta = self.get_sync_metadata()
+            if sync_meta:
+                meta["sync"] = sync_meta
             (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
         self._sync.reset()

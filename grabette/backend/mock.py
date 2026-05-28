@@ -226,4 +226,7 @@ class MockBackend(Backend):
             "imu_hz": IMU_HZ,
             "backend": "mock",
         }
+        sync_meta = self.get_sync_metadata()
+        if sync_meta:
+            meta["sync"] = sync_meta
         (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))

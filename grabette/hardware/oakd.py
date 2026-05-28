@@ -346,6 +346,13 @@ class OakdCapture:
 
         Returns True if ready within the timeout, False on timeout (the caller
         proceeds anyway — a late-but-recording capture beats a hung one).
+
+        TODO: the 5% min_depth_coverage was set conservatively. In practice
+        textured scenes hit 5% in 1-2 frames, but feature-poor scenes (blank
+        walls, white surfaces) can stall here. Combined with the 5 s timeout
+        in the caller this is the main contributor to ~8 s cold-boot start
+        latency. Once we have data showing SLAM tolerates 2% or even no-wait
+        cold-boot frames, lower this (and OAKD_READY_TIMEOUT_S in rpi.py).
         """
         if not self._initialized:
             return False

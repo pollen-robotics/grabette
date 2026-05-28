@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Device identification (used as the 'self' entry in sync rig metadata).
+    # Set via GRABETTE_DEVICE_ID env var, e.g. "grabette-1".
+    device_id: str = ""
+
     # Multi-device sync
     # Peer list for /api/sync/{start,stop} fan-out. Format:
     #     GRABETTE_PEERS=casquette-1=http://casquette.local:8001,grabette-2=...

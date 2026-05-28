@@ -93,6 +93,12 @@ class StartCaptureRequest(BaseModel):
     # daemon waits until this wall-clock instant, then begins recording.
     # Used by the sync orchestrator to start multiple devices in lockstep.
     start_at_utc: datetime | None = None
+    # Optional rig topology for sync-driven starts. Each entry is a dict
+    # with 'device_id' (required), 'url' (optional), 'role' (optional).
+    # Stored on the backend and folded into metadata.json at stop, so
+    # workstation analysis can reconstruct multi-device episodes without
+    # any external manifest.
+    peers: list[dict] | None = None
 
 
 @router.post("/api/episodes/start")
@@ -101,8 +107,11 @@ async def start_capture(
     scheduler: EpisodeScheduler = Depends(get_scheduler),
 ):
     start_at = body.start_at_utc if body else None
+    peers = body.peers if body else None
     try:
-        episode_id = await scheduler.start(start_at_utc=start_at)
+        episode_id = await scheduler.start(
+            start_at_utc=start_at, peers=peers,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except ValueError as e:

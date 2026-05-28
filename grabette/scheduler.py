@@ -51,6 +51,11 @@ class EpisodeScheduler:
         self._scheduled_task: asyncio.Task | None = None
         self._scheduled_at_utc: datetime | None = None
         self._scheduled_episode_id: str | None = None
+        # Peer list for the current scheduled episode (populated by the
+        # /api/sync/start orchestrator). Includes self when sync-driven.
+        # Stored here so _wait_and_start can attach the full rig topology
+        # to backend.set_sync_metadata after start_capture succeeds.
+        self._scheduled_peers: list[dict] = []
         # True while backend.start_capture is in progress (past T₀, before
         # is_capturing flips). Used to distinguish SCHEDULED (safe to
         # cancel) from STARTING (must wait for start to complete).
@@ -74,8 +79,19 @@ class EpisodeScheduler:
     def scheduled_episode_id(self) -> str | None:
         return self._scheduled_episode_id
 
-    async def start(self, start_at_utc: datetime | None = None) -> str:
+    async def start(
+        self,
+        start_at_utc: datetime | None = None,
+        peers: list[dict] | None = None,
+    ) -> str:
         """Start now or schedule at start_at_utc. Returns the episode_id.
+
+        Args:
+            start_at_utc: UTC instant to start at. None = start immediately.
+            peers: full rig topology for sync-driven starts (each entry is a
+                dict with at least 'device_id', optionally 'url' and 'role').
+                Stored and attached to metadata.json at stop time. Empty /
+                None for local-only captures.
 
         Raises:
             RuntimeError if not in IDLE state (caller should map to HTTP 409).
@@ -97,10 +113,17 @@ class EpisodeScheduler:
                     f"{start_at_utc.isoformat()} (now {now.isoformat()})"
                 )
 
+        # Clear any stale sync metadata from a previous capture. The
+        # set_sync_metadata in _wait_and_start re-populates it after
+        # start_capture succeeds; this baseline reset ensures local-only
+        # captures don't accidentally inherit a previous sync episode's data.
+        self._backend.set_sync_metadata({})
+
         # Create the episode dir up front so the returned id is stable
         # regardless of the start path.
         episode_id = self._sm.create_episode()
         episode_dir = self._sm.episode_dir(episode_id)
+        self._scheduled_peers = list(peers or [])
 
         if start_at_utc is None:
             await self._backend.start_capture(episode_dir)
@@ -146,6 +169,16 @@ class EpisodeScheduler:
                 logger.info(
                     "start_capture completed (took %.0f ms)", init_ms,
                 )
+                # Attach sync metadata for stop_capture to fold into
+                # metadata.json. Per-device file is self-contained:
+                # workstation analysis can group multi-device episodes
+                # by matching scheduled_start_utc across files.
+                self._backend.set_sync_metadata({
+                    "scheduled_start_utc": target_utc.isoformat(),
+                    "sleep_end_skew_ms": round(sleep_end_skew_ms, 3),
+                    "start_capture_ms": round(init_ms, 0),
+                    "peers": list(self._scheduled_peers),
+                })
             finally:
                 self._starting = False
         except asyncio.CancelledError:
