@@ -188,7 +188,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             choices=move_choices,
             value=move_choices[0][1] if move_choices else None,
         )
-        title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
+        title = f"### Episodes for *{task_name}*" if task_name else "### Episodes"
         desc = task_description or ""
         return rows, move_dd, title, desc
 
@@ -430,21 +430,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 episodes_title = gr.Markdown("## Episodes")
                 task_desc_md = gr.Markdown("")
 
-                # Capture — compact box, pushed to the right
+                # Capture — one line, sits right under the title
                 with gr.Row():
-                    gr.HTML("")
-                    with gr.Column(scale=2, min_width=220):
-                        with gr.Group():
-                            gr.Markdown("**Capture**")
-                            capture_box = gr.Textbox(
-                                label="Capture Status", lines=2,
-                                interactive=False,
-                            )
-                            with gr.Row():
-                                toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
-                                capture_msg = gr.Textbox(
-                                    show_label=False, interactive=False, max_lines=1, scale=2,
-                                )
+                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
+                    capture_box = gr.Textbox(
+                        label="Capture Status", lines=1, max_lines=1,
+                        interactive=False, scale=3,
+                    )
+                    capture_msg = gr.Textbox(
+                        show_label=False, interactive=False, max_lines=1, scale=2,
+                    )
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
@@ -469,17 +464,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Replay panel (hidden until replay starts)
                 with gr.Group(visible=False) as replay_panel:
                     gr.Markdown("#### Replay")
+                    with gr.Row():
+                        replay_pause_btn = gr.Button("Pause", size="sm", scale=1)
+                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm", scale=1)
+                        replay_time_label = gr.Textbox(
+                            value="0.0s / 0.0s", show_label=False,
+                            interactive=False, max_lines=1, scale=3,
+                        )
                     replay_slider = gr.Slider(
                         minimum=0, maximum=1, step=1, value=0,
                         label="Timeline (ms)", interactive=True,
                     )
-                    replay_time_label = gr.Textbox(
-                        value="0.0s / 0.0s", show_label=False,
-                        interactive=False, max_lines=1,
-                    )
-                    with gr.Row():
-                        replay_pause_btn = gr.Button("Pause", size="sm")
-                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
                     with gr.Row(equal_height=True):
                         with gr.Column(scale=2):
                             replay_video = gr.HTML(value="")
