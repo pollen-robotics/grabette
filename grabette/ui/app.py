@@ -382,15 +382,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if not value:
                 continue
             parts.append(
-                f"<div style='background:#1e293b;border-radius:8px;padding:0.5rem 0.75rem;"
-                f"border:1px solid #334155;flex:1;min-width:110px;'>"
-                f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.08em;"
-                f"color:#64748b;margin-bottom:0.2rem;'>{label}</div>"
-                f"<div style='font-size:0.9rem;font-weight:600;color:#e2e8f0;'>{value}</div>"
+                f"<div style='background:#1e293b;border-radius:8px;padding:0.6rem 0.9rem;"
+                f"border:1px solid #334155;'>"
+                f"<div style='font-size:0.7rem;text-transform:uppercase;letter-spacing:0.08em;"
+                f"color:#94a3b8;margin-bottom:0.25rem;'>{label}</div>"
+                f"<div style='font-size:0.95rem;font-weight:600;color:#f1f5f9;'>{value}</div>"
                 f"</div>"
             )
         return (
-            "<div style='display:flex;gap:0.75rem;flex-wrap:wrap;margin:1rem 0;'>"
+            "<div style='display:flex;flex-direction:column;gap:0.5rem;height:100%;'>"
             + "".join(parts)
             + "</div>"
         )
@@ -766,25 +766,31 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Data View") as live_demo:
         gr.Navbar(main_page_name="Episodes")
+        gr.Markdown("# GRABETTE")
 
-        # ── Camera + 3D viewer ────────────────────────────────────────
+        # ── Camera | 3D viewer | System cards ────────────────────────
         with gr.Row(equal_height=True):
-            with gr.Column(scale=1):
+            with gr.Column(scale=2):
                 gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#64748b;margin-bottom:0.3rem;'>"
+                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
                         "Camera</div>")
                 camera_img = gr.Image(
                     label=None, show_label=False, height="30vh", container=False,
                 )
-            with gr.Column(scale=1):
+            with gr.Column(scale=2):
                 gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#64748b;margin-bottom:0.3rem;'>"
+                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
                         "3D Model</div>")
                 gr.HTML(
                     '<iframe id="urdf-viewer" src="/viewer" '
                     'style="width:100%;height:30vh;border:none;'
                     'border-radius:8px;background:#1a1a2e;"></iframe>'
                 )
+            with gr.Column(scale=1):
+                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
+                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
+                        "System</div>")
+                dv_system_bar = gr.HTML()
 
         # ── Sensor charts ─────────────────────────────────────────────
         gr.HTML("<hr style='margin:1.25rem 0;border:none;border-top:1px solid #1e293b;'>")
@@ -803,10 +809,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     'style="width:100%;height:18vh;border:none;'
                     'border-radius:8px;background:transparent;"></iframe>'
                 )
-
-        # ── System info cards ─────────────────────────────────────────
-        gr.HTML("<hr style='margin:0.5rem 0;border:none;border-top:1px solid #1e293b;'>")
-        dv_system_bar = gr.HTML()
 
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
