@@ -480,20 +480,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     with gr.Row():
                         replay_pause_btn = gr.Button("Pause", size="sm")
                         replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
-                    with gr.Row(equal_height=True):
-                        with gr.Column(scale=2):
-                            replay_video = gr.HTML(value="")
-                        with gr.Column(scale=1):
-                            gr.HTML(
-                                '<iframe src="/charts/imu" '
-                                'style="width:100%;height:200px;border:none;'
-                                'border-radius:8px;background:transparent;"></iframe>'
-                            )
-                            gr.HTML(
-                                '<iframe src="/charts/angle" '
-                                'style="width:100%;height:120px;border:none;'
-                                'border-radius:8px;background:transparent;"></iframe>'
-                            )
+                    replay_video = gr.HTML(value="")
+                    gr.HTML(
+                        '<iframe src="/charts/imu" '
+                        'style="width:100%;height:180px;border:none;'
+                        'border-radius:8px;background:transparent;"></iframe>'
+                    )
+                    gr.HTML(
+                        '<iframe src="/charts/angle" '
+                        'style="width:100%;height:100px;border:none;'
+                        'border-radius:8px;background:transparent;"></iframe>'
+                    )
                 replay_timer = gr.Timer(0.5, active=False)
 
                 # HF upload section
