@@ -182,21 +182,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             choices=move_choices,
             value=move_choices[0][1] if move_choices else None,
         )
-        title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
+        task_header = f"## Task: {task_name}" if task_name else ""
         desc = f"**Description:** {task_description}" if task_description else ""
-        cap_title = f"### Capture an episode for *{task_name}*" if task_name else "### Capture"
-        return rows, move_dd, title, desc, cap_title
+        cap_title = f"### Capture" if not task_name else f"### Capture — *{task_name}*"
+        return rows, move_dd, task_header, desc, cap_title
 
     def refresh_tasks():
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
-        rows, move_dd, title, desc, cap_title = _refresh_episode_table(value, sessions)
-        return gr.update(choices=choices, value=value), cap_title, title, desc, rows, move_dd
+        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(value, sessions)
+        return gr.update(choices=choices, value=value), task_header, cap_title, desc, rows, move_dd
 
     def on_task_select(session_id):
-        rows, move_dd, title, desc, cap_title = _refresh_episode_table(session_id)
-        return cap_title, title, desc, rows, move_dd
+        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(session_id)
+        return task_header, cap_title, desc, rows, move_dd
 
     def on_create_task(name, description):
         if not name:
@@ -207,8 +207,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         new_id = result["id"]
-        rows, move_dd, title, desc, cap_title = _refresh_episode_table(new_id, sessions)
-        return gr.update(choices=choices, value=new_id), cap_title, title, desc, rows, move_dd, gr.update(visible=False)
+        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(new_id, sessions)
+        return gr.update(choices=choices, value=new_id), task_header, cap_title, desc, rows, move_dd, gr.update(visible=False)
 
     # ── Edit Task helpers ─────────────────────────────────────────────
 
@@ -227,8 +227,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         client.update_session(session_id, name=new_name.strip())
         sessions = _get_sessions()
         choices = _task_choices(sessions)
-        _, _, title, _, cap_title = _refresh_episode_table(session_id, sessions)
-        return "Renamed", gr.update(choices=choices, value=session_id), cap_title, title
+        _, _, task_header, _, cap_title = _refresh_episode_table(session_id, sessions)
+        return "Renamed", gr.update(choices=choices, value=session_id), task_header, cap_title
 
     def on_update_task_desc(session_id, new_desc):
         if not session_id:
@@ -244,12 +244,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
-        rows, move_dd, title, desc, cap_title = _refresh_episode_table(value, sessions)
+        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(value, sessions)
         return (
             gr.update(choices=choices, value=value),
-            cap_title, title, desc, rows, move_dd,
-            gr.update(visible=False),  # close edit form
-            gr.update(visible=False),  # close delete confirm
+            task_header, cap_title, desc, rows, move_dd,
+            gr.update(visible=False),
+            gr.update(visible=False),
         )
 
     def _get_selected_ids(table_data) -> list[str]:
@@ -462,6 +462,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         create_task_btn = gr.Button("Create", variant="primary", size="sm")
                         cancel_task_btn = gr.Button("Cancel", size="sm")
 
+            # ── RIGHT: Episodes ──────────────────────────────────────
+            with gr.Column(scale=3):
+
+                # Task header: "## Task: X" + edit button
+                with gr.Row():
+                    with gr.Column(scale=5):
+                        task_header_md = gr.Markdown("")
+                    edit_task_btn = gr.Button("✏ Edit", size="sm", scale=1)
+                task_desc_md = gr.Markdown("")
+
+                # Edit Task panel (appears below description)
                 with gr.Group(visible=False) as edit_task_form:
                     with gr.Row():
                         gr.Markdown("#### Edit Task")
@@ -492,10 +503,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             )
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
 
-            # ── RIGHT: Episodes ──────────────────────────────────────
-            with gr.Column(scale=3):
-
-                # Capture (above episodes, title shows selected task)
+                # Capture
                 capture_title = gr.Markdown("### Capture")
                 with gr.Row():
                     capture_box = gr.Textbox(
@@ -505,12 +513,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
                 gr.HTML("<hr style='margin:16px 0;border:none;border-top:1px solid #333;'>")
 
-                # Episodes header + task info
                 episodes_title = gr.Markdown("## Episodes")
-                with gr.Row():
-                    with gr.Column(scale=5):
-                        task_desc_md = gr.Markdown("")
-                    edit_task_btn = gr.Button("✏ Edit", size="sm", scale=1)
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
@@ -585,11 +588,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         create_task_btn.click(
             fn=on_create_task,
             inputs=[new_task_name, new_task_desc],
-            outputs=[task_list, capture_title, episodes_title, task_desc_md, episodes_table, move_target_dd, new_task_form],
+            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_table, move_target_dd, new_task_form],
         )
         task_list.change(
             fn=on_task_select, inputs=task_list,
-            outputs=[capture_title, episodes_title, task_desc_md, episodes_table, move_target_dd],
+            outputs=[task_header_md, capture_title, task_desc_md, episodes_table, move_target_dd],
         )
 
         # Edit Task
@@ -602,7 +605,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         rename_btn.click(
             fn=on_rename_task, inputs=[task_list, rename_input],
-            outputs=[edit_task_msg, task_list, capture_title, episodes_title],
+            outputs=[edit_task_msg, task_list, task_header_md, capture_title],
         )
         update_desc_btn.click(
             fn=on_update_task_desc, inputs=[task_list, desc_edit_input],
@@ -616,7 +619,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         confirm_delete_btn.click(
             fn=on_delete_task, inputs=task_list,
-            outputs=[task_list, capture_title, episodes_title, task_desc_md,
+            outputs=[task_list, task_header_md, capture_title, task_desc_md,
                      episodes_table, move_target_dd, edit_task_form, delete_confirm],
         )
 
@@ -659,7 +662,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         system_timer = gr.Timer(10)
         system_timer.tick(fn=get_system_bar, outputs=system_bar)
 
-        demo.load(fn=refresh_tasks, outputs=[task_list, capture_title, episodes_title, task_desc_md, episodes_table, move_target_dd])
+        demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_table, move_target_dd])
         demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
 
     # ══════════════════════════════════════════════════════════════════
