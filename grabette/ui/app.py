@@ -44,7 +44,6 @@ PAGE_JS = """
 () => {
     const style = document.createElement('style');
     style.textContent = `
-        /* ── Navbar ─────────────────────────────────── */
         .nav-holder {
             background: #111827 !important;
             border-bottom: 2px solid #f97316 !important;
@@ -68,27 +67,10 @@ PAGE_JS = """
             color: #e5e7eb !important;
             background-color: rgba(255, 255, 255, 0.07) !important;
         }
-
-        /* ── Tasks panel ────────────────────────────── */
         #tasks-col {
             background: #1e293b !important;
             border-radius: 8px !important;
             padding: 8px !important;
-        }
-
-        /* ── Responsive: stack two-col rows on mobile ─ */
-        @media (max-width: 767px) {
-            #episodes-row,
-            #dv-top-row,
-            #dv-sensors-row {
-                flex-direction: column !important;
-            }
-            #episodes-row > *,
-            #dv-top-row > *,
-            #dv-sensors-row > * {
-                min-width: 100% !important;
-                width: 100% !important;
-            }
         }
     `;
     document.head.appendChild(style);
@@ -480,14 +462,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS, js=PAGE_JS) as demo:
         gr.Navbar(main_page_name="Episodes")
+        gr.Markdown("# GRABETTE")
 
         # ── Main layout ───────────────────────────────────────────────
-        with gr.Row(elem_id="episodes-row"):
+        with gr.Row():
 
             # ── LEFT: Tasks ──────────────────────────────────────────
             with gr.Column(scale=1, min_width=200, elem_id="tasks-col"):
-                gr.HTML("<div style='font-size:1.1rem;font-weight:700;color:#f1f5f9;"
-                        "letter-spacing:0.02em;padding:0.25rem 0 0.75rem;'>Tasks</div>")
+                gr.Markdown("## Tasks")
                 task_list = gr.Radio(choices=[], label=None, container=False)
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
                 with gr.Group(visible=False) as new_task_form:
@@ -585,24 +567,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 replay_timer = gr.Timer(0.5, active=False)
 
         gr.HTML("""
-            <div style="margin-top:2.5rem;padding:1.25rem 1.5rem;
-                        background:linear-gradient(135deg,#1e3a5f,#1e293b);
-                        border-radius:10px;border:1px solid #2563eb;
-                        display:flex;align-items:center;
-                        justify-content:space-between;gap:1rem;flex-wrap:wrap;">
-                <div>
-                    <div style="color:#e2e8f0;font-weight:600;font-size:0.95rem;
-                                margin-bottom:0.2rem;">
-                        Ready to push your episodes to HuggingFace?
-                    </div>
-                    <div style="color:#64748b;font-size:0.82rem;">
-                        Select your tasks and upload them as a dataset.
-                    </div>
-                </div>
+            <div style="margin-top:2rem;padding:1.25rem 1.5rem;
+                        background:#1e3a5f;border-radius:10px;
+                        border:1px solid #2563eb;display:flex;
+                        align-items:center;justify-content:space-between;gap:1rem;">
+                <span style="color:#e2e8f0;font-size:0.95rem;">
+                    Ready to push your episodes to HuggingFace?
+                </span>
                 <a href="/datasets" style="background:#2563eb;color:#fff;
-                           padding:9px 20px;border-radius:8px;font-weight:600;
-                           font-size:0.875rem;text-decoration:none;white-space:nowrap;
-                           flex-shrink:0;">
+                           padding:8px 18px;border-radius:6px;font-weight:600;
+                           font-size:0.9rem;text-decoration:none;white-space:nowrap;">
                     Create a dataset &#8594;
                 </a>
             </div>
@@ -690,9 +664,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Datasets") as datasets_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.HTML("""
-        <div style="max-width:700px;margin:0 auto;padding:0 1rem;">
-        """)
 
         # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
@@ -754,7 +725,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
         # ── Upload ────────────────────────────────────────────────────
-        gr.HTML("<div style='margin-top:1.5rem;max-width:260px;'>")
+        gr.HTML("<div style='margin-top:1.5rem;'>")
         ds_upload_btn = gr.Button(
             "Push to HuggingFace Hub",
             variant="huggingface",
@@ -763,7 +734,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_upload_msg = gr.Textbox(
             show_label=False, interactive=False, max_lines=2, container=False,
         )
-        gr.HTML("</div>")  # close max-width wrapper
 
         ds_modal_auth_btn.click(
             fn=on_modal_auth, inputs=ds_modal_token,
@@ -781,36 +751,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Data View") as live_demo:
         gr.Navbar(main_page_name="Episodes")
+        gr.Markdown("# GRABETTE")
 
-        gr.HTML("""
-        <div style="padding:1.25rem 0 1rem;border-bottom:1px solid #1e293b;
-                    margin-bottom:1.25rem;display:flex;align-items:baseline;gap:0.75rem;">
-            <span style="font-size:1.3rem;font-weight:700;color:#f1f5f9;">
-                Live Data
-            </span>
-            <span style="color:#64748b;font-size:0.85rem;">Real-time sensor feed</span>
-        </div>
-        """)
-
-        with gr.Row(equal_height=True, elem_id="dv-top-row"):
+        with gr.Row(equal_height=True):
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.75rem;text-transform:uppercase;"
-                        "letter-spacing:0.08em;color:#64748b;margin-bottom:0.4rem;'>"
-                        "Camera</div>")
-                camera_img = gr.Image(label=None, show_label=False, height="30vh",
-                                      container=False)
+                camera_img = gr.Image(label="Camera Live View", height="30vh")
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.75rem;text-transform:uppercase;"
-                        "letter-spacing:0.08em;color:#64748b;margin-bottom:0.4rem;'>"
-                        "3D Model</div>")
                 gr.HTML(
                     '<iframe id="urdf-viewer" src="/viewer" '
                     'style="width:100%;height:30vh;border:none;'
                     'border-radius:8px;background:#1a1a2e;"></iframe>'
                 )
 
-        gr.HTML("<div style='margin-top:1.25rem;'>")
-        with gr.Row(elem_id="dv-sensors-row"):
+        with gr.Row():
             with gr.Column(scale=1):
                 imu_box = gr.Markdown("## IMU Live")
                 gr.HTML(
@@ -825,12 +778,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     'style="width:100%;height:20vh;border:none;'
                     'border-radius:8px;background:transparent;"></iframe>'
                 )
-        gr.HTML("</div>")
 
-        gr.HTML("<div style='height:1rem;'></div>")
-        dv_system_bar = gr.Textbox(
-            show_label=False, interactive=False, max_lines=1, container=False,
-        )
+        dv_system_bar = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
@@ -847,53 +796,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("HF Account") as hf_demo:
         gr.Navbar(main_page_name="Episodes")
+        gr.Markdown("# GRABETTE")
+        gr.Markdown("## HuggingFace Account")
 
-        gr.HTML("""
-        <div style="max-width:560px;margin:2rem auto 0;padding:0 1rem;">
-          <h1 style="margin:0 0 0.25rem;font-size:1.6rem;font-weight:700;">
-            HuggingFace Account
-          </h1>
-          <p style="margin:0 0 2rem;color:#64748b;font-size:0.9rem;">
-            Manage your connection to HuggingFace Hub.
-          </p>
+        hf_account_status = gr.Textbox(label="Current status", interactive=False)
 
-          <div style="background:#1e293b;border-radius:12px;padding:1.25rem 1.5rem;
-                      margin-bottom:1.5rem;border:1px solid #334155;">
-            <div style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.1em;
-                        color:#64748b;margin-bottom:0.6rem;">
-              Current status
-            </div>
-        """)
-        hf_account_status = gr.Textbox(
-            label=None, container=False, interactive=False,
-        )
-        gr.HTML("""
-          </div>
-
-          <div style="background:#1e293b;border-radius:12px;padding:1.25rem 1.5rem;
-                      border:1px solid #334155;">
-            <div style="font-size:0.95rem;font-weight:600;margin-bottom:0.25rem;">
-              Update token
-            </div>
-            <div style="color:#64748b;font-size:0.82rem;margin-bottom:1rem;">
-              Generate a token at
-              <a href="https://huggingface.co/settings/tokens" target="_blank"
-                 style="color:#f97316;text-decoration:none;">
-                huggingface.co/settings/tokens
-              </a>
-            </div>
-        """)
+        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
+        gr.Markdown("### Update Token")
         new_token_input = gr.Textbox(
-            label=None, container=False,
-            type="password", placeholder="hf_...",
+            label="New HF Token", type="password", placeholder="hf_...",
         )
-        gr.HTML("""
-            <div style="display:flex;gap:0.75rem;margin-top:0.75rem;flex-wrap:wrap;">
-        """)
         with gr.Row():
             update_token_btn = gr.Button("Save token", variant="primary", size="sm")
             remove_token_btn = gr.Button("Remove current token", variant="stop", size="sm")
-        gr.HTML("</div></div></div>")
+        account_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
         update_token_btn.click(
             fn=on_hf_update_token, inputs=new_token_input,
