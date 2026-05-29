@@ -67,6 +67,11 @@ PAGE_JS = """
             color: #e5e7eb !important;
             background-color: rgba(255, 255, 255, 0.07) !important;
         }
+        .tasks-panel {
+            background: #1e293b !important;
+            border-radius: 8px !important;
+            padding: 12px !important;
+        }
     `;
     document.head.appendChild(style);
 }
@@ -143,10 +148,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         capturing = state.get("capture", {}).get("is_capturing", False) if state else False
         if capturing:
             client.stop_capture()
-            return gr.update(value="Start Capture", variant="primary")
+            rows, move_dd, *_ = _refresh_episode_table(session_id)
+            return gr.update(value="Start Capture", variant="primary"), rows, move_dd
         else:
             client.start_capture(session_id=session_id or None)
-            return gr.update(value="Stop Capture", variant="stop")
+            return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update()
 
     # ── Task (Session) helpers ────────────────────────────────────────
 
@@ -184,31 +190,32 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         task_header = f"## Task: {task_name}" if task_name else ""
         desc = f"**Description:** {task_description}" if task_description else ""
-        cap_title = f"### Capture" if not task_name else f"### Capture — *{task_name}*"
-        return rows, move_dd, task_header, desc, cap_title
+        cap_title = f"### Capture" if not task_name else f"### Capture a new episode for *{task_name}*"
+        ep_title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
+        return rows, move_dd, task_header, desc, cap_title, ep_title
 
     def refresh_tasks():
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
-        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(value, sessions)
-        return gr.update(choices=choices, value=value), task_header, cap_title, desc, rows, move_dd
+        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
+        return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_task_select(session_id):
-        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(session_id)
-        return task_header, cap_title, desc, rows, move_dd
+        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id)
+        return task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_create_task(name, description):
         if not name:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         result = client.create_session(name, description or "")
         if "error" in result:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         new_id = result["id"]
-        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(new_id, sessions)
-        return gr.update(choices=choices, value=new_id), task_header, cap_title, desc, rows, move_dd, gr.update(visible=False)
+        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(new_id, sessions)
+        return gr.update(choices=choices, value=new_id), task_header, cap_title, desc, ep_title, rows, move_dd, gr.update(visible=False)
 
     # ── Edit Task helpers ─────────────────────────────────────────────
 
@@ -222,32 +229,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(visible=True), "", ""
 
     def on_save_task(session_id, new_name, new_desc):
-        if not session_id:
-            return "No task selected", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
-        if not new_name.strip():
-            return "Name cannot be empty", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+        if not session_id or not new_name.strip():
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         client.update_session(session_id, name=new_name.strip(), description=new_desc)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
-        _, _, task_header, desc, cap_title = _refresh_episode_table(session_id, sessions)
+        _, _, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id, sessions)
         return (
-            "Saved",
             gr.update(choices=choices, value=session_id),
-            task_header, cap_title, desc,
+            task_header, cap_title, desc, ep_title,
             gr.update(visible=False),
         )
 
     def on_delete_task(session_id):
         if not session_id:
-            return (gr.update(),) * 8
+            return (gr.update(),) * 9
         client.delete_session(session_id)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
-        rows, move_dd, task_header, desc, cap_title = _refresh_episode_table(value, sessions)
+        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
         return (
             gr.update(choices=choices, value=value),
-            task_header, cap_title, desc, rows, move_dd,
+            task_header, cap_title, desc, ep_title, rows, move_dd,
             gr.update(visible=False),
             gr.update(visible=False),
         )
@@ -385,18 +389,36 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def check_hf_auth_on_load():
         result = client.hf_check_auth()
-        return _hf_status_text(result), gr.update(visible=not result.get("authenticated", False))
+        return gr.update(visible=not result.get("authenticated", False))
+
+    def load_datasets_page():
+        result = client.hf_check_auth()
+        hf_text = _hf_status_text(result)
+        sessions = _get_sessions()
+        episodes = []
+        for s in sessions:
+            for ep in s.get("episodes", []):
+                episodes.append((f"{s['name']} / {ep['episode_id']}", ep["episode_id"]))
+        return hf_text, gr.update(choices=episodes, value=episodes[0][1] if episodes else None)
+
+    def on_ds_upload(episode_id, repo_id):
+        if not episode_id:
+            return "Select an episode"
+        if not repo_id:
+            return "Enter a repo ID (e.g. username/grabette-data)"
+        result = client.hf_upload_episode(episode_id, repo_id)
+        if "error" in result:
+            return f"Error: {result['error']}"
+        return f"Upload started (job: {result.get('job_id', '?')})"
 
     def on_modal_auth(token):
         if not token:
-            return gr.update(visible=True, value="Please enter a token"), gr.update(), gr.update()
+            return gr.update(visible=True, value="Please enter a token"), gr.update()
         result = client.hf_set_auth(token)
         if result.get("authenticated"):
-            msg = _hf_status_text(result)
-            return gr.update(visible=False), gr.update(visible=False), gr.update(value=msg)
+            return gr.update(visible=False), gr.update(visible=False)
         return (
             gr.update(visible=True, value=f"Auth failed: {result.get('error', 'unknown')}"),
-            gr.update(),
             gr.update(),
         )
 
@@ -430,7 +452,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS, js=PAGE_JS) as demo:
-        gr.Navbar(main_page_name="Datasets")
+        gr.Navbar(main_page_name="Episodes")
         gr.Markdown("# GRABETTE")
 
         # ── HF Auth popup ─────────────────────────────────────────────
@@ -451,7 +473,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         with gr.Row():
 
             # ── LEFT: Tasks ──────────────────────────────────────────
-            with gr.Column(scale=1, min_width=200):
+            with gr.Column(scale=1, min_width=200, elem_classes=["tasks-panel"]):
                 gr.Markdown("## Tasks")
                 task_list = gr.Radio(choices=[], label=None, container=False)
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
@@ -475,9 +497,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Edit Task panel (appears below description)
                 with gr.Group(visible=False) as edit_task_form:
                     gr.Markdown("#### Edit Task")
-                    edit_task_msg = gr.Textbox(
-                        show_label=False, interactive=False, max_lines=1,
-                    )
                     rename_input = gr.Textbox(label="Name", placeholder="Task name…")
                     desc_edit_input = gr.Textbox(label="Description", placeholder="Description…")
                     with gr.Row():
@@ -502,8 +521,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         label="Status", lines=2, interactive=False, scale=3,
                     )
                     toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
-
-                gr.HTML("<hr style='margin:16px 0;border:none;border-top:1px solid #333;'>")
 
                 episodes_title = gr.Markdown("## Episodes")
 
@@ -554,16 +571,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
                 replay_timer = gr.Timer(0.5, active=False)
 
-                # HF upload section
-                gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
-                gr.Markdown("### HuggingFace Upload")
-                hf_status = gr.Textbox(label="HF Status", interactive=False, max_lines=1)
-                with gr.Row():
-                    hf_repo = gr.Textbox(
-                        label="Dataset Repo ID", placeholder="username/grabette-data", scale=3,
-                    )
-                    hf_upload_btn = gr.Button("Upload Episode", size="sm", variant="huggingface", scale=1)
-                hf_upload_msg = gr.Textbox(label="Upload Status", interactive=False, max_lines=1)
 
         system_bar = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
@@ -571,7 +578,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         modal_auth_btn.click(
             fn=on_modal_auth, inputs=modal_token,
-            outputs=[modal_msg, auth_modal, hf_status],
+            outputs=[modal_msg, auth_modal],
         )
         modal_skip_btn.click(fn=lambda: gr.update(visible=False), outputs=auth_modal)
 
@@ -580,11 +587,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         create_task_btn.click(
             fn=on_create_task,
             inputs=[new_task_name, new_task_desc],
-            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_table, move_target_dd, new_task_form],
+            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd, new_task_form],
         )
         task_list.change(
             fn=on_task_select, inputs=task_list,
-            outputs=[task_header_md, capture_title, task_desc_md, episodes_table, move_target_dd],
+            outputs=[task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd],
         )
 
         # Edit Task
@@ -598,7 +605,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         save_task_btn.click(
             fn=on_save_task,
             inputs=[task_list, rename_input, desc_edit_input],
-            outputs=[edit_task_msg, task_list, task_header_md, capture_title, task_desc_md, edit_task_form],
+            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, edit_task_form],
         )
         delete_task_btn.click(
             fn=lambda: gr.update(visible=True), outputs=delete_confirm,
@@ -608,14 +615,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         confirm_delete_btn.click(
             fn=on_delete_task, inputs=task_list,
-            outputs=[task_list, task_header_md, capture_title, task_desc_md,
+            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title,
                      episodes_table, move_target_dd, edit_task_form, delete_confirm],
         )
 
         toggle_btn.click(
             fn=on_toggle_capture,
             inputs=[task_list],
-            outputs=[toggle_btn],
+            outputs=[toggle_btn, episodes_table, move_target_dd],
         )
 
         dl_btn.click(fn=on_download_episodes, inputs=episodes_table, outputs=dl_file)
@@ -644,23 +651,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      replay_timer, replay_panel, replay_video],
         )
 
-        hf_upload_btn.click(fn=on_hf_upload, inputs=[episodes_table, hf_repo], outputs=hf_upload_msg)
-
         capture_timer = gr.Timer(0.5)
         capture_timer.tick(fn=get_capture_status, outputs=capture_box)
 
         system_timer = gr.Timer(10)
         system_timer.tick(fn=get_system_bar, outputs=system_bar)
 
-        demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_table, move_target_dd])
-        demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
+        demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
+        demo.load(fn=check_hf_auth_on_load, outputs=auth_modal)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Data View
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Data View") as live_demo:
-        gr.Navbar(main_page_name="Datasets")
+        gr.Navbar(main_page_name="Episodes")
         gr.Markdown("# GRABETTE")
 
         with gr.Row(equal_height=True):
@@ -700,7 +705,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("HF Account") as hf_demo:
-        gr.Navbar(main_page_name="Datasets")
+        gr.Navbar(main_page_name="Episodes")
         gr.Markdown("# GRABETTE")
         gr.Markdown("## HuggingFace Account")
 
@@ -724,5 +729,47 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         remove_token_btn.click(fn=on_hf_remove_token, outputs=hf_account_status)
 
         hf_demo.load(fn=check_hf_account, outputs=hf_account_status)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Page 4 — Datasets (HF auth + upload)
+    # ══════════════════════════════════════════════════════════════════
+
+    with demo.route("Datasets") as datasets_demo:
+        gr.Navbar(main_page_name="Episodes")
+        gr.Markdown("# GRABETTE")
+
+        gr.Markdown("## HuggingFace Authentication")
+        ds_hf_status = gr.Textbox(label="Status", interactive=False, max_lines=1)
+        ds_token_input = gr.Textbox(
+            label="Token", type="password", placeholder="hf_...",
+        )
+        with gr.Row():
+            ds_save_token_btn = gr.Button("Save token", variant="primary", size="sm")
+            ds_remove_token_btn = gr.Button("Remove token", variant="stop", size="sm")
+
+        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
+        gr.Markdown("## Upload to HuggingFace")
+        ds_episode_dd = gr.Dropdown(label="Select episode", interactive=True)
+        ds_repo = gr.Textbox(
+            label="Dataset Repo ID", placeholder="username/grabette-data",
+        )
+        ds_upload_btn = gr.Button("Upload", variant="huggingface", size="sm")
+        ds_upload_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+
+        ds_save_token_btn.click(
+            fn=on_hf_update_token,
+            inputs=ds_token_input,
+            outputs=[ds_hf_status, ds_token_input],
+        )
+        ds_remove_token_btn.click(fn=on_hf_remove_token, outputs=ds_hf_status)
+        ds_upload_btn.click(
+            fn=on_ds_upload,
+            inputs=[ds_episode_dd, ds_repo],
+            outputs=ds_upload_msg,
+        )
+        datasets_demo.load(
+            fn=load_datasets_page,
+            outputs=[ds_hf_status, ds_episode_dd],
+        )
 
     return demo
