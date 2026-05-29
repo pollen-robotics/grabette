@@ -392,14 +392,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(visible=not result.get("authenticated", False))
 
     def load_datasets_page():
-        result = client.hf_check_auth()
-        hf_text = _hf_status_text(result)
         sessions = _get_sessions()
         episodes = []
         for s in sessions:
             for ep in s.get("episodes", []):
                 episodes.append((f"{s['name']} / {ep['episode_id']}", ep["episode_id"]))
-        return hf_text, gr.update(choices=episodes, value=episodes[0][1] if episodes else None)
+        return gr.update(choices=episodes, value=episodes[0][1] if episodes else None)
 
     def on_ds_upload(episode_id, repo_id):
         if not episode_id:
@@ -557,6 +555,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
                 replay_timer = gr.Timer(0.5, active=False)
 
+        gr.HTML("""
+            <div style="margin-top:2rem;padding:1.25rem 1.5rem;
+                        background:#1e3a5f;border-radius:10px;
+                        border:1px solid #2563eb;display:flex;
+                        align-items:center;justify-content:space-between;gap:1rem;">
+                <span style="color:#e2e8f0;font-size:0.95rem;">
+                    Ready to push your episodes to HuggingFace?
+                </span>
+                <a href="/datasets" style="background:#2563eb;color:#fff;
+                           padding:8px 18px;border-radius:6px;font-weight:600;
+                           font-size:0.9rem;text-decoration:none;white-space:nowrap;">
+                    Create a dataset &#8594;
+                </a>
+            </div>
+        """)
 
         # ── Wire events ───────────────────────────────────────────────
 
@@ -656,13 +669,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
                     ds_modal_skip_btn = gr.Button("Skip for now", variant="secondary", size="sm")
 
-        gr.Markdown("## HuggingFace Authentication")
-        ds_hf_status = gr.Textbox(label="Status", interactive=False, max_lines=1)
-        ds_token_input = gr.Textbox(label="Token", type="password", placeholder="hf_...")
-        with gr.Row():
-            ds_save_token_btn = gr.Button("Save token", variant="primary", size="sm")
-            ds_remove_token_btn = gr.Button("Remove token", variant="stop", size="sm")
-
         gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
         gr.Markdown("## Upload to HuggingFace")
         ds_episode_dd = gr.Dropdown(label="Select episode", interactive=True)
@@ -675,15 +681,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[ds_modal_msg, ds_auth_modal],
         )
         ds_modal_skip_btn.click(fn=lambda: gr.update(visible=False), outputs=ds_auth_modal)
-        ds_save_token_btn.click(
-            fn=on_hf_update_token, inputs=ds_token_input,
-            outputs=[ds_hf_status, ds_token_input],
-        )
-        ds_remove_token_btn.click(fn=on_hf_remove_token, outputs=ds_hf_status)
         ds_upload_btn.click(
             fn=on_ds_upload, inputs=[ds_episode_dd, ds_repo], outputs=ds_upload_msg,
         )
-        datasets_demo.load(fn=load_datasets_page, outputs=[ds_hf_status, ds_episode_dd])
+        datasets_demo.load(fn=load_datasets_page, outputs=ds_episode_dd)
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=ds_auth_modal)
 
     # ══════════════════════════════════════════════════════════════════
