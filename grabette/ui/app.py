@@ -464,17 +464,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Replay panel (hidden until replay starts)
                 with gr.Group(visible=False) as replay_panel:
                     gr.Markdown("#### Replay")
-                    with gr.Row():
-                        replay_pause_btn = gr.Button("Pause", size="sm", scale=1)
-                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm", scale=1)
-                        replay_time_label = gr.Textbox(
-                            value="0.0s / 0.0s", show_label=False,
-                            interactive=False, max_lines=1, scale=3,
-                        )
                     replay_slider = gr.Slider(
                         minimum=0, maximum=1, step=1, value=0,
                         label="Timeline (ms)", interactive=True,
                     )
+                    replay_time_label = gr.Textbox(
+                        value="0.0s / 0.0s", show_label=False,
+                        interactive=False, max_lines=1,
+                    )
+                    with gr.Row():
+                        replay_pause_btn = gr.Button("Pause", size="sm")
+                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
                     with gr.Row(equal_height=True):
                         with gr.Column(scale=2):
                             replay_video = gr.HTML(value="")
