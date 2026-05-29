@@ -182,32 +182,75 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             choices=move_choices,
             value=move_choices[0][1] if move_choices else None,
         )
-        title = f"## Episodes for *{task_name}*" if task_name else "### Episodes"
-        desc = task_description or ""
-        return rows, move_dd, title, desc
+        title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
+        desc = f"**Description:** {task_description}" if task_description else ""
+        cap_title = f"### Capture for *{task_name}*" if task_name else "### Capture"
+        return rows, move_dd, title, desc, cap_title
 
     def refresh_tasks():
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
-        rows, move_dd, title, desc = _refresh_episode_table(value, sessions)
-        return gr.update(choices=choices, value=value), title, desc, rows, move_dd
+        rows, move_dd, title, desc, cap_title = _refresh_episode_table(value, sessions)
+        return gr.update(choices=choices, value=value), cap_title, title, desc, rows, move_dd
 
     def on_task_select(session_id):
-        rows, move_dd, title, desc = _refresh_episode_table(session_id)
-        return title, desc, rows, move_dd
+        rows, move_dd, title, desc, cap_title = _refresh_episode_table(session_id)
+        return cap_title, title, desc, rows, move_dd
 
     def on_create_task(name, description):
         if not name:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         result = client.create_session(name, description or "")
         if "error" in result:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         new_id = result["id"]
-        rows, move_dd, title, desc = _refresh_episode_table(new_id, sessions)
-        return gr.update(choices=choices, value=new_id), title, desc, rows, move_dd, gr.update(visible=False)
+        rows, move_dd, title, desc, cap_title = _refresh_episode_table(new_id, sessions)
+        return gr.update(choices=choices, value=new_id), cap_title, title, desc, rows, move_dd, gr.update(visible=False)
+
+    # ── Edit Task helpers ─────────────────────────────────────────────
+
+    def on_open_edit_form(session_id):
+        if not session_id:
+            return gr.update(visible=False), "", ""
+        sessions = _get_sessions()
+        for s in sessions:
+            if s["id"] == session_id:
+                return gr.update(visible=True), s.get("name", ""), s.get("description", "")
+        return gr.update(visible=True), "", ""
+
+    def on_rename_task(session_id, new_name):
+        if not session_id or not new_name.strip():
+            return "Enter a name", gr.update(), gr.update()
+        client.update_session(session_id, name=new_name.strip())
+        sessions = _get_sessions()
+        choices = _task_choices(sessions)
+        _, _, title, _, cap_title = _refresh_episode_table(session_id, sessions)
+        return "Renamed", gr.update(choices=choices, value=session_id), cap_title, title
+
+    def on_update_task_desc(session_id, new_desc):
+        if not session_id:
+            return "No task selected", gr.update()
+        client.update_session(session_id, description=new_desc)
+        desc = f"**Description:** {new_desc}" if new_desc.strip() else ""
+        return "Updated", desc
+
+    def on_delete_task(session_id):
+        if not session_id:
+            return (gr.update(),) * 8
+        client.delete_session(session_id)
+        sessions = _get_sessions()
+        choices = _task_choices(sessions)
+        value = choices[0][1] if choices else None
+        rows, move_dd, title, desc, cap_title = _refresh_episode_table(value, sessions)
+        return (
+            gr.update(choices=choices, value=value),
+            cap_title, title, desc, rows, move_dd,
+            gr.update(visible=False),  # close edit form
+            gr.update(visible=False),  # close delete confirm
+        )
 
     def _get_selected_ids(table_data) -> list[str]:
         if table_data is None:
@@ -421,16 +464,54 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── RIGHT: Episodes ──────────────────────────────────────
             with gr.Column(scale=3):
-                episodes_title = gr.Markdown("## Episodes")
-                task_desc_md = gr.Markdown("")
 
-                # Capture
-                gr.Markdown("### Capture")
+                # Capture (above episodes, title shows selected task)
+                capture_title = gr.Markdown("### Capture")
                 with gr.Row():
                     capture_box = gr.Textbox(
                         label="Status", lines=2, interactive=False, scale=3,
                     )
                     toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
+
+                gr.HTML("<hr style='margin:16px 0;border:none;border-top:1px solid #333;'>")
+
+                # Episodes header + task info
+                episodes_title = gr.Markdown("## Episodes")
+                task_desc_md = gr.Markdown("")
+
+                # Edit Task button + collapsible form
+                with gr.Row():
+                    edit_task_btn = gr.Button("✏ Edit Task", size="sm", variant="secondary")
+
+                with gr.Group(visible=False) as edit_task_form:
+                    gr.Markdown("#### Edit Task")
+                    edit_task_msg = gr.Textbox(
+                        show_label=False, interactive=False, max_lines=1,
+                    )
+                    with gr.Row():
+                        rename_input = gr.Textbox(
+                            label="New name", placeholder="Task name…", scale=3,
+                        )
+                        rename_btn = gr.Button("Rename", size="sm", scale=1)
+                    with gr.Row():
+                        desc_edit_input = gr.Textbox(
+                            label="Description", placeholder="Description…", scale=3,
+                        )
+                        update_desc_btn = gr.Button("Update", size="sm", scale=1)
+                    gr.HTML("<hr style='margin:12px 0;border:none;border-top:1px solid #555;'>")
+                    delete_task_btn = gr.Button(
+                        "Delete Task", variant="stop", size="sm",
+                    )
+                    with gr.Group(visible=False) as delete_confirm:
+                        gr.Markdown(
+                            "⚠ **This will permanently delete the task and ALL its episodes. "
+                            "This action cannot be undone.**"
+                        )
+                        with gr.Row():
+                            confirm_delete_btn = gr.Button(
+                                "Yes, delete everything", variant="stop", size="sm",
+                            )
+                            cancel_delete_btn = gr.Button("Cancel", size="sm")
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
@@ -505,11 +586,36 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         create_task_btn.click(
             fn=on_create_task,
             inputs=[new_task_name, new_task_desc],
-            outputs=[task_list, episodes_title, task_desc_md, episodes_table, move_target_dd, new_task_form],
+            outputs=[task_list, capture_title, episodes_title, task_desc_md, episodes_table, move_target_dd, new_task_form],
         )
         task_list.change(
             fn=on_task_select, inputs=task_list,
-            outputs=[episodes_title, task_desc_md, episodes_table, move_target_dd],
+            outputs=[capture_title, episodes_title, task_desc_md, episodes_table, move_target_dd],
+        )
+
+        # Edit Task
+        edit_task_btn.click(
+            fn=on_open_edit_form, inputs=task_list,
+            outputs=[edit_task_form, rename_input, desc_edit_input],
+        )
+        rename_btn.click(
+            fn=on_rename_task, inputs=[task_list, rename_input],
+            outputs=[edit_task_msg, task_list, capture_title, episodes_title],
+        )
+        update_desc_btn.click(
+            fn=on_update_task_desc, inputs=[task_list, desc_edit_input],
+            outputs=[edit_task_msg, task_desc_md],
+        )
+        delete_task_btn.click(
+            fn=lambda: gr.update(visible=True), outputs=delete_confirm,
+        )
+        cancel_delete_btn.click(
+            fn=lambda: gr.update(visible=False), outputs=delete_confirm,
+        )
+        confirm_delete_btn.click(
+            fn=on_delete_task, inputs=task_list,
+            outputs=[task_list, capture_title, episodes_title, task_desc_md,
+                     episodes_table, move_target_dd, edit_task_form, delete_confirm],
         )
 
         toggle_btn.click(
@@ -555,10 +661,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 2 — Live Streaming
+    # Page 2 — Robot View
     # ══════════════════════════════════════════════════════════════════
 
-    with demo.route("Live Streaming") as live_demo:
+    with demo.route("Robot View") as live_demo:
         gr.Navbar(main_page_name="Datasets")
         gr.Markdown("# GRABETTE")
 
