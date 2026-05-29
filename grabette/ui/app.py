@@ -72,10 +72,6 @@ PAGE_JS = """
             border-radius: 8px !important;
             padding: 8px !important;
         }
-        /* Constrain content width — centers on wide screens, full-width on mobile */
-        .app {
-            max-width: 1200px !important;
-        }
     `;
     document.head.appendChild(style);
 }
