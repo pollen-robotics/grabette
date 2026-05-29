@@ -664,29 +664,76 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Datasets") as datasets_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
 
-        # HF Auth popup (shown if not authenticated)
+        # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
             with gr.Group(elem_id="hf-auth-card"):
                 gr.HTML(
                     "<h2 style='margin:0 0 0.4rem;'>HuggingFace Authentication</h2>"
                     "<p style='color:#9ca3af;margin:0 0 1.2rem;font-size:0.9rem;'>"
-                    "Enter your HF token to enable episode uploads.</p>"
+                    "A HuggingFace token is required to push datasets.</p>"
                 )
                 ds_modal_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_...")
                 ds_modal_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, visible=False)
                 ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
 
-        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
-        gr.Markdown("## Upload to HuggingFace")
-        ds_task_cbg = gr.CheckboxGroup(choices=[], label="Select tasks")
+        # ── Page header ───────────────────────────────────────────────
+        gr.HTML("""
+        <div style="padding:2rem 0 1.5rem;">
+          <h1 style="margin:0 0 0.4rem;font-size:1.8rem;">Create a Dataset</h1>
+          <p style="margin:0;color:#94a3b8;font-size:0.95rem;">
+            Package your recorded tasks and push them to HuggingFace Hub.
+          </p>
+        </div>
+        """)
+
+        # ── Step 1 ────────────────────────────────────────────────────
+        gr.HTML("""
+        <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
+          <span style="background:#f97316;color:#fff;font-weight:700;
+                       border-radius:50%;width:28px;height:28px;display:flex;
+                       align-items:center;justify-content:center;flex-shrink:0;">1</span>
+          <div>
+            <div style="font-weight:600;font-size:1rem;">Select tasks to include</div>
+            <div style="color:#94a3b8;font-size:0.85rem;">
+              All episodes within each selected task will be uploaded.
+            </div>
+          </div>
+        </div>
+        """)
+        ds_task_cbg = gr.CheckboxGroup(choices=[], label=None, container=False)
+
+        # ── Step 2 ────────────────────────────────────────────────────
+        gr.HTML("""
+        <div style="display:flex;align-items:center;gap:0.75rem;
+                    margin-top:1.5rem;margin-bottom:0.5rem;">
+          <span style="background:#f97316;color:#fff;font-weight:700;
+                       border-radius:50%;width:28px;height:28px;display:flex;
+                       align-items:center;justify-content:center;flex-shrink:0;">2</span>
+          <div>
+            <div style="font-weight:600;font-size:1rem;">Name your destination repository</div>
+            <div style="color:#94a3b8;font-size:0.85rem;">
+              Format: <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">
+              username/my-dataset</code>
+            </div>
+          </div>
+        </div>
+        """)
         ds_repo = gr.Textbox(
-            label="Destination repository on HuggingFace",
+            label=None, container=False,
             placeholder="username/grabette-data",
         )
-        ds_upload_btn = gr.Button("Upload", variant="huggingface", size="sm")
-        ds_upload_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+
+        # ── Upload ────────────────────────────────────────────────────
+        gr.HTML("<div style='margin-top:1.5rem;'>")
+        ds_upload_btn = gr.Button(
+            "Push to HuggingFace Hub",
+            variant="huggingface",
+        )
+        gr.HTML("</div>")
+        ds_upload_msg = gr.Textbox(
+            show_label=False, interactive=False, max_lines=2, container=False,
+        )
 
         ds_modal_auth_btn.click(
             fn=on_modal_auth, inputs=ds_modal_token,
