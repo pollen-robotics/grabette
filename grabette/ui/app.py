@@ -67,10 +67,10 @@ PAGE_JS = """
             color: #e5e7eb !important;
             background-color: rgba(255, 255, 255, 0.07) !important;
         }
-        .tasks-panel {
+        #tasks-col {
             background: #1e293b !important;
             border-radius: 8px !important;
-            padding: 12px !important;
+            padding: 8px !important;
         }
     `;
     document.head.appendChild(style);
@@ -455,25 +455,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         gr.Navbar(main_page_name="Episodes")
         gr.Markdown("# GRABETTE")
 
-        # ── HF Auth popup ─────────────────────────────────────────────
-        with gr.Group(visible=False, elem_id="hf-auth-modal") as auth_modal:
-            with gr.Group(elem_id="hf-auth-card"):
-                gr.HTML(
-                    "<h2 style='margin:0 0 0.4rem;'>HuggingFace Authentication</h2>"
-                    "<p style='color:#9ca3af;margin:0 0 1.2rem;font-size:0.9rem;'>"
-                    "Enter your HF token to enable episode uploads.</p>"
-                )
-                modal_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_...")
-                modal_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, visible=False)
-                with gr.Row():
-                    modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
-                    modal_skip_btn = gr.Button("Skip for now", variant="secondary", size="sm")
-
         # ── Main layout ───────────────────────────────────────────────
         with gr.Row():
 
             # ── LEFT: Tasks ──────────────────────────────────────────
-            with gr.Column(scale=1, min_width=200, elem_classes=["tasks-panel"]):
+            with gr.Column(scale=1, min_width=200, elem_id="tasks-col"):
                 gr.Markdown("## Tasks")
                 task_list = gr.Radio(choices=[], label=None, container=False)
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
@@ -572,15 +558,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 replay_timer = gr.Timer(0.5, active=False)
 
 
-        system_bar = gr.Textbox(show_label=False, interactive=False, max_lines=1)
-
         # ── Wire events ───────────────────────────────────────────────
-
-        modal_auth_btn.click(
-            fn=on_modal_auth, inputs=modal_token,
-            outputs=[modal_msg, auth_modal],
-        )
-        modal_skip_btn.click(fn=lambda: gr.update(visible=False), outputs=auth_modal)
 
         new_task_btn.click(fn=lambda: gr.update(visible=True), outputs=new_task_form)
         cancel_task_btn.click(fn=lambda: gr.update(visible=False), outputs=new_task_form)
@@ -654,14 +632,62 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         capture_timer = gr.Timer(0.5)
         capture_timer.tick(fn=get_capture_status, outputs=capture_box)
 
-        system_timer = gr.Timer(10)
-        system_timer.tick(fn=get_system_bar, outputs=system_bar)
-
         demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
-        demo.load(fn=check_hf_auth_on_load, outputs=auth_modal)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 2 — Data View
+    # Page 2 — Datasets (HF auth popup + upload)
+    # ══════════════════════════════════════════════════════════════════
+
+    with demo.route("Datasets") as datasets_demo:
+        gr.Navbar(main_page_name="Episodes")
+        gr.Markdown("# GRABETTE")
+
+        # HF Auth popup (shown if not authenticated)
+        with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
+            with gr.Group(elem_id="hf-auth-card"):
+                gr.HTML(
+                    "<h2 style='margin:0 0 0.4rem;'>HuggingFace Authentication</h2>"
+                    "<p style='color:#9ca3af;margin:0 0 1.2rem;font-size:0.9rem;'>"
+                    "Enter your HF token to enable episode uploads.</p>"
+                )
+                ds_modal_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_...")
+                ds_modal_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, visible=False)
+                with gr.Row():
+                    ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
+                    ds_modal_skip_btn = gr.Button("Skip for now", variant="secondary", size="sm")
+
+        gr.Markdown("## HuggingFace Authentication")
+        ds_hf_status = gr.Textbox(label="Status", interactive=False, max_lines=1)
+        ds_token_input = gr.Textbox(label="Token", type="password", placeholder="hf_...")
+        with gr.Row():
+            ds_save_token_btn = gr.Button("Save token", variant="primary", size="sm")
+            ds_remove_token_btn = gr.Button("Remove token", variant="stop", size="sm")
+
+        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
+        gr.Markdown("## Upload to HuggingFace")
+        ds_episode_dd = gr.Dropdown(label="Select episode", interactive=True)
+        ds_repo = gr.Textbox(label="Dataset Repo ID", placeholder="username/grabette-data")
+        ds_upload_btn = gr.Button("Upload", variant="huggingface", size="sm")
+        ds_upload_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+
+        ds_modal_auth_btn.click(
+            fn=on_modal_auth, inputs=ds_modal_token,
+            outputs=[ds_modal_msg, ds_auth_modal],
+        )
+        ds_modal_skip_btn.click(fn=lambda: gr.update(visible=False), outputs=ds_auth_modal)
+        ds_save_token_btn.click(
+            fn=on_hf_update_token, inputs=ds_token_input,
+            outputs=[ds_hf_status, ds_token_input],
+        )
+        ds_remove_token_btn.click(fn=on_hf_remove_token, outputs=ds_hf_status)
+        ds_upload_btn.click(
+            fn=on_ds_upload, inputs=[ds_episode_dd, ds_repo], outputs=ds_upload_msg,
+        )
+        datasets_demo.load(fn=load_datasets_page, outputs=[ds_hf_status, ds_episode_dd])
+        datasets_demo.load(fn=check_hf_auth_on_load, outputs=ds_auth_modal)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Page 3 — Data View
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Data View") as live_demo:
@@ -694,14 +720,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     'border-radius:8px;background:transparent;"></iframe>'
                 )
 
+        dv_system_bar = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
         sensor_timer = gr.Timer(0.5)
         sensor_timer.tick(fn=get_sensor_state, outputs=[imu_box, angle_box])
 
+        dv_system_timer = gr.Timer(10)
+        dv_system_timer.tick(fn=get_system_bar, outputs=dv_system_bar)
+
     # ══════════════════════════════════════════════════════════════════
-    # Page 3 — HF Account
+    # Page 4 — HF Account
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("HF Account") as hf_demo:
@@ -722,54 +753,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         account_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
         update_token_btn.click(
-            fn=on_hf_update_token,
-            inputs=new_token_input,
+            fn=on_hf_update_token, inputs=new_token_input,
             outputs=[hf_account_status, new_token_input],
         )
         remove_token_btn.click(fn=on_hf_remove_token, outputs=hf_account_status)
 
         hf_demo.load(fn=check_hf_account, outputs=hf_account_status)
-
-    # ══════════════════════════════════════════════════════════════════
-    # Page 4 — Datasets (HF auth + upload)
-    # ══════════════════════════════════════════════════════════════════
-
-    with demo.route("Datasets") as datasets_demo:
-        gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
-
-        gr.Markdown("## HuggingFace Authentication")
-        ds_hf_status = gr.Textbox(label="Status", interactive=False, max_lines=1)
-        ds_token_input = gr.Textbox(
-            label="Token", type="password", placeholder="hf_...",
-        )
-        with gr.Row():
-            ds_save_token_btn = gr.Button("Save token", variant="primary", size="sm")
-            ds_remove_token_btn = gr.Button("Remove token", variant="stop", size="sm")
-
-        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
-        gr.Markdown("## Upload to HuggingFace")
-        ds_episode_dd = gr.Dropdown(label="Select episode", interactive=True)
-        ds_repo = gr.Textbox(
-            label="Dataset Repo ID", placeholder="username/grabette-data",
-        )
-        ds_upload_btn = gr.Button("Upload", variant="huggingface", size="sm")
-        ds_upload_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
-
-        ds_save_token_btn.click(
-            fn=on_hf_update_token,
-            inputs=ds_token_input,
-            outputs=[ds_hf_status, ds_token_input],
-        )
-        ds_remove_token_btn.click(fn=on_hf_remove_token, outputs=ds_hf_status)
-        ds_upload_btn.click(
-            fn=on_ds_upload,
-            inputs=[ds_episode_dd, ds_repo],
-            outputs=ds_upload_msg,
-        )
-        datasets_demo.load(
-            fn=load_datasets_page,
-            outputs=[ds_hf_status, ds_episode_dd],
-        )
 
     return demo
