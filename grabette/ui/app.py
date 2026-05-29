@@ -799,16 +799,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         gr.Markdown("# GRABETTE")
         gr.Markdown("## HuggingFace Account")
 
-        hf_account_status = gr.Textbox(label="Current status", interactive=False)
-
-        gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
-        gr.Markdown("### Update Token")
-        new_token_input = gr.Textbox(
-            label="New HF Token", type="password", placeholder="hf_...",
-        )
         with gr.Row():
-            update_token_btn = gr.Button("Save token", variant="primary", size="sm")
-            remove_token_btn = gr.Button("Remove current token", variant="stop", size="sm")
+            with gr.Column(scale=1):
+                gr.Markdown("### Current status")
+                hf_account_status = gr.Textbox(
+                    label=None, container=False, interactive=False,
+                )
+            with gr.Column(scale=1):
+                gr.Markdown("### Update Token")
+                new_token_input = gr.Textbox(
+                    label=None, container=False,
+                    type="password", placeholder="hf_...",
+                )
+                with gr.Row():
+                    update_token_btn = gr.Button("Save token", variant="primary", size="sm")
+                    remove_token_btn = gr.Button("Remove current token", variant="stop", size="sm")
         account_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
         update_token_btn.click(
