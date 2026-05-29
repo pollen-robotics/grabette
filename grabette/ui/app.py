@@ -387,11 +387,116 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.update(),
         )
 
+    # ── HuggingFace modal helpers ─────────────────────────────────────
+
+    def on_modal_auth(token):
+        if not token:
+            return gr.update(visible=True, value="Please enter a token"), gr.update(), gr.update()
+        result = client.hf_set_auth(token)
+        if result.get("authenticated"):
+            user = result.get("user", {})
+            msg = f"Authenticated as {user.get('username', '?')}"
+            return (
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(value=msg),
+            )
+        return (
+            gr.update(visible=True, value=f"Auth failed: {result.get('error', 'unknown')}"),
+            gr.update(),
+            gr.update(),
+        )
+
+    def check_hf_auth_on_load():
+        result = client.hf_check_auth()
+        authenticated = result.get("authenticated", False)
+        if authenticated:
+            hf_text = f"Authenticated as {result.get('user', {}).get('username', '?')}"
+        else:
+            hf_text = "Not authenticated"
+        return hf_text, gr.update(visible=not authenticated)
+
     # ── Build layout ──────────────────────────────────────────────────
 
-    with gr.Blocks(title="Grabette") as demo:
+    modal_css = """
+    #hf-auth-modal {
+        position: fixed !important;
+        inset: 0 !important;
+        background: rgba(0, 0, 0, 0.78) !important;
+        z-index: 9999 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        margin: 0 !important;
+        padding: 1rem !important;
+        border-radius: 0 !important;
+        border: none !important;
+        gap: 0 !important;
+    }
+    #hf-auth-card {
+        max-width: 460px !important;
+        width: 100% !important;
+        background: #1f2937 !important;
+        border-radius: 12px !important;
+        padding: 2rem !important;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
+        border: 1px solid #374151 !important;
+    }
+    """
+
+    page_js = """
+    () => {
+        const style = document.createElement('style');
+        style.textContent = `
+            .nav-holder {
+                background: #111827 !important;
+                border-bottom: 2px solid #f97316 !important;
+                padding: 0 1rem !important;
+            }
+            nav a {
+                color: #9ca3af !important;
+                font-weight: 600 !important;
+                font-size: 0.95rem !important;
+                padding: 12px 20px !important;
+                border-radius: 0 !important;
+                border: none !important;
+                border-bottom: 3px solid transparent !important;
+            }
+            nav a.active {
+                color: #ffffff !important;
+                background-color: transparent !important;
+                border-bottom: 3px solid #f97316 !important;
+            }
+            nav a:hover {
+                color: #e5e7eb !important;
+                background-color: rgba(255, 255, 255, 0.07) !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+    """
+
+    with gr.Blocks(title="Grabette", css=modal_css, js=page_js) as demo:
         gr.Navbar(main_page_name="Tasks")
         gr.Markdown("# GRABETTE")
+
+        # ── HF Auth popup (shown on load if not authenticated) ────────
+        with gr.Group(visible=False, elem_id="hf-auth-modal") as auth_modal:
+            with gr.Group(elem_id="hf-auth-card"):
+                gr.HTML(
+                    "<h2 style='margin:0 0 0.4rem;'>HuggingFace Authentication</h2>"
+                    "<p style='color:#9ca3af;margin:0 0 1.2rem;font-size:0.9rem;'>"
+                    "Enter your HF token to enable episode uploads.</p>"
+                )
+                modal_token = gr.Textbox(
+                    label="HF Token", type="password", placeholder="hf_...",
+                )
+                modal_msg = gr.Textbox(
+                    show_label=False, interactive=False, max_lines=1, visible=False,
+                )
+                with gr.Row():
+                    modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
+                    modal_skip_btn = gr.Button("Skip for now", variant="secondary", size="sm")
 
         # ── Live view ─────────────────────────────────────────────────
         with gr.Row(equal_height=True):
@@ -625,6 +730,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      replay_timer, replay_panel, camera_img, replay_video],
         )
 
+        # HF auth modal
+        modal_auth_btn.click(
+            fn=on_modal_auth,
+            inputs=modal_token,
+            outputs=[modal_msg, auth_modal, hf_status],
+        )
+        modal_skip_btn.click(
+            fn=lambda: gr.update(visible=False),
+            outputs=auth_modal,
+        )
+
         # HuggingFace
         hf_auth_btn.click(fn=on_hf_auth, inputs=hf_token, outputs=hf_status)
         hf_upload_btn.click(
@@ -656,7 +772,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=refresh_sessions,
             outputs=[session_dd, episodes_table, move_target_dd, sessions_cbg],
         )
-        demo.load(fn=check_hf_auth, outputs=hf_status)
+        demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
 
     with demo.route("HF Account"):
         gr.Navbar(main_page_name="Tasks")
