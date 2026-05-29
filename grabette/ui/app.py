@@ -728,7 +728,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
           <div>
             <div style="font-weight:600;font-size:1rem;">Name your destination repository</div>
             <div style="color:#94a3b8;font-size:0.85rem;">
-              Format: <code style="background:#1e293b;padding:2px 6px;border-radius:4px;">
+              Format: <code style="padding:2px 6px;border-radius:4px;">
               username/my-dataset</code>
             </div>
           </div>
