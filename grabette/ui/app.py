@@ -142,17 +142,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         state = client.get_state()
         capturing = state.get("capture", {}).get("is_capturing", False) if state else False
         if capturing:
-            result = client.stop_capture()
-            if "error" in result:
-                return f"Error: {result['error']}", gr.update(value="Start Capture", variant="primary")
-            dur = result.get("duration_seconds", 0)
-            frames = result.get("frame_count", 0)
-            return f"Stopped — {dur:.1f}s, {frames} frames", gr.update(value="Start Capture", variant="primary")
+            client.stop_capture()
+            return gr.update(value="Start Capture", variant="primary")
         else:
-            result = client.start_capture()
-            if "error" in result:
-                return f"Error: {result['error']}", gr.update(value="Start Capture", variant="primary")
-            return f"Started: {result.get('episode_id', '?')}", gr.update(value="Stop Capture", variant="stop")
+            client.start_capture()
+            return gr.update(value="Stop Capture", variant="stop")
 
     # ── Task (Session) helpers ────────────────────────────────────────
 
@@ -430,16 +424,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 episodes_title = gr.Markdown("## Episodes")
                 task_desc_md = gr.Markdown("")
 
-                # Capture — one line, sits right under the title
+                # Capture
+                gr.Markdown("### Capture")
                 with gr.Row():
-                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
                     capture_box = gr.Textbox(
-                        label="Capture Status", lines=1, max_lines=1,
-                        interactive=False, scale=3,
+                        label="Status", lines=2, interactive=False, scale=3,
                     )
-                    capture_msg = gr.Textbox(
-                        show_label=False, interactive=False, max_lines=1, scale=2,
-                    )
+                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
@@ -464,6 +455,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Replay panel (hidden until replay starts)
                 with gr.Group(visible=False) as replay_panel:
                     gr.Markdown("#### Replay")
+                    replay_video = gr.HTML(value="")
+                    gr.HTML(
+                        '<iframe src="/charts/imu" '
+                        'style="width:100%;height:160px;border:none;'
+                        'border-radius:8px;background:transparent;"></iframe>'
+                    )
+                    gr.HTML(
+                        '<iframe src="/charts/angle" '
+                        'style="width:100%;height:100px;border:none;'
+                        'border-radius:8px;background:transparent;"></iframe>'
+                    )
                     replay_slider = gr.Slider(
                         minimum=0, maximum=1, step=1, value=0,
                         label="Timeline (ms)", interactive=True,
@@ -475,20 +477,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     with gr.Row():
                         replay_pause_btn = gr.Button("Pause", size="sm")
                         replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
-                    with gr.Row(equal_height=True):
-                        with gr.Column(scale=2):
-                            replay_video = gr.HTML(value="")
-                        with gr.Column(scale=1):
-                            gr.HTML(
-                                '<iframe src="/charts/imu" '
-                                'style="width:100%;height:200px;border:none;'
-                                'border-radius:8px;background:transparent;"></iframe>'
-                            )
-                            gr.HTML(
-                                '<iframe src="/charts/angle" '
-                                'style="width:100%;height:120px;border:none;'
-                                'border-radius:8px;background:transparent;"></iframe>'
-                            )
                 replay_timer = gr.Timer(0.5, active=False)
 
                 # HF upload section
@@ -526,7 +514,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         toggle_btn.click(
             fn=on_toggle_capture,
-            outputs=[capture_msg, toggle_btn],
+            outputs=[toggle_btn],
         )
 
         dl_btn.click(fn=on_download_episodes, inputs=episodes_table, outputs=dl_file)
