@@ -221,21 +221,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return gr.update(visible=True), s.get("name", ""), s.get("description", "")
         return gr.update(visible=True), "", ""
 
-    def on_rename_task(session_id, new_name):
-        if not session_id or not new_name.strip():
-            return "Enter a name", gr.update(), gr.update(), gr.update()
-        client.update_session(session_id, name=new_name.strip())
+    def on_save_task(session_id, new_name, new_desc):
+        if not session_id:
+            return "No task selected", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+        if not new_name.strip():
+            return "Name cannot be empty", gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+        client.update_session(session_id, name=new_name.strip(), description=new_desc)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
-        _, _, task_header, _, cap_title = _refresh_episode_table(session_id, sessions)
-        return "Renamed", gr.update(choices=choices, value=session_id), task_header, cap_title
-
-    def on_update_task_desc(session_id, new_desc):
-        if not session_id:
-            return "No task selected", gr.update()
-        client.update_session(session_id, description=new_desc)
-        desc = f"**Description:** {new_desc}" if new_desc.strip() else ""
-        return "Updated", desc
+        _, _, task_header, desc, cap_title = _refresh_episode_table(session_id, sessions)
+        return (
+            "Saved",
+            gr.update(choices=choices, value=session_id),
+            task_header, cap_title, desc,
+            gr.update(visible=False),
+        )
 
     def on_delete_task(session_id):
         if not session_id:
@@ -474,24 +474,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
                 # Edit Task panel (appears below description)
                 with gr.Group(visible=False) as edit_task_form:
-                    with gr.Row():
-                        gr.Markdown("#### Edit Task")
-                        close_edit_btn = gr.Button("✕ Close", size="sm")
+                    gr.Markdown("#### Edit Task")
                     edit_task_msg = gr.Textbox(
                         show_label=False, interactive=False, max_lines=1,
                     )
+                    rename_input = gr.Textbox(label="Name", placeholder="Task name…")
+                    desc_edit_input = gr.Textbox(label="Description", placeholder="Description…")
                     with gr.Row():
-                        rename_input = gr.Textbox(
-                            label="New name", placeholder="Task name…", scale=3,
-                        )
-                        rename_btn = gr.Button("Rename", size="sm", scale=1)
-                    with gr.Row():
-                        desc_edit_input = gr.Textbox(
-                            label="Description", placeholder="Description…", scale=3,
-                        )
-                        update_desc_btn = gr.Button("Update", size="sm", scale=1)
-                    gr.HTML("<hr style='margin:12px 0;border:none;border-top:1px solid #555;'>")
-                    delete_task_btn = gr.Button("Delete Task", variant="stop", size="sm")
+                        delete_task_btn = gr.Button("Delete Task", variant="stop", size="sm")
+                        cancel_edit_btn = gr.Button("Cancel", size="sm")
+                        save_task_btn = gr.Button("Save changes", variant="primary", size="sm")
                     with gr.Group(visible=False) as delete_confirm:
                         gr.Markdown(
                             "⚠ **This will permanently delete the task and ALL its episodes. "
@@ -600,16 +592,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_open_edit_form, inputs=task_list,
             outputs=[edit_task_form, rename_input, desc_edit_input],
         )
-        close_edit_btn.click(
+        cancel_edit_btn.click(
             fn=lambda: gr.update(visible=False), outputs=edit_task_form,
         )
-        rename_btn.click(
-            fn=on_rename_task, inputs=[task_list, rename_input],
-            outputs=[edit_task_msg, task_list, task_header_md, capture_title],
-        )
-        update_desc_btn.click(
-            fn=on_update_task_desc, inputs=[task_list, desc_edit_input],
-            outputs=[edit_task_msg, task_desc_md],
+        save_task_btn.click(
+            fn=on_save_task,
+            inputs=[task_list, rename_input, desc_edit_input],
+            outputs=[edit_task_msg, task_list, task_header_md, capture_title, task_desc_md, edit_task_form],
         )
         delete_task_btn.click(
             fn=lambda: gr.update(visible=True), outputs=delete_confirm,
