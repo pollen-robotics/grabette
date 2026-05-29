@@ -477,14 +477,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
                 # Episodes header + task info
                 episodes_title = gr.Markdown("## Episodes")
-                task_desc_md = gr.Markdown("")
-
-                # Edit Task button + collapsible form
                 with gr.Row():
-                    edit_task_btn = gr.Button("✏ Edit Task", size="sm", variant="secondary")
+                    with gr.Column(scale=5):
+                        task_desc_md = gr.Markdown("")
+                    edit_task_btn = gr.Button("✏ Edit", size="sm", scale=1)
 
                 with gr.Group(visible=False) as edit_task_form:
-                    gr.Markdown("#### Edit Task")
+                    with gr.Row():
+                        gr.Markdown("#### Edit Task")
+                        close_edit_btn = gr.Button("✕ Close", size="sm")
                     edit_task_msg = gr.Textbox(
                         show_label=False, interactive=False, max_lines=1,
                     )
@@ -499,9 +500,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         )
                         update_desc_btn = gr.Button("Update", size="sm", scale=1)
                     gr.HTML("<hr style='margin:12px 0;border:none;border-top:1px solid #555;'>")
-                    delete_task_btn = gr.Button(
-                        "Delete Task", variant="stop", size="sm",
-                    )
+                    delete_task_btn = gr.Button("Delete Task", variant="stop", size="sm")
                     with gr.Group(visible=False) as delete_confirm:
                         gr.Markdown(
                             "⚠ **This will permanently delete the task and ALL its episodes. "
@@ -598,6 +597,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_open_edit_form, inputs=task_list,
             outputs=[edit_task_form, rename_input, desc_edit_input],
         )
+        close_edit_btn.click(
+            fn=lambda: gr.update(visible=False), outputs=edit_task_form,
+        )
         rename_btn.click(
             fn=on_rename_task, inputs=[task_list, rename_input],
             outputs=[edit_task_msg, task_list, capture_title, episodes_title],
@@ -661,10 +663,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 2 — Robot View
+    # Page 2 — Data View
     # ══════════════════════════════════════════════════════════════════
 
-    with demo.route("Robot View") as live_demo:
+    with demo.route("Data View") as live_demo:
         gr.Navbar(main_page_name="Datasets")
         gr.Markdown("# GRABETTE")
 
