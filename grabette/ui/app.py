@@ -370,15 +370,30 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def get_system_bar():
         info = client.get_system_info()
         if info is None:
-            return "System: disconnected"
-        parts = [info.get("hostname", "?")]
-        if "cpu_temp_c" in info:
-            parts.append(f"{info['cpu_temp_c']}°C")
-        if "disk_free_gb" in info:
-            parts.append(f"{info['disk_free_gb']}GB free")
-        if "ip" in info:
-            parts.append(info["ip"])
-        return " | ".join(parts)
+            return "<p style='color:#64748b;font-size:0.85rem;margin:0.75rem 0;'>System disconnected</p>"
+        cards = [
+            ("Host", info.get("hostname", "?")),
+            ("CPU temp", f"{info['cpu_temp_c']} °C" if "cpu_temp_c" in info else None),
+            ("Disk free", f"{info['disk_free_gb']} GB" if "disk_free_gb" in info else None),
+            ("IP", info.get("ip")),
+        ]
+        parts = []
+        for label, value in cards:
+            if not value:
+                continue
+            parts.append(
+                f"<div style='background:#1e293b;border-radius:8px;padding:0.5rem 0.75rem;"
+                f"border:1px solid #334155;flex:1;min-width:110px;'>"
+                f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.08em;"
+                f"color:#64748b;margin-bottom:0.2rem;'>{label}</div>"
+                f"<div style='font-size:0.9rem;font-weight:600;color:#e2e8f0;'>{value}</div>"
+                f"</div>"
+            )
+        return (
+            "<div style='display:flex;gap:0.75rem;flex-wrap:wrap;margin:1rem 0;'>"
+            + "".join(parts)
+            + "</div>"
+        )
 
     # ── HuggingFace ───────────────────────────────────────────────────
 
@@ -751,35 +766,47 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Data View") as live_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
 
+        # ── Camera + 3D viewer ────────────────────────────────────────
         with gr.Row(equal_height=True):
             with gr.Column(scale=1):
-                camera_img = gr.Image(label="Camera Live View", height="30vh")
+                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
+                        "letter-spacing:0.09em;color:#64748b;margin-bottom:0.3rem;'>"
+                        "Camera</div>")
+                camera_img = gr.Image(
+                    label=None, show_label=False, height="30vh", container=False,
+                )
             with gr.Column(scale=1):
+                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
+                        "letter-spacing:0.09em;color:#64748b;margin-bottom:0.3rem;'>"
+                        "3D Model</div>")
                 gr.HTML(
                     '<iframe id="urdf-viewer" src="/viewer" '
                     'style="width:100%;height:30vh;border:none;'
                     'border-radius:8px;background:#1a1a2e;"></iframe>'
                 )
 
+        # ── Sensor charts ─────────────────────────────────────────────
+        gr.HTML("<hr style='margin:1.25rem 0;border:none;border-top:1px solid #1e293b;'>")
         with gr.Row():
-            with gr.Column(scale=1):
+            with gr.Column(scale=3):
                 imu_box = gr.Markdown("## IMU Live")
                 gr.HTML(
                     '<iframe src="/charts/imu" '
-                    'style="width:100%;height:40vh;border:none;'
+                    'style="width:100%;height:38vh;border:none;'
                     'border-radius:8px;background:transparent;"></iframe>'
                 )
-            with gr.Column(scale=1):
+            with gr.Column(scale=2):
                 angle_box = gr.Markdown("## Angle Sensors")
                 gr.HTML(
                     '<iframe src="/charts/angle" '
-                    'style="width:100%;height:20vh;border:none;'
+                    'style="width:100%;height:18vh;border:none;'
                     'border-radius:8px;background:transparent;"></iframe>'
                 )
 
-        dv_system_bar = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+        # ── System info cards ─────────────────────────────────────────
+        gr.HTML("<hr style='margin:0.5rem 0;border:none;border-top:1px solid #1e293b;'>")
+        dv_system_bar = gr.HTML()
 
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
