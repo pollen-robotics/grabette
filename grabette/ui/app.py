@@ -72,12 +72,19 @@ PAGE_JS = """
             border-radius: 8px !important;
             padding: 8px !important;
         }
-        /* Constrain content width — centers on wide screens, full-width on mobile */
-        .app {
-            max-width: 1200px !important;
+        /* Datasets page: constrain width and center */
+        body.page-datasets .app {
+            max-width: 600px !important;
         }
     `;
     document.head.appendChild(style);
+
+    function applyPageClass() {
+        const path = window.location.pathname;
+        document.body.classList.toggle('page-datasets', path.includes('/datasets'));
+    }
+    applyPageClass();
+    window.addEventListener('popstate', applyPageClass);
 }
 """
 
