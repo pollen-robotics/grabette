@@ -393,21 +393,32 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def load_datasets_page():
         sessions = _get_sessions()
-        episodes = []
-        for s in sessions:
-            for ep in s.get("episodes", []):
-                episodes.append((f"{s['name']} / {ep['episode_id']}", ep["episode_id"]))
-        return gr.update(choices=episodes, value=episodes[0][1] if episodes else None)
+        choices = [(s["name"], s["id"]) for s in sessions]
+        return gr.update(choices=choices, value=[])
 
-    def on_ds_upload(episode_id, repo_id):
-        if not episode_id:
-            return "Select an episode"
-        if not repo_id:
-            return "Enter a repo ID (e.g. username/grabette-data)"
-        result = client.hf_upload_episode(episode_id, repo_id)
-        if "error" in result:
-            return f"Error: {result['error']}"
-        return f"Upload started (job: {result.get('job_id', '?')})"
+    def on_ds_upload(task_ids, repo_id):
+        if not task_ids:
+            return "Select at least one task"
+        if not repo_id.strip():
+            return "Enter a repository name (e.g. username/grabette-data)"
+        sessions = _get_sessions()
+        session_map = {s["id"]: s for s in sessions}
+        jobs, errors = [], []
+        for tid in task_ids:
+            s = session_map.get(tid)
+            if not s:
+                continue
+            for ep in s.get("episodes", []):
+                result = client.hf_upload_episode(ep["episode_id"], repo_id)
+                if "error" in result:
+                    errors.append(f"{ep['episode_id']}: {result['error']}")
+                else:
+                    jobs.append(result.get("job_id", "?"))
+        if errors:
+            return f"Errors: {'; '.join(errors)}"
+        if not jobs:
+            return "No episodes found in selected tasks"
+        return f"Started {len(jobs)} upload job(s)"
 
     def on_modal_auth(token):
         if not token:
@@ -665,14 +676,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 )
                 ds_modal_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_...")
                 ds_modal_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, visible=False)
-                with gr.Row():
-                    ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
-                    ds_modal_skip_btn = gr.Button("Skip for now", variant="secondary", size="sm")
+                ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
 
         gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
         gr.Markdown("## Upload to HuggingFace")
-        ds_episode_dd = gr.Dropdown(label="Select episode", interactive=True)
-        ds_repo = gr.Textbox(label="Dataset Repo ID", placeholder="username/grabette-data")
+        ds_task_cbg = gr.CheckboxGroup(choices=[], label="Select tasks")
+        ds_repo = gr.Textbox(
+            label="Destination repository on HuggingFace",
+            placeholder="username/grabette-data",
+        )
         ds_upload_btn = gr.Button("Upload", variant="huggingface", size="sm")
         ds_upload_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
 
@@ -680,11 +692,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_modal_auth, inputs=ds_modal_token,
             outputs=[ds_modal_msg, ds_auth_modal],
         )
-        ds_modal_skip_btn.click(fn=lambda: gr.update(visible=False), outputs=ds_auth_modal)
         ds_upload_btn.click(
-            fn=on_ds_upload, inputs=[ds_episode_dd, ds_repo], outputs=ds_upload_msg,
+            fn=on_ds_upload, inputs=[ds_task_cbg, ds_repo], outputs=ds_upload_msg,
         )
-        datasets_demo.load(fn=load_datasets_page, outputs=ds_episode_dd)
+        datasets_demo.load(fn=load_datasets_page, outputs=ds_task_cbg)
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=ds_auth_modal)
 
     # ══════════════════════════════════════════════════════════════════
