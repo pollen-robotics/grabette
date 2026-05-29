@@ -390,6 +390,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Build layout ──────────────────────────────────────────────────
 
     with gr.Blocks(title="Grabette") as demo:
+        gr.Navbar(main_page_name="Tasks")
         gr.Markdown("# GRABETTE")
 
         # ── Live view ─────────────────────────────────────────────────
@@ -656,5 +657,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[session_dd, episodes_table, move_target_dd, sessions_cbg],
         )
         demo.load(fn=check_hf_auth, outputs=hf_status)
+
+    with demo.route("HF Account"):
+        gr.Navbar(main_page_name="Tasks")
+        gr.Markdown("*Coming soon.*")
 
     return demo
