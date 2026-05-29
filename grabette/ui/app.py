@@ -430,21 +430,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 episodes_title = gr.Markdown("## Episodes")
                 task_desc_md = gr.Markdown("")
 
-                # Capture — compact box, pushed to the right
-                with gr.Row():
-                    gr.HTML("")
-                    with gr.Column(scale=2, min_width=220):
-                        with gr.Group():
-                            gr.Markdown("**Capture**")
-                            capture_box = gr.Textbox(
-                                label="Capture Status", lines=2,
-                                interactive=False,
-                            )
-                            with gr.Row():
-                                toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
-                                capture_msg = gr.Textbox(
-                                    show_label=False, interactive=False, max_lines=1, scale=2,
-                                )
+                # Capture
+                with gr.Group():
+                    gr.Markdown("**Capture**")
+                    capture_box = gr.Textbox(
+                        label="Capture Status", lines=2, interactive=False,
+                    )
+                    with gr.Row():
+                        toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
+                        capture_msg = gr.Textbox(
+                            show_label=False, interactive=False, max_lines=1, scale=2,
+                        )
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
