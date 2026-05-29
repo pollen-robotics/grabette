@@ -85,6 +85,18 @@ PAGE_JS = """
     }
     applyPageClass();
     window.addEventListener('popstate', applyPageClass);
+
+    // Gradio uses pushState/replaceState for navigation — intercept both
+    const _push = history.pushState.bind(history);
+    history.pushState = function(...args) {
+        _push(...args);
+        applyPageClass();
+    };
+    const _replace = history.replaceState.bind(history);
+    history.replaceState = function(...args) {
+        _replace(...args);
+        applyPageClass();
+    };
 }
 """
 
