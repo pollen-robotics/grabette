@@ -182,7 +182,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             choices=move_choices,
             value=move_choices[0][1] if move_choices else None,
         )
-        title = f"### Episodes for *{task_name}*" if task_name else "### Episodes"
+        title = f"## Episodes for *{task_name}*" if task_name else "### Episodes"
         desc = task_description or ""
         return rows, move_dd, title, desc
 
