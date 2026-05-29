@@ -223,7 +223,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def on_rename_task(session_id, new_name):
         if not session_id or not new_name.strip():
-            return "Enter a name", gr.update(), gr.update()
+            return "Enter a name", gr.update(), gr.update(), gr.update()
         client.update_session(session_id, name=new_name.strip())
         sessions = _get_sessions()
         choices = _task_choices(sessions)
@@ -657,7 +657,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         system_timer = gr.Timer(10)
         system_timer.tick(fn=get_system_bar, outputs=system_bar)
 
-        demo.load(fn=refresh_tasks, outputs=[task_list, episodes_title, task_desc_md, episodes_table, move_target_dd])
+        demo.load(fn=refresh_tasks, outputs=[task_list, capture_title, episodes_title, task_desc_md, episodes_table, move_target_dd])
         demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
 
     # ══════════════════════════════════════════════════════════════════
