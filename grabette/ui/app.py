@@ -184,7 +184,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
         desc = f"**Description:** {task_description}" if task_description else ""
-        cap_title = f"### Capture for *{task_name}*" if task_name else "### Capture"
+        cap_title = f"### Capture an episode for *{task_name}*" if task_name else "### Capture"
         return rows, move_dd, title, desc, cap_title
 
     def refresh_tasks():
@@ -462,26 +462,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         create_task_btn = gr.Button("Create", variant="primary", size="sm")
                         cancel_task_btn = gr.Button("Cancel", size="sm")
 
-            # ── RIGHT: Episodes ──────────────────────────────────────
-            with gr.Column(scale=3):
-
-                # Capture (above episodes, title shows selected task)
-                capture_title = gr.Markdown("### Capture")
-                with gr.Row():
-                    capture_box = gr.Textbox(
-                        label="Status", lines=2, interactive=False, scale=3,
-                    )
-                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
-
-                gr.HTML("<hr style='margin:16px 0;border:none;border-top:1px solid #333;'>")
-
-                # Episodes header + task info
-                episodes_title = gr.Markdown("## Episodes")
-                with gr.Row():
-                    with gr.Column(scale=5):
-                        task_desc_md = gr.Markdown("")
-                    edit_task_btn = gr.Button("✏ Edit", size="sm", scale=1)
-
                 with gr.Group(visible=False) as edit_task_form:
                     with gr.Row():
                         gr.Markdown("#### Edit Task")
@@ -511,6 +491,26 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                 "Yes, delete everything", variant="stop", size="sm",
                             )
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
+
+            # ── RIGHT: Episodes ──────────────────────────────────────
+            with gr.Column(scale=3):
+
+                # Capture (above episodes, title shows selected task)
+                capture_title = gr.Markdown("### Capture")
+                with gr.Row():
+                    capture_box = gr.Textbox(
+                        label="Status", lines=2, interactive=False, scale=3,
+                    )
+                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
+
+                gr.HTML("<hr style='margin:16px 0;border:none;border-top:1px solid #333;'>")
+
+                # Episodes header + task info
+                episodes_title = gr.Markdown("## Episodes")
+                with gr.Row():
+                    with gr.Column(scale=5):
+                        task_desc_md = gr.Markdown("")
+                    edit_task_btn = gr.Button("✏ Edit", size="sm", scale=1)
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
