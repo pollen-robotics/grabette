@@ -408,14 +408,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def load_datasets_page():
         sessions = _get_sessions()
-        choices = [(s["name"], s["id"]) for s in sessions]
-        return gr.update(choices=choices, value=[])
+        task_choices = [(s["name"], s["id"]) for s in sessions]
+        namespaces = client.hf_get_namespaces()
+        ns_update = gr.update(
+            choices=namespaces,
+            value=namespaces[0] if namespaces else None,
+        )
+        return gr.update(choices=task_choices, value=[]), ns_update
 
-    def on_ds_upload(task_ids, repo_id):
+    def on_ds_upload(task_ids, namespace, repo_name):
         if not task_ids:
             return "Select at least one task"
-        if not repo_id.strip():
-            return "Enter a repository name (e.g. username/grabette-data)"
+        if not namespace or not repo_name.strip():
+            return "Enter a namespace and a repository name"
+        repo_id = f"{namespace}/{repo_name.strip()}"
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
         jobs, errors = [], []
@@ -728,19 +734,24 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
           <div>
             <div style="font-weight:600;font-size:1rem;">Name your destination repository</div>
             <div style="color:#94a3b8;font-size:0.85rem;">
-              Format: <code style="padding:2px 6px;border-radius:4px;">
-              username/my-dataset</code>
+              Choose a namespace and give a name to the dataset.
             </div>
           </div>
         </div>
         """)
-        ds_repo = gr.Textbox(
-            label=None, container=False,
-            placeholder="username/grabette-data",
-        )
+        with gr.Row():
+            ds_namespace = gr.Dropdown(
+                label="Namespace", choices=[], interactive=True, scale=1,
+            )
+            gr.HTML("<div style='display:flex;align-items:flex-end;padding-bottom:8px;"
+                    "color:#64748b;font-size:1.2rem;'>/</div>")
+            ds_repo_name = gr.Textbox(
+                label="Repository name", placeholder="grabette-data",
+                container=True, scale=2,
+            )
 
         # ── Upload ────────────────────────────────────────────────────
-        gr.HTML("<div style='margin-top:1.5rem;'>")
+        gr.HTML("<div style='margin-top:1.5rem;max-width:260px;'>")
         ds_upload_btn = gr.Button(
             "Push to HuggingFace Hub",
             variant="huggingface",
@@ -749,15 +760,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_upload_msg = gr.Textbox(
             show_label=False, interactive=False, max_lines=2, container=False,
         )
+        gr.HTML("</div>")
 
         ds_modal_auth_btn.click(
             fn=on_modal_auth, inputs=ds_modal_token,
             outputs=[ds_modal_msg, ds_auth_modal],
         )
         ds_upload_btn.click(
-            fn=on_ds_upload, inputs=[ds_task_cbg, ds_repo], outputs=ds_upload_msg,
+            fn=on_ds_upload,
+            inputs=[ds_task_cbg, ds_namespace, ds_repo_name],
+            outputs=ds_upload_msg,
         )
-        datasets_demo.load(fn=load_datasets_page, outputs=ds_task_cbg)
+        datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=ds_auth_modal)
 
     # ══════════════════════════════════════════════════════════════════

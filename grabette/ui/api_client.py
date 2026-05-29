@@ -205,6 +205,13 @@ class GrabetteClient:
         except Exception:
             return {"authenticated": False}
 
+    def hf_get_namespaces(self) -> list[str]:
+        """Return available namespaces (username + orgs) for the authenticated user."""
+        result = self.hf_check_auth()
+        if not result.get("authenticated"):
+            return []
+        return result.get("user", {}).get("namespaces", [])
+
     def hf_set_auth(self, token: str) -> dict:
         try:
             r = self._http.post("/api/hf/auth", json={"token": token})
