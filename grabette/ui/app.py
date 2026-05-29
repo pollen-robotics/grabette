@@ -389,33 +389,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Build layout ──────────────────────────────────────────────────
 
-    navbar_css = """
-    .nav-holder {
-        background: #111827 !important;
-        border-bottom: 2px solid #f97316 !important;
-        padding: 0 1rem !important;
-    }
-    nav a {
-        color: #9ca3af !important;
-        font-weight: 600 !important;
-        font-size: 0.95rem !important;
-        padding: 12px 20px !important;
-        border-radius: 0 !important;
-        border: none !important;
-        border-bottom: 3px solid transparent !important;
-    }
-    nav a.active {
-        color: #ffffff !important;
-        background-color: transparent !important;
-        border-bottom: 3px solid #f97316 !important;
-    }
-    nav a:hover {
-        color: #e5e7eb !important;
-        background-color: rgba(255, 255, 255, 0.07) !important;
-    }
-    """
-
-    with gr.Blocks(title="Grabette", css=navbar_css) as demo:
+    with gr.Blocks(title="Grabette") as demo:
         gr.Navbar(main_page_name="Tasks")
         gr.Markdown("# GRABETTE")
 
