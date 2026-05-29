@@ -166,8 +166,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if sessions is None:
             sessions = _get_sessions()
         rows = []
+        task_name = ""
+        task_description = ""
         for s in sessions:
             if s["id"] == session_id:
+                task_name = s.get("name", "")
+                task_description = s.get("description", "")
                 for ep in s.get("episodes", []):
                     rows.append([
                         False,
@@ -184,30 +188,32 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             choices=move_choices,
             value=move_choices[0][1] if move_choices else None,
         )
-        return rows, move_dd
+        title = f"### Episodes for *{task_name}*" if task_name else "### Episodes"
+        desc = task_description or ""
+        return rows, move_dd, title, desc
 
     def refresh_tasks():
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
-        rows, move_dd = _refresh_episode_table(value, sessions)
-        return gr.update(choices=choices, value=value), rows, move_dd
+        rows, move_dd, title, desc = _refresh_episode_table(value, sessions)
+        return gr.update(choices=choices, value=value), title, desc, rows, move_dd
 
     def on_task_select(session_id):
-        rows, move_dd = _refresh_episode_table(session_id)
-        return rows, move_dd
+        rows, move_dd, title, desc = _refresh_episode_table(session_id)
+        return title, desc, rows, move_dd
 
     def on_create_task(name, description):
         if not name:
-            return gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         result = client.create_session(name, description or "")
         if "error" in result:
-            return gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         new_id = result["id"]
-        rows, move_dd = _refresh_episode_table(new_id, sessions)
-        return gr.update(choices=choices, value=new_id), rows, move_dd, gr.update(visible=False)
+        rows, move_dd, title, desc = _refresh_episode_table(new_id, sessions)
+        return gr.update(choices=choices, value=new_id), title, desc, rows, move_dd, gr.update(visible=False)
 
     def _get_selected_ids(table_data) -> list[str]:
         if table_data is None:
@@ -259,7 +265,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def _video_iframe(episode_id: str) -> str:
         return (
             f'<iframe src="/api/replay/video?episode_id={episode_id}" '
-            'style="width:100%;height:300px;border:none;'
+            'style="width:100%;height:320px;border:none;'
             'border-radius:8px;background:#000;"></iframe>'
         )
 
@@ -421,7 +427,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── RIGHT: Episodes ──────────────────────────────────────
             with gr.Column(scale=3):
-                gr.Markdown("## Episodes")
+                episodes_title = gr.Markdown("## Episodes")
+                task_desc_md = gr.Markdown("")
+
+                # Capture — one line, sits right under the title
+                with gr.Row():
+                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
+                    capture_box = gr.Textbox(
+                        label="Capture Status", lines=1, max_lines=1,
+                        interactive=False, scale=3,
+                    )
+                    capture_msg = gr.Textbox(
+                        show_label=False, interactive=False, max_lines=1, scale=2,
+                    )
+
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
                     datatype=["bool", "str", "str", "number", "number", "number"],
@@ -444,27 +463,33 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
                 # Replay panel (hidden until replay starts)
                 with gr.Group(visible=False) as replay_panel:
-                    gr.Markdown("#### Episode Replay")
-                    replay_video = gr.HTML(value="")
+                    gr.Markdown("#### Replay")
+                    with gr.Row():
+                        replay_pause_btn = gr.Button("Pause", size="sm", scale=1)
+                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm", scale=1)
+                        replay_time_label = gr.Textbox(
+                            value="0.0s / 0.0s", show_label=False,
+                            interactive=False, max_lines=1, scale=3,
+                        )
                     replay_slider = gr.Slider(
                         minimum=0, maximum=1, step=1, value=0,
                         label="Timeline (ms)", interactive=True,
                     )
-                    replay_time_label = gr.Textbox(
-                        value="0.0s / 0.0s", show_label=False, interactive=False, max_lines=1,
-                    )
-                    with gr.Row():
-                        replay_pause_btn = gr.Button("Pause", size="sm")
-                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
+                    with gr.Row(equal_height=True):
+                        with gr.Column(scale=2):
+                            replay_video = gr.HTML(value="")
+                        with gr.Column(scale=1):
+                            gr.HTML(
+                                '<iframe src="/charts/imu" '
+                                'style="width:100%;height:200px;border:none;'
+                                'border-radius:8px;background:transparent;"></iframe>'
+                            )
+                            gr.HTML(
+                                '<iframe src="/charts/angle" '
+                                'style="width:100%;height:120px;border:none;'
+                                'border-radius:8px;background:transparent;"></iframe>'
+                            )
                 replay_timer = gr.Timer(0.5, active=False)
-
-                # Capture section
-                gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
-                gr.Markdown("### Capture")
-                capture_box = gr.Textbox(label="Capture Status", lines=3, interactive=False)
-                with gr.Row():
-                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=2)
-                    capture_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, scale=3)
 
                 # HF upload section
                 gr.HTML("<hr style='margin:24px 0;border:none;border-top:1px solid #333;'>")
@@ -492,11 +517,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         create_task_btn.click(
             fn=on_create_task,
             inputs=[new_task_name, new_task_desc],
-            outputs=[task_list, episodes_table, move_target_dd, new_task_form],
+            outputs=[task_list, episodes_title, task_desc_md, episodes_table, move_target_dd, new_task_form],
         )
         task_list.change(
             fn=on_task_select, inputs=task_list,
-            outputs=[episodes_table, move_target_dd],
+            outputs=[episodes_title, task_desc_md, episodes_table, move_target_dd],
         )
 
         toggle_btn.click(
@@ -538,7 +563,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         system_timer = gr.Timer(10)
         system_timer.tick(fn=get_system_bar, outputs=system_bar)
 
-        demo.load(fn=refresh_tasks, outputs=[task_list, episodes_table, move_target_dd])
+        demo.load(fn=refresh_tasks, outputs=[task_list, episodes_title, task_desc_md, episodes_table, move_target_dd])
         demo.load(fn=check_hf_auth_on_load, outputs=[hf_status, auth_modal])
 
     # ══════════════════════════════════════════════════════════════════
