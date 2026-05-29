@@ -52,9 +52,10 @@ class GrabetteClient:
 
     # -- Capture --
 
-    def start_capture(self) -> dict:
+    def start_capture(self, session_id: str | None = None) -> dict:
         try:
-            r = self._http.post("/api/episodes/start")
+            body = {"session_id": session_id} if session_id else {}
+            r = self._http.post("/api/episodes/start", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:

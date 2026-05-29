@@ -138,14 +138,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return "\n".join(parts)
         return "○ Idle"
 
-    def on_toggle_capture():
+    def on_toggle_capture(session_id):
         state = client.get_state()
         capturing = state.get("capture", {}).get("is_capturing", False) if state else False
         if capturing:
             client.stop_capture()
             return gr.update(value="Start Capture", variant="primary")
         else:
-            client.start_capture()
+            client.start_capture(session_id=session_id or None)
             return gr.update(value="Stop Capture", variant="stop")
 
     # ── Task (Session) helpers ────────────────────────────────────────
@@ -280,7 +280,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             result = client.delete_episode(eid)
             if "error" in result:
                 errors.append(f"{eid}: {result['error']}")
-        rows, move_dd = _refresh_episode_table(session_id)
+        rows, move_dd, *_ = _refresh_episode_table(session_id)
         if errors:
             return "Errors: " + "; ".join(errors), rows, move_dd
         return f"Deleted {len(episode_ids)} episode(s)", rows, move_dd
@@ -294,7 +294,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         result = client.move_episodes(episode_ids, target_session_id)
         if "error" in result:
             return f"Error: {result['error']}", gr.update(), gr.update()
-        rows, move_dd = _refresh_episode_table(current_session_id)
+        rows, move_dd, *_ = _refresh_episode_table(current_session_id)
         return f"Moved {len(episode_ids)} episode(s)", rows, move_dd
 
     # ── Replay ────────────────────────────────────────────────────────
@@ -614,6 +614,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         toggle_btn.click(
             fn=on_toggle_capture,
+            inputs=[task_list],
             outputs=[toggle_btn],
         )
 
