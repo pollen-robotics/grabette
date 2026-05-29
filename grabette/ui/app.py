@@ -188,12 +188,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             choices=move_choices,
             value=move_choices[0][1] if move_choices else None,
         )
-        if task_name:
-            title = f"<h2 style='margin:0 0 4px'>Episodes <span style='font-weight:400'>for <em>{task_name}</em></span></h2>"
-            desc = f"<p style='color:#9ca3af;margin:0 0 8px;font-size:0.9rem'>{task_description}</p>" if task_description else ""
-        else:
-            title = "<h2 style='margin:0 0 4px'>Episodes</h2>"
-            desc = ""
+        title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
+        desc = task_description or ""
         return rows, move_dd, title, desc
 
     def refresh_tasks():
@@ -431,8 +427,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── RIGHT: Episodes ──────────────────────────────────────
             with gr.Column(scale=3):
-                episodes_title = gr.HTML("<h2 style='margin:0 0 4px'>Episodes</h2>")
-                task_desc_md = gr.HTML("")
+                episodes_title = gr.Markdown("## Episodes")
+                task_desc_md = gr.Markdown("")
 
                 # Capture
                 with gr.Group():
