@@ -410,9 +410,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         sessions = _get_sessions()
         task_choices = [(s["name"], s["id"]) for s in sessions]
         namespaces = client.hf_get_namespaces()
+        ns_choices = [f"{ns}/" for ns in namespaces]
         ns_update = gr.update(
-            choices=namespaces,
-            value=namespaces[0] if namespaces else None,
+            choices=ns_choices,
+            value=ns_choices[0] if ns_choices else None,
         )
         return gr.update(choices=task_choices, value=[]), ns_update
 
@@ -421,7 +422,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return "Select at least one task"
         if not namespace or not repo_name.strip():
             return "Enter a namespace and a repository name"
-        repo_id = f"{namespace}/{repo_name.strip()}"
+        repo_id = f"{namespace}{repo_name.strip()}"
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
         jobs, errors = [], []
@@ -743,11 +744,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             ds_namespace = gr.Dropdown(
                 label="Namespace", choices=[], interactive=True, scale=1,
             )
-            gr.HTML("<div style='display:flex;align-items:flex-end;padding-bottom:8px;"
-                    "color:#64748b;font-size:1.2rem;'>/</div>")
             ds_repo_name = gr.Textbox(
                 label="Repository name", placeholder="grabette-data",
-                container=True, scale=2,
+                scale=2,
             )
 
         # ── Upload ────────────────────────────────────────────────────
