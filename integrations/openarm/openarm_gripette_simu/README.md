@@ -4,6 +4,19 @@ MuJoCo simulation of the OpenArm right arm + Gripette gripper with gRPC control 
 
 ## Install
 
+`placo` (used for kinematics) dynamically links the system `urdfdom` libraries,
+which are **not** installed by `uv`. On Debian/Ubuntu, install them first:
+
+```bash
+sudo apt install -y liburdfdom-sensor4.0 liburdfdom-model4.0 liburdfdom-world4.0
+# or the catch-all: sudo apt install -y liburdfdom-dev
+```
+
+Without them, `import placo` (and the sim) fails with
+`ImportError: liburdfdom_sensor.so.4.0: cannot open shared object file`.
+
+Then sync the Python environment:
+
 ```bash
 uv sync                  # base install
 uv sync --extra dataset  # + lerobot (for LeRobot dataset collection)
