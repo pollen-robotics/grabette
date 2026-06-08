@@ -1,0 +1,12 @@
+{
+  "description": "Transform from Meta Quest right-hand controller frame to SLAM camera frame",
+  "source": "Umeyama alignment + orientation offset from recording 20260331_120534",
+  "ate_rmse_mm": 21.2,
+  "orientation_std_deg": 1.47,
+  "scale": 0.781073,
+  "rotation_quaternion_xyzw": [0.66459949, -0.29020896, -0.25313645, 0.64031884],
+  "translation": [-0.28551811, 0.04012777, -0.89013789],
+  "body_rotation_quaternion_xyzw": [0.68961531, -0.12910902, -0.65747938, 0.27474069],
+  "time_offset_ms": -10.0,
+  "note": "Position: p_cam = scale * R_world @ p_quest + t. Orientation: R_cam = R_world @ R_quest @ R_body"
+}

@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gripette Bluetooth Tool</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #4fc3f7;
+            margin-bottom: 24px;
+            font-size: 1.5em;
+        }
+        .container {
+            max-width: 420px;
+            margin: 0 auto;
+        }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #2a3a5c;
+        }
+        .card h2 {
+            font-size: 0.9em;
+            color: #90caf9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        button {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            margin-bottom: 8px;
+        }
+        button:hover { opacity: 0.85; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        button:last-child { margin-bottom: 0; }
+        .btn-primary { background: #4fc3f7; color: #1a1a2e; }
+        .btn-success { background: #66bb6a; color: #1a1a2e; }
+        .btn-danger  { background: #ef5350; color: #fff; }
+        .btn-secondary { background: #546e7a; color: #fff; }
+        input {
+            display: block;
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #2a3a5c;
+            border-radius: 8px;
+            background: #0f1629;
+            color: #e0e0e0;
+            font-size: 1em;
+            margin-bottom: 8px;
+        }
+        input::placeholder { color: #546e7a; }
+        input:focus { outline: none; border-color: #4fc3f7; }
+        #log {
+            background: #0f1629;
+            border: 1px solid #2a3a5c;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: 0.85em;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-info { color: #90caf9; }
+        .log-ok   { color: #66bb6a; }
+        .log-err  { color: #ef5350; }
+        .log-cmd  { color: #ffd54f; }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .status-connected { background: #66bb6a; }
+        .status-disconnected { background: #ef5350; }
+        #connection-status {
+            text-align: center;
+            margin-bottom: 16px;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Gripette BT Tool</h1>
+
+        <div id="connection-status">
+            <span class="status-dot status-disconnected" id="statusDot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+
+        <!-- Connection -->
+        <div class="card">
+            <h2>Connection</h2>
+            <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
+                Connect to Gripette
+            </button>
+            <button class="btn-secondary" id="btnDisconnect" onclick="disconnectDevice()" disabled>
+                Disconnect
+            </button>
+        </div>
+
+        <!-- Authentication -->
+        <div class="card">
+            <h2>Authentication</h2>
+            <input type="text" id="pinInput" placeholder="PIN (default: 00000)" value="00000">
+            <button class="btn-primary" id="btnPin" onclick="sendPin()" disabled>
+                Authenticate
+            </button>
+        </div>
+
+        <!-- WiFi Configuration -->
+        <div class="card">
+            <h2>WiFi Configuration</h2>
+            <input type="text" id="ssidInput" placeholder="WiFi SSID">
+            <input type="password" id="passwordInput" placeholder="WiFi Password">
+            <button class="btn-success" id="btnWifi" onclick="sendWifi()" disabled>
+                Connect WiFi
+            </button>
+            <button class="btn-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled>
+                Reset All WiFi
+            </button>
+        </div>
+
+        <!-- Status -->
+        <div class="card">
+            <h2>Status</h2>
+            <button class="btn-secondary" id="btnPing" onclick="sendPing()" disabled>
+                Ping
+            </button>
+            <button class="btn-secondary" id="btnNetStatus" onclick="readNetworkStatus()" disabled>
+                Read Network Status
+            </button>
+        </div>
+
+        <!-- Log -->
+        <div class="card">
+            <h2>Log</h2>
+            <div id="log"></div>
+        </div>
+    </div>
+
+<script>
+    // BLE UUIDs — must match bluetooth_service.py
+    const SERVICE_UUID        = '12345678-1234-5678-1234-56789abcdef0';
+    const COMMAND_CHAR_UUID   = '12345678-1234-5678-1234-56789abcdef1';
+    const RESPONSE_CHAR_UUID  = '12345678-1234-5678-1234-56789abcdef2';
+    const STATUS_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef3';
+    const NETWORK_STATUS_UUID = '12345678-1234-5678-1234-56789abcdef4';
+
+    let device = null;
+    let server = null;
+    let commandChar = null;
+    let responseChar = null;
+    let networkStatusChar = null;
+
+    const logEl = document.getElementById('log');
+
+    function log(msg, cls = 'log-info') {
+        const ts = new Date().toLocaleTimeString();
+        logEl.innerHTML += `<span class="${cls}">[${ts}] ${msg}</span>\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setConnected(connected) {
+        const dot = document.getElementById('statusDot');
+        const text = document.getElementById('statusText');
+        dot.className = 'status-dot ' + (connected ? 'status-connected' : 'status-disconnected');
+        text.textContent = connected ? 'Connected' : 'Disconnected';
+
+        document.getElementById('btnConnect').disabled = connected;
+        document.getElementById('btnDisconnect').disabled = !connected;
+        document.getElementById('btnPin').disabled = !connected;
+        document.getElementById('btnWifi').disabled = !connected;
+        document.getElementById('btnWifiReset').disabled = !connected;
+        document.getElementById('btnPing').disabled = !connected;
+        document.getElementById('btnNetStatus').disabled = !connected;
+    }
+
+    async function connectDevice() {
+        try {
+            log('Scanning for Gripette...');
+            device = await navigator.bluetooth.requestDevice({
+                filters: [{ name: 'Gripette' }],
+                optionalServices: [SERVICE_UUID, STATUS_SERVICE_UUID],
+            });
+
+            device.addEventListener('gattserverdisconnected', () => {
+                log('Device disconnected', 'log-err');
+                setConnected(false);
+            });
+
+            log('Connecting GATT...');
+            server = await device.gatt.connect();
+
+            // Command service
+            const cmdService = await server.getPrimaryService(SERVICE_UUID);
+            commandChar = await cmdService.getCharacteristic(COMMAND_CHAR_UUID);
+            responseChar = await cmdService.getCharacteristic(RESPONSE_CHAR_UUID);
+
+            // Status service
+            try {
+                const statusService = await server.getPrimaryService(STATUS_SERVICE_UUID);
+                networkStatusChar = await statusService.getCharacteristic(NETWORK_STATUS_UUID);
+            } catch (e) {
+                log('Status service not available', 'log-err');
+                networkStatusChar = null;
+            }
+
+            setConnected(true);
+            log('Connected to Gripette', 'log-ok');
+        } catch (e) {
+            log('Connection failed: ' + e.message, 'log-err');
+        }
+    }
+
+    function disconnectDevice() {
+        if (device && device.gatt.connected) {
+            device.gatt.disconnect();
+        }
+        setConnected(false);
+        log('Disconnected');
+    }
+
+    async function sendCommand(cmd) {
+        if (!commandChar || !responseChar) {
+            log('Not connected', 'log-err');
+            return null;
+        }
+        try {
+            log('> ' + cmd, 'log-cmd');
+            const encoder = new TextEncoder();
+            await commandChar.writeValue(encoder.encode(cmd));
+            // Small delay for the device to process
+            await new Promise(r => setTimeout(r, 200));
+            const value = await responseChar.readValue();
+            const decoder = new TextDecoder();
+            const response = decoder.decode(value);
+            const cls = response.startsWith('OK') || response === 'PONG' ? 'log-ok' : 'log-err';
+            log('< ' + response, cls);
+            return response;
+        } catch (e) {
+            log('Command failed: ' + e.message, 'log-err');
+            return null;
+        }
+    }
+
+    async function sendPing() {
+        await sendCommand('PING');
+    }
+
+    async function sendPin() {
+        const pin = document.getElementById('pinInput').value.trim();
+        if (!pin) { log('Enter a PIN', 'log-err'); return; }
+        await sendCommand('PIN_' + pin);
+    }
+
+    async function sendWifi() {
+        const ssid = document.getElementById('ssidInput').value.trim();
+        const password = document.getElementById('passwordInput').value;
+        if (!ssid) { log('Enter an SSID', 'log-err'); return; }
+        if (!password) { log('Enter a password', 'log-err'); return; }
+        await sendCommand('WIFI ' + ssid + ' ' + password);
+    }
+
+    async function sendWifiReset() {
+        if (!confirm('Delete ALL saved WiFi networks?')) return;
+        await sendCommand('WIFI_RESET');
+    }
+
+    async function readNetworkStatus() {
+        if (!networkStatusChar) {
+            log('Network status characteristic not available', 'log-err');
+            return;
+        }
+        try {
+            const value = await networkStatusChar.readValue();
+            const decoder = new TextDecoder();
+            const status = decoder.decode(value);
+            log('Network: ' + status, 'log-ok');
+        } catch (e) {
+            log('Read failed: ' + e.message, 'log-err');
+        }
+    }
+</script>
+</body>
+</html>

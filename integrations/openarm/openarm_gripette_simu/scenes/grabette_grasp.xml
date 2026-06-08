@@ -1,0 +1,193 @@
+<mujoco model="grabette_grasp">
+    <!-- Realistic physics, matching scenes/table_grasp.xml -->
+    <option cone="elliptic" impratio="10" timestep="0.001" iterations="100" noslip_iterations="3" />
+
+    <!-- Mesh paths resolved relative to the model package's openarm_right dir.
+         The scene lives at openarm_gripette_simu/scenes/ so we walk up two
+         dirs to the model package and into the assets dir. -->
+    <compiler angle="radian" autolimits="true"
+        meshdir="../../openarm_gripette_model/openarm_gripette_model/openarm_right" />
+
+    <default>
+        <!-- Default friction for ground/table; the cube overrides below -->
+        <geom friction="2.0 0.005 0.001" />
+        <!-- Robot-style defaults for joints and actuators (matches robot.xml) -->
+        <default class="grabette">
+            <joint frictionloss="0.1" armature="0.1" />
+            <position kp="500" dampratio="1" />
+            <default class="visual">
+                <geom type="mesh" contype="0" conaffinity="0" group="2" />
+            </default>
+            <default class="collision">
+                <geom group="3" contype="2" conaffinity="1" />
+            </default>
+        </default>
+    </default>
+
+    <visual>
+        <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+        <rgba haze="0.15 0.25 0.35 1" />
+        <global azimuth="160" elevation="-20" offwidth="1296" offheight="972" />
+    </visual>
+
+    <asset>
+        <!-- Skybox / ground / table textures (same as table_grasp.xml) -->
+        <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
+            height="3072" />
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4"
+            rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
+            reflectance="0.2" />
+        <texture type="2d" name="wood" builtin="flat" rgb1="0.65 0.45 0.25" rgb2="0.55 0.35 0.18"
+            mark="random" markrgb="0.60 0.40 0.22" width="256" height="256" />
+        <material name="wood" texture="wood" texrepeat="3 3" shininess="0.1" specular="0.1" />
+        <material name="red_cube" rgba="0.85 0.15 0.1 1" shininess="0.3" specular="0.5" />
+
+        <!-- Gripper meshes: gripper_base ("palm") + proximal finger + distal finger.
+             Names match robot.xml so the rest of the toolchain can reuse logic.
+             The palm (gripper_base) collision is critical: it pins the top of
+             the cube during the closing motion so the fingers can wrap
+             around. Without it the distal scoops the cube away. -->
+        <mesh file="assets/merged/gripper_base_visual.stl" />
+        <mesh file="assets/merged/gripper_base_collision.stl" />
+        <mesh file="assets/merged/feetech_sts3215__configuration_default_visual.stl" />
+        <mesh file="assets/merged/feetech_sts3215__configuration_default_collision.stl" />
+        <mesh file="assets/merged/distal_visual.stl" />
+        <mesh file="assets/merged/distal_collision.stl" />
+
+        <material name="gripper_base_visual_material"
+            rgba="0.698026 0.790622 0.846179 1" />
+        <material name="gripper_base_collision_material"
+            rgba="0.698026 0.790622 0.846179 1" />
+        <material name="feetech_sts3215__configuration_default_visual_material"
+            rgba="0.647059 0.647059 0.647059 1" />
+        <material name="feetech_sts3215__configuration_default_collision_material"
+            rgba="0.647059 0.647059 0.647059 1" />
+        <material name="distal_visual_material" rgba="0.231373 0.380392 0.705882 1" />
+        <material name="distal_collision_material" rgba="0.231373 0.380392 0.705882 1" />
+    </asset>
+
+    <worldbody>
+        <light name="main_light" pos="0 0 3.5" dir="0 0 -1" directional="true" />
+        <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+
+        <!-- Table (identical to table_grasp.xml) -->
+        <body name="table" pos="0.44 -0.142 0">
+            <geom name="tabletop" type="box" size="0.15 0.15 0.01" pos="0 0 0.34"
+                material="wood" mass="20" />
+            <geom name="leg_1" type="box" size="0.015 0.015 0.165" pos="0.12 0.12 0.165"
+                material="wood" mass="1" />
+            <geom name="leg_2" type="box" size="0.015 0.015 0.165" pos="-0.12 0.12 0.165"
+                material="wood" mass="1" />
+            <geom name="leg_3" type="box" size="0.015 0.015 0.165" pos="0.12 -0.12 0.165"
+                material="wood" mass="1" />
+            <geom name="leg_4" type="box" size="0.015 0.015 0.165" pos="-0.12 -0.12 0.165"
+                material="wood" mass="1" />
+        </body>
+
+        <!-- Red cube (identical to table_grasp.xml: realistic friction, condim=6) -->
+        <body name="red_cube" pos="0.44 -0.142 0.41">
+            <freejoint name="red_cube_joint" />
+            <geom name="red_cube" type="box" size="0.02 0.02 0.06"
+                material="red_cube" mass="0.1"
+                friction="1.0 0.1 0.005" condim="6"
+                solref="0.005 1" solimp="0.99 0.99 0.001" />
+        </body>
+
+        <!-- Mocap target: invisible, no gravity. Driven externally each step
+             via data.mocap_pos / data.mocap_quat to define the desired
+             Grabette pose. -->
+        <body name="grabette_mocap" mocap="true" pos="0.44 -0.142 0.7">
+            <!-- Tiny visual marker so the mocap pose is debuggable in the viewer -->
+            <geom type="sphere" size="0.005" rgba="1 0 0 0.3"
+                contype="0" conaffinity="0" group="2" />
+        </body>
+
+        <!-- Dynamic Grabette body. Local frame is identical to the original
+             gripper_base in robot.xml (so the proximal/distal/camera relative
+             poses are copied verbatim from robot.xml).
+
+             Inertial values are taken from gripper_base in robot.xml. The
+             freejoint lets the body move dynamically; the weld constraint
+             below pulls it toward the mocap pose every step. -->
+        <body name="grabette_root" pos="0.44 -0.142 0.7" childclass="grabette">
+            <freejoint name="grabette_freejoint" />
+            <inertial pos="0.000738567 0.084598 0.0158667" mass="0.208245"
+                fullinertia="0.000366288 0.000294868 0.00017809 4.37234e-07 3.64051e-06 -3.03598e-05" />
+
+            <!-- Gripper base ("palm"): copied verbatim from robot.xml.
+                 Visual + collision. The collision is essential — its broad
+                 surface contacts the top of objects during a top-down
+                 grasp, anchoring the object before the fingers wrap. -->
+            <geom type="mesh" class="visual"
+                pos="0.000738567 0.084598 0.0158667"
+                quat="0.708745 0.70546 0.00131821 0.0023684"
+                mesh="gripper_base_visual"
+                material="gripper_base_visual_material" />
+            <geom type="mesh" class="collision"
+                pos="0.000738567 0.084598 0.0158667"
+                quat="0.708745 0.70546 0.00131821 0.0023684"
+                mesh="gripper_base_collision"
+                material="gripper_base_collision_material" />
+
+            <!-- Camera identical to robot.xml's gripette_cam (relative to
+                 gripper_base, which is what grabette_root maps to) -->
+            <camera name="gripette_cam" pos="0.0687999 0.0662004 0.0260816"
+                quat="0.500002 0.499998 0.499998 -0.500002" fovy="130" />
+
+            <!-- Proximal finger: copied verbatim from robot.xml's
+                 feetech_sts3215__configuration_default body -->
+            <body name="feetech_sts3215__configuration_default"
+                pos="0.0179344 0.1065 -0.0131898"
+                quat="0.0616284 0.704416 -0.0616284 -0.704416">
+                <joint axis="0 0 1" name="proximal" type="hinge"
+                    range="-1.5707963267948966 0.0" />
+                <inertial pos="0.0182944 -0.0259223 0.0175868" mass="0.100722"
+                    fullinertia="5.94511e-05 4.45642e-05 3.97205e-05 6.81532e-06 -4.17039e-07 1.07118e-06" />
+                <geom type="mesh" class="visual"
+                    pos="0.0182944 -0.0259223 0.0175868"
+                    quat="0.538866 -0.456557 0.542366 0.454992"
+                    mesh="feetech_sts3215__configuration_default_visual"
+                    material="feetech_sts3215__configuration_default_visual_material" />
+                <geom type="mesh" class="collision"
+                    pos="0.0182944 -0.0259223 0.0175868"
+                    quat="0.538866 -0.456557 0.542366 0.454992"
+                    mesh="feetech_sts3215__configuration_default_collision"
+                    material="feetech_sts3215__configuration_default_collision_material" />
+
+                <!-- Distal finger: copied verbatim from robot.xml -->
+                <body name="distal" pos="0.025 -0.0433013 -0.00055"
+                    quat="0.5 -0 0 0.866025">
+                    <joint axis="0 0 1" name="distal" type="hinge"
+                        range="-2.0943951023931944 8.881784197001252e-16" />
+                    <inertial pos="-0.0264976 0.00403103 0.0179373" mass="0.0417207"
+                        fullinertia="1.10253e-05 1.6107e-05 9.41129e-06 2.04438e-06 3.05704e-07 1.39544e-07" />
+                    <geom type="mesh" class="visual"
+                        pos="-0.0264976 0.00403103 0.0179373"
+                        quat="0.663468 0.241424 0.666573 -0.239176"
+                        mesh="distal_visual" material="distal_visual_material" />
+                    <geom type="mesh" class="collision"
+                        pos="-0.0264976 0.00403103 0.0179373"
+                        quat="0.663468 0.241424 0.666573 -0.239176"
+                        mesh="distal_collision" material="distal_collision_material" />
+                </body>
+            </body>
+        </body>
+    </worldbody>
+
+    <actuator>
+        <!-- Same kp/dampratio as robot.xml (kp=500, dampratio=1 from
+             default class="robot"). class="grabette" mirrors that. -->
+        <position class="grabette" name="proximal" joint="proximal" inheritrange="1" />
+        <position class="grabette" name="distal" joint="distal" inheritrange="1" />
+    </actuator>
+
+    <equality>
+        <!-- Weld the dynamic Grabette body to the mocap target. The default
+             solref/solimp give a stiff weld; the freejoint then closely
+             tracks the mocap pose under physics. relpose="0 0 0 1 0 0 0"
+             makes the child's body frame coincide with the mocap frame. -->
+        <weld body1="grabette_mocap" body2="grabette_root"
+            relpose="0 0 0 1 0 0 0" />
+    </equality>
+</mujoco>

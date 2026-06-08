@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+
+# Virtualenvs
+.venv/
+venv/
+
+# uv — the single workspace lock IS committed; nothing to ignore there.
+
+# Runtime data directories produced by the services
+grabette-data/
+casquette-data/
+gripette-data/
+
+# NOTE: generated protobuf stubs (*_pb2.py / *_pb2_grpc.py / *.pyi) are
+# committed in this project (gripette, openarm sim import them directly),
+# so they are intentionally NOT ignored.
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+*~

@@ -1,0 +1,64 @@
+syntax = "proto3";
+package openarm;
+
+service ArmService {
+  // Apply a delta Cartesian command to the arm end-effector
+  rpc SendCartesianDelta (CartesianDelta) returns (ArmCommandResponse);
+  // Read the current arm state (Cartesian pose + joint positions)
+  rpc GetArmState (GetArmStateRequest) returns (ArmState);
+  // Reset the episode: teleport arm + randomize cube
+  // If joint_positions is empty, arm start is randomized too
+  rpc Reset (ResetRequest) returns (ResetResponse);
+  // Check if the current episode goal is achieved (cube touched)
+  rpc GetSuccessStatus (SuccessStatusRequest) returns (SuccessStatusResponse);
+  // Health check
+  rpc Ping (ArmPingRequest) returns (ArmPingResponse);
+}
+
+message CartesianDelta {
+  float dx = 1;               // meters
+  float dy = 2;               // meters
+  float dz = 3;               // meters
+  repeated float dr6d = 4;    // 6 values: delta 6D rotation
+}
+
+message ArmCommandResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message GetArmStateRequest {}
+
+message ArmState {
+  float x = 1;                         // meters
+  float y = 2;                         // meters
+  float z = 3;                         // meters
+  repeated float r6d = 4;              // 6 values: current 6D rotation
+  repeated float joint_positions = 5;  // 7 arm joint angles (rad)
+}
+
+message ResetRequest {
+  repeated float joint_positions = 1;  // 7 arm joint angles (rad), empty = randomize
+}
+
+message ResetResponse {
+  bool success = 1;
+  string error = 2;
+  float cube_x = 3;  // cube position after reset
+  float cube_y = 4;
+  float cube_z = 5;
+}
+
+message SuccessStatusRequest {}
+
+message SuccessStatusResponse {
+  bool goal_reached = 1;           // true if cube was touched (moved from initial position)
+  float cube_displacement = 2;     // how far the cube moved (meters)
+}
+
+message ArmPingRequest {}
+
+message ArmPingResponse {
+  string status = 1;
+  double uptime_seconds = 2;
+}

@@ -1,0 +1,30 @@
+[project]
+name = "casquette"
+version = "0.1.0"
+description = "POV camera data collection service for Raspberry Pi"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.13.1",
+    "opencv-contrib-python>=4.13.0.92",
+    "requests>=2.34.2",
+]
+
+[project.optional-dependencies]
+rpi = [
+    "picamera2",
+    "adafruit-extended-bus",
+    # numpy intentionally not pinned — comes from system via
+    # --system-site-packages (set by `make install-rpi`). On current Pi OS
+    # Bookworm and Trixie aarch64 both ship numpy 2.x, and the apt-installed
+    # python3-picamera2 is built against that. Pinning to numpy<2 would
+    # force uv to build 1.26.4 from source (no aarch64 wheel for cpython
+    # 3.13 / 3.11.15) — ~30 min on a Pi Zero 2W. Same pattern as grabette.
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

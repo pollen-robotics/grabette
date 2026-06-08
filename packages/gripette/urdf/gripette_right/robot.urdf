@@ -1,0 +1,299 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/70d590d987c43934e5d14436/e/85669cf219241d3a19aa8f5a -->
+<robot name="gripette_right">
+  <!-- Link gripper_base -->
+  <link name="gripper_base">
+    <inertial>
+      <origin xyz="0.012014 -0.0472552 0.0253228" rpy="0 0 0"/>
+      <mass value="0.225894"/>
+      <inertia ixx="0.000189198" ixy="3.05033e-05" ixz="-4.28826e-06" iyy="0.000336735" iyz="-3.1272e-08" izz="0.000412863"/>
+    </inertial>
+    <!-- Part feetech_sts3215__configuration_default -->
+    <visual>
+      <origin xyz="0.0394727 -0.0499168 0.0344888" rpy="1.5708 0 -1.74533"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_sts3215__configuration_default_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0394727 -0.0499168 0.0344888" rpy="1.5708 0 -1.74533"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part gripper_base -->
+    <visual>
+      <origin xyz="0.044518 -0.00416521 -0.000111233" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/gripper_base.stl"/>
+      </geometry>
+      <material name="gripper_base_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.044518 -0.00416521 -0.000111233" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/gripper_base.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part b0404 -->
+    <visual>
+      <origin xyz="0.0030569 -0.0784041 0.0938888" rpy="-1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/b0404.stl"/>
+      </geometry>
+      <material name="b0404_material">
+        <color rgba="0.372549 0.654902 0.239216 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0030569 -0.0784041 0.0938888" rpy="-1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/b0404.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part elec_support_square -->
+    <visual>
+      <origin xyz="0.0165181 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/elec_support_square.stl"/>
+      </geometry>
+      <material name="elec_support_square_material">
+        <color rgba="0.498039 0.498039 0.498039 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0165181 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/elec_support_square.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part camera_imu_support -->
+    <visual>
+      <origin xyz="0.033457 -0.00907682 0.0498888" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/camera_imu_support.stl"/>
+      </geometry>
+      <material name="camera_imu_support_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.033457 -0.00907682 0.0498888" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/camera_imu_support.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part elec_support -->
+    <visual>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/elec_support.stl"/>
+      </geometry>
+      <material name="elec_support_material">
+        <color rgba="0.972549 0.529412 0.00392157 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/elec_support.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part backplate -->
+    <visual>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/backplate.stl"/>
+      </geometry>
+      <material name="backplate_material">
+        <color rgba="0.917647 0.917647 0.917647 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/backplate.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part rasp_support -->
+    <visual>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://assets/rasp_support.stl"/>
+      </geometry>
+      <material name="rasp_support_material">
+        <color rgba="0.768627 0.886275 0.952941 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://assets/rasp_support.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part elec_support_square_2 -->
+    <visual>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/elec_support_square.stl"/>
+      </geometry>
+      <material name="elec_support_square_2_material">
+        <color rgba="0.498039 0.498039 0.498039 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/elec_support_square.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Frame openarm_fix (dummy link + fixed joint) -->
+  <link name="openarm_fix">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="openarm_fix_frame" type="fixed">
+    <origin xyz="0.00863865 -0.0824044 0.0250888" rpy="1.5708 -0 7.64992e-06"/>
+    <parent link="gripper_base"/>
+    <child link="openarm_fix"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame camera (dummy link + fixed joint) -->
+  <link name="camera">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="camera_frame" type="fixed">
+    <origin xyz="0.0030569 -0.0657041 0.0938888" rpy="-1.5708 -0 0"/>
+    <parent link="gripper_base"/>
+    <child link="camera"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Link feetech_sts3215__configuration_default -->
+  <link name="feetech_sts3215__configuration_default">
+    <inertial>
+      <origin xyz="0.0182592 -0.0259026 0.0175524" rpy="0 0 0"/>
+      <mass value="0.101487"/>
+      <inertia ixx="5.99713e-05" ixy="6.78604e-06" ixz="-4.30903e-07" iyy="4.50716e-05" iyz="1.10027e-06" izz="3.99848e-05"/>
+    </inertial>
+    <!-- Part proximal_side -->
+    <visual>
+      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_side.stl"/>
+      </geometry>
+      <material name="proximal_side_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_side.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part proximal_bottom -->
+    <visual>
+      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 0 -0.174533"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_bottom.stl"/>
+      </geometry>
+      <material name="proximal_bottom_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 0 -0.174533"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_bottom.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_sts3215__configuration_default_2 -->
+    <visual>
+      <origin xyz="0.0122498 -0.0212176 0.0089" rpy="-1.5708 0 2.0944"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_sts3215__configuration_default_2_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0122498 -0.0212176 0.0089" rpy="-1.5708 0 2.0944"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part proximal_top -->
+    <visual>
+      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_top.stl"/>
+      </geometry>
+      <material name="proximal_top_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_top.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link distal -->
+  <link name="distal">
+    <inertial>
+      <origin xyz="-0.0288978 0.00403421 0.0180018" rpy="0 0 0"/>
+      <mass value="0.0471678"/>
+      <inertia ixx="1.19203e-05" ixy="2.06538e-06" ixz="3.61884e-07" iyy="1.88956e-05" iyz="1.38375e-07" izz="1.16157e-05"/>
+    </inertial>
+    <!-- Part distal -->
+    <visual>
+      <origin xyz="0.0337928 0.0127932 0.0435" rpy="-3.14159 -0 -2.26893"/>
+      <geometry>
+        <mesh filename="package://assets/distal.stl"/>
+      </geometry>
+      <material name="distal_material">
+        <color rgba="0.231373 0.380392 0.705882 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0337928 0.0127932 0.0435" rpy="-3.14159 -0 -2.26893"/>
+      <geometry>
+        <mesh filename="package://assets/distal.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Joint from feetech_sts3215__configuration_default to distal -->
+  <joint name="distal" type="revolute">
+    <origin xyz="0.0249998 -0.0433013 -0.00055" rpy="0 0 2.0944"/>
+    <parent link="feetech_sts3215__configuration_default"/>
+    <child link="distal"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-2.0944" upper="0"/>
+  </joint>
+  <!-- Joint from gripper_base to feetech_sts3215__configuration_default -->
+  <joint name="proximal" type="revolute">
+    <origin xyz="0.0439007 -0.0248042 0.0428388" rpy="-3.14159 -0 -0.174525"/>
+    <parent link="gripper_base"/>
+    <child link="feetech_sts3215__configuration_default"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-1.57079" upper="7.64992e-06"/>
+  </joint>
+</robot>

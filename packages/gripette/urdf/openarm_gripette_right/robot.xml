@@ -1,0 +1,123 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/70d590d987c43934e5d14436/e/a0051f8e5560f378a52e9e28 -->
+<mujoco model="openarm_gripette_right">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+  <default>
+    <default class="openarm_gripette_right">
+      <joint frictionloss="0.1" armature="0.005"/>
+      <position kp="50" dampratio="1"/>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom group="3"/>
+      </default>
+    </default>
+  </default>
+  <worldbody>
+    <!-- Link gripper_base -->
+    <body name="gripper_base" pos="0 0 0.1" quat="1 0 0 0" childclass="openarm_gripette_right">
+      <inertial pos="0.012014 -0.0472552 0.0253228" mass="0.225894" fullinertia="0.000189198 0.000336735 0.000412863 3.05033e-05 -4.28826e-06 -3.1272e-08"/>
+      <!-- Part feetech_sts3215__configuration_default -->
+      <geom type="mesh" class="visual" pos="0.0394727 -0.0499168 0.0344888" quat="0.454519 0.454519 -0.541675 -0.541675" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0394727 -0.0499168 0.0344888" quat="0.454519 0.454519 -0.541675 -0.541675" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+      <!-- Part j8_b_2_step -->
+      <geom type="mesh" class="visual" pos="-0.143913 0.129094 0.0250878" quat="0.499998 0.500002 -0.499998 0.500002" mesh="j8_b_2_step" material="j8_b_2_step_material"/>
+      <geom type="mesh" class="collision" pos="-0.143913 0.129094 0.0250878" quat="0.499998 0.500002 -0.499998 0.500002" mesh="j8_b_2_step" material="j8_b_2_step_material"/>
+      <!-- Part gripper_base -->
+      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 -0.000111233" quat="1 0 0 0" mesh="gripper_base" material="gripper_base_material"/>
+      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 -0.000111233" quat="1 0 0 0" mesh="gripper_base" material="gripper_base_material"/>
+      <!-- Part b0404 -->
+      <geom type="mesh" class="visual" pos="0.0030569 -0.0784041 0.0938888" quat="0.707107 -0.707107 0 0" mesh="b0404" material="b0404_material"/>
+      <geom type="mesh" class="collision" pos="0.0030569 -0.0784041 0.0938888" quat="0.707107 -0.707107 0 0" mesh="b0404" material="b0404_material"/>
+      <!-- Part elec_support_square -->
+      <geom type="mesh" class="visual" pos="0.0165181 -0.00416521 8.87673e-05" quat="1 -0 -0 0" mesh="elec_support_square" material="elec_support_square_material"/>
+      <geom type="mesh" class="collision" pos="0.0165181 -0.00416521 8.87673e-05" quat="1 -0 -0 0" mesh="elec_support_square" material="elec_support_square_material"/>
+      <!-- Part camera_imu_support -->
+      <geom type="mesh" class="visual" pos="0.033457 -0.00907682 0.0498888" quat="1 0 0 0" mesh="camera_imu_support" material="camera_imu_support_material"/>
+      <geom type="mesh" class="collision" pos="0.033457 -0.00907682 0.0498888" quat="1 0 0 0" mesh="camera_imu_support" material="camera_imu_support_material"/>
+      <!-- Part elec_support -->
+      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support" material="elec_support_material"/>
+      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support" material="elec_support_material"/>
+      <!-- Part j8_a_2_step -->
+      <geom type="mesh" class="visual" pos="-0.143913 0.129094 0.0250888" quat="0.499998 0.500002 -0.499998 0.500002" mesh="j8_a_2_step" material="j8_a_2_step_material"/>
+      <geom type="mesh" class="collision" pos="-0.143913 0.129094 0.0250888" quat="0.499998 0.500002 -0.499998 0.500002" mesh="j8_a_2_step" material="j8_a_2_step_material"/>
+      <!-- Part backplate -->
+      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 0 -0 0" mesh="backplate" material="backplate_material"/>
+      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 0 -0 0" mesh="backplate" material="backplate_material"/>
+      <!-- Part rasp_support -->
+      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="rasp_support" material="rasp_support_material"/>
+      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="rasp_support" material="rasp_support_material"/>
+      <!-- Part elec_support_square_2 -->
+      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support_square" material="elec_support_square_material"/>
+      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support_square" material="elec_support_square_material"/>
+      <!-- Frame openarm_fix -->
+      <site group="3" name="openarm_fix" pos="0.00863865 -0.0824044 0.0250888" quat="0.707107 0.707107 2.70466e-06 2.70466e-06"/>
+      <!-- Frame camera -->
+      <site group="3" name="camera" pos="0.0030569 -0.0657041 0.0938888" quat="0.707107 -0.707107 0 0"/>
+      <!-- Link feetech_sts3215__configuration_default -->
+      <body name="feetech_sts3215__configuration_default" pos="0.0439007 -0.0248042 0.0428388" quat="0 0.996195 -0.0871519 0">
+        <!-- Joint from gripper_base to feetech_sts3215__configuration_default -->
+        <joint axis="0 0 1" name="proximal" type="hinge" range="-1.5707886768702144 7.649924682162634e-06"/>
+        <inertial pos="0.0182592 -0.0259026 0.0175524" mass="0.101487" fullinertia="5.99713e-05 4.50716e-05 3.99848e-05 6.78604e-06 -4.30903e-07 1.10027e-06"/>
+        <!-- Part proximal_side -->
+        <geom type="mesh" class="visual" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_side" material="proximal_side_material"/>
+        <geom type="mesh" class="collision" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_side" material="proximal_side_material"/>
+        <!-- Part proximal_bottom -->
+        <geom type="mesh" class="visual" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_bottom" material="proximal_bottom_material"/>
+        <geom type="mesh" class="collision" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_bottom" material="proximal_bottom_material"/>
+        <!-- Part feetech_sts3215__configuration_default_2 -->
+        <geom type="mesh" class="visual" pos="0.0122498 -0.0212176 0.0089" quat="0.353553 -0.353553 -0.612372 0.612372" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="0.0122498 -0.0212176 0.0089" quat="0.353553 -0.353553 -0.612372 0.612372" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+        <!-- Part proximal_top -->
+        <geom type="mesh" class="visual" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 -0" mesh="proximal_top" material="proximal_top_material"/>
+        <geom type="mesh" class="collision" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 -0" mesh="proximal_top" material="proximal_top_material"/>
+        <!-- Link distal -->
+        <body name="distal" pos="0.0249998 -0.0433013 -0.00055" quat="0.5 0 0 0.866025">
+          <!-- Joint from feetech_sts3215__configuration_default to distal -->
+          <joint axis="0 0 1" name="distal" type="hinge" range="-2.0943951023931953 0.0"/>
+          <inertial pos="-0.0288978 0.00403421 0.0180018" mass="0.0471678" fullinertia="1.19203e-05 1.88956e-05 1.16157e-05 2.06538e-06 3.61884e-07 1.38375e-07"/>
+          <!-- Part distal -->
+          <geom type="mesh" class="visual" pos="0.0337928 0.0127932 0.0435" quat="0 0.422618 -0.906308 0" mesh="distal" material="distal_material"/>
+          <geom type="mesh" class="collision" pos="0.0337928 0.0127932 0.0435" quat="0 0.422618 -0.906308 0" mesh="distal" material="distal_material"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <asset>
+    <mesh file="j8_a_2_step.stl"/>
+    <mesh file="b0404.stl"/>
+    <mesh file="rasp_support.stl"/>
+    <mesh file="distal.stl"/>
+    <mesh file="feetech_sts3215__configuration_default.stl"/>
+    <mesh file="gripper_base.stl"/>
+    <mesh file="backplate.stl"/>
+    <mesh file="j8_b_2_step.stl"/>
+    <mesh file="elec_support.stl"/>
+    <mesh file="proximal_top.stl"/>
+    <mesh file="camera_imu_support.stl"/>
+    <mesh file="elec_support_square.stl"/>
+    <mesh file="proximal_side.stl"/>
+    <mesh file="proximal_bottom.stl"/>
+    <material name="feetech_sts3215__configuration_default_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="j8_b_2_step_material" rgba="0.792157 0.819608 0.933333 1"/>
+    <material name="gripper_base_material" rgba="0.615686 0.811765 0.929412 1"/>
+    <material name="b0404_material" rgba="0.372549 0.654902 0.239216 1"/>
+    <material name="elec_support_square_material" rgba="0.498039 0.498039 0.498039 1"/>
+    <material name="camera_imu_support_material" rgba="0.615686 0.811765 0.929412 1"/>
+    <material name="elec_support_material" rgba="0.972549 0.529412 0.00392157 1"/>
+    <material name="j8_a_2_step_material" rgba="0.792157 0.819608 0.933333 1"/>
+    <material name="backplate_material" rgba="0.917647 0.917647 0.917647 1"/>
+    <material name="rasp_support_material" rgba="0.768627 0.886275 0.952941 1"/>
+    <material name="proximal_side_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="proximal_bottom_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="proximal_top_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="distal_material" rgba="0.231373 0.380392 0.705882 1"/>
+  </asset>
+  <actuator>
+    <position class="openarm_gripette_right" name="proximal" joint="proximal" inheritrange="1"/>
+    <position class="openarm_gripette_right" name="distal" joint="distal" inheritrange="1"/>
+  </actuator>
+  <equality/>
+</mujoco>

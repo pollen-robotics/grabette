@@ -1,0 +1,14 @@
+{
+    // Document URL, MuJoCo output
+
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/70d590d987c43934e5d14436/e/a0051f8e5560f378a52e9e28",
+    "output_format": "mujoco",
+    #"output_format": "urdf",
+    #"package_name": "openarm_gripette_right",
+
+    // Disable the freejoint to fix the robot
+    "freejoint": false,
+
+
+
+}

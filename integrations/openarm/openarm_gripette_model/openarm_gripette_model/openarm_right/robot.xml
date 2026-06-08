@@ -1,0 +1,186 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/b72c5d895a7b03d249830939/e/c77dbd6d3fbd22e2e0636f89 -->
+<mujoco model="robot">
+  <compiler angle="radian" autolimits="true"/>
+  <default>
+    <default class="robot">
+      <joint frictionloss="0.1" armature="0.1"/>
+      <position kp="500" dampratio="1"/>
+      <default class="visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+      </default>
+      <default class="collision">
+        <geom group="3" contype="2" conaffinity="1"/>
+      </default>
+    </default>
+  </default>
+  <worldbody>
+    <!-- Link hfsb6_6060_750_1_step -->
+    <body name="hfsb6_6060_750_1_step" pos="0 0 0" quat="1 0 0 0" childclass="robot">
+      <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+      <!-- Part hfsb6_6060_750_1_step_parts -->
+      <geom type="mesh" class="visual" pos="0 0 0" quat="1 0 0 0" mesh="hfsb6_6060_750_1_step_visual" material="hfsb6_6060_750_1_step_visual_material"/>
+      <geom type="mesh" class="collision" pos="0 0 0" quat="1 0 0 0" mesh="hfsb6_6060_750_1_step_collision" material="hfsb6_6060_750_1_step_collision_material"/>
+      <!-- Link dm_j8009p_2_step_1 -->
+      <body name="dm_j8009p_2_step_1" pos="-0 -0.0925 0.689" quat="0.707027 0.707027 -0.0106446 0.0106446">
+        <!-- Joint from hfsb6_6060_750_1_step to dm_j8009p_2_step_1 -->
+        <joint axis="0 0 1" name="r_arm_pitch" type="hinge" range="-1.0300951330908181 2.9698853532148264"/>
+        <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+        <!-- Part dm_j8009p_2_step_1_parts -->
+        <geom type="mesh" class="visual" pos="-0.0207418 -0.688688 -0.0925" quat="0.707027 -0.707027 0.0106446 -0.0106446" mesh="dm_j8009p_2_step_1_visual" material="dm_j8009p_2_step_1_visual_material"/>
+        <geom type="mesh" class="collision" pos="-0.0207418 -0.688688 -0.0925" quat="0.707027 -0.707027 0.0106446 -0.0106446" mesh="dm_j8009p_2_step_1_collision" material="dm_j8009p_2_step_1_collision_material"/>
+        <!-- Link j2_b_2_step -->
+        <body name="j2_b_2_step" pos="-0.0301 0 0.06" quat="0.00558855 -0.707085 -0.00558855 0.707085">
+          <!-- Joint from dm_j8009p_2_step_1 to j2_b_2_step -->
+          <joint axis="0 0 1" name="r_arm_roll" type="hinge" range="-0.1587259447536428 3.3319325592350166"/>
+          <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+          <!-- Part j2_b_2_step_parts -->
+          <geom type="mesh" class="visual" pos="0.141595 0.691012 -0.00935821" quat="0.496293 0.503444 0.511465 -0.488509" mesh="j2_b_2_step_visual" material="j2_b_2_step_visual_material"/>
+          <geom type="mesh" class="collision" pos="0.141595 0.691012 -0.00935821" quat="0.496293 0.503444 0.511465 -0.488509" mesh="j2_b_2_step_collision" material="j2_b_2_step_collision_material"/>
+          <!-- Link dm_j4340_2_step -->
+          <body name="dm_j4340_2_step" pos="-0 0.06625 -0.0301" quat="0.5 0.5 0.5 -0.5">
+            <!-- Joint from j2_b_2_step to dm_j4340_2_step -->
+            <joint axis="0 0 -1" name="r_arm_yaw" type="hinge" range="-1.57404681808939 1.567545835500403"/>
+            <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+            <!-- Part dm_j4340_2_step_parts -->
+            <geom type="mesh" class="visual" pos="-0.0207418 0.141595 -0.624762" quat="0.999855 -0.00790251 0.0150533 -0.000118976" mesh="dm_j4340_2_step_visual" material="dm_j4340_2_step_visual_material"/>
+            <geom type="mesh" class="collision" pos="-0.0207418 0.141595 -0.624762" quat="0.999855 -0.00790251 0.0150533 -0.000118976" mesh="dm_j4340_2_step_collision" material="dm_j4340_2_step_collision_material"/>
+            <!-- Link dm_j4310_1_2_step -->
+            <body name="dm_j4310_1_2_step" pos="-0.000102553 -0.0315498 -0.15375" quat="0.707106 0.707106 -0.00114922 -0.00114922">
+              <!-- Joint from dm_j4340_2_step to dm_j4310_1_2_step -->
+              <joint axis="0 0 1" name="r_elbow" type="hinge" range="-5.684341886080802e-14 2.4434609527920044"/>
+              <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+              <!-- Part dm_j4310_1_2_step_parts -->
+              <geom type="mesh" class="visual" pos="-0.0212019 -0.471012 -0.173077" quat="0.701399 -0.712609 0.0117001 -0.00957029" mesh="dm_j4310_1_2_step_visual" material="dm_j4310_1_2_step_visual_material"/>
+              <geom type="mesh" class="collision" pos="-0.0212019 -0.471012 -0.173077" quat="0.701399 -0.712609 0.0117001 -0.00957029" mesh="dm_j4310_1_2_step_collision" material="dm_j4310_1_2_step_collision_material"/>
+              <!-- Link j6_a_3_step -->
+              <body name="j6_a_3_step" pos="-0 -0.0955 -0.0315" quat="0.707107 -0.707107 0 -0">
+                <!-- Joint from dm_j4310_1_2_step to j6_a_3_step -->
+                <joint axis="0 0 -1" name="r_wrist_yaw" type="hinge" range="-1.5691583059424143 1.5724343476473788"/>
+                <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+                <!-- Part j6_a_3_step_parts -->
+                <geom type="mesh" class="visual" pos="-0.0212019 0.141577 -0.375512" quat="0.999854 -0.00792697 0.0150405 0.00150603" mesh="j6_a_3_step_visual" material="j6_a_3_step_visual_material"/>
+                <geom type="mesh" class="collision" pos="-0.0212019 0.141577 -0.375512" quat="0.999854 -0.00792697 0.0150405 0.00150603" mesh="j6_a_3_step_collision" material="j6_a_3_step_collision_material"/>
+                <!-- Link j7_e_2_step -->
+                <body name="j7_e_2_step" pos="0.0172 2.81739e-05 -0.0455" quat="0.502386 0.496779 0.5032 0.497603">
+                  <!-- Joint from j6_a_3_step to j7_e_2_step -->
+                  <joint axis="0 0 -1" name="r_wrist_roll" type="hinge" range="-0.7966021618003796 0.7741938381996205"/>
+                  <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+                  <!-- Part j7_e_2_step_parts -->
+                  <geom type="mesh" class="visual" pos="0.1453 -0.328405 -0.03817" quat="0.506692 -0.493963 -0.490878 -0.508234" mesh="j7_e_2_step_visual" material="j7_e_2_step_visual_material"/>
+                  <geom type="mesh" class="collision" pos="0.1453 -0.328405 -0.03817" quat="0.506692 -0.493963 -0.490878 -0.508234" mesh="j7_e_2_step_collision" material="j7_e_2_step_collision_material"/>
+                </body>
+                <!-- Link dm_j4310_1_2_step_2 -->
+                <body name="dm_j4310_1_2_step_2" pos="0.0343 5.61841e-05 -0.1205" quat="0.497603 -0.5032 0.496779 -0.502386">
+                  <!-- Joint from j6_a_3_step to dm_j4310_1_2_step_2 -->
+                  <joint axis="0 0 1" name="r_wrist_roll_mimic" type="hinge"/>
+                  <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+                  <!-- Part dm_j4310_1_2_step_2_parts -->
+                  <geom type="mesh" class="visual" pos="-0.14446 0.25341 -0.05527" quat="0.508234 0.490878 -0.493963 0.506692" mesh="dm_j4310_1_2_step_2_visual" material="dm_j4310_1_2_step_2_visual_material"/>
+                  <geom type="mesh" class="collision" pos="-0.14446 0.25341 -0.05527" quat="0.508234 0.490878 -0.493963 0.506692" mesh="dm_j4310_1_2_step_2_collision" material="dm_j4310_1_2_step_2_collision_material"/>
+                  <!-- Link gripper_base -->
+                  <body name="gripper_base" pos="0.0205 -0 -0.0343" quat="0.707052 -0.0087938 -0.707052 0.0087938">
+                    <!-- Joint from dm_j4310_1_2_step_2 to gripper_base -->
+                    <joint axis="0 0 -1" name="r_wrist_pitch" type="hinge" range="-1.5459230518972482 1.595669601692545"/>
+                    <inertial pos="0.000738567 0.084598 0.0158667" mass="0.208245" fullinertia="0.000366288 0.000294868 0.00017809 4.37234e-07 3.64051e-06 -3.03598e-05"/>
+                    <!-- Part gripper_base_parts -->
+                    <geom type="mesh" class="visual" pos="0.000738567 0.084598 0.0158667" quat="0.708745 0.70546 0.00131821 0.0023684" mesh="gripper_base_visual" material="gripper_base_visual_material"/>
+                    <geom type="mesh" class="collision" pos="0.000738567 0.084598 0.0158667" quat="0.708745 0.70546 0.00131821 0.0023684" mesh="gripper_base_collision" material="gripper_base_collision_material"/>
+                    <!-- Frame openarm_fix -->
+                    <site group="3" name="openarm_fix" pos="-0 0.0495 0.0205" quat="0.5 0.5 0.5 -0.5"/>
+                    <!-- Frame camera -->
+                    <site group="3" name="camera" pos="0.0689844 0.0662 0.0278102" quat="0.5 -0.5 0.5 0.5"/>
+                    <!-- Gripette camera (180° pitch correction from site frame to MuJoCo camera convention) -->
+                    <!-- fovy=130° for wide pinhole render, fisheye distortion applied in post -->
+                    <camera name="gripette_cam" pos="0.0687999 0.0662004 0.0260816" quat="0.500002 0.499998 0.499998 -0.500002" fovy="130"/>
+                    <!-- Frame gripper -->
+                    <site group="3" name="gripper" pos="-0 0.1395 0.0305" quat="0.5 -0.5 0.5 0.5"/>
+                    <!-- Link feetech_sts3215__configuration_default -->
+                    <body name="feetech_sts3215__configuration_default" pos="0.0179344 0.1065 -0.0131898" quat="0.0616284 0.704416 -0.0616284 -0.704416">
+                      <!-- Joint from gripper_base to feetech_sts3215__configuration_default -->
+                      <joint axis="0 0 1" name="proximal" type="hinge" range="-1.5707963267948966 0.0"/>
+                      <inertial pos="0.0182944 -0.0259223 0.0175868" mass="0.100722" fullinertia="5.94511e-05 4.45642e-05 3.97205e-05 6.81532e-06 -4.17039e-07 1.07118e-06"/>
+                      <!-- Part feetech_sts3215__configuration_default_parts -->
+                      <geom type="mesh" class="visual" pos="0.0182944 -0.0259223 0.0175868" quat="0.538866 -0.456557 0.542366 0.454992" mesh="feetech_sts3215__configuration_default_visual" material="feetech_sts3215__configuration_default_visual_material"/>
+                      <geom type="mesh" class="collision" pos="0.0182944 -0.0259223 0.0175868" quat="0.538866 -0.456557 0.542366 0.454992" mesh="feetech_sts3215__configuration_default_collision" material="feetech_sts3215__configuration_default_collision_material"/>
+                      <!-- Link distal -->
+                      <body name="distal" pos="0.025 -0.0433013 -0.00055" quat="0.5 -0 0 0.866025">
+                        <!-- Joint from feetech_sts3215__configuration_default to distal -->
+                        <joint axis="0 0 1" name="distal" type="hinge" range="-2.0943951023931944 8.881784197001252e-16"/>
+                        <inertial pos="-0.0264976 0.00403103 0.0179373" mass="0.0417207" fullinertia="1.10253e-05 1.6107e-05 9.41129e-06 2.04438e-06 3.05704e-07 1.39544e-07"/>
+                        <!-- Part distal_parts -->
+                        <geom type="mesh" class="visual" pos="-0.0264976 0.00403103 0.0179373" quat="0.663468 0.241424 0.666573 -0.239176" mesh="distal_visual" material="distal_visual_material"/>
+                        <geom type="mesh" class="collision" pos="-0.0264976 0.00403103 0.0179373" quat="0.663468 0.241424 0.666573 -0.239176" mesh="distal_collision" material="distal_collision_material"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <asset>
+    <mesh file="assets/merged/j7_e_2_step_collision.stl"/>
+    <mesh file="assets/merged/hfsb6_6060_750_1_step_visual.stl"/>
+    <mesh file="assets/merged/feetech_sts3215__configuration_default_visual.stl"/>
+    <mesh file="assets/merged/dm_j8009p_2_step_1_collision.stl"/>
+    <mesh file="assets/merged/j6_a_3_step_visual.stl"/>
+    <mesh file="assets/merged/dm_j4310_1_2_step_visual.stl"/>
+    <mesh file="assets/merged/j6_a_3_step_collision.stl"/>
+    <mesh file="assets/merged/dm_j4340_2_step_collision.stl"/>
+    <mesh file="assets/merged/dm_j4310_1_2_step_collision.stl"/>
+    <mesh file="assets/merged/j2_b_2_step_collision.stl"/>
+    <mesh file="assets/merged/dm_j8009p_2_step_1_visual.stl"/>
+    <mesh file="assets/merged/j7_e_2_step_visual.stl"/>
+    <mesh file="assets/merged/distal_visual.stl"/>
+    <mesh file="assets/merged/dm_j4340_2_step_visual.stl"/>
+    <mesh file="assets/merged/j2_b_2_step_visual.stl"/>
+    <mesh file="assets/merged/hfsb6_6060_750_1_step_collision.stl"/>
+    <mesh file="assets/merged/dm_j4310_1_2_step_2_collision.stl"/>
+    <mesh file="assets/merged/feetech_sts3215__configuration_default_collision.stl"/>
+    <mesh file="assets/merged/dm_j4310_1_2_step_2_visual.stl"/>
+    <mesh file="assets/merged/gripper_base_visual.stl"/>
+    <mesh file="assets/merged/distal_collision.stl"/>
+    <mesh file="assets/merged/gripper_base_collision.stl"/>
+    <material name="hfsb6_6060_750_1_step_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="hfsb6_6060_750_1_step_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j8009p_2_step_1_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j8009p_2_step_1_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="j2_b_2_step_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="j2_b_2_step_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j4340_2_step_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j4340_2_step_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j4310_1_2_step_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j4310_1_2_step_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="j6_a_3_step_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="j6_a_3_step_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="j7_e_2_step_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="j7_e_2_step_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j4310_1_2_step_2_visual_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="dm_j4310_1_2_step_2_collision_material" rgba="1.0 1.0 1.0 1.0"/>
+    <material name="gripper_base_visual_material" rgba="0.698026 0.790622 0.846179 1"/>
+    <material name="gripper_base_collision_material" rgba="0.698026 0.790622 0.846179 1"/>
+    <material name="feetech_sts3215__configuration_default_visual_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="feetech_sts3215__configuration_default_collision_material" rgba="0.647059 0.647059 0.647059 1"/>
+    <material name="distal_visual_material" rgba="0.231373 0.380392 0.705882 1"/>
+    <material name="distal_collision_material" rgba="0.231373 0.380392 0.705882 1"/>
+  </asset>
+  <actuator>
+    <position class="robot" name="r_arm_pitch" joint="r_arm_pitch" inheritrange="1"/>
+    <position class="robot" name="r_arm_roll" joint="r_arm_roll" inheritrange="1"/>
+    <position class="robot" name="r_arm_yaw" joint="r_arm_yaw" inheritrange="1"/>
+    <position class="robot" name="r_elbow" joint="r_elbow" inheritrange="1"/>
+    <position class="robot" name="r_wrist_yaw" joint="r_wrist_yaw" inheritrange="1"/>
+    <position class="robot" name="r_wrist_roll" joint="r_wrist_roll" inheritrange="1"/>
+    <position class="robot" name="r_wrist_pitch" joint="r_wrist_pitch" inheritrange="1"/>
+    <position class="robot" name="proximal" joint="proximal" inheritrange="1"/>
+    <position class="robot" name="distal" joint="distal" inheritrange="1"/>
+  </actuator>
+  <equality>
+    <joint joint1="r_wrist_roll_mimic" joint2="r_wrist_roll" polycoef="0 1.0 0 0 0"/>
+  </equality>
+</mujoco>

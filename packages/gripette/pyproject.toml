@@ -1,0 +1,40 @@
+[project]
+name = "gripette"
+version = "0.1.0"
+description = "gRPC motor+camera service for the GRABETTE gripette on Pi Zero 2W"
+requires-python = ">=3.11"
+dependencies = [
+    "grpcio>=1.60.0",
+    "pillow>=12.1.1",
+    "protobuf>=4.25.0",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.optional-dependencies]
+rpi = [
+    "picamera2",
+    "pyserial",
+    "rustypot",
+]
+dev = [
+    "grpcio-tools>=1.60.0",
+]
+
+urdf = [
+    "onshape-to-robot>=1.8.1",
+    "pybullet>=3.2.7",
+]
+
+
+[tool.uv]
+# On the Pi Zero 2W, numpy is provided by system-site-packages (via picamera2).
+# To avoid a slow source build on the Pi, run: uv sync --extra rpi --no-install-package numpy
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "matplotlib>=3.10.8",
+]

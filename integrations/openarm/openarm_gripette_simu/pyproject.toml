@@ -1,0 +1,33 @@
+[project]
+name = "openarm-gripette-simu"
+version = "0.1.0"
+description = "MuJoCo simulation of the OpenArm right arm + Gripette gripper"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mujoco>=3.6",
+    "placo>=0.9",
+    "numpy",
+    "opencv-python>=4.9",
+    "grpcio>=1.60",
+    "protobuf>=4.25",
+    "openarm-gripette-model",
+]
+
+[project.optional-dependencies]
+dev = ["grpcio-tools>=1.60"]
+dataset = ["lerobot>=0.5 ; python_version >= '3.12'"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+# Resolved from the monorepo workspace (integrations/openarm/openarm_gripette_model),
+# not PyPI. Was a local `../` path dep in the standalone repo.
+openarm-gripette-model = { workspace = true }
+
+# lerobot pulls opencv-python-headless which clobbers our opencv-python (same cv2 namespace).
+# Override to use the full opencv-python everywhere.
+[tool.uv]
+override-dependencies = ["opencv-python-headless ; sys_platform == 'never'"]

@@ -1,0 +1,14 @@
+{
+    // Document URL, MuJoCo output
+
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/529179f8dc04070c513eedce/e/88fd728908ce031c3076cd77",
+    #"output_format": "mujoco",
+    "output_format": "urdf",
+    "package_name": "grabette_right",
+
+    // Disable the freejoint to fix the robot
+    "freejoint": false,
+
+
+
+}

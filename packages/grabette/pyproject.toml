@@ -1,0 +1,53 @@
+[project]
+name = "grabette"
+version = "0.1.0"
+description = "Autonomous RPi service for robotic manipulation data collection"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.13.1",
+]
+
+[project.optional-dependencies]
+rpi = [
+    "picamera2",
+    "adafruit-extended-bus",
+    "gpiod>=2.0.0",
+    # numpy intentionally not pinned — comes from system via --system-site-packages.
+    # Older Pi OS shipped numpy 1.x and apt simplejpeg was numpy-1-built; on
+    # current Pi OS (and Trixie) both are numpy 2.x and agree. Pinning to
+    # numpy<2 here forces uv to install 1.26.4 in the venv (shadowing system),
+    # and on recent Pi OS Bookworm aarch64 + cpython 3.11.15 there's no wheel,
+    # so uv builds from source for ~30 min. Don't.
+    "depthai>=3.6,<4",
+    "opencv-python-headless>=4.8",
+    "scipy",  # quaternion + rotation math (teleop, dataset processing)
+    "rerun-sdk",  # live trajectory visualization for teleop
+]
+hf = [
+    "huggingface-hub>=0.20.0",
+]
+urdf = [
+    "onshape-to-robot>=1.8.1",
+    "pybullet>=3.2.7",
+]
+ui = [
+    "gradio>=5.0.0",
+]
+teleop_bridge = [
+    # Workstation-side bridge: scripts/teleop_bridge.py consumes the
+    # grabette teleop WS and forwards deltas/gripper goals to the OpenArm
+    # gRPC sim. websockets is already pulled in by uvicorn[standard].
+    "grpcio>=1.60",
+    "protobuf>=4.25",
+    "httpx>=0.27",
+    "scipy",
+    "numpy",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

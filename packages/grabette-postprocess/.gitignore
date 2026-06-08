@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# Data outputs
+*.osa
+*.mp4
+camera_trajectory.csv
+mapping_camera_trajectory.csv
+imu_data_resampled.json
+slam_mask.png
+slam_metadata.json
+oak_slam_stdout.txt
+poses.csv
+gravity.csv
+biases.csv

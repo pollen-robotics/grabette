@@ -1,0 +1,15 @@
+[Unit]
+Description=Gripette - gRPC motor+camera service
+After=network.target
+
+[Service]
+Type=simple
+User=rasp
+WorkingDirectory=/home/rasp/Project/Repo/gripette
+ExecStart=/home/rasp/Project/Repo/gripette/.venv/bin/python -m gripette
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
