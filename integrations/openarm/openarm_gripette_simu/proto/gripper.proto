@@ -1,0 +1,57 @@
+syntax = "proto3";
+package gripette;
+
+service GripperService {
+  // Server-streaming: 10Hz camera frames + motor positions
+  rpc StreamState (StreamRequest) returns (stream GripperFrame);
+  // Unary: send goal positions to motors
+  rpc SendMotorCommand (MotorCommand) returns (MotorCommandResponse);
+  // Unary: read motor positions (lightweight, no camera)
+  rpc ReadMotors (ReadMotorsRequest) returns (MotorState);
+  // Unary: enable/disable motor torque
+  rpc SetTorque (TorqueCommand) returns (TorqueResponse);
+  // Unary: health check
+  rpc Ping (PingRequest) returns (PingResponse);
+}
+
+message StreamRequest {}
+
+message GripperFrame {
+  bytes jpeg_data = 1;
+  MotorState motor_state = 2;
+  double timestamp_ms = 3;       // monotonic, ms since server start
+  uint64 sequence = 4;
+}
+
+message MotorState {
+  float motor1_position = 1;     // radians
+  float motor2_position = 2;     // radians
+}
+
+message MotorCommand {
+  float motor1_goal = 1;         // radians
+  float motor2_goal = 2;         // radians
+}
+
+message MotorCommandResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message TorqueCommand {
+  bool enable = 1;
+}
+
+message TorqueResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message ReadMotorsRequest {}
+
+message PingRequest {}
+
+message PingResponse {
+  string status = 1;
+  double uptime_seconds = 2;
+}

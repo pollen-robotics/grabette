@@ -1,0 +1,7 @@
+{
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/b72c5d895a7b03d249830939/e/c77dbd6d3fbd22e2e0636f89",
+    "robot_name": "robot",
+    "output_format": "urdf",
+    "merge_stls": true,
+    "simplify_stls": true
+}

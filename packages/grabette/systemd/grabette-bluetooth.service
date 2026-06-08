@@ -1,0 +1,17 @@
+[Unit]
+Description=Grabette Bluetooth WiFi Setup
+After=bluetooth.target
+Requires=bluetooth.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/rasp/Project/Repo/grabette
+ExecStartPre=/usr/sbin/rfkill unblock bluetooth
+ExecStart=/home/rasp/Project/Repo/grabette/.venv/bin/python -m grabette.bluetooth
+Restart=on-failure
+RestartSec=5
+User=root
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,651 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/529179f8dc04070c513eedce/e/88fd728908ce031c3076cd77 -->
+<robot name="grabette_right">
+  <!-- Link thumb_base -->
+  <link name="thumb_base">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part bmi088 -->
+    <visual>
+      <origin xyz="0.0622801 -0.0605999 0.0945557" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bmi088.stl"/>
+      </geometry>
+      <material name="bmi088_material">
+        <color rgba="0.282353 0.54902 0.160784 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0622801 -0.0605999 0.0945557" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bmi088.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part b0404 -->
+    <visual>
+      <origin xyz="-0.0408438 -0.0535999 0.044" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/b0404.stl"/>
+      </geometry>
+      <material name="b0404_material">
+        <color rgba="0.372549 0.654902 0.239216 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0408438 -0.0535999 0.044" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/b0404.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part grip -->
+    <visual>
+      <origin xyz="-0.0105436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/grip.stl"/>
+      </geometry>
+      <material name="grip_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0105436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/grip.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part camera_imu_support -->
+    <visual>
+      <origin xyz="-0.0104436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/camera_imu_support.stl"/>
+      </geometry>
+      <material name="camera_imu_support_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/camera_imu_support.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part vertical_support -->
+    <visual>
+      <origin xyz="-0.0105436 0.0157273 0" rpy="0 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/vertical_support.stl"/>
+      </geometry>
+      <material name="vertical_support_material">
+        <color rgba="0.231373 0.380392 0.705882 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0105436 0.0157273 0" rpy="0 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/vertical_support.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part thumb_base -->
+    <visual>
+      <origin xyz="-0.0104436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/thumb_base.stl"/>
+      </geometry>
+      <material name="thumb_base_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 0.0157273 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/thumb_base.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part red_button -->
+    <visual>
+      <origin xyz="0.0307258 0.0472051 -0.0557" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/red_button.stl"/>
+      </geometry>
+      <material name="red_button_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0307258 0.0472051 -0.0557" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/red_button.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part bushing_6x8x4 -->
+    <visual>
+      <origin xyz="-0.0001 -0 -0.11501" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+      <material name="bushing_6x8x4_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0001 -0 -0.11501" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part raspi_box_lid -->
+    <visual>
+      <origin xyz="0.0394063 -0.0515497 -0.09908" rpy="-0 -0 -1.57079"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspi_box_lid.stl"/>
+      </geometry>
+      <material name="raspi_box_lid_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0394063 -0.0515497 -0.09908" rpy="-0 -0 -1.57079"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspi_box_lid.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part raspberry_pi_4_model_b -->
+    <visual>
+      <origin xyz="0.0414463 -0.0518997 -0.05458" rpy="-1.57079 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspberry_pi_4_model_b.stl"/>
+      </geometry>
+      <material name="raspberry_pi_4_model_b_material">
+        <color rgba="0.231373 0.380392 0.705882 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0414463 -0.0518997 -0.05458" rpy="-1.57079 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspberry_pi_4_model_b.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part raspi_box -->
+    <visual>
+      <origin xyz="0.0394063 -0.0517497 -0.09908" rpy="0 -0 -1.57079"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspi_box.stl"/>
+      </geometry>
+      <material name="raspi_box_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0394063 -0.0517497 -0.09908" rpy="0 -0 -1.57079"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspi_box.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part pisugar3plus -->
+    <visual>
+      <origin xyz="0.0380563 -0.0518932 -0.0645992" rpy="1.57079 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/pisugar3plus.stl"/>
+      </geometry>
+      <material name="pisugar3plus_material">
+        <color rgba="0.231373 0.380392 0.705882 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0380563 -0.0518932 -0.0645992" rpy="1.57079 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/pisugar3plus.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit -->
+    <visual>
+      <origin xyz="0.0553415 -0.0690316 -0.07041" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553415 -0.0690316 -0.07041" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_2 -->
+    <visual>
+      <origin xyz="0.0553415 -0.0690316 -0.048185" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_2_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553415 -0.0690316 -0.048185" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_3 -->
+    <visual>
+      <origin xyz="0.0553415 -0.0690316 -0.038533" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_3_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553415 -0.0690316 -0.038533" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_4 -->
+    <visual>
+      <origin xyz="0.0553412 -0.0365196 -0.07041" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_4_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553412 -0.0365196 -0.07041" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_5 -->
+    <visual>
+      <origin xyz="0.0553415 -0.0690316 -0.060758" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_5_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553415 -0.0690316 -0.060758" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_6 -->
+    <visual>
+      <origin xyz="0.0553413 -0.0527121 -0.089714" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_6_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553413 -0.0527121 -0.089714" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_7 -->
+    <visual>
+      <origin xyz="0.0553415 -0.0690316 -0.080062" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_7_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553415 -0.0690316 -0.080062" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_8 -->
+    <visual>
+      <origin xyz="0.0553413 -0.0527121 -0.07041" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_8_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553413 -0.0527121 -0.07041" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_9 -->
+    <visual>
+      <origin xyz="0.0553413 -0.0527121 -0.048185" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_9_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553413 -0.0527121 -0.048185" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_10 -->
+    <visual>
+      <origin xyz="0.0553413 -0.0527121 -0.060758" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_10_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553413 -0.0527121 -0.060758" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part raspberry_pi_grove_base_hat_v1_0_pcb -->
+    <visual>
+      <origin xyz="0.0532471 -0.156903 -0.213081" rpy="-3.14159 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspberry_pi_grove_base_hat_v1_0_pcb.stl"/>
+      </geometry>
+      <material name="raspberry_pi_grove_base_hat_v1_0_pcb_material">
+        <color rgba="0.313725 0.486275 0.411765 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0532471 -0.156903 -0.213081" rpy="-3.14159 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/raspberry_pi_grove_base_hat_v1_0_pcb.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_11 -->
+    <visual>
+      <origin xyz="0.0553412 -0.0365196 -0.060758" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_11_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553412 -0.0365196 -0.060758" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_12 -->
+    <visual>
+      <origin xyz="0.0553413 -0.0527121 -0.038533" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_12_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553413 -0.0527121 -0.038533" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_13 -->
+    <visual>
+      <origin xyz="0.0553415 -0.0690316 -0.089714" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_13_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553415 -0.0690316 -0.089714" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_14 -->
+    <visual>
+      <origin xyz="0.0553412 -0.0365196 -0.080062" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_14_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553412 -0.0365196 -0.080062" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part user_library_grove_connector__sit_15 -->
+    <visual>
+      <origin xyz="0.0553413 -0.0527121 -0.080062" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+      <material name="user_library_grove_connector__sit_15_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0553413 -0.0527121 -0.080062" rpy="-3.14159 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/user_library_grove_connector__sit.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Frame camera (dummy link + fixed joint) -->
+  <link name="camera">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="camera_frame" type="fixed">
+    <origin xyz="-0.0408438 -0.0494999 0.044" rpy="1.5708 -0 3.14159"/>
+    <parent link="thumb_base"/>
+    <child link="camera"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame imu (dummy link + fixed joint) -->
+  <link name="imu">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="imu_frame" type="fixed">
+    <origin xyz="-0.0408438 -0.0631499 0.044" rpy="1.5708 -0 0"/>
+    <parent link="thumb_base"/>
+    <child link="imu"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Link phalanx_1_bottom -->
+  <link name="phalanx_1_bottom">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part phalanx_1_bottom -->
+    <visual>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_bottom.stl"/>
+      </geometry>
+      <material name="phalanx_1_bottom_material">
+        <color rgba="0.768627 0.886275 0.952941 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_bottom.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part phalanx_1_side -->
+    <visual>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_side.stl"/>
+      </geometry>
+      <material name="phalanx_1_side_material">
+        <color rgba="0.972549 0.529412 0.00392157 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_side.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part phalanx_1_middle -->
+    <visual>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_middle.stl"/>
+      </geometry>
+      <material name="phalanx_1_middle_material">
+        <color rgba="0.498039 0.498039 0.498039 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_middle.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part bushing_6x8x4_2 -->
+    <visual>
+      <origin xyz="0.0321391 -0.0383025 0.05014" rpy="0 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+      <material name="bushing_6x8x4_2_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0321391 -0.0383025 0.05014" rpy="0 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part phalanx_1_top -->
+    <visual>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_top.stl"/>
+      </geometry>
+      <material name="phalanx_1_top_material">
+        <color rgba="0.917647 0.917647 0.917647 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0104436 -0.0157273 7e-05" rpy="3.14159 -0 -0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_1_top.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part bushing_6x8x4_3 -->
+    <visual>
+      <origin xyz="0 0 0" rpy="3.14159 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+      <material name="bushing_6x8x4_3_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="3.14159 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part bushing_6x8x4_4 -->
+    <visual>
+      <origin xyz="0.0321391 -0.0383025 0" rpy="3.14159 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+      <material name="bushing_6x8x4_4_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0321391 -0.0383025 0" rpy="3.14159 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/bushing_6x8x4.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link phalanx_2 -->
+  <link name="phalanx_2">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part phalanx_2 -->
+    <visual>
+      <origin xyz="-0.0425827 -0.0225751 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_2.stl"/>
+      </geometry>
+      <material name="phalanx_2_material">
+        <color rgba="0.498039 0.498039 0.498039 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0425827 -0.0225751 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://grabette_right/assets/phalanx_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Joint from phalanx_1_bottom to phalanx_2 -->
+  <joint name="distal" type="revolute">
+    <origin xyz="0.0321391 -0.0383025 -0" rpy="3.14159 -0 0"/>
+    <parent link="phalanx_1_bottom"/>
+    <child link="phalanx_2"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-3.141592653589793" upper="3.141592653589793"/>
+  </joint>
+  <!-- Joint from thumb_base to phalanx_1_bottom -->
+  <joint name="proximal" type="revolute">
+    <origin xyz="0 -0 0" rpy="3.14159 -0 -0"/>
+    <parent link="thumb_base"/>
+    <child link="phalanx_1_bottom"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-3.141592653589793" upper="3.141592653589793"/>
+  </joint>
+</robot>

@@ -1,0 +1,69 @@
+# For more options and information see
+# http://rptl.io/configtxt
+# Some settings may impact device functionality. See link above for details
+
+# Uncomment some or all of these to enable the optional hardware interfaces
+dtparam=i2c_arm=on
+#dtparam=i2s=on
+#dtparam=spi=on
+
+# Enable audio (loads snd_bcm2835)
+dtparam=audio=on
+
+# Additional overlays and parameters are documented
+# /boot/firmware/overlays/README
+
+# Automatically load overlays for detected cameras
+#camera_auto_detect=0 #0 IMX219
+camera_auto_detect=1
+
+# Automatically load overlays for detected DSI displays
+display_auto_detect=1
+
+# Automatically load initramfs files, if found
+auto_initramfs=1
+
+# Enable DRM VC4 V3D driver
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+
+# Don't have the firmware create an initial video= setting in cmdline.txt.
+# Use the kernel's default instead.
+disable_fw_kms_setup=1
+
+# Run in 64-bit mode
+arm_64bit=1
+
+# Disable compensation for displays with overscan
+disable_overscan=1
+
+# Run as fast as firmware / board allows
+arm_boost=1
+
+[cm4]
+# Enable host mode on the 2711 built-in XHCI USB controller.
+# This line should be removed if the legacy DWC2 controller is required
+# (e.g. for USB device mode) or if USB support is not required.
+otg_mode=1
+
+[cm5]
+dtoverlay=dwc2,dr_mode=host
+
+[all]
+#dtoverlay=imx219 #IMX219
+#dtoverlay=arducam-pivariety
+
+#V1 (legacy, Grove HAT, BMI088 IMU + bit-banged I2C)
+# IMU on grove D5
+#dtoverlay=i2c-gpio,bus=3,i2c_gpio_sda=6,i2c_gpio_scl=5
+# Angle sensor 1 on D16
+#dtoverlay=i2c-gpio,bus=4,i2c_gpio_sda=17,i2c_gpio_scl=16
+# Angle sensor 2 on D18
+#dtoverlay=i2c-gpio,bus=5,i2c_gpio_sda=19,i2c_gpio_scl=18
+
+#V2 (custom HAT, OAK-D SR over USB3 — IMU dropped from RPi)
+# Angle sensor "distal" on hardware i2c3 (GPIO 4 SDA / GPIO 5 SCL)
+dtoverlay=i2c3,pins_4_5
+# Angle sensor "proximal" on hardware i2c4 (GPIO 8 SDA / GPIO 9 SCL)
+dtoverlay=i2c4,pins_8_9
+# Switch on GPIO 10 (input), LED on GPIO 11 (output) — handled in software, no overlay needed

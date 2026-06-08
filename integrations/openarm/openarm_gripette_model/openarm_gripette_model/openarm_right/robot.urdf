@@ -1,0 +1,395 @@
+<?xml version="1.0" ?>
+<!-- Generated using onshape-to-robot -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/b72c5d895a7b03d249830939/e/c77dbd6d3fbd22e2e0636f89 -->
+<robot name="robot">
+  <!-- Link hfsb6_6060_750_1_step -->
+  <link name="hfsb6_6060_750_1_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part hfsb6_6060_750_1_step_parts -->
+    <visual>
+      <origin xyz="0 0 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/merged/hfsb6_6060_750_1_step_visual.stl"/>
+      </geometry>
+      <material name="hfsb6_6060_750_1_step_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/merged/hfsb6_6060_750_1_step_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link dm_j8009p_2_step_1 -->
+  <link name="dm_j8009p_2_step_1">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part dm_j8009p_2_step_1_parts -->
+    <visual>
+      <origin xyz="-0.0207418 -0.688688 -0.0925" rpy="-1.5708 0 -0.0301087"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j8009p_2_step_1_visual.stl"/>
+      </geometry>
+      <material name="dm_j8009p_2_step_1_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0207418 -0.688688 -0.0925" rpy="-1.5708 0 -0.0301087"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j8009p_2_step_1_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j2_b_2_step -->
+  <link name="j2_b_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j2_b_2_step_parts -->
+    <visual>
+      <origin xyz="0.141595 0.691012 -0.00935821" rpy="3.14159 1.54069 1.5866"/>
+      <geometry>
+        <mesh filename="package://assets/merged/j2_b_2_step_visual.stl"/>
+      </geometry>
+      <material name="j2_b_2_step_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.141595 0.691012 -0.00935821" rpy="3.14159 1.54069 1.5866"/>
+      <geometry>
+        <mesh filename="package://assets/merged/j2_b_2_step_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link dm_j4340_2_step -->
+  <link name="dm_j4340_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part dm_j4340_2_step_parts -->
+    <visual>
+      <origin xyz="-0.0207418 0.141595 -0.624762" rpy="-0.0158141 0.030105 -0.000476052"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j4340_2_step_visual.stl"/>
+      </geometry>
+      <material name="dm_j4340_2_step_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0207418 0.141595 -0.624762" rpy="-0.0158141 0.030105 -0.000476052"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j4340_2_step_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link dm_j4310_1_2_step -->
+  <link name="dm_j4310_1_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part dm_j4310_1_2_step_parts -->
+    <visual>
+      <origin xyz="-0.0212019 -0.471012 -0.173077" rpy="-1.58669 0.00277318 -0.0301051"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j4310_1_2_step_visual.stl"/>
+      </geometry>
+      <material name="dm_j4310_1_2_step_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0212019 -0.471012 -0.173077" rpy="-1.58669 0.00277318 -0.0301051"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j4310_1_2_step_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j6_a_3_step -->
+  <link name="j6_a_3_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j6_a_3_step_parts -->
+    <visual>
+      <origin xyz="-0.0212019 0.141577 -0.375512" rpy="-0.0158141 0.030105 0.00277444"/>
+      <geometry>
+        <mesh filename="package://assets/merged/j6_a_3_step_visual.stl"/>
+      </geometry>
+      <material name="j6_a_3_step_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0212019 0.141577 -0.375512" rpy="-0.0158141 0.030105 0.00277444"/>
+      <geometry>
+        <mesh filename="package://assets/merged/j6_a_3_step_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j7_e_2_step -->
+  <link name="j7_e_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j7_e_2_step_parts -->
+    <visual>
+      <origin xyz="0.1453 -0.328405 -0.03817" rpy="-0.0535505 -1.54067 -1.52187"/>
+      <geometry>
+        <mesh filename="package://assets/merged/j7_e_2_step_visual.stl"/>
+      </geometry>
+      <material name="j7_e_2_step_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.1453 -0.328405 -0.03817" rpy="-0.0535505 -1.54067 -1.52187"/>
+      <geometry>
+        <mesh filename="package://assets/merged/j7_e_2_step_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Joint from j6_a_3_step to j7_e_2_step -->
+  <joint name="r_wrist_roll" type="revolute">
+    <origin xyz="0.0172 2.81739e-05 -0.0455" rpy="1.5708 0.0112042 1.57243"/>
+    <parent link="j6_a_3_step"/>
+    <child link="j7_e_2_step"/>
+    <axis xyz="0 0 -1"/>
+    <limit effort="10" velocity="10" lower="-0.796602" upper="0.774194"/>
+  </joint>
+  <!-- Link dm_j4310_1_2_step_2 -->
+  <link name="dm_j4310_1_2_step_2">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part dm_j4310_1_2_step_2_parts -->
+    <visual>
+      <origin xyz="-0.14446 0.25341 -0.05527" rpy="-0.0535505 -1.54067 1.61972"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j4310_1_2_step_2_visual.stl"/>
+      </geometry>
+      <material name="dm_j4310_1_2_step_2_parts_material">
+        <color rgba="1.0 1.0 1.0 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.14446 0.25341 -0.05527" rpy="-0.0535505 -1.54067 1.61972"/>
+      <geometry>
+        <mesh filename="package://assets/merged/dm_j4310_1_2_step_2_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link gripper_base -->
+  <link name="gripper_base">
+    <inertial>
+      <origin xyz="0.000738567 0.084598 0.0158667" rpy="0 0 0"/>
+      <mass value="0.208245"/>
+      <inertia ixx="0.000366288" ixy="4.37234e-07" ixz="3.64051e-06" iyy="0.000294868" iyz="-3.03598e-05" izz="0.00017809"/>
+    </inertial>
+    <!-- Part gripper_base_parts -->
+    <visual>
+      <origin xyz="0.000738567 0.084598 0.0158667" rpy="1.56615 -0.00147308 0.00521711"/>
+      <geometry>
+        <mesh filename="package://assets/merged/gripper_base_visual.stl"/>
+      </geometry>
+      <material name="gripper_base_parts_material">
+        <color rgba="0.698026 0.790622 0.846179 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.000738567 0.084598 0.0158667" rpy="1.56615 -0.00147308 0.00521711"/>
+      <geometry>
+        <mesh filename="package://assets/merged/gripper_base_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Frame openarm_fix (dummy link + fixed joint) -->
+  <link name="openarm_fix">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="openarm_fix_frame" type="fixed">
+    <origin xyz="-0 0.0495 0.0205" rpy="1.5708 1.5708 0"/>
+    <parent link="gripper_base"/>
+    <child link="openarm_fix"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame camera (dummy link + fixed joint) -->
+  <link name="camera">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="camera_frame" type="fixed">
+    <origin xyz="0.0689844 0.0662 0.0278102" rpy="-1.5708 1.5708 0"/>
+    <parent link="gripper_base"/>
+    <child link="camera"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame gripper (dummy link + fixed joint) -->
+  <link name="gripper">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="gripper_frame" type="fixed">
+    <origin xyz="-0 0.1395 0.0305" rpy="-1.5708 1.5708 0"/>
+    <parent link="gripper_base"/>
+    <child link="gripper"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Link feetech_sts3215__configuration_default -->
+  <link name="feetech_sts3215__configuration_default">
+    <inertial>
+      <origin xyz="0.0182944 -0.0259223 0.0175868" rpy="0 0 0"/>
+      <mass value="0.100722"/>
+      <inertia ixx="5.94511e-05" ixy="6.81532e-06" ixz="-4.17039e-07" iyy="4.45642e-05" iyz="1.07118e-06" izz="3.97205e-05"/>
+    </inertial>
+    <!-- Part feetech_sts3215__configuration_default_parts -->
+    <visual>
+      <origin xyz="0.0182944 -0.0259223 0.0175868" rpy="2.86176 1.56538 -2.02052"/>
+      <geometry>
+        <mesh filename="package://assets/merged/feetech_sts3215__configuration_default_visual.stl"/>
+      </geometry>
+      <material name="feetech_sts3215__configuration_default_parts_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0182944 -0.0259223 0.0175868" rpy="2.86176 1.56538 -2.02052"/>
+      <geometry>
+        <mesh filename="package://assets/merged/feetech_sts3215__configuration_default_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link distal -->
+  <link name="distal">
+    <inertial>
+      <origin xyz="-0.0264976 0.00403103 0.0179373" rpy="0 0 0"/>
+      <mass value="0.0417207"/>
+      <inertia ixx="1.10253e-05" ixy="2.04438e-06" ixz="3.05704e-07" iyy="1.6107e-05" iyz="1.39544e-07" izz="9.41129e-06"/>
+    </inertial>
+    <!-- Part distal_parts -->
+    <visual>
+      <origin xyz="-0.0264976 0.00403103 0.0179373" rpy="2.86176 1.56538 2.16827"/>
+      <geometry>
+        <mesh filename="package://assets/merged/distal_visual.stl"/>
+      </geometry>
+      <material name="distal_parts_material">
+        <color rgba="0.231373 0.380392 0.705882 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0264976 0.00403103 0.0179373" rpy="2.86176 1.56538 2.16827"/>
+      <geometry>
+        <mesh filename="package://assets/merged/distal_collision.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Joint from feetech_sts3215__configuration_default to distal -->
+  <joint name="distal" type="revolute">
+    <origin xyz="0.025 -0.0433013 -0.00055" rpy="0 0 2.0944"/>
+    <parent link="feetech_sts3215__configuration_default"/>
+    <child link="distal"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-2.0944" upper="0"/>
+  </joint>
+  <!-- Joint from gripper_base to feetech_sts3215__configuration_default -->
+  <joint name="proximal" type="revolute">
+    <origin xyz="0.0179344 0.1065 -0.0131898" rpy="1.5708 1.39626 -1.5708"/>
+    <parent link="gripper_base"/>
+    <child link="feetech_sts3215__configuration_default"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-1.5708" upper="0"/>
+  </joint>
+  <!-- Joint from dm_j4310_1_2_step_2 to gripper_base -->
+  <joint name="r_wrist_pitch" type="revolute">
+    <origin xyz="0.0205 -0 -0.0343" rpy="-1.5708 -1.54592 1.5708"/>
+    <parent link="dm_j4310_1_2_step_2"/>
+    <child link="gripper_base"/>
+    <axis xyz="0 0 -1"/>
+    <limit effort="10" velocity="10" lower="-1.54592" upper="1.59567"/>
+  </joint>
+  <!-- Joint from j6_a_3_step to dm_j4310_1_2_step_2 -->
+  <joint name="r_wrist_roll_mimic" type="revolute">
+    <origin xyz="0.0343 5.61841e-05 -0.1205" rpy="-1.5708 -0.0112042 -1.56916"/>
+    <parent link="j6_a_3_step"/>
+    <child link="dm_j4310_1_2_step_2"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-3.141592653589793" upper="3.141592653589793"/>
+    <mimic joint="r_wrist_roll_inv" multiplier="1.0"/>
+  </joint>
+  <!-- Joint from dm_j4310_1_2_step to j6_a_3_step -->
+  <joint name="r_wrist_yaw" type="revolute">
+    <origin xyz="-0 -0.0955 -0.0315" rpy="-1.5708 0 -0"/>
+    <parent link="dm_j4310_1_2_step"/>
+    <child link="j6_a_3_step"/>
+    <axis xyz="0 0 -1"/>
+    <limit effort="10" velocity="10" lower="-1.56916" upper="1.57243"/>
+  </joint>
+  <!-- Joint from dm_j4340_2_step to dm_j4310_1_2_step -->
+  <joint name="r_elbow" type="revolute">
+    <origin xyz="-0.000102553 -0.0315498 -0.15375" rpy="1.5708 -0 -0.00325049"/>
+    <parent link="dm_j4340_2_step"/>
+    <child link="dm_j4310_1_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-0" upper="2.44346"/>
+  </joint>
+  <!-- Joint from j2_b_2_step to dm_j4340_2_step -->
+  <joint name="r_arm_yaw" type="revolute">
+    <origin xyz="-0 0.06625 -0.0301" rpy="1.5708 1.5708 0"/>
+    <parent link="j2_b_2_step"/>
+    <child link="dm_j4340_2_step"/>
+    <axis xyz="0 0 -1"/>
+    <limit effort="10" velocity="10" lower="-1.57405" upper="1.56755"/>
+  </joint>
+  <!-- Joint from dm_j8009p_2_step_1 to j2_b_2_step -->
+  <joint name="r_arm_roll" type="revolute">
+    <origin xyz="-0.0301 0 0.06" rpy="-1.5708 1.55499 1.5708"/>
+    <parent link="dm_j8009p_2_step_1"/>
+    <child link="j2_b_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-0.158726" upper="3.33193"/>
+  </joint>
+  <!-- Joint from hfsb6_6060_750_1_step to dm_j8009p_2_step_1 -->
+  <joint name="r_arm_pitch" type="revolute">
+    <origin xyz="-0 -0.0925 0.689" rpy="1.5708 -0.0301087 -0"/>
+    <parent link="hfsb6_6060_750_1_step"/>
+    <child link="dm_j8009p_2_step_1"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-1.0301" upper="2.96989"/>
+  </joint>
+</robot>

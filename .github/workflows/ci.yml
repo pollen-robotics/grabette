@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  workspace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Lock is up to date
+        run: uv lock --check
+
+      - name: Build the full workspace environment
+        # Resolves and installs every member on a clean machine — the real
+        # gate that the single workspace lock works end to end.
+        run: uv sync --all-packages
+
+      - name: Import smoke test
+        # The core services + postprocess + model import with no exotic system
+        # libs. The OpenArm sim is validated by the build step above; importing
+        # it at runtime additionally needs system urdfdom (placo) — left to a
+        # follow-up CI step. Linting (ruff) is also a follow-up: no config yet.
+        run: |
+          uv run python - <<'PY'
+          import importlib, sys
+          mods = ["grabette", "casquette", "gripette",
+                  "grabette_postprocess", "openarm_gripette_model"]
+          failed = []
+          for m in mods:
+              try:
+                  importlib.import_module(m)
+                  print(f"OK   {m}")
+              except Exception as e:
+                  print(f"FAIL {m}: {type(e).__name__}: {e}")
+                  failed.append(m)
+          sys.exit(1 if failed else 0)
+          PY

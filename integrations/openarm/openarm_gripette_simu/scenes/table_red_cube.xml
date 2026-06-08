@@ -1,0 +1,56 @@
+<mujoco model="table_red_cube">
+    <include file="../../openarm_gripette_model/openarm_gripette_model/openarm_right/robot.xml" />
+
+    <visual>
+        <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+        <rgba haze="0.15 0.25 0.35 1" />
+        <global azimuth="160" elevation="-20" offwidth="1296" offheight="972" />
+    </visual>
+
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
+            height="3072" />
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4"
+            rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
+            reflectance="0.2" />
+
+        <!-- Wood table texture -->
+        <texture type="2d" name="wood" builtin="flat" rgb1="0.65 0.45 0.25" rgb2="0.55 0.35 0.18"
+            mark="random" markrgb="0.60 0.40 0.22" width="256" height="256" />
+        <material name="wood" texture="wood" texrepeat="3 3" shininess="0.1" specular="0.1" />
+
+        <!-- Red cube material -->
+        <material name="red_cube" rgba="0.85 0.15 0.1 1" shininess="0.3" specular="0.5" />
+    </asset>
+
+    <worldbody>
+        <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
+        <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+
+        <!-- Wooden table: 60cm x 40cm surface, 40cm height, in front of robot (+X) -->
+        <body name="table" pos="0.45 0 0">
+            <!-- Tabletop -->
+            <geom name="tabletop" type="box" size="0.30 0.30 0.015" pos="0 0 0.385"
+                material="wood" mass="20" />
+            <!-- Four legs -->
+            <geom name="leg_1" type="box" size="0.02 0.02 0.185" pos="0.26 0.16 0.185"
+                material="wood" mass="1" />
+            <geom name="leg_2" type="box" size="0.02 0.02 0.185" pos="-0.26 0.16 0.185"
+                material="wood" mass="1" />
+            <geom name="leg_3" type="box" size="0.02 0.02 0.185" pos="0.26 -0.16 0.185"
+                material="wood" mass="1" />
+            <geom name="leg_4" type="box" size="0.02 0.02 0.185" pos="-0.26 -0.16 0.185"
+                material="wood" mass="1" />
+        </body>
+
+        <!-- Red cube: 3cm, movable, sitting on the table -->
+        <body name="red_cube" pos="0.45 -0.2 0.415">
+            <freejoint name="red_cube_joint" />
+            <geom name="red_cube" type="box" size="0.015 0.015 0.055"
+                material="red_cube" mass="0.05"
+                friction="0.8 0.01 0.001" condim="4"
+                solref="0.005 1" solimp="0.98 0.98 0.001" />
+        </body>
+    </worldbody>
+</mujoco>

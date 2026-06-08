@@ -1,0 +1,15 @@
+[Unit]
+Description=Casquette - POV camera data collection service
+After=network.target
+
+[Service]
+Type=simple
+User=rasp
+WorkingDirectory=/home/rasp/Project/Repo/casquette
+ExecStart=/home/rasp/Project/Repo/casquette/.venv/bin/python -m casquette
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
