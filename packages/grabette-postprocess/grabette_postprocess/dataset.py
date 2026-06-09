@@ -17,7 +17,6 @@ from grabette_postprocess.trajectory import (
     load_trajectory_csv,
     trajectory_to_poses,
     interpolate_angles,
-    load_gravity,
 )
 
 # Feature schema for the GRABETTE dataset

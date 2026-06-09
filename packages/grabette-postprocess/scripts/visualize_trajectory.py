@@ -2,8 +2,8 @@
 """
 Visualize SLAM trajectory in 3D using Rerun.
 
-The trajectory from grabette_slam is already gravity-aligned (Z-up, gravity = -Z)
-after IMU initialization.
+The trajectory is expected to be gravity-aligned (Z-up, gravity = -Z), as
+produced by the SLAM/VIO and Quest pipelines.
 
 Usage:
     python scripts/visualize_trajectory.py <episode_dir>
@@ -32,7 +32,7 @@ _DEFAULT_CY = 366.17
 _DEFAULT_W = 960
 _DEFAULT_H = 720
 
-# Intrinsics at native 1296x972 (from rpi_bmi088_slam_settings.yaml)
+# Intrinsics at native 1296x972 (RPi fisheye calibration)
 _NATIVE_FX = 525.37
 _NATIVE_FY = 524.10
 _NATIVE_CX = 635.85
@@ -182,7 +182,7 @@ def main(episode_dir, show_video, video_skip, reference, app_id):
     rr.init(app_id, spawn=True)
     time.sleep(0.5)
 
-    # Set world coordinate system: gravity-aligned, Z-up (matches ORB-SLAM3 after IMU init)
+    # Set world coordinate system: gravity-aligned, Z-up
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 
     # Log IMU data first (fills the timeline)
@@ -345,7 +345,7 @@ def main(episode_dir, show_video, video_skip, reference, app_id):
             print(f"  Frame {frame_i}/{n_total}", end='\r')
 
     print(f"\nVisualization complete.")
-    print(f"  Coordinate system: Z-up (gravity = -Z), from ORB-SLAM3 IMU init")
+    print(f"  Coordinate system: Z-up (gravity = -Z)")
     print(f"  Green line: full trajectory")
     print(f"  Blue line: trajectory up to current time")
     print(f"  RGB arrows: camera X(right)/Y(down)/Z(forward) axes")
