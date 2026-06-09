@@ -23,7 +23,7 @@ worked integration, not a requirement.
 | [`grabette`](packages/grabette) | On-device data-collection service (camera + IMU + angle/OAK-D) | Raspberry Pi | HTTP/WebSocket, :8000 |
 | [`casquette`](packages/casquette) | POV head-mounted camera + IMU collection service | Raspberry Pi Zero 2W | HTTP/WebSocket, :8001 |
 | [`gripette`](packages/gripette) | Gripper motor + camera service | Raspberry Pi Zero 2W | gRPC, :50051 |
-| [`grabette-postprocess`](packages/grabette-postprocess) | SLAM (ORB-SLAM3, Dockerized) → LeRobot dataset generation | Workstation | CLI |
+| [`grabette-postprocess`](packages/grabette-postprocess) | SLAM/VIO (OAK-D + RTAB-Map, Dockerized) → LeRobot dataset generation | Workstation | CLI |
 
 ### `integrations/openarm/` — reference integration (OpenArm 7-DOF arm)
 

@@ -7,7 +7,7 @@ the real fisheye camera with matching intrinsics and distortion.
 import numpy as np
 import cv2
 
-# Real camera calibration (from rpi_bmi088_slam_settings.yaml)
+# Real camera calibration (RPi fisheye intrinsics, KannalaBrandt8)
 CAMERA_WIDTH = 1296
 CAMERA_HEIGHT = 972
 CAMERA_FX = 537.8970067668539
