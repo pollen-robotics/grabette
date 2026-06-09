@@ -1,5 +1,9 @@
 .PHONY: install-rpi install-udev-oak install-systemd help
 
+# This package is a uv workspace member; the environment uv actually uses
+# lives at the workspace ROOT, not here. All venv ops target that root.
+WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
+
 help:
 	@echo "Targets:"
 	@echo "  install-rpi       Install apt deps + udev rule, create venv, sync, verify"
@@ -13,15 +17,15 @@ install-rpi: install-udev-oak
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg
-	rm -rf .venv
-	uv venv --python /usr/bin/python3 --system-site-packages
-	uv sync --extra rpi --extra ui
+	cd $(WORKSPACE_ROOT) && rm -rf .venv \
+	  && uv venv --python /usr/bin/python3 --system-site-packages \
+	  && uv sync --package grabette --extra rpi --extra ui
 	@echo "--- verifying imports ---"
-	@.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
+	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
-	@grep -E "home|version_info|system-site" .venv/pyvenv.cfg
+	@grep -E "home|version_info|system-site" $(WORKSPACE_ROOT)/.venv/pyvenv.cfg
 	@echo
-	@echo "Done. Run 'uv run python -m grabette' to start the daemon."
+	@echo "Done. Run 'uv run --package grabette python -m grabette' to start the daemon."
 	@echo "Watch journalctl for 'RPi hardware detected, using RpiBackend' (NOT MockBackend)."
 
 # Movidius / OAK-D USB access rule. Without this, depthai needs sudo to talk
@@ -37,7 +41,10 @@ install-udev-oak:
 	fi
 
 install-systemd:
-	sudo cp systemd/grabette.service /etc/systemd/system/
+	@# Patch the unit's hardcoded path to this device's actual workspace root
+	@# (where the venv lives) so boot-time start uses the right interpreter.
+	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette.service \
+	  | sudo tee /etc/systemd/system/grabette.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now grabette
 	@echo "Logs: journalctl -u grabette -f"

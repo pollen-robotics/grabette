@@ -1,5 +1,9 @@
 .PHONY: install-rpi enable-i2c install-systemd check help
 
+# This package is a uv workspace member; the environment uv actually uses
+# lives at the workspace ROOT, not here. All venv ops target that root.
+WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
+
 help:
 	@echo "Targets:"
 	@echo "  install-rpi       One-shot bring-up: apt deps + I2C enable + venv + sync + verify"
@@ -9,7 +13,8 @@ help:
 	@echo ""
 	@echo "Prereqs before 'install-rpi':"
 	@echo "  - uv installed (https://docs.astral.sh/uv/)"
-	@echo "  - this repo cloned at /home/rasp/Project/Repo/casquette (path the systemd unit expects)"
+	@echo "  - the grabette monorepo cloned on this device (any path; install-systemd"
+	@echo "    patches the unit to this device's workspace root automatically)"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Mirrors grabette/Makefile's install-rpi but for casquette's lighter stack
@@ -18,16 +23,16 @@ install-rpi: enable-i2c
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg i2c-tools
-	rm -rf .venv
-	uv venv --python /usr/bin/python3 --system-site-packages
-	uv sync --extra rpi
+	cd $(WORKSPACE_ROOT) && rm -rf .venv \
+	  && uv venv --python /usr/bin/python3 --system-site-packages \
+	  && uv sync --package casquette --extra rpi
 	@echo "--- verifying imports ---"
-	@.venv/bin/python -c "import picamera2, numpy, adafruit_extended_bus; print('all imports OK')"
+	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, numpy, adafruit_extended_bus; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
-	@grep -E "home|version_info|system-site" .venv/pyvenv.cfg
+	@grep -E "home|version_info|system-site" $(WORKSPACE_ROOT)/.venv/pyvenv.cfg
 	@echo
 	@echo "Done. Plug the BMI088 into the HAT's I2C port (GPIO 2/3) and run 'make check'."
-	@echo "Then 'uv run python -m casquette' to start the daemon, or 'make install-systemd' for boot-time start."
+	@echo "Then 'uv run --package casquette python -m casquette' to start the daemon, or 'make install-systemd' for boot-time start."
 
 # Enable hardware I2C bus 1 (GPIO 2/3) — the conventional Pi I2C bus where
 # the HAT exposes its 'I2C' port. raspi-config handles both /boot/config.txt
@@ -47,8 +52,12 @@ enable-i2c:
 # venv builds. The bluetooth service needs root (BlueZ DBus access); the
 # main service runs as rasp.
 install-systemd:
-	sudo cp systemd/casquette.service /etc/systemd/system/
-	sudo cp systemd/casquette-bluetooth.service /etc/systemd/system/
+	@# Patch the units' hardcoded path to this device's actual workspace root
+	@# (where the venv lives) so boot-time start uses the right interpreter.
+	sed 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' systemd/casquette.service \
+	  | sudo tee /etc/systemd/system/casquette.service >/dev/null
+	sed 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' systemd/casquette-bluetooth.service \
+	  | sudo tee /etc/systemd/system/casquette-bluetooth.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now casquette
 	sudo systemctl enable --now casquette-bluetooth
@@ -57,11 +66,11 @@ install-systemd:
 	@echo "  journalctl -u casquette-bluetooth -f"
 
 check:
-	@if [ ! -x .venv/bin/python ]; then \
-		echo "No .venv/bin/python found. Run 'make install-rpi' first —"; \
+	@if [ ! -x $(WORKSPACE_ROOT)/.venv/bin/python ]; then \
+		echo "No $(WORKSPACE_ROOT)/.venv/bin/python found. Run 'make install-rpi' first —"; \
 		echo "the venv must be created with --system-site-packages so apt's"; \
 		echo "picamera2 satisfies the dependency tree (otherwise uv tries to"; \
 		echo "build python-prctl from PyPI, which needs libcap-dev)."; \
 		exit 1; \
 	fi
-	.venv/bin/python scripts/check_hardware.py
+	$(WORKSPACE_ROOT)/.venv/bin/python scripts/check_hardware.py
