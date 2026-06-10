@@ -15,17 +15,12 @@ from grabette_postprocess.dataset import build_dataset
 @click.option("--task", required=True,
               help="Task description (e.g. 'cup manipulation')")
 @click.option("--fps", type=float, default=None,
-              help="Video frame rate (default: auto-detect from trajectory source)")
+              help="Video frame rate (default: 50fps, native RPi camera rate)")
 @click.option("--image_height", type=int, default=720)
 @click.option("--image_width", type=int, default=960)
-@click.option("--quest-camera", is_flag=True, default=False,
-              help="Include Quest POV camera as observation.images.cam1")
-@click.option("--quest_image_height", type=int, default=480)
-@click.option("--quest_image_width", type=int, default=640)
 @click.option("--root", type=click.Path(), default=None,
               help="Local storage path (default: HF cache)")
-def main(input_dir, repo_id, task, fps, image_height, image_width,
-         quest_camera, quest_image_height, quest_image_width, root):
+def main(input_dir, repo_id, task, fps, image_height, image_width, root):
     input_dir = Path(input_dir).expanduser().absolute()
 
     # Find all episode directories that have a trajectory CSV
@@ -45,9 +40,7 @@ def main(input_dir, repo_id, task, fps, image_height, image_width,
         task=task,
         fps=fps,
         image_size=(image_height, image_width),
-        quest_image_size=(quest_image_height, quest_image_width),
         root=Path(root) if root else None,
-        include_quest_camera=quest_camera,
     )
 
 
