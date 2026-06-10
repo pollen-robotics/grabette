@@ -15,9 +15,7 @@ Streams:
 - BNO086 IMU at ~200 Hz → JSON
 
 Frames are encoded from `stereo.rectifiedLeft/Right` so the mp4s are already
-SLAM-ready (rectified + undistorted). On-device `setImageOrientation(ROTATE_180)`
-flips both sensors before stereo, since the OAK-D SR is mounted upside-down on
-the grabette.
+SLAM-ready (rectified + undistorted).
 
 Output layout per episode (resolution = depth_resolution, default 640×400):
     oakd_left.mp4               H.264 mono, rectified (CAM_B = mono global-shutter)
@@ -175,23 +173,16 @@ class OakdCapture:
             logger.warning("oak_mask.png not found at %s — capturing without mask", _MASK_PATH)
 
         # --- Build pipeline ---
-        # Stereo input resolution dictates everything downstream:
-        # cameras → (rotated 180° on-device) → stereo → rectifiedLeft/Right → H.264
-        #                                            ↘ depth → host
-        # The OAK-D SR is physically mounted upside-down on the grabette;
-        # ROTATE_180_DEG on each sensor makes rectified frames + depth right-side-up
-        # for downstream SLAM. Calibration (intrinsics, imu_to_cam) is computed
-        # by depthai with the rotation already applied.
+        # cameras → stereo → rectifiedLeft/Right → H.264
+        #                  ↘ depth → host
         self._pipeline = dai.Pipeline()
 
         camB = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
-        camB.setImageOrientation(dai.CameraImageOrientation.ROTATE_180_DEG)
         leftStereoIn = camB.requestOutput(
             self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
         )
 
         camC = self._pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
-        camC.setImageOrientation(dai.CameraImageOrientation.ROTATE_180_DEG)
         rightStereoIn = camC.requestOutput(
             self.depth_resolution, type=dai.ImgFrame.Type.GRAY8, fps=self.fps,
         )
@@ -303,10 +294,6 @@ class OakdCapture:
         Schema matches what grabette-data/docker/oak_vslam expects:
         width, height, fx, fy, cx, cy, baseline (m), imu_to_cam (4x4).
 
-        Note: depthai returns factory intrinsics for the un-rotated sensor.
-        We apply setImageOrientation(ROTATE_180) on-device, but for OAK-D SR
-        the lens is well-centered and the cx/cy offset is sub-pixel — this
-        matches the convention used by the grabette-data rgbd-for-slam pipeline.
         """
         import depthai as dai
         try:
@@ -679,9 +666,6 @@ class OakdCapture:
         """Return latest depth as colorized JPEG (turbo colormap, 0.2-3m).
 
         Returns None if no depth frame has arrived yet.
-
-        The frame is rotated 180° for display only — recorded depth on disk
-        keeps the pipeline orientation so calibration intrinsics stay valid.
         """
         depth = self._latest_depth  # atomic read
         if depth is None:
@@ -693,7 +677,6 @@ class OakdCapture:
         d_norm = (255.0 * (d_max - d_clip) / (d_max - d_min)).astype(np.uint8)
         d_norm[~mask] = 0
         colorized = cv2.applyColorMap(d_norm, cv2.COLORMAP_TURBO)
-        colorized = cv2.rotate(colorized, cv2.ROTATE_180)
         ok, buf = cv2.imencode(".jpg", colorized, [cv2.IMWRITE_JPEG_QUALITY, quality])
         return buf.tobytes() if ok else None
 
