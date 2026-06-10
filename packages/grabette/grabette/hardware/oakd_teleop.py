@@ -259,8 +259,8 @@ class OakdTeleop:
                 )
                 self._latest_delta = Delta(
                     t_host=t_host,
-                    dx=float(d[0, 3]), dy=float(d[1, 3]), dz=float(d[2, 3]),
-                    dqx=float(dq[0]), dqy=float(dq[1]),
+                    dx=-float(d[0, 3]), dy=-float(d[1, 3]), dz=float(d[2, 3]),
+                    dqx=-float(dq[0]), dqy=-float(dq[1]),
                     dqz=float(dq[2]), dqw=float(dq[3]),
                 )
                 self._prev_pose_mat = T_curr
