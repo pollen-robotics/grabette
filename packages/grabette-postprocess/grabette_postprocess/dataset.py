@@ -1,9 +1,7 @@
 """LeRobot v3 dataset builder for GRABETTE.
 
-Converts trajectory + capture data into LeRobot v3 format (Parquet + MP4).
-Supports two camera sources:
-  - RPi fisheye camera (raw_video.mp4)
-  - Quest POV camera (grpc_camera_frames/*.jpg), optional
+Converts trajectory + capture data into LeRobot v3 format (Parquet + MP4)
+from the RPi fisheye camera (raw_video.mp4).
 """
 
 import json
@@ -78,45 +76,13 @@ def _load_video_timestamps(episode_dir: Path, video_path: Path) -> np.ndarray:
     return np.arange(n_frames, dtype=np.float64) / video_fps
 
 
-def _load_quest_frames(episode_dir: Path) -> list[tuple[float, Path]] | None:
-    """Load Quest camera frame paths with relative timestamps in seconds.
-
-    Timestamps are parsed from filenames (absolute ms), then zero-based so
-    the first frame is at t=0s, matching the trajectory clock.
-
-    Returns list of (timestamp_s, path) sorted by timestamp, or None.
-    """
-    quest_dir = episode_dir / "grpc_camera_frames"
-    if not quest_dir.is_dir():
-        return None
-
-    frames = []
-    for f in sorted(quest_dir.iterdir()):
-        if f.suffix.lower() not in ('.jpg', '.jpeg', '.png'):
-            continue
-        # Filename format: frame_{timestamp_ms}_{seqnum}.ext
-        parts = f.stem.split('_')
-        if len(parts) >= 2:
-            ts_ms = int(parts[1])
-            frames.append((ts_ms, f))
-
-    if not frames:
-        return None
-
-    # Convert absolute ms timestamps to relative seconds
-    t0 = frames[0][0]
-    return [(( ts - t0) / 1000.0, path) for ts, path in frames]
-
-
 def build_dataset(
     repo_id: str,
     episode_dirs: list[Path],
     task: str,
     fps: float | None = None,
     image_size: tuple[int, int] = (720, 960),
-    quest_image_size: tuple[int, int] | None = None,
     root: Path | None = None,
-    include_quest_camera: bool = False,
 ):
     """Build LeRobot v3 dataset from processed episode directories.
 
@@ -125,39 +91,20 @@ def build_dataset(
         - imu_data.json (raw, with ANGL stream)
         - camera_trajectory.csv (or mapping_camera_trajectory.csv)
 
-    Optionally:
-        - grpc_camera_frames/ (Quest POV images, added as observation.images.cam1)
-
     Args:
         repo_id: dataset identifier (e.g. "steve/grabette-demo")
         episode_dirs: list of episode directory paths
         task: task description string
-        fps: dataset frame rate. If None, auto-detected from trajectory source:
-            50fps for SLAM (native RPi camera rate),
-            30fps for Quest.
+        fps: dataset frame rate (default: 50fps, the native RPi camera rate)
         image_size: (height, width) for RPi camera output frames
-        quest_image_size: (height, width) for Quest camera output frames
-            (default: same as image_size)
         root: local storage path (default: HF cache)
-        include_quest_camera: include Quest POV camera as observation.images.cam1
     """
     # Lazy import — lerobot is a heavy dependency
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    if quest_image_size is None:
-        quest_image_size = image_size
-
-    # Auto-detect fps from first episode's trajectory source if not specified
     if fps is None:
-        first_meta = episode_dirs[0] / "slam_metadata.json"
-        if first_meta.is_file():
-            with open(first_meta) as f:
-                m = json.load(f)
-            method = m.get("method", "slam")
-            fps = 30.0 if method == "quest" else 50.0
-        else:
-            fps = 50.0
-        print(f"Auto-detected fps: {int(fps)}")
+        fps = 50.0
+        print(f"Using default fps: {int(fps)}")
 
     # Build feature schema
     features = FEATURES_BASE.copy()
@@ -166,13 +113,6 @@ def build_dataset(
         **features["observation.images.cam0"],
         "shape": (3, h, w),
     }
-    if include_quest_camera:
-        qh, qw = quest_image_size
-        features["observation.images.cam1"] = {
-            "dtype": "video",
-            "shape": (3, qh, qw),
-            "names": ["channels", "height", "width"],
-        }
 
     dataset = LeRobotDataset.create(
         repo_id=repo_id,
@@ -233,24 +173,6 @@ def build_dataset(
         cam0_cache = _load_video_frames_indexed(video_path, image_size,
                                                 set(cam0_indices.tolist()))
 
-        # --- cam1: Quest camera, timestamp-based frame selection ---
-        qh, qw = quest_image_size
-        quest_frames = None
-        cam1_paths = None
-        if include_quest_camera:
-            quest_frames = _load_quest_frames(ep_dir)
-            if quest_frames:
-                # Quest frames already have relative timestamps in seconds
-                quest_ts = np.array([f[0] for f in quest_frames])
-                print(f"  Quest camera: {len(quest_frames)} frames, {quest_ts[-1]:.2f}s")
-                # For each trajectory step, find nearest Quest frame
-                cam1_paths = [
-                    quest_frames[int(np.argmin(np.abs(quest_ts - t)))][1]
-                    for t in traj_ts
-                ]
-            else:
-                print(f"  Warning: no Quest camera frames found")
-
         for i in range(n_frames):
             img = cam0_cache.get(cam0_indices[i])
             if img is None:
@@ -263,19 +185,6 @@ def build_dataset(
                 "observation.images.cam0": img_rgb,
                 "action": actions[i],
             }
-
-            if include_quest_camera:
-                if cam1_paths is not None:
-                    quest_img_bgr = cv2.imread(str(cam1_paths[i]))
-                    if quest_img_bgr is not None:
-                        if quest_img_bgr.shape[0] != qh or quest_img_bgr.shape[1] != qw:
-                            quest_img_bgr = cv2.resize(quest_img_bgr, (qw, qh))
-                        quest_img = cv2.cvtColor(quest_img_bgr, cv2.COLOR_BGR2RGB)
-                    else:
-                        quest_img = np.zeros((qh, qw, 3), dtype=np.uint8)
-                else:
-                    quest_img = np.zeros((qh, qw, 3), dtype=np.uint8)
-                frame_data["observation.images.cam1"] = quest_img
 
             dataset.add_frame(frame_data)
 

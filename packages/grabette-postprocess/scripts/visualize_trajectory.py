@@ -3,7 +3,7 @@
 Visualize SLAM trajectory in 3D using Rerun.
 
 The trajectory is expected to be gravity-aligned (Z-up, gravity = -Z), as
-produced by the SLAM/VIO and Quest pipelines.
+produced by the SLAM/VIO pipeline.
 
 Usage:
     python scripts/visualize_trajectory.py <episode_dir>
@@ -108,7 +108,7 @@ def _log_imu_data(imu_data: dict):
 @click.option('--show-video/--no-video', default=True, help='Show video frames')
 @click.option('--video-skip', default=5, help='Show every Nth video frame')
 @click.option('--reference', '-r', type=click.Path(exists=True), default=None,
-              help='Reference trajectory CSV to overlay (e.g. quest_in_slam_frame.csv)')
+              help='Reference trajectory CSV to overlay (e.g. another run camera_trajectory.csv)')
 @click.option('--app-id', default='grabette_viz', help='Rerun application ID')
 def main(episode_dir, show_video, video_skip, reference, app_id):
     """Visualize SLAM trajectory from a processed episode directory."""
