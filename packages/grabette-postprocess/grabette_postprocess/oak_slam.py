@@ -2,15 +2,30 @@
 
 import json
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from scipy.spatial.transform import Rotation
 
-from grabette_postprocess.slam import SlamResult
-
 DEFAULT_DOCKER_IMAGE = "pollenrobotics/oak-vslam"
+
+
+@dataclass
+class SlamResult:
+    """Result from a single SLAM run."""
+    returncode: int
+    total_frames: int
+    tracked_frames: int
+    trajectory_path: Path | None
+    abort_reason: str | None = None
+
+    @property
+    def tracking_pct(self) -> float:
+        if self.total_frames == 0:
+            return 0.0
+        return 100.0 * self.tracked_frames / self.total_frames
 
 
 def _estimate_gravity_imu(imu_acc: pd.DataFrame, g_nominal: float = 9.81,
@@ -97,7 +112,7 @@ def _integrate_deltas(delta_df: pd.DataFrame) -> pd.DataFrame:
     """Integrate frame-to-frame delta poses into absolute poses.
 
     Input columns: timestamp_s, dx, dy, dz, dqx, dqy, dqz, dqw, lost, ...
-    Output columns match the ORB-SLAM3 trajectory CSV format so the rest of
+    Output columns match the standard trajectory CSV format so the rest of
     the pipeline (trajectory.py, generate_dataset.py) can consume it unchanged.
 
     Lost frames hold the last known absolute pose (no motion accumulated

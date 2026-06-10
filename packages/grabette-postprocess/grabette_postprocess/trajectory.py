@@ -101,12 +101,3 @@ def interpolate_angles(imu_json_path: Path,
         angles[:, i] = np.interp(video_timestamps, angl_cts, angl_vals[:, axis])
 
     return angles
-
-
-def load_gravity(path: Path) -> np.ndarray:
-    """Load 3x3 gravity rotation matrix from CSV.
-
-    Returns:
-        (3, 3) float64 array
-    """
-    return np.loadtxt(path, delimiter=',')
