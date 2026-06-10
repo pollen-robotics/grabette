@@ -85,14 +85,19 @@ class MoveEpisodesRequest(BaseModel):
     target_session_id: str
 
 
+class StartCaptureRequest(BaseModel):
+    session_id: str | None = None
+
+
 @router.post("/api/episodes/start")
 async def start_capture(
+    req: StartCaptureRequest = StartCaptureRequest(),
     backend: Backend = Depends(get_backend),
     sm: SessionManager = Depends(get_session_manager),
 ):
     if backend.is_capturing:
         raise HTTPException(status_code=409, detail="Already capturing")
-    episode_id = sm.create_episode()
+    episode_id = sm.create_episode(req.session_id)
     episode_dir = sm.episode_dir(episode_id)
     await backend.start_capture(episode_dir)
     return {"episode_id": episode_id, "status": "capturing"}

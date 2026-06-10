@@ -112,9 +112,10 @@ class GrabetteClient:
 
     # -- Capture --
 
-    def start_capture(self) -> dict:
+    def start_capture(self, session_id: str | None = None) -> dict:
         try:
-            r = self._http.post("/api/episodes/start")
+            body = {"session_id": session_id} if session_id else {}
+            r = self._http.post("/api/episodes/start", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
@@ -264,6 +265,13 @@ class GrabetteClient:
         except Exception:
             return {"authenticated": False}
 
+    def hf_get_namespaces(self) -> list[str]:
+        """Return available namespaces (username + orgs) for the authenticated user."""
+        result = self.hf_check_auth()
+        if not result.get("authenticated"):
+            return []
+        return result.get("user", {}).get("namespaces", [])
+
     def hf_set_auth(self, token: str) -> dict:
         try:
             r = self._http.post("/api/hf/auth", json={"token": token})
@@ -357,6 +365,16 @@ class GrabetteClient:
             return r.json()
         except Exception:
             return {"active": False, "episode_id": None, "time_ms": 0, "duration_ms": 0, "playing": False}
+
+    # -- WiFi --
+
+    def wifi_status(self) -> dict:
+        try:
+            r = self._http.get("/api/wifi/status", timeout=3.0)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {"mode": "offline", "ssid": None, "ip": None}
 
     # -- SLAM --
 
