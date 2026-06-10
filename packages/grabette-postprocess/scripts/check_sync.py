@@ -82,7 +82,7 @@ def load_gyro_norm(imu_path: Path) -> tuple[np.ndarray, np.ndarray]:
     gyro_samples = streams["GYRO"]["samples"]
     accl_samples = streams["ACCL"]["samples"]
 
-    # Zero-base timestamps (same convention as grabette_slam LoadTelemetry)
+    # Zero-base timestamps (relative to the first ACCL sample)
     t0 = accl_samples[0]["cts"] * 1e-3
 
     timestamps = np.array([s["cts"] * 1e-3 - t0 for s in gyro_samples])

@@ -150,7 +150,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
 
 ### IMU format
 
-GoPro-compatible JSON consumed directly by the UMI SLAM pipeline (ORB-SLAM3):
+GoPro-compatible JSON (ACCL/GYRO streams) consumed by the SLAM/VIO pipeline:
 
 ```json
 {
@@ -173,7 +173,7 @@ All sensor streams share a common `SyncManager` clock based on `time.monotonic()
 - **IMU**: BMI088 SENSORTIME register (internal oscillator, ~1% drift) — corrected via two-point linear rescaling at capture stop
 - **Contention prevention**: `_capturing` flag blocks daemon I2C reads during recording
 - **Stop order**: IMU first, then camera (camera stop includes ffmpeg muxing)
-- **IMU brackets video**: IMU starts before first frame, stops before last — required by ORB-SLAM3
+- **IMU brackets video**: IMU starts before first frame, stops before last — required by the downstream SLAM/VIO pipeline
 
 ## Data Pipeline
 
@@ -181,7 +181,7 @@ All sensor streams share a common `SyncManager` clock based on `time.monotonic()
 RPi (camera + BMI088 + AS5600)
   → Grabette service (capture, manage sessions)
   → HuggingFace dataset repo (upload episodes)
-  → Cloud SLAM (ORB-SLAM3 via UMI pipeline)
+  → Cloud SLAM/VIO processing
   → Training dataset + 6DoF trajectories
 ```
 
@@ -190,7 +190,7 @@ RPi (camera + BMI088 + AS5600)
 | Project | Description |
 |---|---|
 | [gripette](https://github.com/pollen-robotics/gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
-| [grabette-data](https://github.com/pollen-robotics/grabette-data) | grabette data processing (ORB-SLAM3, Docker) |
+| [grabette-data](https://github.com/pollen-robotics/grabette-data) | grabette data processing (SLAM/VIO + LeRobot dataset generation, Docker) |
 
 ## Calibration
 
