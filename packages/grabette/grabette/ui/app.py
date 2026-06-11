@@ -325,7 +325,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             value=move_choices[0][1] if move_choices else None,
         )
         task_header = f"## Task: {task_name}" if task_name else ""
-        desc = f"**Description:** {task_description}" if task_description else ""
+        desc = f"**Task description:** {task_description}" if task_description else ""
         cap_title = f"### Capture" if not task_name else f"### Capture a new episode for *{task_name}*"
         count = len(rows)
         count_str = f"{count} episode" + ("s" if count != 1 else "")
@@ -344,8 +344,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             '<div>'
             '<div style="font-weight:700;color:#fb923c;font-size:0.95rem;">Active session</div>'
             '<div style="color:#e2e8f0;font-size:0.88rem;margin-top:2px;">'
-            f'All recordings → <strong style="color:#fff;">{task_name}</strong>'
-            f'&ensp;·&ensp;<strong style="color:#fb923c;">{ep_str}</strong>'
+            f'All recordings are saved to: <strong style="color:#fff;">{task_name}</strong>'
+            '</div>'
+            '<div style="color:#e2e8f0;font-size:0.88rem;margin-top:3px;">'
+            f'Session: <strong style="color:#fb923c;">{ep_str} recorded</strong>'
             '</div>'
             '</div>'
             '</div>'
@@ -767,6 +769,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     with gr.Row():
                         create_task_btn = gr.Button("Create", variant="primary", size="sm")
                         cancel_task_btn = gr.Button("Cancel", size="sm")
+                edit_task_btn = gr.Button("✏ Edit task", size="sm")
 
             # ── RIGHT: Episodes ──────────────────────────────────────
             with gr.Column(scale=3):
@@ -783,11 +786,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         toggle_btn = gr.Button("Start Capture", variant="primary")
 
                 task_header_md = gr.Markdown("", visible=False)
-                with gr.Row():
-                    task_desc_md = gr.Markdown("", scale=5)
-                    edit_task_btn = gr.Button("✏ Edit", size="sm", scale=1)
 
-                # Edit Task panel (appears below description)
+                # Edit Task panel (appears below capture section)
                 with gr.Group(visible=False) as edit_task_form:
                     gr.Markdown("#### Edit Task")
                     rename_input = gr.Textbox(label="Name", placeholder="Task name…")
@@ -808,6 +808,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
 
                 episodes_title = gr.Markdown("## Episodes")
+                task_desc_md = gr.Markdown("")
 
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
@@ -950,12 +951,26 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      replay_timer, replay_panel, replay_video],
         )
 
+        _capture_state = {"was_active": False}
+
         def get_capture_status_and_active_task(current_task):
             state = client.get_state()
             cap_session = client.get_capture_session_status()
             cap = (state or {}).get("capture", {})
             is_recording = cap.get("is_capturing", False)
             is_starting = cap.get("is_starting", False)
+
+            # Detect recording stop to refresh episode table
+            currently_active = is_recording or is_starting
+            just_stopped = _capture_state["was_active"] and not currently_active
+            _capture_state["was_active"] = currently_active
+            if just_stopped and current_task:
+                rows, move_dd_upd, *_ = _refresh_episode_table(current_task)
+                table_update = rows
+                move_dd_update = move_dd_upd
+            else:
+                table_update = gr.skip()
+                move_dd_update = gr.skip()
 
             # Build status text and toggle button state
             if is_starting:
@@ -979,9 +994,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if cap_session.get("active"):
                 task_name = cap_session.get("task_name", "")
                 count = cap_session.get("count", 0)
+                # Don't count the episode currently in progress
+                display_count = max(0, count - 1) if is_recording else count
                 sess_btn = gr.update(value="■ Stop Session", variant="stop")
                 cap_title = gr.update(value=f"### Capture a new episode for *{task_name}*")
-                banner = gr.update(value=_session_banner_html(task_name, count))
+                banner = gr.update(value=_session_banner_html(task_name, display_count))
                 task_update = gr.skip()
             else:
                 active = client.get_active_session()
@@ -990,13 +1007,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 banner = gr.update(value="")
                 task_update = gr.skip() if (active is None or active == current_task) else gr.update(value=active)
 
-            return status, task_update, sess_btn, cap_title, banner, toggle_btn_update
+            return status, task_update, sess_btn, cap_title, banner, toggle_btn_update, table_update, move_dd_update
 
         capture_timer = gr.Timer(0.5)
         capture_timer.tick(
             fn=get_capture_status_and_active_task,
             inputs=[task_list],
-            outputs=[capture_box, task_list, session_btn, capture_title, session_banner, toggle_btn],
+            outputs=[capture_box, task_list, session_btn, capture_title, session_banner, toggle_btn,
+                     episodes_table, move_target_dd],
         )
 
         batt_popup_ep = gr.HTML(visible=False)
