@@ -66,7 +66,8 @@ def _load_video_timestamps(episode_dir: Path, video_path: Path) -> np.ndarray:
     if ft_path.is_file():
         with open(ft_path) as f:
             ts_ms = json.load(f)
-        return np.array(ts_ms, dtype=np.float64) / 1000.0
+        if ts_ms:  # non-empty; empty [] falls through to the uniform fallback
+            return np.array(ts_ms, dtype=np.float64) / 1000.0
 
     # Fallback: uniform timestamps
     cap = cv2.VideoCapture(str(video_path))
@@ -143,12 +144,15 @@ def build_dataset(
         traj_ts = df['timestamp'].values.astype(np.float64)
         n_frames = len(df)
 
-        # Load joint angles from raw IMU (ANGL stream)
-        imu_path = ep_dir / "imu_data.json"
-        if imu_path.is_file():
-            joints = interpolate_angles(imu_path, traj_ts)
+        # Load joint angles. Recorded episodes use angle_data.json (flat schema);
+        # older GoPro-style captures use imu_data.json. interpolate_angles reads both.
+        angle_path = ep_dir / "angle_data.json"
+        if not angle_path.is_file():
+            angle_path = ep_dir / "imu_data.json"
+        if angle_path.is_file():
+            joints = interpolate_angles(angle_path, traj_ts)
         else:
-            print(f"  Warning: no imu_data.json, joints will be zeros")
+            print(f"  Warning: no angle_data.json/imu_data.json, joints will be zeros")
             joints = np.zeros((n_frames, 2), dtype=np.float32)
 
         # Build state: [x, y, z, ax, ay, az, proximal, distal]

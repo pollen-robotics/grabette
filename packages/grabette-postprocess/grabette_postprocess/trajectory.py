@@ -60,16 +60,42 @@ def trajectory_to_poses(df: pd.DataFrame) -> np.ndarray:
     return poses
 
 
+def _load_angle_stream(data: dict) -> tuple[np.ndarray, np.ndarray]:
+    """Return (cts_seconds, values) for the joint-angle stream, recording-relative.
+
+    Handles both schemas:
+      - grabette flat: {"samples": [{"cts": <ms>, "value": [distal, proximal]}]}
+        cts is already relative to recording start.
+      - GoPro nested: data['1']['streams']['ANGL'], zero-based via the ACCL
+        stream's first timestamp.
+    Values keep their native [distal, proximal] order (the caller swaps).
+    """
+    if "samples" in data:  # grabette flat schema (angle_data.json)
+        samples = data["samples"]
+        cts = np.array([s["cts"] for s in samples]) * 1e-3
+        vals = np.array([s["value"] for s in samples])
+        return cts, vals
+
+    # GoPro nested schema (imu_data.json)
+    angl = data["1"]["streams"]["ANGL"]["samples"]
+    cts = np.array([s["cts"] for s in angl]) * 1e-3
+    vals = np.array([s["value"] for s in angl])
+    accl = data["1"]["streams"]["ACCL"]["samples"]
+    cts = cts - accl[0]["cts"] * 1e-3  # zero-base to recording start
+    return cts, vals
+
+
 def interpolate_angles(imu_json_path: Path,
                        video_timestamps: np.ndarray) -> np.ndarray:
-    """Interpolate ANGL stream (100Hz) to video frame timestamps.
+    """Interpolate the joint-angle stream to video/trajectory timestamps.
 
-    The raw ANGL stream stores value=[distal, proximal]. This function swaps
-    them to return [proximal, distal] which matches the kinematic chain order.
+    Reads angle_data.json (flat) or imu_data.json (GoPro). The stream stores
+    value=[distal, proximal]; this returns [proximal, distal] to match the
+    kinematic chain order.
 
     Args:
-        imu_json_path: path to raw imu_data.json (not resampled — ANGL is stripped there)
-        video_timestamps: (N,) array of video frame timestamps in seconds
+        imu_json_path: path to angle_data.json or imu_data.json
+        video_timestamps: (N,) array of timestamps in seconds (recording-relative)
 
     Returns:
         (N, 2) float32 array: [proximal, distal] in radians
@@ -77,25 +103,10 @@ def interpolate_angles(imu_json_path: Path,
     with open(imu_json_path) as f:
         data = json.load(f)
 
-    angl_samples = data['1']['streams']['ANGL']['samples']
-
-    # ANGL timestamps are in ms, convert to seconds
-    angl_cts = np.array([s['cts'] for s in angl_samples]) * 1e-3
-    angl_vals = np.array([s['value'] for s in angl_samples])  # [distal, proximal]
-
-    # Zero-base ANGL timestamps to match video timestamps (same as CORI in LoadTelemetry)
-    # Video timestamps are frame_idx/fps, starting at 0
-    # ANGL cts are absolute; we need to align them.
-    # The ACCL stream's first timestamp is subtracted from IMU timestamps in LoadTelemetry.
-    # ANGL timestamps use the same clock, so subtract the same offset.
-    # We load ACCL to find the offset.
-    accl_samples = data['1']['streams']['ACCL']['samples']
-    imu_start_t = accl_samples[0]['cts'] * 1e-3
-    angl_cts = angl_cts - imu_start_t
+    angl_cts, angl_vals = _load_angle_stream(data)
 
     n = len(video_timestamps)
     angles = np.zeros((n, 2), dtype=np.float32)
-
     # Interpolate each axis, then swap distal/proximal -> proximal/distal
     for i, axis in enumerate([1, 0]):  # proximal=index1, distal=index0
         angles[:, i] = np.interp(video_timestamps, angl_cts, angl_vals[:, axis])

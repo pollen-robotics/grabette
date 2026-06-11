@@ -1,4 +1,10 @@
-"""OAK-D SR offline VSLAM via Docker (pollenrobotics/oak-vslam image)."""
+"""OAK-D SR offline VSLAM (pollenrobotics/oak-vslam).
+
+By default the C++ offline_vslam binary runs inside Docker. When the binary is
+already present on the host (e.g. inside a HuggingFace Space image that bundles
+it), pass `binary=` to run it directly — Docker-in-Docker is not available
+there.
+"""
 
 import json
 import subprocess
@@ -152,27 +158,47 @@ def _integrate_deltas(delta_df: pd.DataFrame) -> pd.DataFrame:
     })
 
 
+def _slam_command(oak_dir: Path, *, docker_image: str, binary: str | None) -> list[str]:
+    """Build the offline_vslam invocation.
+
+    With `binary`, call it directly on the host (e.g. inside a Space image that
+    bundles it). Otherwise run it in Docker, mounting oak_dir at /data.
+    """
+    poses_path = oak_dir / "poses.csv"
+    if binary:
+        return [binary, str(oak_dir), str(poses_path)]
+    return [
+        "docker", "run", "--rm",
+        "--volume", f"{oak_dir}:/data",
+        docker_image,
+        "/data", "/data/poses.csv",
+    ]
+
+
 def run_oak_slam(
     episode_dir: Path,
     *,
     docker_image: str = DEFAULT_DOCKER_IMAGE,
+    binary: str | None = None,
     output_csv: str = "camera_trajectory.csv",
     show_progress: bool = True,
 ) -> SlamResult:
-    """Run offline_vslam (via Docker) on the oak/ subdir of an episode directory.
+    """Run offline_vslam on the oak/ subdir of an episode directory.
 
     Produces <episode_dir>/<output_csv> with absolute poses in the standard
     trajectory format (frame_idx, timestamp, state, is_lost, is_keyframe,
     x, y, z, q_x, q_y, q_z, q_w).
 
-    The Docker image must be built once with:
+    By default the binary runs in Docker; the image must be built once with:
         docker build -t pollenrobotics/oak-vslam docker/oak_vslam/
 
     Args:
         episode_dir: directory containing oak/ with frames, depth, IMU CSVs, calib
-        docker_image: Docker image name
+        docker_image: Docker image name (ignored when `binary` is set)
+        binary: path to a host offline_vslam binary; if set, run it directly
+            instead of via Docker (Docker-in-Docker is unavailable in Spaces)
         output_csv: trajectory output filename (inside episode_dir)
-        show_progress: print Docker stdout in real time
+        show_progress: print SLAM stdout in real time
 
     Returns:
         SlamResult with tracking statistics
@@ -184,12 +210,7 @@ def run_oak_slam(
         raise FileNotFoundError(f"No oak/ subdir in {episode_dir}")
 
     poses_path = oak_dir / "poses.csv"
-    cmd = [
-        "docker", "run", "--rm",
-        "--volume", f"{oak_dir}:/data",
-        docker_image,
-        "/data", "/data/poses.csv",
-    ]
+    cmd = _slam_command(oak_dir, docker_image=docker_image, binary=binary)
 
     if show_progress:
         print(f"Running OAK SLAM on {episode_dir.name}...")
