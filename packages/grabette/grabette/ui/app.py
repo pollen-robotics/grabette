@@ -768,7 +768,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
                     datatype=["bool", "str", "str", "number", "number", "number"],
-                    interactive=[True, False, False, False, False, False],
+                    interactive=True,
+                    static_columns=[1, 2, 3, 4, 5],
                     col_count=(6, "fixed"),
                     show_search="filter",
                 )
