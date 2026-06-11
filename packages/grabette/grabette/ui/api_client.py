@@ -143,9 +143,10 @@ class GrabetteClient:
         except Exception:
             return {"active": False, "task_id": None, "task_name": None, "count": 0}
 
-    def start_capture_session(self) -> dict:
+    def start_capture_session(self, task_id: str | None = None) -> dict:
         try:
-            r = self._http.post("/api/capture-session/start")
+            body = {"task_id": task_id} if task_id else {}
+            r = self._http.post("/api/capture-session/start", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:

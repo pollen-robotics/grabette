@@ -114,10 +114,18 @@ def capture_session_status(sm: SessionManager = Depends(get_session_manager)):
     return sm.get_capture_session_status()
 
 
+class StartCaptureSessionRequest(BaseModel):
+    task_id: str | None = None
+
+
 @router.post("/api/capture-session/start")
-def start_capture_session(sm: SessionManager = Depends(get_session_manager)):
+def start_capture_session(
+    req: StartCaptureSessionRequest = StartCaptureSessionRequest(),
+    sm: SessionManager = Depends(get_session_manager),
+):
+    task_id = req.task_id or sm.active_session_id
     try:
-        sm.start_capture_session(sm.active_session_id)
+        sm.start_capture_session(task_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return sm.get_capture_session_status()
