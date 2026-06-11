@@ -339,7 +339,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (
             '<div style="padding:0.85rem 1.2rem;background:#1c1710;border-radius:10px;'
             'border:1px solid #f97316;display:flex;align-items:center;gap:0.9rem;">'
-            '<span style="font-size:1.6rem;line-height:1;">🔒</span>'
+            '<span style="font-size:1.6rem;line-height:1;filter:brightness(0) invert(1);">🔒</span>'
             '<div>'
             '<div style="font-weight:700;color:#fb923c;font-size:0.95rem;">Active session</div>'
             '<div style="color:#e2e8f0;font-size:0.88rem;margin-top:2px;">'
@@ -769,6 +769,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # ── RIGHT: Episodes ──────────────────────────────────────
             with gr.Column(scale=3):
 
+                # Capture (always at top so the primary action is prominent)
+                session_banner = gr.HTML("")
+                capture_title = gr.Markdown("### Capture")
+                with gr.Row():
+                    capture_box = gr.Textbox(
+                        label="Status", lines=2, interactive=False, scale=3,
+                    )
+                    with gr.Column(scale=1, min_width=150):
+                        session_btn = gr.Button("▶ Start Session", variant="secondary", size="sm")
+                        toggle_btn = gr.Button("Start Capture", variant="primary")
+
                 # Task header: "## Task: X" + edit button
                 with gr.Row():
                     with gr.Column(scale=5):
@@ -795,17 +806,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                 "Yes, delete everything", variant="stop", size="sm",
                             )
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
-
-                # Capture
-                session_banner = gr.HTML("")
-                capture_title = gr.Markdown("### Capture")
-                with gr.Row():
-                    capture_box = gr.Textbox(
-                        label="Status", lines=2, interactive=False, scale=3,
-                    )
-                    with gr.Column(scale=1, min_width=150):
-                        session_btn = gr.Button("▶ Start Session", variant="secondary", size="sm")
-                        toggle_btn = gr.Button("Start Capture", variant="primary")
 
                 episodes_title = gr.Markdown("## Episodes")
 
