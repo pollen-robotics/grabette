@@ -135,6 +135,24 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def get_active_session(self) -> str | None:
+        try:
+            r = self._http.get("/api/sessions/active")
+            r.raise_for_status()
+            return r.json().get("session_id")
+        except Exception:
+            return None
+
+    def set_active_session(self, session_id: str) -> dict:
+        try:
+            r = self._http.put("/api/sessions/active", json={"session_id": session_id})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- Sessions --
 
     def list_sessions(self) -> list[dict]:

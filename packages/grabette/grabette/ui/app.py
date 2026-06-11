@@ -322,6 +322,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_task_select(session_id):
+        if session_id:
+            client.set_active_session(session_id)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id)
         return task_header, cap_title, desc, ep_title, rows, move_dd
 
@@ -766,7 +768,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 episodes_table = gr.Dataframe(
                     headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
                     datatype=["bool", "str", "str", "number", "number", "number"],
-                    interactive=True,
+                    interactive=[True, False, False, False, False, False],
                     col_count=(6, "fixed"),
                     show_search="filter",
                 )
@@ -897,8 +899,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      replay_timer, replay_panel, replay_video],
         )
 
+        def get_capture_status_and_active_task(current_task):
+            status = get_capture_status()
+            active = client.get_active_session()
+            if active is None or active == current_task:
+                return status, gr.skip()
+            return status, gr.update(value=active)
+
         capture_timer = gr.Timer(0.5)
-        capture_timer.tick(fn=get_capture_status, outputs=capture_box)
+        capture_timer.tick(
+            fn=get_capture_status_and_active_task,
+            inputs=[task_list],
+            outputs=[capture_box, task_list],
+        )
 
         batt_popup_ep = gr.HTML(visible=False)
         batt_timer_ep = gr.Timer(60.0)
