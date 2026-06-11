@@ -171,7 +171,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=""),
             )
         else:
-            result = client.start_capture_session()
+            result = client.start_capture_session(task_id=current_task or None)
             if "error" in result:
                 return gr.update(), gr.skip(), gr.skip()
             task_name = result.get("task_name", "")
@@ -337,14 +337,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def _session_banner_html(task_name: str) -> str:
         return (
-            '<div style="background:#14532d;border:2px solid #16a34a;border-radius:8px;'
-            'padding:12px 18px;display:flex;align-items:center;gap:14px;margin-bottom:4px;">'
-            '<span style="font-size:1.8rem;line-height:1;">🔒</span>'
+            '<div style="padding:0.85rem 1.2rem;background:#1c1710;border-radius:10px;'
+            'border:1px solid #f97316;display:flex;align-items:center;gap:0.9rem;">'
+            '<span style="font-size:1.6rem;line-height:1;">🔒</span>'
             '<div>'
-            '<div style="font-weight:700;color:#4ade80;font-size:1.05rem;'
-            'letter-spacing:0.04em;text-transform:uppercase;">Session en cours</div>'
-            '<div style="color:#bbf7d0;font-size:0.9rem;margin-top:2px;">'
-            f'Tous les enregistrements sont assignés à : <strong>{task_name}</strong>'
+            '<div style="font-weight:700;color:#fb923c;font-size:0.95rem;">Active session</div>'
+            '<div style="color:#e2e8f0;font-size:0.88rem;margin-top:2px;">'
+            f'All recordings are saved to: <strong style="color:#fff;">{task_name}</strong>'
             '</div>'
             '</div>'
             '</div>'
