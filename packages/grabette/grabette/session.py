@@ -58,6 +58,7 @@ class SessionManager:
         self.episodes_dir = self.data_dir / "episodes"
         self._registry_path = self.data_dir / "sessions.json"
         self._sessions: list[dict] = []
+        self.active_session_id: str = UNASSIGNED_ID
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -143,14 +144,19 @@ class SessionManager:
     def episode_dir(self, episode_id: str) -> Path:
         return self.episodes_dir / episode_id
 
-    def create_episode(self) -> str:
-        """Create a new episode directory and add it to Unassigned."""
+    def create_episode(self, session_id: str | None = None) -> str:
+        """Create a new episode directory and add it to the given session.
+
+        Falls back to active_session_id, then Unassigned.
+        """
         episode_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         ep_dir = self.episode_dir(episode_id)
         ep_dir.mkdir(parents=True, exist_ok=True)
 
-        unassigned = self._find_session(UNASSIGNED_ID)
-        unassigned["episode_ids"].append(episode_id)
+        target_id = session_id or self.active_session_id
+        target = self._find_session(target_id) or self._find_session(UNASSIGNED_ID)
+        target["episode_ids"].append(episode_id)
+        self.active_session_id = target["id"]
         self._save()
         return episode_id
 
