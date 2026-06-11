@@ -53,44 +53,42 @@ class ReplayEngine:
         else:
             self._duration_ms = 0
 
-        # Load IMU data
-        imu_path = path / "imu_data.json"
-        if not imu_path.exists():
-            raise FileNotFoundError(f"No imu_data.json in {episode_dir}")
-
-        with open(imu_path) as f:
-            data = json.load(f)
-
-        streams = data.get("1", {}).get("streams", {})
-
-        accl_samples = streams.get("ACCL", {}).get("samples", [])
-        gyro_samples = streams.get("GYRO", {}).get("samples", [])
-        angl_samples = streams.get("ANGL", {}).get("samples", [])
-
-        # Zip ACCL + GYRO by index into unified IMU samples
+        # Load IMU data (optional — not present on OAK-D-only recordings)
         self._imu_samples = []
-        n_imu = min(len(accl_samples), len(gyro_samples))
-        for i in range(n_imu):
-            a = accl_samples[i]
-            g = gyro_samples[i]
-            self._imu_samples.append({
-                "t": a["cts"],
-                "a": a["value"],
-                "g": g["value"],
-            })
-        self._imu_times = [s["t"] for s in self._imu_samples]
-
-        # Parse angle samples — indices swapped to match live convention
-        # (in imu_data.json value=[sensor1, sensor2], but live maps
-        #  proximal=value[1], distal=value[0])
         self._angle_samples = []
-        for s in angl_samples:
-            v = s["value"]
-            self._angle_samples.append({
-                "t": s["cts"],
-                "p": v[1],
-                "d": v[0],
-            })
+        imu_path = path / "imu_data.json"
+        if imu_path.exists():
+            with open(imu_path) as f:
+                data = json.load(f)
+
+            streams = data.get("1", {}).get("streams", {})
+            accl_samples = streams.get("ACCL", {}).get("samples", [])
+            gyro_samples = streams.get("GYRO", {}).get("samples", [])
+            angl_samples = streams.get("ANGL", {}).get("samples", [])
+
+            # Zip ACCL + GYRO by index into unified IMU samples
+            n_imu = min(len(accl_samples), len(gyro_samples))
+            for i in range(n_imu):
+                a = accl_samples[i]
+                g = gyro_samples[i]
+                self._imu_samples.append({
+                    "t": a["cts"],
+                    "a": a["value"],
+                    "g": g["value"],
+                })
+
+            # Parse angle samples — indices swapped to match live convention
+            # (in imu_data.json value=[sensor1, sensor2], but live maps
+            #  proximal=value[1], distal=value[0])
+            for s in angl_samples:
+                v = s["value"]
+                self._angle_samples.append({
+                    "t": s["cts"],
+                    "p": v[1],
+                    "d": v[0],
+                })
+
+        self._imu_times = [s["t"] for s in self._imu_samples]
         self._angle_times = [s["t"] for s in self._angle_samples]
 
         # Fall back to data duration if metadata missing

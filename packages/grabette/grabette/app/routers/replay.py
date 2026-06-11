@@ -26,8 +26,6 @@ async def start_replay(body: ReplayStartRequest, daemon: Daemon = Depends(get_da
     episode_dir = settings.data_dir / "episodes" / body.episode_id
     if not episode_dir.exists():
         raise HTTPException(status_code=404, detail="Episode not found")
-    if not (episode_dir / "imu_data.json").exists():
-        raise HTTPException(status_code=400, detail="Episode has no IMU data")
     try:
         await daemon.start_replay(str(episode_dir), body.episode_id)
     except Exception as e:
