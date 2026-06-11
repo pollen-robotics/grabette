@@ -325,14 +325,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             value=move_choices[0][1] if move_choices else None,
         )
         task_header = f"## Task: {task_name}" if task_name else ""
-        desc = f"**Task description:** {task_description}" if task_description else ""
         cap_title = f"### Capture" if not task_name else f"### Capture a new episode for *{task_name}*"
         count = len(rows)
         count_str = f"{count} episode" + ("s" if count != 1 else "")
-        ep_title = (
-            f"## Episodes for *{task_name}*\n\n*{count_str} recorded*"
-            if task_name else "## Episodes"
-        )
+        ep_title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
+        desc_parts = []
+        if task_description:
+            desc_parts.append(f"**Task description:** {task_description}")
+        desc_parts.append(f"*{count_str} recorded*")
+        desc = "\n\n".join(desc_parts)
         return rows, move_dd, task_header, desc, cap_title, ep_title
 
     def _session_banner_html(task_name: str, count: int = 0) -> str:
@@ -770,24 +771,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         create_task_btn = gr.Button("Create", variant="primary", size="sm")
                         cancel_task_btn = gr.Button("Cancel", size="sm")
                 edit_task_btn = gr.Button("✏ Edit task", size="sm")
-
-            # ── RIGHT: Episodes ──────────────────────────────────────
-            with gr.Column(scale=3):
-
-                # Capture (always at top so the primary action is prominent)
-                session_banner = gr.HTML("")
-                capture_title = gr.Markdown("### Capture")
-                with gr.Row():
-                    capture_box = gr.Textbox(
-                        label="Status", lines=2, interactive=False, scale=3,
-                    )
-                    with gr.Column(scale=1, min_width=150):
-                        session_btn = gr.Button("▶ Start Session", variant="secondary")
-                        toggle_btn = gr.Button("Start Capture", variant="primary")
-
-                task_header_md = gr.Markdown("", visible=False)
-
-                # Edit Task panel (appears below capture section)
                 with gr.Group(visible=False) as edit_task_form:
                     gr.Markdown("#### Edit Task")
                     rename_input = gr.Textbox(label="Name", placeholder="Task name…")
@@ -807,6 +790,23 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             )
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
 
+            # ── RIGHT: Episodes ──────────────────────────────────────
+            with gr.Column(scale=3):
+
+                # Capture (always at top so the primary action is prominent)
+                session_banner = gr.HTML("")
+                capture_title = gr.Markdown("### Capture")
+                with gr.Row():
+                    capture_box = gr.Textbox(
+                        label="Status", lines=2, interactive=False, scale=3,
+                    )
+                    with gr.Column(scale=1, min_width=150):
+                        session_btn = gr.Button("▶ Start Session", variant="secondary")
+                        toggle_btn = gr.Button("Start Capture", variant="primary")
+
+                task_header_md = gr.Markdown("", visible=False)
+
+                gr.HTML("<div style='margin-top:2rem;'></div>")
                 episodes_title = gr.Markdown("## Episodes")
                 task_desc_md = gr.Markdown("")
 
@@ -837,12 +837,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     replay_video = gr.HTML(value="")
                     gr.HTML(
                         '<iframe src="/charts/imu" '
-                        'style="width:100%;height:160px;border:none;'
+                        'style="width:100%;height:300px;border:none;'
                         'border-radius:8px;background:transparent;"></iframe>'
                     )
                     gr.HTML(
                         '<iframe src="/charts/angle" '
-                        'style="width:100%;height:100px;border:none;'
+                        'style="width:100%;height:180px;border:none;'
                         'border-radius:8px;background:transparent;"></iframe>'
                     )
                     replay_slider = gr.Slider(
