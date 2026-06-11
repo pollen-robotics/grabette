@@ -70,9 +70,29 @@ uv run --package grabette-postprocess python scripts/arducam_slam/generate_datas
   (Raspberry Pi OS Bookworm) — they don't depend on `lerobot`.
 - **OpenArm sim system deps:** `placo` (sim kinematics) dynamically links
   `liburdfdom`; install it from your distro's packages before running the sim.
-- **Raspberry Pi install:** clone with `GIT_LFS_SKIP_SMUDGE=1` (or
-  `git clone --filter=blob:none`) so Pi devices skip the OpenArm meshes, then
-  `uv sync --package <service> --extra rpi`. See each package's README/Makefile.
+- **Raspberry Pi install:** use the `make install-rpi` target (see below) — a
+  bare `uv sync` skips the apt deps and `--system-site-packages` venv that
+  `picamera2` needs, and the service silently falls back to the mock backend.
+
+## Running on a Raspberry Pi device
+
+The on-device services (`grabette`, `casquette`, `gripette`) install through a
+`make` target that builds the `--system-site-packages` venv at the workspace
+root, with the device's apt-provided `picamera2`/`libcamera`:
+
+```bash
+# clone skipping the OpenArm meshes (not needed on-device)
+GIT_LFS_SKIP_SMUDGE=1 git clone git@github.com:pollen-robotics/grabette.git
+cd grabette/packages/grabette
+
+make install-rpi                               # apt deps + venv + sync + verify imports
+uv run --package grabette python -m grabette   # run the service (auto-detects hardware)
+make install-systemd                           # optional: enable boot-time autostart
+```
+
+On success the log shows `RPi hardware detected, using RpiBackend` (not
+`MockBackend`). `casquette` follows the same pattern from `packages/casquette`;
+run `make help` in either package for the available targets.
 
 ## License
 
