@@ -109,6 +109,26 @@ def set_active_session(
     return {"session_id": sm.active_session_id}
 
 
+@router.get("/api/capture-session/status")
+def capture_session_status(sm: SessionManager = Depends(get_session_manager)):
+    return sm.get_capture_session_status()
+
+
+@router.post("/api/capture-session/start")
+def start_capture_session(sm: SessionManager = Depends(get_session_manager)):
+    try:
+        sm.start_capture_session(sm.active_session_id)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return sm.get_capture_session_status()
+
+
+@router.post("/api/capture-session/stop")
+def stop_capture_session(sm: SessionManager = Depends(get_session_manager)):
+    sm.stop_capture_session()
+    return {"active": False}
+
+
 @router.post("/api/episodes/start")
 async def start_capture(
     req: StartCaptureRequest = StartCaptureRequest(),

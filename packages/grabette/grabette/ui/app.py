@@ -160,6 +160,25 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             client.start_capture(session_id=session_id or None)
             return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update()
 
+    def on_start_stop_session(current_task):
+        cap_session = client.get_capture_session_status()
+        if cap_session.get("active"):
+            client.stop_capture_session()
+            _, _, _, _, cap_title, _ = _refresh_episode_table(current_task)
+            return (
+                gr.update(value="▶ Start Session", variant="secondary"),
+                gr.update(value=cap_title),
+            )
+        else:
+            result = client.start_capture_session()
+            if "error" in result:
+                return gr.update(), gr.skip()
+            task_name = result.get("task_name", "")
+            return (
+                gr.update(value="■ Stop Session", variant="stop"),
+                gr.update(value=f"### Capture a new episode for *{task_name}*"),
+            )
+
     def get_teleop_display():
         """Polled on a slow (~1 Hz) timer, separately from get_sensor_state.
 
@@ -322,9 +341,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_task_select(session_id):
-        if session_id:
+        cap_session = client.get_capture_session_status()
+        session_active = cap_session.get("active", False)
+        if not session_active and session_id:
             client.set_active_session(session_id)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id)
+        if session_active:
+            return task_header, gr.skip(), desc, ep_title, rows, move_dd
         return task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_create_task(name, description):
@@ -761,7 +784,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     capture_box = gr.Textbox(
                         label="Status", lines=2, interactive=False, scale=3,
                     )
-                    toggle_btn = gr.Button("Start Capture", variant="primary", scale=1)
+                    with gr.Column(scale=1, min_width=150):
+                        session_btn = gr.Button("▶ Start Session", variant="secondary", size="sm")
+                        toggle_btn = gr.Button("Start Capture", variant="primary")
 
                 episodes_title = gr.Markdown("## Episodes")
 
@@ -868,6 +893,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      episodes_table, move_target_dd, edit_task_form, delete_confirm],
         )
 
+        session_btn.click(
+            fn=on_start_stop_session,
+            inputs=[task_list],
+            outputs=[session_btn, capture_title],
+        )
+
         toggle_btn.click(
             fn=on_toggle_capture,
             inputs=[task_list],
@@ -901,17 +932,49 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
         def get_capture_status_and_active_task(current_task):
-            status = get_capture_status()
-            active = client.get_active_session()
-            if active is None or active == current_task:
-                return status, gr.skip()
-            return status, gr.update(value=active)
+            state = client.get_state()
+            cap_session = client.get_capture_session_status()
+            cap = (state or {}).get("capture", {})
+            is_recording = cap.get("is_capturing", False)
+
+            # Build status text
+            if is_recording:
+                parts = [
+                    f"● RECORDING  {cap.get('session_id', '')}",
+                    f"Duration: {cap.get('duration_seconds', 0):.1f}s",
+                    f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
+                ]
+                if cap.get("angle_sample_count", 0):
+                    parts[-1] += f"  |  Angle: {cap['angle_sample_count']}"
+                if cap_session.get("active"):
+                    count = cap_session.get("count", 0)
+                    parts.insert(0, f"● SESSION: {count} episode{'s' if count != 1 else ''} recorded")
+                status = "\n".join(parts)
+            elif cap_session.get("active"):
+                count = cap_session.get("count", 0)
+                status = f"● SESSION: {count} episode{'s' if count != 1 else ''} recorded\n○ Idle"
+            else:
+                status = "○ Idle"
+
+            # Session button + capture title sync
+            if cap_session.get("active"):
+                task_name = cap_session.get("task_name", "")
+                sess_btn = gr.update(value="■ Stop Session", variant="stop")
+                cap_title = gr.update(value=f"### Capture a new episode for *{task_name}*")
+                task_update = gr.skip()
+            else:
+                active = client.get_active_session()
+                sess_btn = gr.update(value="▶ Start Session", variant="secondary")
+                cap_title = gr.skip()
+                task_update = gr.skip() if (active is None or active == current_task) else gr.update(value=active)
+
+            return status, task_update, sess_btn, cap_title
 
         capture_timer = gr.Timer(0.5)
         capture_timer.tick(
             fn=get_capture_status_and_active_task,
             inputs=[task_list],
-            outputs=[capture_box, task_list],
+            outputs=[capture_box, task_list, session_btn, capture_title],
         )
 
         batt_popup_ep = gr.HTML(visible=False)
