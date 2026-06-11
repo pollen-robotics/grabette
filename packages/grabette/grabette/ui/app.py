@@ -168,15 +168,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return (
                 gr.update(value="▶ Start Session", variant="secondary"),
                 gr.update(value=cap_title),
+                gr.update(value=""),
             )
         else:
             result = client.start_capture_session()
             if "error" in result:
-                return gr.update(), gr.skip()
+                return gr.update(), gr.skip(), gr.skip()
             task_name = result.get("task_name", "")
             return (
                 gr.update(value="■ Stop Session", variant="stop"),
                 gr.update(value=f"### Capture a new episode for *{task_name}*"),
+                gr.update(value=_session_banner_html(task_name)),
             )
 
     def get_teleop_display():
@@ -333,10 +335,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         return rows, move_dd, task_header, desc, cap_title, ep_title
 
+    def _session_banner_html(task_name: str) -> str:
+        return (
+            '<div style="background:#14532d;border:2px solid #16a34a;border-radius:8px;'
+            'padding:12px 18px;display:flex;align-items:center;gap:14px;margin-bottom:4px;">'
+            '<span style="font-size:1.8rem;line-height:1;">🔒</span>'
+            '<div>'
+            '<div style="font-weight:700;color:#4ade80;font-size:1.05rem;'
+            'letter-spacing:0.04em;text-transform:uppercase;">Session en cours</div>'
+            '<div style="color:#bbf7d0;font-size:0.9rem;margin-top:2px;">'
+            f'Tous les enregistrements sont assignés à : <strong>{task_name}</strong>'
+            '</div>'
+            '</div>'
+            '</div>'
+        )
+
     def refresh_tasks():
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
+        if value:
+            client.set_active_session(value)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
@@ -779,6 +798,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
 
                 # Capture
+                session_banner = gr.HTML("")
                 capture_title = gr.Markdown("### Capture")
                 with gr.Row():
                     capture_box = gr.Textbox(
@@ -896,7 +916,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         session_btn.click(
             fn=on_start_stop_session,
             inputs=[task_list],
-            outputs=[session_btn, capture_title],
+            outputs=[session_btn, capture_title, session_banner],
         )
 
         toggle_btn.click(
@@ -956,25 +976,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             else:
                 status = "○ Idle"
 
-            # Session button + capture title sync
+            # Session button + capture title + banner sync
             if cap_session.get("active"):
                 task_name = cap_session.get("task_name", "")
                 sess_btn = gr.update(value="■ Stop Session", variant="stop")
                 cap_title = gr.update(value=f"### Capture a new episode for *{task_name}*")
+                banner = gr.update(value=_session_banner_html(task_name))
                 task_update = gr.skip()
             else:
                 active = client.get_active_session()
                 sess_btn = gr.update(value="▶ Start Session", variant="secondary")
                 cap_title = gr.skip()
+                banner = gr.update(value="")
                 task_update = gr.skip() if (active is None or active == current_task) else gr.update(value=active)
 
-            return status, task_update, sess_btn, cap_title
+            return status, task_update, sess_btn, cap_title, banner
 
         capture_timer = gr.Timer(0.5)
         capture_timer.tick(
             fn=get_capture_status_and_active_task,
             inputs=[task_list],
-            outputs=[capture_box, task_list, session_btn, capture_title],
+            outputs=[capture_box, task_list, session_btn, capture_title, session_banner],
         )
 
         batt_popup_ep = gr.HTML(visible=False)
