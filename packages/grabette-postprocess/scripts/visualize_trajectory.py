@@ -41,30 +41,33 @@ _NATIVE_W = 1296
 _NATIVE_H = 972
 
 
-def _load_imu_streams(imu_json_path: Path) -> dict | None:
-    """Load raw IMU streams (ACCL, GYRO, ANGL) from GoPro-format JSON.
+def _load_imu_streams(episode_dir: Path) -> dict | None:
+    """Load OAK IMU (oakd_imu.json) + gripper angles (angle_data.json).
 
-    Returns dict with 'accel', 'gyro', 'angle' lists of {timestamp, value},
-    or None if file doesn't exist.
+    Returns dict with 'accel', 'gyro', 'angle' lists of {timestamp, value} (in
+    seconds, recording-relative), or None if there is no IMU data. OAK samples
+    use the host_ms clock; angle samples use cts — both relative to recording
+    start, so they share a timeline.
     """
-    if not imu_json_path.is_file():
-        return None
-
-    with open(imu_json_path) as f:
-        raw = json.load(f)
-
-    streams = raw.get('1', {}).get('streams', {})
     result = {'accel': [], 'gyro': [], 'angle': []}
 
-    for stream_key, result_key in [('ACCL', 'accel'), ('GYRO', 'gyro'), ('ANGL', 'angle')]:
-        if stream_key in streams and 'samples' in streams[stream_key]:
-            for s in streams[stream_key]['samples']:
-                result[result_key].append({
-                    'timestamp': s['cts'] / 1000.0,
-                    'value': s['value'],
-                })
+    imu_path = episode_dir / "oakd_imu.json"
+    if imu_path.is_file():
+        with open(imu_path) as f:
+            samples = json.load(f).get("samples", [])
+        kind_to_key = {"accel": "accel", "gyro": "gyro"}
+        for s in samples:
+            key = kind_to_key.get(s.get("kind"))
+            if key:
+                result[key].append({'timestamp': s['host_ms'] / 1000.0, 'value': s['value']})
 
-    if not result['accel'] and not result['gyro']:
+    angle_path = episode_dir / "angle_data.json"
+    if angle_path.is_file():
+        with open(angle_path) as f:
+            for s in json.load(f).get("samples", []):
+                result['angle'].append({'timestamp': s['cts'] / 1000.0, 'value': s['value']})
+
+    if not result['accel'] and not result['gyro'] and not result['angle']:
         return None
     return result
 
@@ -124,7 +127,6 @@ def main(episode_dir, show_video, video_skip, reference, app_id):
         sys.exit(1)
 
     video_path = episode_dir / "raw_video.mp4"
-    imu_json = episode_dir / "imu_data.json"
 
     # --- Load SLAM metadata (for frame_skip) ---
     frame_skip = 1
@@ -173,7 +175,7 @@ def main(episode_dir, show_video, video_skip, reference, app_id):
     print()
 
     # --- Load IMU ---
-    imu_data = _load_imu_streams(imu_json)
+    imu_data = _load_imu_streams(episode_dir)
     if imu_data:
         print(f"IMU: {len(imu_data['accel'])} accel, {len(imu_data['gyro'])} gyro, "
               f"{len(imu_data['angle'])} angle samples")

@@ -88,16 +88,16 @@ def build_dataset(
     """Build LeRobot v3 dataset from processed episode directories.
 
     Each episode directory must contain:
-        - raw_video.mp4
-        - imu_data.json (raw, with ANGL stream)
+        - raw_video.mp4 (Arducam observation camera)
+        - angle_data.json (gripper joint angles)
         - camera_trajectory.csv (or mapping_camera_trajectory.csv)
 
     Args:
         repo_id: dataset identifier (e.g. "steve/grabette-demo")
         episode_dirs: list of episode directory paths
         task: task description string
-        fps: dataset frame rate (default: 50fps, the native RPi camera rate)
-        image_size: (height, width) for RPi camera output frames
+        fps: dataset frame rate (default: 50fps, the native Arducam rate)
+        image_size: (height, width) for Arducam output frames
         root: local storage path (default: HF cache)
     """
     # Lazy import — lerobot is a heavy dependency
@@ -144,15 +144,12 @@ def build_dataset(
         traj_ts = df['timestamp'].values.astype(np.float64)
         n_frames = len(df)
 
-        # Load joint angles. Recorded episodes use angle_data.json (flat schema);
-        # older GoPro-style captures use imu_data.json. interpolate_angles reads both.
+        # Load gripper joint angles from angle_data.json (flat schema).
         angle_path = ep_dir / "angle_data.json"
-        if not angle_path.is_file():
-            angle_path = ep_dir / "imu_data.json"
         if angle_path.is_file():
             joints = interpolate_angles(angle_path, traj_ts)
         else:
-            print(f"  Warning: no angle_data.json/imu_data.json, joints will be zeros")
+            print(f"  Warning: no angle_data.json, joints will be zeros")
             joints = np.zeros((n_frames, 2), dtype=np.float32)
 
         # Build state: [x, y, z, ax, ay, az, proximal, distal]

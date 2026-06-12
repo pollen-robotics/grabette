@@ -114,6 +114,10 @@ class VideoCapture:
         self._sync_offset_ms = 0.0
         self._frame_count = 0
 
+        # picamera2 invokes pre_callback in the camera thread for every request;
+        # _on_frame records the per-frame timestamp. Without this registration
+        # _on_frame never fires and frame_timestamps.json comes out empty.
+        self._picam2.pre_callback = self._on_frame
         self._recording = True
         gc.disable()  # Prevent GC pauses from dropping frames during recording
         self._picam2.start_encoder(self._encoder, str(self._h264_path))
