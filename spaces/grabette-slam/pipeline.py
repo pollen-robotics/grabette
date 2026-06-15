@@ -5,6 +5,7 @@ Thin glue over grabette_postprocess. The SLAM binary is bundled in the image
 """
 
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -85,7 +86,7 @@ def run_slam(dataset_dir, log=print, should_stop=None, on_progress=None) -> list
         raise ValueError(f"No episodes (oakd_left.mp4) found under {dataset_dir}")
 
     total = len(episodes)
-    log(f"Found {total} episode(s)")
+    log(f"Found {total} episode(s) : {', '.join(ep.name for ep in episodes)}")
     if on_progress:
         on_progress(0, total, "slam")
     workers = min(total, os.cpu_count() or 2)
@@ -109,33 +110,75 @@ def run_slam(dataset_dir, log=print, should_stop=None, on_progress=None) -> list
     return sorted(processed)
 
 
-def process_dataset(dataset_dir, target_repo, task, root, log=print,
-                    should_stop=None, to_branch=False, on_progress=None,
-                    token=None) -> tuple[int, str | None, str]:
-    """Convert + SLAM + build a LeRobot dataset, then push it to the Hub.
+def _branch_name(task: str) -> str:
+    """Deterministic branch name from the task — same input gives the same branch,
+    so a retry pushes to the branch the first attempt was aiming for."""
+    import re
+    slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")[:40] or "update"
+    return f"grabette-{slug}"
 
-    token: HF token used for the upload. Also exported as HF_TOKEN (so
-        push_to_hub, which builds its own HfApi internally, picks it up).
 
-    to_branch: if True, push to a dedicated branch instead of main (used when the
-        target repo already exists, to leave main untouched). We push to a branch
-        rather than opening a PR because HF "Sign in with HF" OAuth tokens can
-        write content but are not allowed to open PRs (that needs the separate
-        discussions/PR permission), so create_pr=True always 403s here.
-    should_stop: optional no-arg predicate; checked before the (irreversible)
-        build + push so a stop request never publishes a partial dataset.
-    on_progress: optional callback(done, total, phase) for UI progress.
+def _push_to_branch(ds, target_repo, branch, log, token, attempts=3):
+    """Create the branch from main, then push_to_hub to it — retrying transient HF
+    5xx errors, with an error message keyed on the real HTTP status (a 5xx is a
+    server hiccup, not a token problem — only 401/403 mean the token can't write).
 
-    Returns (episode_count, link_or_None, mode) where mode is "main" (pushed to
-    main, link None) or "branch" (pushed to a branch, link = branch URL).
+    We create the branch explicitly (from the repo's default branch) and pin
+    ds.revision to it, because LeRobot's push_to_hub otherwise branches from its
+    codebase version (e.g. "v3.0") — a ref that doesn't exist on a plain repo, so
+    HF returns a *deterministic* 500.
+    """
+    from huggingface_hub import HfApi
+    api = HfApi(token=token)
+    for i in range(attempts):
+        try:
+            api.create_branch(target_repo, branch=branch, repo_type="dataset", exist_ok=True)
+            ds.revision = branch  # makes push_to_hub's own create_branch a no-op
+            ds.push_to_hub(branch=branch, tags=["lerobot", "grabette"], tag_version=False)
+            return
+        except Exception as e:
+            status = getattr(getattr(e, "response", None), "status_code", None)
+            if status and status >= 500 and i < attempts - 1:
+                wait = 3 * (i + 1)
+                log(f"  ⚠️ HF server error (HTTP {status}); retrying in {wait}s "
+                    f"({i + 1}/{attempts - 1})…")
+                time.sleep(wait)
+                continue
+            if status in (401, 403):
+                raise RuntimeError(
+                    f"Could not write to {target_repo} (HTTP {status}): your sign-in "
+                    f"token appears read-only. Re-login to grant the Space the "
+                    f"write-repos scope, then re-run."
+                ) from e
+            if status and status >= 500:
+                raise RuntimeError(
+                    f"Hugging Face had a server error (HTTP {status}) while pushing to "
+                    f"branch '{branch}' on {target_repo}. The built dataset is cached — "
+                    f"click “Retry push” to try again without re-running SLAM."
+                ) from e
+            raise RuntimeError(
+                f"Could not push to branch '{branch}' on {target_repo}: {e}"
+            ) from e
+
+
+def build_lerobot(dataset_dir, target_repo, task, root, log=print,
+                  should_stop=None, to_branch=False, on_progress=None,
+                  token=None) -> list:
+    """Convert + SLAM + build the LeRobot dataset on disk under `root`.
+
+    Returns the list of processed episode dirs. Does NOT push — call push_lerobot()
+    afterwards. Splitting build from push lets a failed push be retried (the built
+    dataset stays on disk) without re-running the slow SLAM step.
+
+    should_stop: optional no-arg predicate; checked before the build so a stop
+        request never produces a dataset.
+    token: HF token (exported as HF_TOKEN; also used to resolve the username for
+        the per-episode traceability sidecar when to_branch is set).
     """
     import os
-    import re
-
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     if token:
-        os.environ["HF_TOKEN"] = token  # picked up by push_to_hub's internal HfApi
+        os.environ["HF_TOKEN"] = token
 
     processed = run_slam(dataset_dir, log=log, should_stop=should_stop, on_progress=on_progress)
     if should_stop and should_stop():
@@ -143,31 +186,77 @@ def process_dataset(dataset_dir, target_repo, task, root, log=print,
     if not processed:
         raise RuntimeError("No episode produced a trajectory; nothing to push.")
 
+    # When pushing to a branch of an existing repo, tag each episode with the
+    # source recording + user (meta/episode_sources.json) so episodes from
+    # different users sharing one repo stay distinguishable.
+    source_user = None
+    if to_branch:
+        try:
+            from huggingface_hub import HfApi
+            source_user = HfApi(token=token).whoami().get("name")
+        except Exception as e:
+            log(f"  ⚠️ couldn't resolve username for episode traceability: {e}")
+
     if on_progress:
         on_progress(0, 0, "build")
     log(f"Building LeRobot dataset from {len(processed)} episode(s)…")
-    build_dataset(repo_id=target_repo, episode_dirs=processed, task=task, root=Path(root))
+    build_dataset(repo_id=target_repo, episode_dirs=processed, task=task,
+                  root=Path(root), source_user=source_user)
+    return processed
+
+
+def push_lerobot(target_repo, task, root, n_episodes, to_branch=False,
+                 token=None, log=print, on_progress=None) -> tuple[int, str | None, str]:
+    """Push an already-built LeRobot dataset (on disk under `root`) to the Hub.
+
+    Separated from the build so a failed push can be retried without re-running
+    SLAM. Loads the dataset from disk, so it works on a fresh process too.
+
+    token: HF token used for the upload (also exported as HF_TOKEN, picked up by
+        push_to_hub's internal HfApi).
+    to_branch: if True, push to a dedicated branch instead of main (used when the
+        target repo already exists, to leave main untouched). We push to a branch
+        rather than opening a PR because HF "Sign in with HF" OAuth tokens can
+        write content but are not allowed to open PRs (that needs the separate
+        discussions/PR permission), so create_pr=True always 403s here.
+
+    Returns (n_episodes, link_or_None, mode) where mode is "main" (link None) or
+    "branch" (link = branch URL).
+    """
+    import os
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    if token:
+        os.environ["HF_TOKEN"] = token  # picked up by push_to_hub's internal HfApi
+
     ds = LeRobotDataset(target_repo, root=Path(root))
 
     if on_progress:
         on_progress(0, 0, "push")
     if to_branch:
-        # Push to a dedicated branch, leaving main untouched. tag_version=False:
-        # don't create the repo-global "v3.0" tag when only adding a branch.
-        slug = re.sub(r"[^a-z0-9]+", "-", task.lower()).strip("-")[:40] or "update"
-        branch = f"grabette-{slug}"
+        branch = _branch_name(task)
         log(f"Pushing to branch '{branch}' on {target_repo} …")
-        try:
-            ds.push_to_hub(branch=branch, tags=["lerobot", "grabette"], tag_version=False)
-        except Exception as e:
-            raise RuntimeError(
-                f"Could not write to {target_repo} (HF said: {e}). Your sign-in token "
-                f"appears read-only — re-login to grant the Space write-repos scope."
-            ) from e
+        _push_to_branch(ds, target_repo, branch, log, token)
         branch_url = f"https://huggingface.co/datasets/{target_repo}/tree/{branch}"
         log(f"✅ Pushed to branch '{branch}'.")
-        return len(processed), branch_url, "branch"
+        return n_episodes, branch_url, "branch"
 
     log(f"Pushing to https://huggingface.co/datasets/{target_repo} …")
     ds.push_to_hub(tags=["lerobot", "grabette"])
-    return len(processed), None, "main"
+    return n_episodes, None, "main"
+
+
+def process_dataset(dataset_dir, target_repo, task, root, log=print,
+                    should_stop=None, to_branch=False, on_progress=None,
+                    token=None) -> tuple[int, str | None, str]:
+    """Convert + SLAM + build a LeRobot dataset, then push it to the Hub.
+
+    Thin wrapper over build_lerobot() + push_lerobot() for callers that want the
+    whole thing in one call. Returns (episode_count, link_or_None, mode).
+    """
+    processed = build_lerobot(dataset_dir, target_repo, task, root, log=log,
+                              should_stop=should_stop, to_branch=to_branch,
+                              on_progress=on_progress, token=token)
+    return push_lerobot(target_repo, task, root, len(processed), to_branch=to_branch,
+                        token=token, log=log, on_progress=on_progress)

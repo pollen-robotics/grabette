@@ -63,7 +63,10 @@ RUN useradd -m -u 1000 user
 USER user
 ENV HOME=/home/user \
     HF_HOME=/home/user/.cache/huggingface \
-    SYSTEM=spaces
+    SYSTEM=spaces \
+    HF_HUB_ENABLE_HF_TRANSFER=1
+# HF_HUB_ENABLE_HF_TRANSFER: Rust-based parallel downloader (the hf_transfer pkg),
+# big speedup downloading the large oakd_left/right + raw_video mp4s of the source.
 # SYSTEM=spaces lets Gradio's get_space() recognize this Docker Space so it uses
 # the real HF OAuth flow (vars injected by hf_oauth: true) instead of the local mock.
 WORKDIR /home/user/app
