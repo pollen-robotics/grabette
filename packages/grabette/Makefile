@@ -1,4 +1,4 @@
-.PHONY: install-rpi install-udev-oak install-systemd help
+.PHONY: install-rpi install-udev-oak install-systemd install-netdev help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -9,6 +9,7 @@ help:
 	@echo "  install-rpi       Install apt deps + udev rule, create venv, sync, verify"
 	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
 	@echo "  install-systemd   Install + enable the grabette systemd service"
+	@echo "  install-netdev    Allow 'rasp' user to trigger WiFi scans via nmcli"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
@@ -39,6 +40,13 @@ install-udev-oak:
 	else \
 		echo "OAK-D udev rule already present."; \
 	fi
+
+# nmcli --rescan yes triggers a real radio scan, which NetworkManager restricts
+# to members of the 'netdev' group. Without this, the scan returns empty or errors
+# on machines where the service user doesn't already have wifi management rights.
+install-netdev:
+	sudo usermod -aG netdev rasp
+	@echo "Group change applied. A reboot (or 'sudo systemctl restart grabette') is needed."
 
 install-systemd:
 	@# Patch the unit's hardcoded path to this device's actual workspace root
