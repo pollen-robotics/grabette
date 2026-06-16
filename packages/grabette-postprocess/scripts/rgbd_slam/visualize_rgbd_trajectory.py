@@ -48,7 +48,9 @@ def _gravity_align(positions: np.ndarray, quaternions: np.ndarray,
 
     calib = json.loads((oak_dir / "calib_offline.json").read_text())
     R_imu_to_cam = np.array(calib["imu_to_cam"])[:3, :3]
-    g_cam = R_imu_to_cam @ g_imu
+    # Accelerometer at rest = SPECIFIC FORCE (points UP). Negate for physical
+    # gravity (DOWN) so the align-to-(0,0,-1) below gives a Z-UP world.
+    g_cam = -(R_imu_to_cam @ g_imu)
     g_cam_unit = g_cam / np.linalg.norm(g_cam)
 
     # Project gravity into world frame using the FIRST pose's orientation.
@@ -221,7 +223,7 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
     rr.init(app_id, spawn=True)
     time.sleep(0.5)
 
-    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_DOWN, static=True)
+    rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
 
     if imu_data:
         print("Logging IMU data...")
@@ -269,7 +271,8 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
             g_imu = imu_acc[["ax", "ay", "az"]].iloc[:50].mean().to_numpy()
             calib = json.loads((oak_dir / "calib_offline.json").read_text())
             R_imu_to_cam = np.array(calib["imu_to_cam"])[:3, :3]
-            g_cam = R_imu_to_cam @ g_imu
+            # Negate: accel at rest is specific force (UP); physical gravity is DOWN.
+            g_cam = -(R_imu_to_cam @ g_imu)
             g_cam /= np.linalg.norm(g_cam)
             R_world_from_cam = Rotation.from_quat(quaternions[0])
             g_world = R_world_from_cam.apply(g_cam)

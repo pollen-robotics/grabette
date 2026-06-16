@@ -113,6 +113,7 @@ class VideoCapture:
         self._first_sensor_ts = None
         self._sync_offset_ms = 0.0
         self._frame_count = 0
+        self._picam2.pre_callback = self._on_frame
 
         # picamera2 invokes pre_callback in the camera thread for every request;
         # _on_frame records the per-frame timestamp. Without this registration

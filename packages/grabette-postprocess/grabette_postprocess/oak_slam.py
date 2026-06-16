@@ -94,7 +94,12 @@ def _gravity_align_trajectory(traj_df: pd.DataFrame, oak_dir: Path) -> pd.DataFr
         print(f"  gravity-align skipped: {e}")
         return traj_df
 
-    g_cam = R_imu_to_cam @ g_imu
+    # _estimate_gravity_imu returns the median accelerometer vector, which at
+    # rest is the SPECIFIC FORCE (points UP, anti-gravity). Negate it to get the
+    # physical gravity (DOWN) direction, so aligning it to world -Z below yields
+    # a Z-UP world (gravity along -Z) as the docstring intends. Without the
+    # negation the up-vector lands on -Z and the world comes out Z-DOWN.
+    g_cam = -(R_imu_to_cam @ g_imu)
     g_cam_unit = g_cam / np.linalg.norm(g_cam)
 
     first_quat = valid[["q_x", "q_y", "q_z", "q_w"]].iloc[0].to_numpy(copy=True)
