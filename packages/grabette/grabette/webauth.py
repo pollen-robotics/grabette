@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from .auth import HFAuth
+from .auth import HFAuth, OAUTH_CALLBACK_PATH
 
 
 class _TokenRequest(BaseModel):
@@ -50,8 +50,10 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
         return {"configured": auth.oauth_configured()}
 
     @router.get("/oauth/start")
-    async def oauth_start() -> dict[str, Any]:
-        result = auth.start_oauth()
+    async def oauth_start(request: Request) -> dict[str, Any]:
+        base = str(request.base_url).rstrip("/")
+        redirect_uri = f"{base}{OAUTH_CALLBACK_PATH}"
+        result = auth.start_oauth(redirect_uri=redirect_uri)
         if result["status"] == "error":
             raise HTTPException(500, detail=result.get("message"))
         return result
