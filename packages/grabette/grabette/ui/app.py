@@ -10,7 +10,6 @@ import gradio as gr
 from PIL import Image
 
 from grabette.ui.api_client import GrabetteClient
-from grabette.webauth import LOGIN_CARD
 
 logger = logging.getLogger(__name__)
 
@@ -39,31 +38,16 @@ MODAL_CSS = """
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid #374151 !important;
 }
-#hf-auth-card .card, #hf-settings-auth .card {
-    background: rgba(255,255,255,.06); padding: 1.2rem; border-radius: 14px;
-}
-#hf-auth-card input, #hf-settings-auth input {
-    box-sizing: border-box; padding: .5rem; border-radius: 8px;
-    border: 1px solid #334; background: #0e1220; color: #fff;
-    font-family: monospace; width: 100%;
-}
-#hf-auth-card .row, #hf-settings-auth .row { display: flex; gap: .5rem; margin-bottom: .5rem; }
-#hf-auth-card .row input, #hf-settings-auth .row input { flex: 1; }
-#hf-auth-card button.oauth, #hf-settings-auth button.oauth {
-    background: #10b981; color: #fff; width: 100%; margin-bottom: .6rem;
-    padding: .55rem 1rem; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600;
-}
-#hf-auth-card button.primary, #hf-settings-auth button.primary {
-    background: #ffcc4d; color: #1a1a2e;
-    padding: .55rem 1rem; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600;
-}
-#hf-auth-card button.logout, #hf-settings-auth button.logout {
-    background: #ef4444; color: #fff;
-    padding: .55rem 1rem; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600;
-}
-#hf-auth-card .muted, #hf-settings-auth .muted { color: #a0aec0; font-size: .82rem; }
-#hf-auth-card .err, #hf-settings-auth .err { color: #fca5a5; font-size: .82rem; min-height: 1rem; }
 """
+
+_HF_AUTH_IFRAME = (
+    '<iframe src="/api/hf-auth/widget" scrolling="no"'
+    ' onload="var f=this;(function r(){'
+    'if(!document.contains(f))return;'
+    'try{f.style.height=f.contentDocument.body.scrollHeight+10+\'px\';}catch(e){}'
+    'setTimeout(r,400);})()"'
+    ' style="width:100%;border:none;min-height:160px;"></iframe>'
+)
 
 
 _IMU_IFRAME_HTML = (
@@ -1029,7 +1013,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
             with gr.Group(elem_id="hf-auth-card"):
-                gr.HTML(LOGIN_CARD)
+                gr.HTML(_HF_AUTH_IFRAME)
 
         # ── Page header ───────────────────────────────────────────────
         gr.HTML("""
@@ -1219,7 +1203,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # ── HuggingFace Account ───────────────────────────────────
             with gr.Column(scale=1):
                 gr.Markdown("## HuggingFace Account")
-                gr.HTML(f'<div id="hf-settings-auth">{LOGIN_CARD}</div>')
+                gr.HTML(_HF_AUTH_IFRAME)
 
             # ── WiFi ─────────────────────────────────────────────────
             with gr.Column(scale=1):
