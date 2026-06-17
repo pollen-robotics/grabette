@@ -40,8 +40,8 @@ BASE_URL = os.environ.get("GRABETTE_BASE_URL", "http://localhost:8000").rstrip("
 OAUTH_CALLBACK_PATH = "/api/hf-auth/oauth/callback"
 OAUTH_REDIRECT_URI = f"{BASE_URL}{OAUTH_CALLBACK_PATH}"
 
-# Default is Pollen's reachy-mini app — replace it with your own for Grabette.
-_DEFAULT_OAUTH_CLIENT_ID = "71146982-8184-45a2-b05a-d561b3cd701d"
+# To replace - currently not from Pollen org
+_DEFAULT_OAUTH_CLIENT_ID = "528a5f59-3676-4d5b-8aca-6c5a4db99b42"
 OAUTH_CLIENT_ID: Optional[str] = os.environ.get(
     "HF_OAUTH_CLIENT_ID", _DEFAULT_OAUTH_CLIENT_ID
 )
