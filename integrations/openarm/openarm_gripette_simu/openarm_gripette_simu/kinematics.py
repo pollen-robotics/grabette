@@ -21,7 +21,7 @@ ARM_JOINT_NAMES = [
 
 # Frame names
 CAMERA_FRAME = "camera"
-GRIPPER_FRAME = "gripper"
+GRIPPER_FRAME = "gripper_center"
 
 
 class Kinematics:
@@ -101,7 +101,7 @@ class Kinematics:
             current_joint_positions: optional 7-element starting config.
                 If None, uses the robot's current state.
             n_iter: number of solver iterations.
-            frame: which frame to target ('camera' or 'gripper').
+            frame: which frame to target ('camera' or 'gripper_center').
                    Gripper targets are converted to camera targets internally.
 
         Returns:
