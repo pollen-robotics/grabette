@@ -29,6 +29,7 @@ rpi = [
 ]
 hf = [
     "huggingface-hub>=0.20.0",
+    "aiohttp>=3.9",
 ]
 urdf = [
     "onshape-to-robot>=1.8.1",
