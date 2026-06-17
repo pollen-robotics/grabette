@@ -76,6 +76,17 @@ _WIFI_SETTINGS_HTML = (
     '</iframe>'
 )
 
+# Rendered as explicit HTML rather than Markdown so the title font is pinned to a
+# complete system sans-serif stack. The Markdown <h1> inherited the theme's
+# webfont (--font), which renders inconsistently — and falls back to serif — when
+# it loads partially or fails (e.g. the robot runs offline).
+_TITLE_HTML = (
+    "<h1 style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    "Roboto,Helvetica,Arial,sans-serif;font-weight:700;"
+    "font-size:var(--text-xxl,2rem);color:var(--body-text-color);"
+    "margin:var(--spacing-xxl) 0 var(--spacing-lg);\">GRABETTE</h1>"
+)
+
 
 def _status_bar_html(sys_info, oakd_status, cam_status):
     """Build the Episodes status strip (battery + RGB + OAK-D) from already-fetched dicts.
@@ -822,7 +833,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
+        gr.HTML(_TITLE_HTML)
 
         # ── Main layout ───────────────────────────────────────────────
         with gr.Row():
@@ -1202,7 +1213,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Live View") as live_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
+        gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
         dv_system_bar = gr.HTML()
@@ -1298,7 +1309,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Settings") as settings_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
+        gr.HTML(_TITLE_HTML)
 
         with gr.Row(equal_height=False):
 
