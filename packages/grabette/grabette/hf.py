@@ -63,7 +63,10 @@ class HuggingFaceClient:
         try:
             api = self._get_api()
             info = api.whoami()
-            return {"username": info.get("name", ""), "email": info.get("email", "")}
+            username = info.get("name", "")
+            orgs = [o["name"] for o in info.get("orgs", []) if o.get("name")]
+            namespaces = [username] + orgs if username else orgs
+            return {"username": username, "email": info.get("email", ""), "namespaces": namespaces}
         except Exception:
             return None
 
