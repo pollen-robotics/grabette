@@ -92,19 +92,20 @@ def widget_page() -> str:
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{{margin:0;padding:.8rem;background:transparent;color:#fff;
-font-family:-apple-system,system-ui,sans-serif;font-size:.9rem;overflow:hidden}}
-.card{{background:rgba(255,255,255,.06);padding:1rem;border-radius:10px}}
-h2{{font-size:.95rem;margin:0 0 .7rem}}
-input{{box-sizing:border-box;padding:.45rem;border-radius:7px;border:1px solid #334;
-background:#0e1220;color:#fff;font-family:monospace;width:100%}}
+body{{margin:0;padding:.8rem;background:#1e2535;color:#e2e8f0;
+font-family:-apple-system,system-ui,sans-serif;font-size:.9rem;overflow:hidden;border-radius:8px}}
+.card{{background:rgba(255,255,255,.07);padding:1rem;border-radius:10px;border:1px solid rgba(255,255,255,.1)}}
+h2{{font-size:.95rem;margin:0 0 .7rem;color:#f1f5f9}}
+input{{box-sizing:border-box;padding:.45rem;border-radius:7px;border:1px solid #4a5568;
+background:rgba(255,255,255,.12);color:#e2e8f0;font-family:monospace;width:100%}}
+input::placeholder{{color:#94a3b8}}
 .row{{display:flex;gap:.5rem;margin-bottom:.5rem}}
 .row input{{flex:1}}
 button{{padding:.45rem .9rem;border:0;border-radius:7px;cursor:pointer;font-weight:600}}
 button.oauth{{background:#10b981;color:#fff;width:100%;margin-bottom:.5rem}}
 button.primary{{background:#ffcc4d;color:#1a1a2e}}
 button.logout{{background:#ef4444;color:#fff}}
-.muted{{color:#a0aec0;font-size:.78rem}}
+.muted{{color:#94a3b8;font-size:.78rem}}
 .err{{color:#fca5a5;font-size:.78rem;min-height:1rem}}
 </style></head>
 <body>{LOGIN_CARD}</body></html>"""
@@ -134,7 +135,7 @@ LOGIN_CARD = """
   <div class="row"><input id="hfTok" placeholder="hf_..." autocomplete="off">
    <button class="primary" id="hfSave">Save</button></div>
   <div class="err" id="hfErr"></div>
-  <p class="muted">Token: <a style="color:#ffcc4d" href="https://huggingface.co/settings/tokens" target="_blank">hf.co/settings/tokens</a></p>
+  <p class="muted">Token: <a style="color:#93c5fd;text-decoration:underline" href="https://huggingface.co/settings/tokens" target="_blank">hf.co/settings/tokens</a></p>
  </div></div>
 <script>
 const HF='/api/hf-auth',_$=id=>document.getElementById(id);
