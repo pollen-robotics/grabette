@@ -14,7 +14,7 @@ help:
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: install-udev-oak
+install-rpi: install-udev-oak install-netdev
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg
