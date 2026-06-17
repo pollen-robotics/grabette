@@ -9,7 +9,6 @@ hf_oauth: true
 hf_oauth_scopes:
   - read-repos
   - write-repos
-  - manage-repos
 ---
 
 # Grabette SLAM → LeRobot

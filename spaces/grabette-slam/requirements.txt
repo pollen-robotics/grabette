@@ -1,10 +1,10 @@
 # UI + Hub deps for the Space. The grabette-postprocess package (and its deps:
 # lerobot, numpy, opencv, pandas, ...) is installed from source in the Dockerfile.
 # gradio[oauth] pulls itsdangerous/authlib, required by gr.LoginButton (HF OAuth).
-gradio[oauth]>=4.0
+# >=6.0: the app uses launch(theme=/css=) (moved there in 6.0) and the episode-
+# review panel uses @gr.render + gr.Timer + gr.skip().
+gradio[oauth]>=6.0
 huggingface_hub>=0.20
-# Rust-based parallel downloader, enabled via HF_HUB_ENABLE_HF_TRANSFER=1 (Dockerfile).
-hf_transfer
 # `spaces` satisfies Gradio's in-Space hot-reload watcher (SYSTEM=spaces) so it
 # doesn't raise in a background thread.
 spaces
