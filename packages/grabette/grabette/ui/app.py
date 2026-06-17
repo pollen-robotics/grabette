@@ -10,6 +10,7 @@ import gradio as gr
 from PIL import Image
 
 from grabette.ui.api_client import GrabetteClient
+from grabette.webauth import LOGIN_CARD
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,30 @@ MODAL_CSS = """
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid #374151 !important;
 }
+#hf-auth-card .card, #hf-settings-auth .card {
+    background: rgba(255,255,255,.06); padding: 1.2rem; border-radius: 14px;
+}
+#hf-auth-card input, #hf-settings-auth input {
+    box-sizing: border-box; padding: .5rem; border-radius: 8px;
+    border: 1px solid #334; background: #0e1220; color: #fff;
+    font-family: monospace; width: 100%;
+}
+#hf-auth-card .row, #hf-settings-auth .row { display: flex; gap: .5rem; margin-bottom: .5rem; }
+#hf-auth-card .row input, #hf-settings-auth .row input { flex: 1; }
+#hf-auth-card button.oauth, #hf-settings-auth button.oauth {
+    background: #10b981; color: #fff; width: 100%; margin-bottom: .6rem;
+    padding: .55rem 1rem; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600;
+}
+#hf-auth-card button.primary, #hf-settings-auth button.primary {
+    background: #ffcc4d; color: #1a1a2e;
+    padding: .55rem 1rem; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600;
+}
+#hf-auth-card button.logout, #hf-settings-auth button.logout {
+    background: #ef4444; color: #fff;
+    padding: .55rem 1rem; border: 0; border-radius: 8px; cursor: pointer; font-weight: 600;
+}
+#hf-auth-card .muted, #hf-settings-auth .muted { color: #a0aec0; font-size: .82rem; }
+#hf-auth-card .err, #hf-settings-auth .err { color: #fca5a5; font-size: .82rem; min-height: 1rem; }
 """
 
 
@@ -656,11 +681,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── HuggingFace ───────────────────────────────────────────────────
 
-    def _hf_status_text(result):
-        if result.get("authenticated"):
-            return f"Authenticated as {result.get('user', {}).get('username', '?')}"
-        return "Not authenticated"
-
     def _ds_upload_btn_update(authenticated: bool):
         if authenticated:
             return gr.update(value="Push to HuggingFace Hub", interactive=True, variant="huggingface")
@@ -711,18 +731,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return "No episodes found in selected tasks"
         return f"Started {len(jobs)} upload job(s)"
 
-    def on_modal_auth(token):
-        if not token:
-            return gr.update(visible=True, value="Please enter a token"), gr.update(), gr.update()
-        result = client.hf_set_auth(token)
-        if result.get("authenticated"):
-            return gr.update(visible=False), gr.update(visible=False), _ds_upload_btn_update(True)
-        return (
-            gr.update(visible=True, value=f"Auth failed: {result.get('error', 'unknown')}"),
-            gr.update(),
-            gr.update(),
-        )
-
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
         episode_id = episode_ids[0] if episode_ids else None
@@ -734,19 +742,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if "error" in result:
             return f"Error: {result['error']}"
         return f"Upload started (job: {result.get('job_id', '?')})"
-
-    def check_hf_account():
-        return _hf_status_text(client.hf_check_auth())
-
-    def on_hf_update_token(token):
-        if not token:
-            return "No token provided", gr.update()
-        result = client.hf_set_auth(token)
-        return _hf_status_text(result), gr.update(value="")
-
-    def on_hf_remove_token():
-        client.hf_set_auth("")
-        return "Not authenticated"
 
     # ══════════════════════════════════════════════════════════════════
     # Page 1 — Episodes
@@ -1034,14 +1029,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
             with gr.Group(elem_id="hf-auth-card"):
-                gr.HTML(
-                    "<h2 style='margin:0 0 0.4rem;'>HuggingFace Authentication</h2>"
-                    "<p style='color:#9ca3af;margin:0 0 1.2rem;font-size:0.9rem;'>"
-                    "A HuggingFace token is required to push datasets.</p>"
-                )
-                ds_modal_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_...")
-                ds_modal_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, visible=False)
-                ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
+                gr.HTML(LOGIN_CARD)
 
         # ── Page header ───────────────────────────────────────────────
         gr.HTML("""
@@ -1106,10 +1094,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         gr.HTML("</div>")
 
-        ds_modal_auth_btn.click(
-            fn=on_modal_auth, inputs=ds_modal_token,
-            outputs=[ds_modal_msg, ds_auth_modal, ds_upload_btn],
-        )
         ds_upload_btn.click(
             fn=on_ds_upload,
             inputs=[ds_task_cbg, ds_namespace, ds_repo_name],
@@ -1117,6 +1101,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn])
+
+        ds_auth_timer = gr.Timer(3.0)
+        ds_auth_timer.tick(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn])
 
         batt_popup_ds = gr.HTML(visible=False)
         batt_timer_ds = gr.Timer(60.0)
@@ -1232,19 +1219,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # ── HuggingFace Account ───────────────────────────────────
             with gr.Column(scale=1):
                 gr.Markdown("## HuggingFace Account")
-                gr.Markdown("### Current status")
-                hf_account_status = gr.Textbox(
-                    label=None, container=False, interactive=False,
-                )
-                gr.Markdown("### Update Token")
-                new_token_input = gr.Textbox(
-                    label=None, container=False,
-                    type="password", placeholder="hf_...",
-                )
-                with gr.Row():
-                    update_token_btn = gr.Button("Save token", variant="primary", size="sm")
-                    remove_token_btn = gr.Button("Remove current token", variant="stop", size="sm")
-                account_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+                gr.HTML(f'<div id="hf-settings-auth">{LOGIN_CARD}</div>')
 
             # ── WiFi ─────────────────────────────────────────────────
             with gr.Column(scale=1):
@@ -1252,13 +1227,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 wifi_network_info = gr.Markdown("*Loading…*")
                 gr.HTML(_WIFI_SETTINGS_HTML)
 
-        update_token_btn.click(
-            fn=on_hf_update_token, inputs=new_token_input,
-            outputs=[hf_account_status, new_token_input],
-        )
-        remove_token_btn.click(fn=on_hf_remove_token, outputs=hf_account_status)
-
-        settings_demo.load(fn=check_hf_account, outputs=hf_account_status)
         settings_demo.load(fn=get_wifi_network_info, outputs=wifi_network_info)
 
         batt_popup_st = gr.HTML(visible=False)
