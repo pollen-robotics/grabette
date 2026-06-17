@@ -20,7 +20,7 @@ install-rpi: install-udev-oak
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg
 	cd $(WORKSPACE_ROOT) && rm -rf .venv \
 	  && uv venv --python /usr/bin/python3 --system-site-packages \
-	  && uv sync --package grabette --extra rpi --extra ui
+	  && uv sync --package grabette --extra rpi --extra ui --extra hf
 	@echo "--- verifying imports ---"
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
