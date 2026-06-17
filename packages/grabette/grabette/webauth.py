@@ -41,6 +41,10 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
             raise HTTPException(500, detail="Failed to delete token")
         return {"status": "success"}
 
+    @router.get("/widget", response_class=HTMLResponse)
+    async def auth_widget() -> HTMLResponse:
+        return HTMLResponse(widget_page())
+
     @router.get("/oauth/configured")
     async def oauth_configured() -> dict[str, Any]:
         return {"configured": auth.oauth_configured()}
@@ -81,6 +85,29 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
         return HTMLResponse(result_page(ok, msg))
 
     return router
+
+
+def widget_page() -> str:
+    """Standalone auth widget served at /api/hf-auth/widget for iframe embedding."""
+    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{{margin:0;padding:.8rem;background:transparent;color:#fff;
+font-family:-apple-system,system-ui,sans-serif;font-size:.9rem;overflow:hidden}}
+.card{{background:rgba(255,255,255,.06);padding:1rem;border-radius:10px}}
+h2{{font-size:.95rem;margin:0 0 .7rem}}
+input{{box-sizing:border-box;padding:.45rem;border-radius:7px;border:1px solid #334;
+background:#0e1220;color:#fff;font-family:monospace;width:100%}}
+.row{{display:flex;gap:.5rem;margin-bottom:.5rem}}
+.row input{{flex:1}}
+button{{padding:.45rem .9rem;border:0;border-radius:7px;cursor:pointer;font-weight:600}}
+button.oauth{{background:#10b981;color:#fff;width:100%;margin-bottom:.5rem}}
+button.primary{{background:#ffcc4d;color:#1a1a2e}}
+button.logout{{background:#ef4444;color:#fff}}
+.muted{{color:#a0aec0;font-size:.78rem}}
+.err{{color:#fca5a5;font-size:.78rem;min-height:1rem}}
+</style></head>
+<body>{LOGIN_CARD}</body></html>"""
 
 
 def result_page(success: bool, message: str) -> str:
