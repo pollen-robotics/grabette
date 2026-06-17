@@ -129,6 +129,10 @@ class MockBackend(Backend):
     def is_capturing(self) -> bool:
         return self._capturing
 
+    @property
+    def is_camera_connected(self) -> bool:
+        return True
+
     def get_frame_jpeg(self) -> bytes | None:
         """Return a simple test pattern JPEG."""
         return self._generate_test_pattern()
