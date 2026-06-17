@@ -91,6 +91,10 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "not capturing"}
         result = await backend.stop_capture()
         return {"status": "ok", "result": result}
+    if ctype == "logout":
+        from huggingface_hub import logout as hf_logout
+        hf_logout()
+        return {"status": "ok"}
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 
 
@@ -126,7 +130,7 @@ async def lifespan(app: FastAPI):
             token_provider=get_token,
             device_id=settings.device_id,
             name=settings.device_name,
-            capabilities=["get_state", "start_capture", "stop_capture"],
+            capabilities=["get_state", "start_capture", "stop_capture", "logout"],
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
