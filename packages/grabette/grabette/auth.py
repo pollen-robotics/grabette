@@ -7,6 +7,10 @@ state. The token is persisted with the standard ``huggingface_hub`` mechanism
 Config is read from the environment so the team can point it at their own HF
 OAuth app:
 
+    GRABETTE_BASE_URL    Public URL this dashboard is reachable at.
+                         The OAuth callback is appended to it and the resulting
+                         URL must be registered with the HF OAuth app.
+                         (default: http://localhost:8000)
     HF_OAUTH_CLIENT_ID   Client id of YOUR HF OAuth app.
     HF_OAUTH_SCOPES      Space-separated scopes. For dataset upload you need at
                          least ``write-repos`` (and ``manage-repos`` to create).
@@ -32,7 +36,9 @@ from huggingface_hub import get_token, logout, whoami
 from huggingface_hub.errors import HfHubHTTPError
 
 # --- configuration ----------------------------------------------------------
+BASE_URL = os.environ.get("GRABETTE_BASE_URL", "http://localhost:8000").rstrip("/")
 OAUTH_CALLBACK_PATH = "/api/hf-auth/oauth/callback"
+OAUTH_REDIRECT_URI = f"{BASE_URL}{OAUTH_CALLBACK_PATH}"
 
 # To replace - currently not from Pollen org
 _DEFAULT_OAUTH_CLIENT_ID = "528a5f59-3676-4d5b-8aca-6c5a4db99b42"
@@ -54,7 +60,6 @@ class OAuthSession:
     session_id: str
     state: str  # CSRF protection; doubles as the session id
     code_verifier: str  # PKCE code verifier
-    redirect_uri: str  # stored so exchange_code uses the exact same URI
     status: str = "pending"  # pending | authorized | error | expired
     access_token: Optional[str] = None
     username: Optional[str] = None
@@ -70,9 +75,11 @@ class HFAuth:
         self,
         client_id: Optional[str] = OAUTH_CLIENT_ID,
         scopes: str = OAUTH_SCOPES,
+        redirect_uri: str = OAUTH_REDIRECT_URI,
     ) -> None:
         self.client_id = client_id
         self.scopes = scopes
+        self.redirect_uri = redirect_uri
         self._sessions: dict[str, OAuthSession] = {}
 
     # ---- manual token -----------------------------------------------------
@@ -134,21 +141,20 @@ class HFAuth:
         code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
         return code_verifier, code_challenge
 
-    def start_oauth(self, redirect_uri: str) -> dict[str, Any]:
+    def start_oauth(self) -> dict[str, Any]:
         """Create a session and return the HF authorization URL to open."""
         self._cleanup_sessions()
         if not self.client_id:
             return {"status": "error", "message": "OAuth not configured. Set HF_OAUTH_CLIENT_ID."}
 
-        uri = redirect_uri
         state = secrets.token_urlsafe(32)
         code_verifier, code_challenge = self._pkce_pair()
         self._sessions[state] = OAuthSession(
-            session_id=state, state=state, code_verifier=code_verifier, redirect_uri=uri
+            session_id=state, state=state, code_verifier=code_verifier
         )
         params = {
             "client_id": self.client_id,
-            "redirect_uri": uri,
+            "redirect_uri": self.redirect_uri,
             "scope": self.scopes,
             "response_type": "code",
             "state": state,
@@ -193,7 +199,7 @@ class HFAuth:
             "grant_type": "authorization_code",
             "client_id": self.client_id,
             "code": code,
-            "redirect_uri": session.redirect_uri,
+            "redirect_uri": self.redirect_uri,
             "code_verifier": session.code_verifier,  # PKCE verification
         }
         try:
