@@ -49,6 +49,9 @@ teleop_bridge = [
     "numpy",
 ]
 
+[project.scripts]
+grabette = "grabette.__main__:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
