@@ -1,33 +1,729 @@
 <?xml version="1.0" ?>
 <!-- Generated using onshape-to-robot -->
-<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/70d590d987c43934e5d14436/e/a0051f8e5560f378a52e9e28 -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/25c822efb72989a8d89a69ff/e/c77dbd6d3fbd22e2e0636f89 -->
 <robot name="openarm_gripette_right">
-  <!-- Link gripper_base -->
-  <link name="gripper_base">
+  <!-- Link hfsb6_6060_750_1_step -->
+  <link name="hfsb6_6060_750_1_step">
     <inertial>
-      <origin xyz="0.012014 -0.0472552 0.0253228" rpy="0 0 0"/>
-      <mass value="0.225894"/>
-      <inertia ixx="0.000189198" ixy="3.05033e-05" ixz="-4.28826e-06" iyy="0.000336735" iyz="-3.1272e-08" izz="0.000412863"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
     </inertial>
-    <!-- Part feetech_sts3215__configuration_default -->
+    <!-- Part j1_b_2_step -->
     <visual>
-      <origin xyz="0.0394727 -0.0499168 0.0344888" rpy="1.5708 0 -1.74533"/>
+      <origin xyz="1e-12 3e-12 -0.008" rpy="0 0 -0"/>
       <geometry>
-        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+        <mesh filename="package://assets/j1_b_2_step.stl"/>
       </geometry>
-      <material name="feetech_sts3215__configuration_default_material">
-        <color rgba="0.647059 0.647059 0.647059 1"/>
+      <material name="j1_b_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0394727 -0.0499168 0.0344888" rpy="1.5708 0 -1.74533"/>
+      <origin xyz="1e-12 3e-12 -0.008" rpy="0 0 -0"/>
       <geometry>
-        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+        <mesh filename="package://assets/j1_b_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part hfsb6_6060_750_1_step -->
+    <visual>
+      <origin xyz="-4e-12 -3e-12 0.758" rpy="-3.14159 -0 -1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/hfsb6_6060_750_1_step.stl"/>
+      </geometry>
+      <material name="hfsb6_6060_750_1_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-4e-12 -3e-12 0.758" rpy="-3.14159 -0 -1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/hfsb6_6060_750_1_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part dm_j8009p_2_step -->
+    <visual>
+      <origin xyz="1e-12 3e-12 -0.008" rpy="0 0 -0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j8009p_2_step.stl"/>
+      </geometry>
+      <material name="dm_j8009p_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 3e-12 -0.008" rpy="0 0 -0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j8009p_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j1_a_1_step -->
+    <visual>
+      <origin xyz="1e-12 3e-12 -0.008" rpy="0 -0 -0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_a_1_step.stl"/>
+      </geometry>
+      <material name="j1_a_1_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 3e-12 -0.008" rpy="0 -0 -0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_a_1_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link dm_j8009p_2_step_1 -->
+  <link name="dm_j8009p_2_step_1">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part dm_j8009p_2_step_1 -->
+    <visual>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j8009p_2_step_1.stl"/>
+      </geometry>
+      <material name="dm_j8009p_2_step_1_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j8009p_2_step_1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j1_e_1_step -->
+    <visual>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 -0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_e_1_step.stl"/>
+      </geometry>
+      <material name="j1_e_1_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 -0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_e_1_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j1_d_1_step -->
+    <visual>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_d_1_step.stl"/>
+      </geometry>
+      <material name="j1_d_1_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_d_1_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j1_c_1_step -->
+    <visual>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_c_1_step.stl"/>
+      </geometry>
+      <material name="j1_c_1_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j1_c_1_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j2_b_2_step -->
+  <link name="j2_b_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j2_a_1_step -->
+    <visual>
+      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j2_a_1_step.stl"/>
+      </geometry>
+      <material name="j2_a_1_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j2_a_1_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j2_c_2_step -->
+    <visual>
+      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j2_c_2_step.stl"/>
+      </geometry>
+      <material name="j2_c_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j2_c_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j2_b_2_step -->
+    <visual>
+      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j2_b_2_step.stl"/>
+      </geometry>
+      <material name="j2_b_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j2_b_2_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link dm_j4340_2_step -->
+  <link name="dm_j4340_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part dm_j4340p_2_step -->
+    <visual>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4340p_2_step.stl"/>
+      </geometry>
+      <material name="dm_j4340p_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4340p_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part fl6803zz_2_step -->
+    <visual>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/fl6803zz_2_step.stl"/>
+      </geometry>
+      <material name="fl6803zz_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/fl6803zz_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j4_a_2_step -->
+    <visual>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/j4_a_2_step.stl"/>
+      </geometry>
+      <material name="j4_a_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/j4_a_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part dm_j4340_2_step -->
+    <visual>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4340_2_step.stl"/>
+      </geometry>
+      <material name="dm_j4340_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4340_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j4_b_2_step -->
+    <visual>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/j4_b_2_step.stl"/>
+      </geometry>
+      <material name="j4_b_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <geometry>
+        <mesh filename="package://assets/j4_b_2_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link dm_j4310_1_2_step -->
+  <link name="dm_j4310_1_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j4_d_2_step -->
+    <visual>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j4_d_2_step.stl"/>
+      </geometry>
+      <material name="j4_d_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j4_d_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j4_c_2_step -->
+    <visual>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j4_c_2_step.stl"/>
+      </geometry>
+      <material name="j4_c_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j4_c_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part dm_j4310_1_2_step -->
+    <visual>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4310_1_2_step.stl"/>
+      </geometry>
+      <material name="dm_j4310_1_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4310_1_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j4_e_2_step -->
+    <visual>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j4_e_2_step.stl"/>
+      </geometry>
+      <material name="j4_e_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <geometry>
+        <mesh filename="package://assets/j4_e_2_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j6_a_3_step -->
+  <link name="j6_a_3_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j6_d_3_step -->
+    <visual>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_d_3_step.stl"/>
+      </geometry>
+      <material name="j6_d_3_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_d_3_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part dm_j4310_1_2_step_1 -->
+    <visual>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4310_1_2_step_1.stl"/>
+      </geometry>
+      <material name="dm_j4310_1_2_step_1_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4310_1_2_step_1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j6_b_3_step -->
+    <visual>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_b_3_step.stl"/>
+      </geometry>
+      <material name="j6_b_3_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_b_3_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j5_a_3_step -->
+    <visual>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j5_a_3_step.stl"/>
+      </geometry>
+      <material name="j5_a_3_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j5_a_3_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j6_a_3_step -->
+    <visual>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_a_3_step.stl"/>
+      </geometry>
+      <material name="j6_a_3_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_a_3_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j6_c_right_2_step -->
+    <visual>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_c_right_2_step.stl"/>
+      </geometry>
+      <material name="j6_c_right_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <geometry>
+        <mesh filename="package://assets/j6_c_right_2_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j7_e_2_step -->
+  <link name="j7_e_2_step">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part j7_e_2_step -->
+    <visual>
+      <origin xyz="0.15255 0.336 0.0172" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_e_2_step.stl"/>
+      </geometry>
+      <material name="j7_e_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.15255 0.336 0.0172" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_e_2_step.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Joint from j6_a_3_step to j7_e_2_step -->
+  <joint name="r_wrist_roll" type="revolute">
+    <origin xyz="0.0171947 -0.000425585 -0.0455" rpy="-1.5708 0.0176931 1.54605"/>
+    <parent link="j6_a_3_step"/>
+    <child link="j7_e_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-0.803091" upper="0.767705"/>
+  </joint>
+  <!-- Link dm_j4310_1_2_step_2 -->
+  <link name="dm_j4310_1_2_step_2">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-09"/>
+      <inertia ixx="1e-09" ixy="0" ixz="0" iyy="1e-09" iyz="0" izz="1e-09"/>
+    </inertial>
+    <!-- Part fl6700zz_2_step -->
+    <visual>
+      <origin xyz="0.15255 -0.261 -0.0343" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/fl6700zz_2_step.stl"/>
+      </geometry>
+      <material name="fl6700zz_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.15255 -0.261 -0.0343" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/fl6700zz_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part dm_j4310_1_2_step_2 -->
+    <visual>
+      <origin xyz="-0.15255 0.261 -0.0343" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4310_1_2_step_2.stl"/>
+      </geometry>
+      <material name="dm_j4310_1_2_step_2_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.15255 0.261 -0.0343" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/dm_j4310_1_2_step_2.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j7_b_2_step -->
+    <visual>
+      <origin xyz="-0.15255 -0.261 -0.0343" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_b_2_step.stl"/>
+      </geometry>
+      <material name="j7_b_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.15255 -0.261 -0.0343" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_b_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j7_a_2_step -->
+    <visual>
+      <origin xyz="-0.15255 0.261 -0.0343" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_a_2_step.stl"/>
+      </geometry>
+      <material name="j7_a_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.15255 0.261 -0.0343" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_a_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j7_c_2_step -->
+    <visual>
+      <origin xyz="-0.15255 0.261 -0.0343" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_c_2_step.stl"/>
+      </geometry>
+      <material name="j7_c_2_step_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.15255 0.261 -0.0343" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_c_2_step.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part fl6700zz_2_step_1 -->
+    <visual>
+      <origin xyz="0.15255 -0.261 -0.0343" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/fl6700zz_2_step_1.stl"/>
+      </geometry>
+      <material name="fl6700zz_2_step_1_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.15255 -0.261 -0.0343" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/fl6700zz_2_step_1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part j7_b_2_step_2 -->
+    <visual>
+      <origin xyz="-0.15245 0.261 -0.0343" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_b_2_step_2.stl"/>
+      </geometry>
+      <material name="j7_b_2_step_2_material">
+        <color rgba="0.792157 0.819608 0.933333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.15245 0.261 -0.0343" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/j7_b_2_step_2.stl"/>
+      </geometry>
+    </collision>
+  </link>
+  <!-- Link j8_a_2_step -->
+  <link name="j8_a_2_step">
+    <inertial>
+      <origin xyz="0.0168653 0.0836013 0.0169536" rpy="0 0 0"/>
+      <mass value="0.227294"/>
+      <inertia ixx="0.000379489" ixy="7.53636e-05" ixz="-2.59208e-05" iyy="0.000539617" iyz="-3.44239e-05" izz="0.000403409"/>
+    </inertial>
+    <!-- Part 611_00020_1 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/611_00020_1.stl"/>
+      </geometry>
+      <material name="611_00020_1_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/611_00020_1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part sr_lens_py058 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/sr_lens_py058.stl"/>
+      </geometry>
+      <material name="sr_lens_py058_material">
+        <color rgba="0.262745 0.282353 0.301961 0.376471"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/sr_lens_py058.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default -->
+    <visual>
+      <origin xyz="-0 0.129426 0.0833323" rpy="-3.14159 1.17152 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0 0.129426 0.0833323" rpy="-3.14159 1.17152 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1 -->
+    <visual>
+      <origin xyz="0.0554246 0.0485 -0.00845136" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
+      </geometry>
+      <material name="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material">
+        <color rgba="0.603922 0.647059 0.686275 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0554246 0.0485 -0.00845136" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_2 -->
+    <visual>
+      <origin xyz="-0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_2_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default -->
+    <visual>
+      <origin xyz="0.0177 0.07175 -0.0477356" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0177 0.07175 -0.0477356" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part j8_b_2_step -->
     <visual>
-      <origin xyz="-0.143913 0.129094 0.0250878" rpy="1.5708 -1.5708 0"/>
+      <origin xyz="-9.99999e-07 0.260999 0.17305" rpy="1.5708 -0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_b_2_step.stl"/>
       </geometry>
@@ -36,94 +732,302 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.143913 0.129094 0.0250878" rpy="1.5708 -1.5708 0"/>
+      <origin xyz="-9.99999e-07 0.260999 0.17305" rpy="1.5708 -0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_b_2_step.stl"/>
       </geometry>
     </collision>
-    <!-- Part gripper_base -->
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_3 -->
     <visual>
-      <origin xyz="0.044518 -0.00416521 -0.000111233" rpy="0 -0 0"/>
+      <origin xyz="0.0830084 0.0650719 0.0130486" rpy="1.22173 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/gripper_base.stl"/>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
-      <material name="gripper_base_material">
-        <color rgba="0.615686 0.811765 0.929412 1"/>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_3_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.044518 -0.00416521 -0.000111233" rpy="0 -0 0"/>
+      <origin xyz="0.0830084 0.0650719 0.0130486" rpy="1.22173 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/gripper_base.stl"/>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
-    <!-- Part b0404 -->
+    <!-- Part part_1__configuration_copy_of_2x8 -->
     <visual>
-      <origin xyz="0.0030569 -0.0784041 0.0938888" rpy="-1.5708 -0 0"/>
+      <origin xyz="0.03101 0.0593 0.04195" rpy="-3.14159 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/b0404.stl"/>
+        <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
-      <material name="b0404_material">
-        <color rgba="0.372549 0.654902 0.239216 1"/>
+      <material name="part_1__configuration_copy_of_2x8_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0030569 -0.0784041 0.0938888" rpy="-1.5708 -0 0"/>
+      <origin xyz="0.03101 0.0593 0.04195" rpy="-3.14159 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/b0404.stl"/>
+        <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
     </collision>
-    <!-- Part elec_support_square -->
+    <!-- Part feetech_pt_screw_2x6__configuration_default_2 -->
     <visual>
-      <origin xyz="0.0165181 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <origin xyz="-0.0182 0.0755 -0.0477356" rpy="1.5708 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/elec_support_square.stl"/>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
-      <material name="elec_support_square_material">
-        <color rgba="0.498039 0.498039 0.498039 1"/>
+      <material name="feetech_pt_screw_2x6__configuration_default_2_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0165181 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <origin xyz="-0.0182 0.0755 -0.0477356" rpy="1.5708 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/elec_support_square.stl"/>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
-    <!-- Part camera_imu_support -->
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_4 -->
     <visual>
-      <origin xyz="0.033457 -0.00907682 0.0498888" rpy="0 -0 0"/>
+      <origin xyz="0.0830084 0.0650719 0.0420486" rpy="1.22173 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/camera_imu_support.stl"/>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
-      <material name="camera_imu_support_material">
-        <color rgba="0.615686 0.811765 0.929412 1"/>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_4_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.033457 -0.00907682 0.0498888" rpy="0 -0 0"/>
+      <origin xyz="0.0830084 0.0650719 0.0420486" rpy="1.22173 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/camera_imu_support.stl"/>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
-    <!-- Part elec_support -->
+    <!-- Part cameras_holder_r -->
     <visual>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/elec_support.stl"/>
+        <mesh filename="package://assets/cameras_holder_r.stl"/>
       </geometry>
-      <material name="elec_support_material">
-        <color rgba="0.972549 0.529412 0.00392157 1"/>
+      <material name="cameras_holder_r_material">
+        <color rgba="0.262745 0.282353 0.301961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="-0 -0 0"/>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/elec_support.stl"/>
+        <mesh filename="package://assets/cameras_holder_r.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_sts3215__configuration_default -->
+    <visual>
+      <origin xyz="-0.0096 0.079 -0.0133" rpy="-3.14159 -0 -1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_sts3215__configuration_default_material">
+        <color rgba="0.647059 0.647059 0.647059 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0096 0.079 -0.0133" rpy="-3.14159 -0 -1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_3 -->
+    <visual>
+      <origin xyz="0.0177 0.07175 -0.0682356" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_3_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0177 0.07175 -0.0682356" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_4 -->
+    <visual>
+      <origin xyz="-0.0182 0.0755 -0.0682356" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_4_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0182 0.0755 -0.0682356" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part gripper_base_r -->
+    <visual>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/gripper_base_r.stl"/>
+      </geometry>
+      <material name="gripper_base_r_material">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/gripper_base_r.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part arducam_fisheye -->
+    <visual>
+      <origin xyz="0.0977284 0.0670242 0.0275486" rpy="-1.91986 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/arducam_fisheye.stl"/>
+      </geometry>
+      <material name="arducam_fisheye_material">
+        <color rgba="0.235294 0.235294 0.235294 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0977284 0.0670242 0.0275486" rpy="-1.91986 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/arducam_fisheye.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
+      </geometry>
+      <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_5 -->
+    <visual>
+      <origin xyz="0.01535 0.07946 0.0489995" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_5_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.01535 0.07946 0.0489995" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part bulkhead -->
+    <visual>
+      <origin xyz="0.01845 0.0825 0.0634995" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/bulkhead.stl"/>
+      </geometry>
+      <material name="bulkhead_material">
+        <color rgba="0.980392 0.713725 0.00392157 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.01845 0.0825 0.0634995" rpy="1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/bulkhead.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_6 -->
+    <visual>
+      <origin xyz="0.110259 0.0749905 0.0130486" rpy="1.22173 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_6_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.110259 0.0749905 0.0130486" rpy="1.22173 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_2 -->
+    <visual>
+      <origin xyz="0.0554246 0.0485 0.0365486" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
+      </geometry>
+      <material name="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_2_material">
+        <color rgba="0.603922 0.647059 0.686275 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0554246 0.0485 0.0365486" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
+      </geometry>
+      <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 606_00020_sr_front_cover -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/606_00020_sr_front_cover.stl"/>
+      </geometry>
+      <material name="606_00020_sr_front_cover_material">
+        <color rgba="0.262745 0.282353 0.301961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/606_00020_sr_front_cover.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part part_1__configuration_copy_of_2x8_2 -->
+    <visual>
+      <origin xyz="0.03101 0.0823 -0.01605" rpy="-3.14159 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
+      </geometry>
+      <material name="part_1__configuration_copy_of_2x8_2_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03101 0.0823 -0.01605" rpy="-3.14159 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
     </collision>
     <!-- Part j8_a_2_step -->
     <visual>
-      <origin xyz="-0.143913 0.129094 0.0250888" rpy="1.5708 -1.5708 0"/>
+      <origin xyz="1e-12 0.261 0.17305" rpy="1.5708 0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_a_2_step.stl"/>
       </geometry>
@@ -132,75 +1036,332 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.143913 0.129094 0.0250888" rpy="1.5708 -1.5708 0"/>
+      <origin xyz="1e-12 0.261 0.17305" rpy="1.5708 0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_a_2_step.stl"/>
       </geometry>
     </collision>
-    <!-- Part backplate -->
+    <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3 -->
     <visual>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/backplate.stl"/>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
       </geometry>
-      <material name="backplate_material">
-        <color rgba="0.917647 0.917647 0.917647 1"/>
+      <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material">
+        <color rgba="0 0 0 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/backplate.stl"/>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
       </geometry>
     </collision>
-    <!-- Part rasp_support -->
+    <!-- Part grip_soft_tip_r -->
     <visual>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 0 0"/>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/rasp_support.stl"/>
+        <mesh filename="package://assets/grip_soft_tip_r.stl"/>
       </geometry>
-      <material name="rasp_support_material">
-        <color rgba="0.768627 0.886275 0.952941 1"/>
+      <material name="grip_soft_tip_r_material">
+        <color rgba="0.301961 0.301961 0.301961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 0 0"/>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/rasp_support.stl"/>
+        <mesh filename="package://assets/grip_soft_tip_r.stl"/>
       </geometry>
     </collision>
-    <!-- Part elec_support_square_2 -->
+    <!-- Part feetech_pt_screw_2x6__configuration_default_5 -->
     <visual>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <origin xyz="-0.0182 0.0962 -0.0682356" rpy="1.5708 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/elec_support_square.stl"/>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
-      <material name="elec_support_square_2_material">
-        <color rgba="0.498039 0.498039 0.498039 1"/>
+      <material name="feetech_pt_screw_2x6__configuration_default_5_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.044518 -0.00416521 8.87673e-05" rpy="0 -0 0"/>
+      <origin xyz="-0.0182 0.0962 -0.0682356" rpy="1.5708 1.5708 0"/>
       <geometry>
-        <mesh filename="package://assets/elec_support_square.stl"/>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974 -->
+    <visual>
+      <origin xyz="0.03161 0.0593 -0.01605" rpy="0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
+      </geometry>
+      <material name="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_material">
+        <color rgba="0.603922 0.647059 0.686275 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03161 0.0593 -0.01605" rpy="0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_7 -->
+    <visual>
+      <origin xyz="0.0404 0.0449 0.0426436" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_7_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0404 0.0449 0.0426436" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
+      </geometry>
+      <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_6 -->
+    <visual>
+      <origin xyz="-0.0182 0.0962 -0.0477356" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_6_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0182 0.0962 -0.0477356" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_8 -->
+    <visual>
+      <origin xyz="0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_8_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 612_00001_tim_thermal_oak_d_poe -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/612_00001_tim_thermal_oak_d_poe.stl"/>
+      </geometry>
+      <material name="612_00001_tim_thermal_oak_d_poe_material">
+        <color rgba="0.596078 0.666667 0.686275 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/612_00001_tim_thermal_oak_d_poe.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part hub_dyn -->
+    <visual>
+      <origin xyz="0.02381 0.0858 0.04545" rpy="-3.14159 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hub_dyn.stl"/>
+      </geometry>
+      <material name="hub_dyn_material">
+        <color rgba="0.615686 0.811765 0.929412 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.02381 0.0858 0.04545" rpy="-3.14159 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hub_dyn.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part grip_shell_r -->
+    <visual>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="-0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/grip_shell_r.stl"/>
+      </geometry>
+      <material name="grip_shell_r_material">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0242 0.120227 -0.00285636" rpy="-0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/grip_shell_r.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_9 -->
+    <visual>
+      <origin xyz="0.110259 0.0749905 0.0420486" rpy="1.22173 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_9_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.110259 0.0749905 0.0420486" rpy="1.22173 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_2 -->
+    <visual>
+      <origin xyz="0.03161 0.0823 0.04195" rpy="0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
+      </geometry>
+      <material name="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_2_material">
+        <color rgba="0.603922 0.647059 0.686275 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.03161 0.0823 0.04195" rpy="0 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 606_00021_sr_back_cover_py074 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/606_00021_sr_back_cover_py074.stl"/>
+      </geometry>
+      <material name="606_00021_sr_back_cover_py074_material">
+        <color rgba="0.262745 0.282353 0.301961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/606_00021_sr_back_cover_py074.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default -->
+    <visual>
+      <origin xyz="-0.01905 0.1045 -0.0702128" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.01905 0.1045 -0.0702128" rpy="1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part lens_adhesive -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/lens_adhesive.stl"/>
+      </geometry>
+      <material name="lens_adhesive_material">
+        <color rgba="0.262745 0.282353 0.301961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/lens_adhesive.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part 611_00020 -->
+    <visual>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/611_00020.stl"/>
+      </geometry>
+      <material name="611_00020_material">
+        <color rgba="0 0 0 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/611_00020.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_10 -->
+    <visual>
+      <origin xyz="0.0404 0.0449 0.0126436" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_10_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.0404 0.0449 0.0126436" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part rasp_pi_0_2w__configuration_default -->
+    <visual>
+      <origin xyz="0.02872 0.0708 0.01295" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/rasp_pi_0_2w__configuration_default.stl"/>
+      </geometry>
+      <material name="rasp_pi_0_2w__configuration_default_material">
+        <color rgba="0.972549 0.529412 0.00392157 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.02872 0.0708 0.01295" rpy="-1.5708 -1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/rasp_pi_0_2w__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_11 -->
+    <visual>
+      <origin xyz="-0.01715 0.07946 0.0490995" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_11_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.01715 0.07946 0.0490995" rpy="-1.5708 1.5708 0"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
   </link>
-  <!-- Frame openarm_fix (dummy link + fixed joint) -->
-  <link name="openarm_fix">
-    <origin xyz="0 0 0" rpy="0 -0 0"/>
-    <inertial>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <mass value="1e-9"/>
-      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
-    </inertial>
-  </link>
-  <joint name="openarm_fix_frame" type="fixed">
-    <origin xyz="0.00863865 -0.0824044 0.0250888" rpy="1.5708 -0 7.64992e-06"/>
-    <parent link="gripper_base"/>
-    <child link="openarm_fix"/>
-    <axis xyz="0 0 0"/>
-  </joint>
   <!-- Frame camera (dummy link + fixed joint) -->
   <link name="camera">
     <origin xyz="0 0 0" rpy="0 -0 0"/>
@@ -211,53 +1372,432 @@
     </inertial>
   </link>
   <joint name="camera_frame" type="fixed">
-    <origin xyz="0.0030569 -0.0657041 0.0938888" rpy="-1.5708 -0 0"/>
-    <parent link="gripper_base"/>
+    <origin xyz="0.0963261 0.070877 0.0275486" rpy="-1.91986 1.5708 0"/>
+    <parent link="j8_a_2_step"/>
     <child link="camera"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame gripper_base (dummy link + fixed joint) -->
+  <link name="gripper_base">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="gripper_base_frame" type="fixed">
+    <origin xyz="-0 0.0495 0.0205" rpy="1.5708 1.5708 0"/>
+    <parent link="j8_a_2_step"/>
+    <child link="gripper_base"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame oak_l (dummy link + fixed joint) -->
+  <link name="oak_l">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="oak_l_frame" type="fixed">
+    <origin xyz="0.0530246 0.078833 0.0240486" rpy="-1.5708 1.5708 0"/>
+    <parent link="j8_a_2_step"/>
+    <child link="oak_l"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame oak_r (dummy link + fixed joint) -->
+  <link name="oak_r">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="oak_r_frame" type="fixed">
+    <origin xyz="0.0530246 0.078833 0.00404864" rpy="-1.5708 1.5708 0"/>
+    <parent link="j8_a_2_step"/>
+    <child link="oak_r"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame gripper_center (dummy link + fixed joint) -->
+  <link name="gripper_center">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="gripper_center_frame" type="fixed">
+    <origin xyz="-0 0.138087 0.0240485" rpy="1.5708 0 1.5708"/>
+    <parent link="j8_a_2_step"/>
+    <child link="gripper_center"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+  <!-- Frame thumb_tip (dummy link + fixed joint) -->
+  <link name="thumb_tip">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="thumb_tip_frame" type="fixed">
+    <origin xyz="-0 0.159661 0.0777992" rpy="3.14159 0.771348 -1.5708"/>
+    <parent link="j8_a_2_step"/>
+    <child link="thumb_tip"/>
     <axis xyz="0 0 0"/>
   </joint>
   <!-- Link feetech_sts3215__configuration_default -->
   <link name="feetech_sts3215__configuration_default">
     <inertial>
-      <origin xyz="0.0182592 -0.0259026 0.0175524" rpy="0 0 0"/>
-      <mass value="0.101487"/>
-      <inertia ixx="5.99713e-05" ixy="6.78604e-06" ixz="-4.30903e-07" iyy="4.50716e-05" iyz="1.10027e-06" izz="3.99848e-05"/>
+      <origin xyz="-0.0253697 0.0243883 0.0242046" rpy="0 0 0"/>
+      <mass value="0.0769363"/>
+      <inertia ixx="3.19064e-05" ixy="7.34138e-06" ixz="-4.06564e-06" iyy="3.84967e-05" iyz="3.31711e-06" izz="2.83826e-05"/>
     </inertial>
-    <!-- Part proximal_side -->
+    <!-- Part proximal_top_r -->
     <visual>
-      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
       <geometry>
-        <mesh filename="package://assets/proximal_side.stl"/>
+        <mesh filename="package://assets/proximal_top_r.stl"/>
       </geometry>
-      <material name="proximal_side_material">
-        <color rgba="0.647059 0.647059 0.647059 1"/>
+      <material name="proximal_top_r_material">
+        <color rgba="1 1 1 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
       <geometry>
-        <mesh filename="package://assets/proximal_side.stl"/>
+        <mesh filename="package://assets/proximal_top_r.stl"/>
       </geometry>
     </collision>
-    <!-- Part proximal_bottom -->
+    <!-- Part proximal_bot_r -->
     <visual>
-      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 0 -0.174533"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
       <geometry>
-        <mesh filename="package://assets/proximal_bottom.stl"/>
+        <mesh filename="package://assets/proximal_bot_r.stl"/>
       </geometry>
-      <material name="proximal_bottom_material">
-        <color rgba="0.647059 0.647059 0.647059 1"/>
+      <material name="proximal_bot_r_material">
+        <color rgba="1 1 1 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 0 -0.174533"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
       <geometry>
-        <mesh filename="package://assets/proximal_bottom.stl"/>
+        <mesh filename="package://assets/proximal_bot_r.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_2 -->
+    <visual>
+      <origin xyz="0.007 0.0569128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_2_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.007 0.0569128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_7 -->
+    <visual>
+      <origin xyz="-0.0261619 0.0819783 0.03705" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_7_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0261619 0.0819783 0.03705" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_3 -->
+    <visual>
+      <origin xyz="-0.0115835 0.0823901 -0.0001" rpy="1.5708 0 1.0821"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_3_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0115835 0.0823901 -0.0001" rpy="1.5708 0 1.0821"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_4 -->
+    <visual>
+      <origin xyz="0 0.0639128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_4_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0639128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_8 -->
+    <visual>
+      <origin xyz="-0.0078849 0.0722603 0.00055" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_8_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0078849 0.0722603 0.00055" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_5 -->
+    <visual>
+      <origin xyz="-0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_5_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part proximal_shell_r -->
+    <visual>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_shell_r.stl"/>
+      </geometry>
+      <material name="proximal_shell_r_material">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/proximal_shell_r.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_9 -->
+    <visual>
+      <origin xyz="-0.014198 0.0523993 0.03705" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_9_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.014198 0.0523993 0.03705" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_6 -->
+    <visual>
+      <origin xyz="-0.007 0.0569128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_6_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.007 0.0569128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_7 -->
+    <visual>
+      <origin xyz="0 0.0639128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_7_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0639128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_8 -->
+    <visual>
+      <origin xyz="0 0.0499128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_8_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0499128 -0.00245" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_9 -->
+    <visual>
+      <origin xyz="0 0.0499128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_9_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0.0499128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_10 -->
+    <visual>
+      <origin xyz="-0.0175091 0.0541598 0.00055" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_10_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0175091 0.0541598 0.00055" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part cross_bar -->
+    <visual>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/cross_bar.stl"/>
+      </geometry>
+      <material name="cross_bar_material">
+        <color rgba="0.917647 0.917647 0.917647 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/cross_bar.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_11 -->
+    <visual>
+      <origin xyz="-0.00457385 0.0704997 0.03705" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_11_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.00457385 0.0704997 0.03705" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_10 -->
+    <visual>
+      <origin xyz="0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_10_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_12 -->
+    <visual>
+      <origin xyz="-0.0298053 0.00790851 0.03925" rpy="1.5708 0 2.44347"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_12_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0298053 0.00790851 0.03925" rpy="1.5708 0 2.44347"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_13 -->
+    <visual>
+      <origin xyz="-0.0298053 0.00790851 -0.00115" rpy="1.5708 0 2.44347"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_13_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0298053 0.00790851 -0.00115" rpy="1.5708 0 2.44347"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_pt_screw_2x6__configuration_default_12 -->
+    <visual>
+      <origin xyz="-0.0261619 0.0819783 0.00055" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_pt_screw_2x6__configuration_default_12_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0261619 0.0819783 0.00055" rpy="1.5708 0 1.5708"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_sts3215__configuration_default_2 -->
     <visual>
-      <origin xyz="0.0122498 -0.0212176 0.0089" rpy="-1.5708 0 2.0944"/>
+      <origin xyz="-0.0157873 0.0201676 0.00935" rpy="-1.5708 -0 -0.488692"/>
       <geometry>
         <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
       </geometry>
@@ -266,66 +1806,314 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0122498 -0.0212176 0.0089" rpy="-1.5708 0 2.0944"/>
+      <origin xyz="-0.0157873 0.0201676 0.00935" rpy="-1.5708 -0 -0.488692"/>
       <geometry>
         <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
       </geometry>
     </collision>
-    <!-- Part proximal_top -->
-    <visual>
-      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
-      <geometry>
-        <mesh filename="package://assets/proximal_top.stl"/>
-      </geometry>
-      <material name="proximal_top_material">
-        <color rgba="0.647059 0.647059 0.647059 1"/>
-      </material>
-    </visual>
-    <collision>
-      <origin xyz="-0.00297594 -0.0204326 0.0435" rpy="-3.14159 -0 -0.174533"/>
-      <geometry>
-        <mesh filename="package://assets/proximal_top.stl"/>
-      </geometry>
-    </collision>
   </link>
-  <!-- Link distal -->
-  <link name="distal">
+  <!-- Link distal_soft_tip -->
+  <link name="distal_soft_tip">
     <inertial>
-      <origin xyz="-0.0288978 0.00403421 0.0180018" rpy="0 0 0"/>
-      <mass value="0.0471678"/>
-      <inertia ixx="1.19203e-05" ixy="2.06538e-06" ixz="3.61884e-07" iyy="1.88956e-05" iyz="1.38375e-07" izz="1.16157e-05"/>
+      <origin xyz="-0.0238598 -0.000329979 0.0190584" rpy="0 0 0"/>
+      <mass value="0.0238623"/>
+      <inertia ixx="7.50665e-06" ixy="-2.56698e-07" ixz="-2.063e-09" iyy="1.03037e-05" iyz="-3.57e-10" izz="6.05691e-06"/>
     </inertial>
-    <!-- Part distal -->
+    <!-- Part feetech_screw_m3x6__configuration_default_11 -->
     <visual>
-      <origin xyz="0.0337928 0.0127932 0.0435" rpy="-3.14159 -0 -2.26893"/>
+      <origin xyz="-0.0197189 0.050251 -0.00215" rpy="1.5708 0 2.05949"/>
       <geometry>
-        <mesh filename="package://assets/distal.stl"/>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
-      <material name="distal_material">
-        <color rgba="0.231373 0.380392 0.705882 1"/>
+      <material name="feetech_screw_m3x6__configuration_default_11_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0337928 0.0127932 0.0435" rpy="-3.14159 -0 -2.26893"/>
+      <origin xyz="-0.0197189 0.050251 -0.00215" rpy="1.5708 0 2.05949"/>
       <geometry>
-        <mesh filename="package://assets/distal.stl"/>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_12 -->
+    <visual>
+      <origin xyz="-0.0267189 0.043251 -0.00215" rpy="1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_12_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0267189 0.043251 -0.00215" rpy="1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_13 -->
+    <visual>
+      <origin xyz="-0.0337189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_13_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0337189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_14 -->
+    <visual>
+      <origin xyz="-0.0345944 -0.00547559 0.03805" rpy="1.5708 0 1.50413"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_14_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0345944 -0.00547559 0.03805" rpy="1.5708 0 1.50413"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_14 -->
+    <visual>
+      <origin xyz="-0.0267189 0.043251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_14_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0267189 0.043251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_15 -->
+    <visual>
+      <origin xyz="-0.0197189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_15_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0197189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_15 -->
+    <visual>
+      <origin xyz="-0.0345597 0.0100566 0.01905" rpy="1.5708 0 1.50413"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_15_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0345597 0.0100566 0.01905" rpy="1.5708 0 1.50413"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_16 -->
+    <visual>
+      <origin xyz="-0.0345944 -0.00547559 5e-05" rpy="1.5708 0 1.50413"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+      <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_16_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0345944 -0.00547559 5e-05" rpy="1.5708 0 1.50413"/>
+      <geometry>
+        <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_16 -->
+    <visual>
+      <origin xyz="-0.0337189 0.050251 -0.00215" rpy="1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_16_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0337189 0.050251 -0.00215" rpy="1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part distal_soft_tip -->
+    <visual>
+      <origin xyz="0.039924 -0.0269999 0.04325" rpy="0 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/distal_soft_tip.stl"/>
+      </geometry>
+      <material name="distal_soft_tip_material">
+        <color rgba="0.301961 0.301961 0.301961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.039924 -0.0269999 0.04325" rpy="0 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/distal_soft_tip.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_17 -->
+    <visual>
+      <origin xyz="-0.0267189 0.057251 0.04025" rpy="-1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_17_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0267189 0.057251 0.04025" rpy="-1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part feetech_screw_m3x6__configuration_default_18 -->
+    <visual>
+      <origin xyz="-0.0267189 0.057251 -0.00215" rpy="1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+      <material name="feetech_screw_m3x6__configuration_default_18_material">
+        <color rgba="0.901961 0.901961 0.901961 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="-0.0267189 0.057251 -0.00215" rpy="1.5708 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
+      </geometry>
+    </collision>
+    <!-- Part distal_r -->
+    <visual>
+      <origin xyz="0.039924 -0.0269999 0.04325" rpy="-0 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/distal_r.stl"/>
+      </geometry>
+      <material name="distal_r_material">
+        <color rgba="1 1 1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0.039924 -0.0269999 0.04325" rpy="-0 0 2.05949"/>
+      <geometry>
+        <mesh filename="package://assets/distal_r.stl"/>
       </geometry>
     </collision>
   </link>
-  <!-- Joint from feetech_sts3215__configuration_default to distal -->
-  <joint name="distal" type="revolute">
-    <origin xyz="0.0249998 -0.0433013 -0.00055" rpy="0 0 2.0944"/>
-    <parent link="feetech_sts3215__configuration_default"/>
-    <child link="distal"/>
-    <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-2.0944" upper="0"/>
+  <!-- Frame finger_tip (dummy link + fixed joint) -->
+  <link name="finger_tip">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="finger_tip_frame" type="fixed">
+    <origin xyz="-0.0613312 -0.00504543 0.01905" rpy="-1.5708 -0 2.70286"/>
+    <parent link="distal_soft_tip"/>
+    <child link="finger_tip"/>
+    <axis xyz="0 0 0"/>
   </joint>
-  <!-- Joint from gripper_base to feetech_sts3215__configuration_default -->
+  <!-- Joint from feetech_sts3215__configuration_default to distal_soft_tip -->
+  <joint name="distal" type="revolute">
+    <origin xyz="-0.0383025 0.0321391 -0.0001" rpy="-0 -0 -0.488692"/>
+    <parent link="feetech_sts3215__configuration_default"/>
+    <child link="distal_soft_tip"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="0" upper="1.5708"/>
+  </joint>
+  <!-- Joint from j8_a_2_step to feetech_sts3215__configuration_default -->
   <joint name="proximal" type="revolute">
-    <origin xyz="0.0439007 -0.0248042 0.0428388" rpy="-3.14159 -0 -0.174525"/>
-    <parent link="gripper_base"/>
+    <origin xyz="-0.01905 0.1045 -0.0133" rpy="-1.5708 -0 -1.5708"/>
+    <parent link="j8_a_2_step"/>
     <child link="feetech_sts3215__configuration_default"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-1.57079" upper="7.64992e-06"/>
+    <limit effort="10" velocity="10" lower="0" upper="1.5708"/>
+  </joint>
+  <!-- Joint from dm_j4310_1_2_step_2 to j8_a_2_step -->
+  <joint name="r_wrist_pitch" type="revolute">
+    <origin xyz="0.0205 -0 -0.0343" rpy="1.5708 -1.54715 -1.5708"/>
+    <parent link="dm_j4310_1_2_step_2"/>
+    <child link="j8_a_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-1.54715" upper="1.59445"/>
+  </joint>
+  <!-- Joint from j6_a_3_step to dm_j4310_1_2_step_2 -->
+  <joint name="r_wrist_roll_mimic" type="revolute">
+    <origin xyz="0.0342895 -0.000848696 -0.1205" rpy="-1.5708 -0.0176931 -1.59554"/>
+    <parent link="j6_a_3_step"/>
+    <child link="dm_j4310_1_2_step_2"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-3.141592653589793" upper="3.141592653589793"/>
+    <mimic joint="r_wrist_roll" multiplier="-1.0"/>
+  </joint>
+  <!-- Joint from dm_j4310_1_2_step to j6_a_3_step -->
+  <joint name="r_wrist_yaw" type="revolute">
+    <origin xyz="-0 0.0955 0.0315" rpy="1.5708 -0 0"/>
+    <parent link="dm_j4310_1_2_step"/>
+    <child link="j6_a_3_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-1.54605" upper="1.59554"/>
+  </joint>
+  <!-- Joint from dm_j4340_2_step to dm_j4310_1_2_step -->
+  <joint name="r_elbow" type="revolute">
+    <origin xyz="-1.97166e-05 -0.03155 -0.15375" rpy="-1.5708 -5.7e-11 -0.000624931"/>
+    <parent link="dm_j4340_2_step"/>
+    <child link="dm_j4310_1_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-2.44346" upper="5.7e-11"/>
+  </joint>
+  <!-- Joint from j2_b_2_step to dm_j4340_2_step -->
+  <joint name="r_arm_yaw" type="revolute">
+    <origin xyz="-0 -0.06625 0.0301" rpy="-1.5708 -1.5708 0"/>
+    <parent link="j2_b_2_step"/>
+    <child link="dm_j4340_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-1.57017" upper="1.57142"/>
+  </joint>
+  <!-- Joint from dm_j8009p_2_step_1 to j2_b_2_step -->
+  <joint name="r_arm_roll" type="revolute">
+    <origin xyz="-0.0301 -0 -0.06" rpy="-1.5708 -1.56864 -1.5708"/>
+    <parent link="dm_j8009p_2_step_1"/>
+    <child link="j2_b_2_step"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-3.31828" upper="0.172375"/>
+  </joint>
+  <!-- Joint from hfsb6_6060_750_1_step to dm_j8009p_2_step_1 -->
+  <joint name="r_arm_pitch" type="revolute">
+    <origin xyz="-0 -0.0925 0.689" rpy="-1.5708 0.00627138 -0"/>
+    <parent link="hfsb6_6060_750_1_step"/>
+    <child link="dm_j8009p_2_step_1"/>
+    <axis xyz="0 0 1"/>
+    <limit effort="10" velocity="10" lower="-3.00627" upper="0.993715"/>
   </joint>
 </robot>
