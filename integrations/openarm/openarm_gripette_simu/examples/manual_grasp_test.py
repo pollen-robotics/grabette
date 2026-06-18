@@ -28,9 +28,9 @@ Trajectory phases (recorded-frame counts at 50 fps -> 20 ms / frame):
     5. Close (ramp gripper ctrl)                   ~25 frames
     6. Hold closed                                 ~25 frames
     7. Lift: grasp_pose -> +10 cm                  ~30 frames
-    8. Retract: lift_pose -> home + extra          ~50 frames
-    9. Final settle                                ~15 frames
-Total ~270 frames per episode (~5.4 s at 50 fps).
+    8. Final settle (hold at lift)                 ~15 frames
+       The task ends here: grasp-and-lift, no retract back to home.
+Total ~220 frames per episode (~4.4 s at 50 fps).
 
 Success: cube z lifted by >= 5 cm.
 
@@ -58,7 +58,6 @@ from grabette_trajectory import (  # noqa: E402
     LIFT_SUCCESS_THRESHOLD,
     PROXIMAL_CLOSED,
     PROXIMAL_OPEN,
-    RETRACT_EXTRA,
     SENTRY_OFFSET,
     grasp_pos_for_cube,
     mid_approach_pose,
@@ -87,7 +86,6 @@ STEPS_HOLD = 100                # 5 frames — short hold so cube gets
                                 # lifted before slipping out of a tilted
                                 # V-pocket
 STEPS_LIFT = 600                # 30 frames
-STEPS_RETRACT = 1000            # 50 frames
 STEPS_FINAL_SETTLE = 300        # 15 frames
 
 
@@ -304,17 +302,10 @@ def run_trial(scene_xml: Path, rng: np.random.Generator, use_viewer: bool = Fals
         prox_id, dist_id, viewer_handle,
     )
 
-    # 12. Retract: lift_target -> home + 10 cm extra, slerp orientation back
-    retract_target = home_xyz + np.array([0.0, 0.0, RETRACT_EXTRA])
-    run_smooth_segment(
-        sim, mocap_id,
-        lift_target, grasp_quat, retract_target, home_quat,
-        STEPS_RETRACT, (PROXIMAL_CLOSED, DISTAL_CLOSED),
-        prox_id, dist_id, viewer_handle,
-    )
-
-    # 13. Final settle
-    hold_mocap(sim, mocap_id, retract_target, home_quat,
+    # 12. Final settle — hold at the lifted pose to confirm the grasp is stable.
+    # The task ends here: grasp-and-lift, no retract back to home (matches the
+    # data collector, collect_grasp_dataset.run_episode).
+    hold_mocap(sim, mocap_id, lift_target, grasp_quat,
                STEPS_FINAL_SETTLE, (PROXIMAL_CLOSED, DISTAL_CLOSED),
                prox_id, dist_id, viewer_handle)
 
@@ -328,7 +319,6 @@ def run_trial(scene_xml: Path, rng: np.random.Generator, use_viewer: bool = Fals
         + np.linalg.norm(sentry_xyz - mid_xyz)
         + np.linalg.norm(grasp_xyz - sentry_xyz)
         + np.linalg.norm(lift_target - grasp_xyz)
-        + np.linalg.norm(retract_target - lift_target)
     )
 
     if viewer_handle is not None:

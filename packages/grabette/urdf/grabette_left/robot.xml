@@ -16,314 +16,311 @@
     </default>
   </default>
   <worldbody>
-    <!-- Link proximal_bend_l -->
-    <body name="proximal_bend_l" pos="0 0 0" quat="1 0 0 0" childclass="grabette_left">
-      <freejoint name="proximal_bend_l_freejoint"/>
-      <inertial pos="-0.019149 0.0136249 -0.0295442" mass="0.0324903" fullinertia="5.74845e-05 5.32659e-05 1.37202e-05 2.45216e-06 -5.37656e-07 -7.01926e-06"/>
+    <!-- Link grip_l -->
+    <body name="grip_l" pos="0 0 0" quat="1 0 0 0" childclass="grabette_left">
+      <freejoint name="grip_l_freejoint"/>
+      <inertial pos="0.0240646 -0.0278499 -0.027438" mass="0.255807" fullinertia="0.000771636 0.00108165 0.000572696 -9.6858e-05 -0.000175444 1.16152e-05"/>
       <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default -->
-      <geom type="mesh" class="visual" pos="-0.0243773 -0.00769107 -0.1002" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <geom type="mesh" class="collision" pos="-0.0243773 -0.00769107 -0.1002" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <!-- Part proximal_shell_l -->
-      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 -0 -0 -0" mesh="proximal_shell_l" material="proximal_shell_l_material"/>
-      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 -0 -0 -0" mesh="proximal_shell_l" material="proximal_shell_l_material"/>
+      <geom type="mesh" class="visual" pos="0.0263486 -0.0394281 0.0598084" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0263486 -0.0394281 0.0598084" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
       <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_2 -->
-      <geom type="mesh" class="visual" pos="-0 -0 -0.1067" quat="1 -0 0 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <geom type="mesh" class="collision" pos="-0 -0 -0.1067" quat="1 -0 0 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <!-- Part proximal_bend_l -->
-      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 -0 -0 -0" mesh="proximal_bend_l" material="proximal_bend_l_material"/>
-      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 -0 -0 -0" mesh="proximal_bend_l" material="proximal_bend_l_material"/>
-      <!-- Part part_1__configuration_copy_of_2x5 -->
-      <geom type="mesh" class="visual" pos="-0.0375014 0.033803 0.00914" quat="0 0.342017 -0.939694 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <geom type="mesh" class="collision" pos="-0.0375014 0.033803 0.00914" quat="0 0.342017 -0.939694 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <!-- Part pivot_bot_l -->
-      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 -0 -0 -0" mesh="pivot_bot_l" material="pivot_bot_l_material"/>
-      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 -0 -0 -0" mesh="pivot_bot_l" material="pivot_bot_l_material"/>
-      <!-- Part part_1__configuration_copy_of_2x5_2 -->
-      <geom type="mesh" class="visual" pos="-0.00536235 -0.00449947 0.00914" quat="0 0.342017 -0.939694 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <geom type="mesh" class="collision" pos="-0.00536235 -0.00449947 0.00914" quat="0 0.342017 -0.939694 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+      <geom type="mesh" class="visual" pos="0.0259436 -0.0596 0.0172" quat="0.707107 -0.707107 -0 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0259436 -0.0596 0.0172" quat="0.707107 -0.707107 -0 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
       <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_3 -->
-      <geom type="mesh" class="visual" pos="-0.0246107 -0.00724886 -0.0507" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <geom type="mesh" class="collision" pos="-0.0246107 -0.00724886 -0.0507" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="visual" pos="0.0966323 0.0249261 -0.0232" quat="0.693063 0.693063 -0.140229 -0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0966323 0.0249261 -0.0232" quat="0.693063 0.693063 -0.140229 -0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part cameras_holder_l -->
+      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 0 -0 -0" mesh="cameras_holder_l" material="cameras_holder_l_material"/>
+      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 0 -0 -0" mesh="cameras_holder_l" material="cameras_holder_l_material"/>
+      <!-- Part hmi -->
+      <geom type="mesh" class="visual" pos="0.0694271 -0.0183 0.00404" quat="0 0.843391 0.5373 0" mesh="hmi" material="hmi_material"/>
+      <geom type="mesh" class="collision" pos="0.0694271 -0.0183 0.00404" quat="0 0.843391 0.5373 0" mesh="hmi" material="hmi_material"/>
+      <!-- Part grip_shell_l -->
+      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 0 0 0" mesh="grip_shell_l" material="grip_shell_l_material"/>
+      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 0 0 0" mesh="grip_shell_l" material="grip_shell_l_material"/>
+      <!-- Part raspi_box_l -->
+      <geom type="mesh" class="visual" pos="0.156727 -0.040775 -0.0933453" quat="0.707107 0 0 -0.707107" mesh="raspi_box_l" material="raspi_box_l_material"/>
+      <geom type="mesh" class="collision" pos="0.156727 -0.040775 -0.0933453" quat="0.707107 0 0 -0.707107" mesh="raspi_box_l" material="raspi_box_l_material"/>
+      <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1 -->
+      <geom type="mesh" class="visual" pos="0.00484864 -0.056 0.0322246" quat="0.707107 0.707107 0 -0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <geom type="mesh" class="collision" pos="0.00484864 -0.056 0.0322246" quat="0.707107 0.707107 0 -0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <!-- Part part_1__configuration_copy_of_2x5 -->
+      <geom type="mesh" class="visual" pos="0.0575889 -0.0271237 0.00554" quat="0 0.5373 -0.843391 0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+      <geom type="mesh" class="collision" pos="0.0575889 -0.0271237 0.00554" quat="0 0.5373 -0.843391 0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+      <!-- Part arducam_fisheye -->
+      <geom type="mesh" class="visual" pos="0.0408486 -0.0374758 0.0745284" quat="0.40558 -0.579228 0.579228 0.40558" mesh="arducam_fisheye" material="arducam_fisheye_material"/>
+      <geom type="mesh" class="collision" pos="0.0408486 -0.0374758 0.0745284" quat="0.40558 -0.579228 0.579228 0.40558" mesh="arducam_fisheye" material="arducam_fisheye_material"/>
       <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_4 -->
-      <geom type="mesh" class="visual" pos="-0.037678 0.017515 -0.0507" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <geom type="mesh" class="collision" pos="-0.037678 0.017515 -0.0507" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <!-- Part bushing_6x8x4 -->
-      <geom type="mesh" class="visual" pos="-0.0321391 0.0383025 -0.0464" quat="0 1 -0 0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <geom type="mesh" class="collision" pos="-0.0321391 0.0383025 -0.0464" quat="0 1 -0 0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+      <geom type="mesh" class="visual" pos="0.0553486 -0.0295095 0.0870595" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0553486 -0.0295095 0.0870595" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part part_1__configuration_copy_of_2x5_2 -->
+      <geom type="mesh" class="visual" pos="0.0812652 -0.00947633 0.00554" quat="0 0.5373 -0.843391 0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+      <geom type="mesh" class="collision" pos="0.0812652 -0.00947633 0.00554" quat="0 0.5373 -0.843391 0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
       <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_5 -->
-      <geom type="mesh" class="visual" pos="-0.0285775 0.000268728 -0.1002" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <geom type="mesh" class="collision" pos="-0.0285775 0.000268728 -0.1002" quat="0.169984 -0.686371 -0.169984 -0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-      <!-- Part plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5 -->
-      <geom type="mesh" class="visual" pos="-0 -0 -0.1048" quat="0 1 -0 0" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
-      <geom type="mesh" class="collision" pos="-0 -0 -0.1048" quat="0 1 -0 0" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
-      <!-- Part bushing_6x8x4_2 -->
-      <geom type="mesh" class="visual" pos="-0 0 -0" quat="0 -0 0 1" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <geom type="mesh" class="collision" pos="-0 0 -0" quat="0 -0 0 1" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <!-- Part part_1__configuration_copy_of_2x5_3 -->
-      <geom type="mesh" class="visual" pos="-0.0267767 0.0428019 0.00914" quat="0 -0.939694 -0.342017 0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <geom type="mesh" class="collision" pos="-0.0267767 0.0428019 0.00914" quat="0 -0.939694 -0.342017 0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <!-- Part bushing_6x8x4_3 -->
-      <geom type="mesh" class="visual" pos="-0.0321391 0.0383025 -0" quat="1 -0 -0 -0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <geom type="mesh" class="collision" pos="-0.0321391 0.0383025 -0" quat="1 -0 -0 -0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <!-- Part bushing_6x8x4_4 -->
-      <geom type="mesh" class="visual" pos="-0 -0 -0.1005" quat="0 1 -0 0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <geom type="mesh" class="collision" pos="-0 -0 -0.1005" quat="0 1 -0 0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
-      <!-- Part sensor -->
-      <geom type="mesh" class="visual" pos="0.00123268 0.0140883 0.0068" quat="0.906306 0 0 -0.422622" mesh="sensor" material="sensor_material"/>
-      <geom type="mesh" class="collision" pos="0.00123268 0.0140883 0.0068" quat="0.906306 0 0 -0.422622" mesh="sensor" material="sensor_material"/>
-      <!-- Part part_1__configuration_copy_of_2x5_4 -->
-      <geom type="mesh" class="visual" pos="0.00536235 0.00449947 0.00914" quat="0 0.342017 -0.939694 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <geom type="mesh" class="collision" pos="0.00536235 0.00449947 0.00914" quat="0 0.342017 -0.939694 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-      <!-- Part sensor_2 -->
-      <geom type="mesh" class="visual" pos="-0.0333718 0.0242142 0.0068" quat="0.422622 0 -0 0.906306" mesh="sensor" material="sensor_material"/>
-      <geom type="mesh" class="collision" pos="-0.0333718 0.0242142 0.0068" quat="0.422622 0 -0 0.906306" mesh="sensor" material="sensor_material"/>
-      <!-- Link distal_l -->
-      <body name="distal_l" pos="-0.0321391 0.0383025 -0" quat="1 -0 -0 -0">
-        <!-- Joint from proximal_bend_l to distal_l -->
-        <joint axis="0 0 1" name="distal" type="hinge" range="-1.5707963267948966 0.0"/>
-        <inertial pos="-0.0104681 0.0190995 -0.023707" mass="0.0254111" fullinertia="1.18331e-05 8.7926e-06 7.48869e-06 1.30414e-06 1.3505e-07 -2.46366e-07"/>
-        <!-- Part distal_l -->
-        <geom type="mesh" class="visual" pos="0.242583 -0.0225751 0.001" quat="1 -0 -0 0" mesh="distal_l" material="distal_l_material"/>
-        <geom type="mesh" class="collision" pos="0.242583 -0.0225751 0.001" quat="1 -0 -0 0" mesh="distal_l" material="distal_l_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_6 -->
-        <geom type="mesh" class="visual" pos="0 0 -0.0528" quat="1 -0 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="0 0 -0.0528" quat="1 -0 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_7 -->
-        <geom type="mesh" class="visual" pos="-0.0251042 0.0257931 -0.0232" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0251042 0.0257931 -0.0232" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part radial_magnet__configuration__4x2mm -->
-        <geom type="mesh" class="visual" pos="-0 -0 0.002" quat="1 -0 -0 0" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
-        <geom type="mesh" class="collision" pos="-0 -0 0.002" quat="1 -0 -0 0" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
-        <!-- Part distal_soft_tip -->
-        <geom type="mesh" class="visual" pos="0.0425827 -0.0225751 -0.0474" quat="0 -0 1 -0" mesh="distal_soft_tip" material="distal_soft_tip_material"/>
-        <geom type="mesh" class="collision" pos="0.0425827 -0.0225751 -0.0474" quat="0 -0 1 -0" mesh="distal_soft_tip" material="distal_soft_tip_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_8 -->
-        <geom type="mesh" class="visual" pos="-0.0114064 0.0331157 -0.0422" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0114064 0.0331157 -0.0422" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_9 -->
-        <geom type="mesh" class="visual" pos="-0.0114064 0.0331157 -0.0042" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0114064 0.0331157 -0.0042" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_2 -->
-        <geom type="mesh" class="visual" pos="0 0 -0.0509" quat="0 1 0 0" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
-        <geom type="mesh" class="collision" pos="0 0 -0.0509" quat="0 1 0 0" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
-        <!-- Frame finger_tip -->
-        <site group="3" name="finger_tip" pos="-0.0243384 0.0565209 -0.0232" quat="0.670835 -0.670835 0.223562 -0.223562"/>
-      </body>
-      <!-- Link grip_l -->
-      <body name="grip_l" pos="-0 0 -0" quat="0 -0 0 1">
-        <!-- Joint from proximal_bend_l to grip_l -->
+      <geom type="mesh" class="visual" pos="-0.0196729 -0.040775 -0.0883453" quat="0.707107 -0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0196729 -0.040775 -0.0883453" quat="0.707107 -0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_6 -->
+      <geom type="mesh" class="visual" pos="0.0819628 0.0300304 -0.0422" quat="0.693063 0.693063 -0.140229 -0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0819628 0.0300304 -0.0422" quat="0.693063 0.693063 -0.140229 -0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_7 -->
+      <geom type="mesh" class="visual" pos="0.0263486 -0.0295095 0.0870595" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0263486 -0.0295095 0.0870595" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_8 -->
+      <geom type="mesh" class="visual" pos="0.0819628 0.0300304 -0.0042" quat="0.693063 0.693063 -0.140229 -0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0819628 0.0300304 -0.0042" quat="0.693063 0.693063 -0.140229 -0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part button -->
+      <geom type="mesh" class="visual" pos="0.0753388 -0.0861377 0.00188" quat="0.5373 0 0 -0.843391" mesh="button" material="button_material"/>
+      <geom type="mesh" class="collision" pos="0.0753388 -0.0861377 0.00188" quat="0.5373 0 0 -0.843391" mesh="button" material="button_material"/>
+      <!-- Part grip_l -->
+      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 0 0 0" mesh="grip_l" material="grip_l_material"/>
+      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 0 0 0" mesh="grip_l" material="grip_l_material"/>
+      <!-- Part radial_magnet__configuration__4x2mm -->
+      <geom type="mesh" class="visual" pos="0 0 0.002" quat="1 -0 -0 0" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
+      <geom type="mesh" class="collision" pos="0 0 0.002" quat="1 -0 -0 0" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_9 -->
+      <geom type="mesh" class="visual" pos="0.0559436 -0.0596 0.0172" quat="0.707107 -0.707107 -0 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0559436 -0.0596 0.0172" quat="0.707107 -0.707107 -0 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_10 -->
+      <geom type="mesh" class="visual" pos="-0.0228729 -0.021225 -0.0883453" quat="0 -0.707107 0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0228729 -0.021225 -0.0883453" quat="0 -0.707107 0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_2 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.056 0.0322246" quat="0.707107 0.707107 0 -0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.056 0.0322246" quat="0.707107 0.707107 0 -0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_11 -->
+      <geom type="mesh" class="visual" pos="-0.0228729 -0.040775 -0.0383453" quat="0 -0.707107 0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0228729 -0.040775 -0.0383453" quat="0 -0.707107 0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part grip_soft_tip_l -->
+      <geom type="mesh" class="visual" pos="0.210444 0.0157273 0.001" quat="1 0 0 -0" mesh="grip_soft_tip_l" material="grip_soft_tip_l_material"/>
+      <geom type="mesh" class="collision" pos="0.210444 0.0157273 0.001" quat="1 0 0 -0" mesh="grip_soft_tip_l" material="grip_soft_tip_l_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_12 -->
+      <geom type="mesh" class="visual" pos="-0.0228729 -0.021225 -0.0383453" quat="0 -0.707107 0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0228729 -0.021225 -0.0383453" quat="0 -0.707107 0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_13 -->
+      <geom type="mesh" class="visual" pos="0.0553486 -0.0394281 0.0598084" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0553486 -0.0394281 0.0598084" quat="0 -0 0.573576 -0.819152" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b -->
+      <geom type="mesh" class="visual" pos="-0.0530179 -0.016075 -0.0875569" quat="0.707107 0 -0.707107 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
+      <geom type="mesh" class="collision" pos="-0.0530179 -0.016075 -0.0875569" quat="0.707107 0 -0.707107 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
+      <!-- Part spacer_h8_5 -->
+      <geom type="mesh" class="visual" pos="-0.0415779 0.0249758 -0.0875569" quat="0.707107 0 -0.707107 0" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
+      <geom type="mesh" class="collision" pos="-0.0415779 0.0249758 -0.0875569" quat="0.707107 0 -0.707107 0" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
+      <!-- Part spacer_h8_5_2 -->
+      <geom type="mesh" class="visual" pos="-0.0415779 0.0249758 -0.0295569" quat="0.707107 0 -0.707107 0" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
+      <geom type="mesh" class="collision" pos="-0.0415779 0.0249758 -0.0295569" quat="0.707107 0 -0.707107 0" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
+      <!-- Part raspberry_pi_4_model_b -->
+      <geom type="mesh" class="visual" pos="-0.0407879 -0.040575 -0.0485569" quat="0.5 0.5 -0.5 0.5" mesh="raspberry_pi_4_model_b" material="raspberry_pi_4_model_b_material"/>
+      <geom type="mesh" class="collision" pos="-0.0407879 -0.040575 -0.0485569" quat="0.5 0.5 -0.5 0.5" mesh="raspberry_pi_4_model_b" material="raspberry_pi_4_model_b_material"/>
+      <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_2 -->
+      <geom type="mesh" class="visual" pos="-0.0530179 -0.016075 -0.0295569" quat="0.707107 0 -0.707107 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
+      <geom type="mesh" class="collision" pos="-0.0530179 -0.016075 -0.0295569" quat="0.707107 0 -0.707107 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
+      <!-- Part pisugar3plus -->
+      <geom type="mesh" class="visual" pos="-0.0373979 -0.0405815 -0.058576" quat="0.5 -0.5 0.5 0.5" mesh="pisugar3plus" material="pisugar3plus_material"/>
+      <geom type="mesh" class="collision" pos="-0.0373979 -0.0405815 -0.058576" quat="0.5 -0.5 0.5 0.5" mesh="pisugar3plus" material="pisugar3plus_material"/>
+      <!-- Part ase01187_elec_rpi_hat -->
+      <geom type="mesh" class="visual" pos="-0.0500779 -0.016525 -0.0875569" quat="0.707107 0 -0.707107 0" mesh="ase01187_elec_rpi_hat" material="ase01187_elec_rpi_hat_material"/>
+      <geom type="mesh" class="collision" pos="-0.0500779 -0.016525 -0.0875569" quat="0.707107 0 -0.707107 0" mesh="ase01187_elec_rpi_hat" material="ase01187_elec_rpi_hat_material"/>
+      <!-- Part pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46 -->
+      <geom type="mesh" class="visual" pos="-0.0436779 -0.065075 -0.0875569" quat="0.707107 0 -0.707107 -0" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
+      <geom type="mesh" class="collision" pos="-0.0436779 -0.065075 -0.0875569" quat="0.707107 0 -0.707107 -0" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
+      <!-- Part pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_2 -->
+      <geom type="mesh" class="visual" pos="-0.0436779 -0.065075 -0.0295569" quat="0.707107 0 -0.707107 -0" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
+      <geom type="mesh" class="collision" pos="-0.0436779 -0.065075 -0.0295569" quat="0.707107 0 -0.707107 -0" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
+      <!-- Part 611_00020_1 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="611_00020_1" material="611_00020_1_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="611_00020_1" material="611_00020_1_material"/>
+      <!-- Part 611_00020 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="611_00020" material="611_00020_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="611_00020" material="611_00020_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material"/>
+      <!-- Part sr_lens_py058 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="sr_lens_py058" material="sr_lens_py058_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="sr_lens_py058" material="sr_lens_py058_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material"/>
+      <!-- Part 612_00001_tim_thermal_oak_d_poe -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="612_00001_tim_thermal_oak_d_poe" material="612_00001_tim_thermal_oak_d_poe_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="612_00001_tim_thermal_oak_d_poe" material="612_00001_tim_thermal_oak_d_poe_material"/>
+      <!-- Part lens_adhesive -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="lens_adhesive" material="lens_adhesive_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="lens_adhesive" material="lens_adhesive_material"/>
+      <!-- Part 606_00021_sr_back_cover_py074 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="606_00021_sr_back_cover_py074" material="606_00021_sr_back_cover_py074_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="606_00021_sr_back_cover_py074" material="606_00021_sr_back_cover_py074_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3 -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material"/>
+      <!-- Part 606_00020_sr_front_cover -->
+      <geom type="mesh" class="visual" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material"/>
+      <geom type="mesh" class="collision" pos="0.0498486 -0.0325 0.0168246" quat="0 0 0.707107 0.707107" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material"/>
+      <!-- Frame camera -->
+      <site group="3" name="camera" pos="0.0408486 -0.0255417 0.0701847" quat="0 0 -0.819152 -0.573576"/>
+      <!-- Frame oak_l -->
+      <site group="3" name="oak_l" pos="0.0173486 -0.025667 0.0298246" quat="0.707107 -0.707107 -0 -0"/>
+      <!-- Frame oak_r -->
+      <site group="3" name="oak_r" pos="0.0373486 -0.025667 0.0298246" quat="0.707107 -0.707107 -0 -0"/>
+      <!-- Frame gripper_base -->
+      <site group="3" name="gripper_base" pos="0.0337996 -0.055 -0.0232" quat="0.707107 0.707107 0 0"/>
+      <!-- Frame gripper_center -->
+      <site group="3" name="gripper_center" pos="0.0373485 0.0335873 -0.0232" quat="0.707107 0 0 0.707107"/>
+      <!-- Frame thumb_tip -->
+      <site group="3" name="thumb_tip" pos="0.0910992 0.0551614 -0.0232" quat="0.651364 -0.651364 -0.275181 0.275181"/>
+      <!-- Link proximal_bend_l -->
+      <body name="proximal_bend_l" pos="-0 0 -0" quat="0 0 1 -0">
+        <!-- Joint from grip_l to proximal_bend_l -->
         <joint axis="0 0 1" name="proximal" type="hinge" range="-3.552713678800501e-15 1.570796326794893"/>
-        <inertial pos="-0.0240645 0.0278499 -0.027438" mass="0.255808" fullinertia="0.000771637 0.00108165 0.000572697 -9.6858e-05 0.000175445 -1.16152e-05"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_10 -->
-        <geom type="mesh" class="visual" pos="-0.0263486 0.0394281 0.0598084" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0263486 0.0394281 0.0598084" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_11 -->
-        <geom type="mesh" class="visual" pos="-0.0259436 0.0596 0.0172" quat="0 -0 0.707107 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0259436 0.0596 0.0172" quat="0 -0 0.707107 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_12 -->
-        <geom type="mesh" class="visual" pos="-0.0966323 -0.0249261 -0.0232" quat="0.140229 0.140229 0.693063 0.693063" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0966323 -0.0249261 -0.0232" quat="0.140229 0.140229 0.693063 0.693063" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part cameras_holder_l -->
-        <geom type="mesh" class="visual" pos="-0.210444 -0.0157273 0.001" quat="0 -0 0 -1" mesh="cameras_holder_l" material="cameras_holder_l_material"/>
-        <geom type="mesh" class="collision" pos="-0.210444 -0.0157273 0.001" quat="0 -0 0 -1" mesh="cameras_holder_l" material="cameras_holder_l_material"/>
-        <!-- Part hmi -->
-        <geom type="mesh" class="visual" pos="-0.0694271 0.0183 0.00404" quat="0 0.5373 -0.843391 0" mesh="hmi" material="hmi_material"/>
-        <geom type="mesh" class="collision" pos="-0.0694271 0.0183 0.00404" quat="0 0.5373 -0.843391 0" mesh="hmi" material="hmi_material"/>
-        <!-- Part grip_shell_l -->
-        <geom type="mesh" class="visual" pos="-0.210444 -0.0157273 0.001" quat="0 -0 0 -1" mesh="grip_shell_l" material="grip_shell_l_material"/>
-        <geom type="mesh" class="collision" pos="-0.210444 -0.0157273 0.001" quat="0 -0 0 -1" mesh="grip_shell_l" material="grip_shell_l_material"/>
-        <!-- Part raspi_box_l -->
-        <geom type="mesh" class="visual" pos="-0.156727 0.040775 -0.0933453" quat="0.707107 -0 0 0.707107" mesh="raspi_box_l" material="raspi_box_l_material"/>
-        <geom type="mesh" class="collision" pos="-0.156727 0.040775 -0.0933453" quat="0.707107 -0 0 0.707107" mesh="raspi_box_l" material="raspi_box_l_material"/>
-        <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1 -->
-        <geom type="mesh" class="visual" pos="-0.00484864 0.056 0.0322246" quat="0 0 -0.707107 -0.707107" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
-        <geom type="mesh" class="collision" pos="-0.00484864 0.056 0.0322246" quat="0 0 -0.707107 -0.707107" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
-        <!-- Part part_1__configuration_copy_of_2x5_5 -->
-        <geom type="mesh" class="visual" pos="-0.0575889 0.0271237 0.00554" quat="0 -0.843391 -0.5373 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-        <geom type="mesh" class="collision" pos="-0.0575889 0.0271237 0.00554" quat="0 -0.843391 -0.5373 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-        <!-- Part arducam_fisheye -->
-        <geom type="mesh" class="visual" pos="-0.0408486 0.0374758 0.0745284" quat="0.40558 0.579228 0.579228 -0.40558" mesh="arducam_fisheye" material="arducam_fisheye_material"/>
-        <geom type="mesh" class="collision" pos="-0.0408486 0.0374758 0.0745284" quat="0.40558 0.579228 0.579228 -0.40558" mesh="arducam_fisheye" material="arducam_fisheye_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_13 -->
-        <geom type="mesh" class="visual" pos="-0.0553486 0.0295095 0.0870595" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0553486 0.0295095 0.0870595" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part part_1__configuration_copy_of_2x5_6 -->
-        <geom type="mesh" class="visual" pos="-0.0812652 0.00947633 0.00554" quat="0 -0.843391 -0.5373 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
-        <geom type="mesh" class="collision" pos="-0.0812652 0.00947633 0.00554" quat="0 -0.843391 -0.5373 -0" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <inertial pos="0.019149 0.0136249 0.0295442" mass="0.0324903" fullinertia="5.74845e-05 5.32659e-05 1.37202e-05 -2.45216e-06 -5.37656e-07 7.01926e-06"/>
         <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_14 -->
-        <geom type="mesh" class="visual" pos="0.0196729 0.040775 -0.0883453" quat="0 -0.707107 -0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="0.0196729 0.040775 -0.0883453" quat="0 -0.707107 -0 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="visual" pos="0.0243773 -0.00769107 0.1002" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="0.0243773 -0.00769107 0.1002" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <!-- Part proximal_shell_l -->
+        <geom type="mesh" class="visual" pos="-0.210444 0.0157273 -0.001" quat="0 -0 1 0" mesh="proximal_shell_l" material="proximal_shell_l_material"/>
+        <geom type="mesh" class="collision" pos="-0.210444 0.0157273 -0.001" quat="0 -0 1 0" mesh="proximal_shell_l" material="proximal_shell_l_material"/>
         <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_15 -->
-        <geom type="mesh" class="visual" pos="-0.0819628 -0.0300304 -0.0422" quat="0.140229 0.140229 0.693063 0.693063" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0819628 -0.0300304 -0.0422" quat="0.140229 0.140229 0.693063 0.693063" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="visual" pos="0 -0 0.1067" quat="0 0 -1 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="0 -0 0.1067" quat="0 0 -1 -0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <!-- Part proximal_bend_l -->
+        <geom type="mesh" class="visual" pos="-0.210444 0.0157273 -0.001" quat="0 -0 1 -0" mesh="proximal_bend_l" material="proximal_bend_l_material"/>
+        <geom type="mesh" class="collision" pos="-0.210444 0.0157273 -0.001" quat="0 -0 1 -0" mesh="proximal_bend_l" material="proximal_bend_l_material"/>
+        <!-- Part part_1__configuration_copy_of_2x5_3 -->
+        <geom type="mesh" class="visual" pos="0.0375014 0.033803 -0.00914" quat="0.939694 -0 0 -0.342017" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <geom type="mesh" class="collision" pos="0.0375014 0.033803 -0.00914" quat="0.939694 -0 0 -0.342017" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <!-- Part pivot_bot_l -->
+        <geom type="mesh" class="visual" pos="-0.210444 0.0157273 -0.001" quat="0 -0 1 0" mesh="pivot_bot_l" material="pivot_bot_l_material"/>
+        <geom type="mesh" class="collision" pos="-0.210444 0.0157273 -0.001" quat="0 -0 1 0" mesh="pivot_bot_l" material="pivot_bot_l_material"/>
+        <!-- Part part_1__configuration_copy_of_2x5_4 -->
+        <geom type="mesh" class="visual" pos="0.00536235 -0.00449947 -0.00914" quat="0.939694 -0 0 -0.342017" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <geom type="mesh" class="collision" pos="0.00536235 -0.00449947 -0.00914" quat="0.939694 -0 0 -0.342017" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
         <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_16 -->
-        <geom type="mesh" class="visual" pos="-0.0263486 0.0295095 0.0870595" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0263486 0.0295095 0.0870595" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="visual" pos="0.0246107 -0.00724886 0.0507" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="0.0246107 -0.00724886 0.0507" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
         <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_17 -->
-        <geom type="mesh" class="visual" pos="-0.0819628 -0.0300304 -0.0042" quat="0.140229 0.140229 0.693063 0.693063" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0819628 -0.0300304 -0.0042" quat="0.140229 0.140229 0.693063 0.693063" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part button -->
-        <geom type="mesh" class="visual" pos="-0.0753388 0.0861377 0.00188" quat="0.843391 -0 0 0.5373" mesh="button" material="button_material"/>
-        <geom type="mesh" class="collision" pos="-0.0753388 0.0861377 0.00188" quat="0.843391 -0 0 0.5373" mesh="button" material="button_material"/>
-        <!-- Part grip_l -->
-        <geom type="mesh" class="visual" pos="-0.210444 -0.0157273 0.001" quat="0 0 0 -1" mesh="grip_l" material="grip_l_material"/>
-        <geom type="mesh" class="collision" pos="-0.210444 -0.0157273 0.001" quat="0 0 0 -1" mesh="grip_l" material="grip_l_material"/>
-        <!-- Part radial_magnet__configuration__4x2mm_2 -->
-        <geom type="mesh" class="visual" pos="-0 0 0.002" quat="0 0 0 -1" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
-        <geom type="mesh" class="collision" pos="-0 0 0.002" quat="0 0 0 -1" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
+        <geom type="mesh" class="visual" pos="0.037678 0.017515 0.0507" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="0.037678 0.017515 0.0507" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <!-- Part bushing_6x8x4 -->
+        <geom type="mesh" class="visual" pos="0.0321391 0.0383025 0.0464" quat="0 0 0 -1" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <geom type="mesh" class="collision" pos="0.0321391 0.0383025 0.0464" quat="0 0 0 -1" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
         <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_18 -->
-        <geom type="mesh" class="visual" pos="-0.0559436 0.0596 0.0172" quat="0 -0 0.707107 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0559436 0.0596 0.0172" quat="0 -0 0.707107 -0.707107" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_19 -->
-        <geom type="mesh" class="visual" pos="0.0228729 0.021225 -0.0883453" quat="0.707107 0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="0.0228729 0.021225 -0.0883453" quat="0.707107 0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_2 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.056 0.0322246" quat="0 0 -0.707107 -0.707107" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.056 0.0322246" quat="0 0 -0.707107 -0.707107" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_20 -->
-        <geom type="mesh" class="visual" pos="0.0228729 0.040775 -0.0383453" quat="0.707107 0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="0.0228729 0.040775 -0.0383453" quat="0.707107 0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part grip_soft_tip_l -->
-        <geom type="mesh" class="visual" pos="-0.210444 -0.0157273 0.001" quat="0 0 0 -1" mesh="grip_soft_tip_l" material="grip_soft_tip_l_material"/>
-        <geom type="mesh" class="collision" pos="-0.210444 -0.0157273 0.001" quat="0 0 0 -1" mesh="grip_soft_tip_l" material="grip_soft_tip_l_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_21 -->
-        <geom type="mesh" class="visual" pos="0.0228729 0.021225 -0.0383453" quat="0.707107 0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="0.0228729 0.021225 -0.0383453" quat="0.707107 0 -0.707107 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_22 -->
-        <geom type="mesh" class="visual" pos="-0.0553486 0.0394281 0.0598084" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <geom type="mesh" class="collision" pos="-0.0553486 0.0394281 0.0598084" quat="0.819152 -0.573576 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
-        <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b -->
-        <geom type="mesh" class="visual" pos="0.0530179 0.016075 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
-        <geom type="mesh" class="collision" pos="0.0530179 0.016075 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
-        <!-- Part spacer_h8_5 -->
-        <geom type="mesh" class="visual" pos="0.0415779 -0.0249758 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
-        <geom type="mesh" class="collision" pos="0.0415779 -0.0249758 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
-        <!-- Part spacer_h8_5_2 -->
-        <geom type="mesh" class="visual" pos="0.0415779 -0.0249758 -0.0295569" quat="0 -0.707107 -0 -0.707107" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
-        <geom type="mesh" class="collision" pos="0.0415779 -0.0249758 -0.0295569" quat="0 -0.707107 -0 -0.707107" mesh="spacer_h8_5" material="spacer_h8_5_material"/>
-        <!-- Part raspberry_pi_4_model_b -->
-        <geom type="mesh" class="visual" pos="0.0407879 0.040575 -0.0485569" quat="0.5 -0.5 -0.5 -0.5" mesh="raspberry_pi_4_model_b" material="raspberry_pi_4_model_b_material"/>
-        <geom type="mesh" class="collision" pos="0.0407879 0.040575 -0.0485569" quat="0.5 -0.5 -0.5 -0.5" mesh="raspberry_pi_4_model_b" material="raspberry_pi_4_model_b_material"/>
-        <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_2 -->
-        <geom type="mesh" class="visual" pos="0.0530179 0.016075 -0.0295569" quat="0 -0.707107 -0 -0.707107" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
-        <geom type="mesh" class="collision" pos="0.0530179 0.016075 -0.0295569" quat="0 -0.707107 -0 -0.707107" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material"/>
-        <!-- Part pisugar3plus -->
-        <geom type="mesh" class="visual" pos="0.0373979 0.0405815 -0.058576" quat="0.5 0.5 0.5 -0.5" mesh="pisugar3plus" material="pisugar3plus_material"/>
-        <geom type="mesh" class="collision" pos="0.0373979 0.0405815 -0.058576" quat="0.5 0.5 0.5 -0.5" mesh="pisugar3plus" material="pisugar3plus_material"/>
-        <!-- Part ase01187_elec_rpi_hat -->
-        <geom type="mesh" class="visual" pos="0.0500779 0.016525 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="ase01187_elec_rpi_hat" material="ase01187_elec_rpi_hat_material"/>
-        <geom type="mesh" class="collision" pos="0.0500779 0.016525 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="ase01187_elec_rpi_hat" material="ase01187_elec_rpi_hat_material"/>
-        <!-- Part pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46 -->
-        <geom type="mesh" class="visual" pos="0.0436779 0.065075 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
-        <geom type="mesh" class="collision" pos="0.0436779 0.065075 -0.0875569" quat="0 -0.707107 -0 -0.707107" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
-        <!-- Part pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_2 -->
-        <geom type="mesh" class="visual" pos="0.0436779 0.065075 -0.0295569" quat="0 -0.707107 -0 -0.707107" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
-        <geom type="mesh" class="collision" pos="0.0436779 0.065075 -0.0295569" quat="0 -0.707107 -0 -0.707107" mesh="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46" material="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46_material"/>
-        <!-- Part 611_00020_1 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="611_00020_1" material="611_00020_1_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="611_00020_1" material="611_00020_1_material"/>
-        <!-- Part 611_00020 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="611_00020" material="611_00020_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="611_00020" material="611_00020_material"/>
-        <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material"/>
-        <!-- Part sr_lens_py058 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="sr_lens_py058" material="sr_lens_py058_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="sr_lens_py058" material="sr_lens_py058_material"/>
-        <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material"/>
-        <!-- Part 612_00001_tim_thermal_oak_d_poe -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="612_00001_tim_thermal_oak_d_poe" material="612_00001_tim_thermal_oak_d_poe_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="612_00001_tim_thermal_oak_d_poe" material="612_00001_tim_thermal_oak_d_poe_material"/>
-        <!-- Part lens_adhesive -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="lens_adhesive" material="lens_adhesive_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="lens_adhesive" material="lens_adhesive_material"/>
-        <!-- Part 606_00021_sr_back_cover_py074 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="606_00021_sr_back_cover_py074" material="606_00021_sr_back_cover_py074_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="606_00021_sr_back_cover_py074" material="606_00021_sr_back_cover_py074_material"/>
-        <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material"/>
-        <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3 -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material"/>
-        <!-- Part 606_00020_sr_front_cover -->
-        <geom type="mesh" class="visual" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material"/>
-        <geom type="mesh" class="collision" pos="-0.0498486 0.0325 0.0168246" quat="0.707107 0.707107 0 0" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material"/>
-        <!-- Frame camera -->
-        <site group="3" name="camera" pos="-0.0408486 0.033623 0.0731261" quat="0.573576 0.819152 0 0"/>
-        <!-- Frame oak_l -->
-        <site group="3" name="oak_l" pos="-0.0173486 0.025667 0.0298246" quat="0 -0 0.707107 -0.707107"/>
-        <!-- Frame oak_r -->
-        <site group="3" name="oak_r" pos="-0.0373486 0.025667 0.0298246" quat="0 -0 0.707107 -0.707107"/>
-        <!-- Frame gripper_base -->
-        <site group="3" name="gripper_base" pos="-0.0337996 0.055 -0.0232" quat="0 0 -0.707107 -0.707107"/>
-        <!-- Frame gripper_center -->
-        <site group="3" name="gripper_center" pos="-0.0373485 -0.0335873 -0.0232" quat="0.707107 -0 -0 -0.707107"/>
-        <!-- Frame thumb_tip -->
-        <site group="3" name="thumb_tip" pos="-0.0910992 -0.0551614 -0.0232" quat="0.275181 -0.275181 0.651364 -0.651364"/>
+        <geom type="mesh" class="visual" pos="0.0285775 0.000268728 0.1002" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="0.0285775 0.000268728 0.1002" quat="0.169984 -0.686371 0.169984 0.686371" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <!-- Part plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5 -->
+        <geom type="mesh" class="visual" pos="0 -0 0.1048" quat="0 -0 0 -1" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
+        <geom type="mesh" class="collision" pos="0 -0 0.1048" quat="0 -0 0 -1" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
+        <!-- Part bushing_6x8x4_2 -->
+        <geom type="mesh" class="visual" pos="0 0 0" quat="0 1 0 0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <geom type="mesh" class="collision" pos="0 0 0" quat="0 1 0 0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <!-- Part part_1__configuration_copy_of_2x5_5 -->
+        <geom type="mesh" class="visual" pos="0.0267767 0.0428019 -0.00914" quat="0.342017 0 0 0.939694" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <geom type="mesh" class="collision" pos="0.0267767 0.0428019 -0.00914" quat="0.342017 0 0 0.939694" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <!-- Part bushing_6x8x4_3 -->
+        <geom type="mesh" class="visual" pos="0.0321391 0.0383025 -0" quat="0 0 -1 -0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <geom type="mesh" class="collision" pos="0.0321391 0.0383025 -0" quat="0 0 -1 -0" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <!-- Part bushing_6x8x4_4 -->
+        <geom type="mesh" class="visual" pos="0 -0 0.1005" quat="0 0 0 -1" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <geom type="mesh" class="collision" pos="0 -0 0.1005" quat="0 0 0 -1" mesh="bushing_6x8x4" material="bushing_6x8x4_material"/>
+        <!-- Part sensor -->
+        <geom type="mesh" class="visual" pos="-0.00123268 0.0140883 -0.0068" quat="0 0.422622 -0.906306 0" mesh="sensor" material="sensor_material"/>
+        <geom type="mesh" class="collision" pos="-0.00123268 0.0140883 -0.0068" quat="0 0.422622 -0.906306 0" mesh="sensor" material="sensor_material"/>
+        <!-- Part part_1__configuration_copy_of_2x5_6 -->
+        <geom type="mesh" class="visual" pos="-0.00536235 0.00449947 -0.00914" quat="0.939694 -0 0 -0.342017" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <geom type="mesh" class="collision" pos="-0.00536235 0.00449947 -0.00914" quat="0.939694 -0 0 -0.342017" mesh="part_1__configuration_copy_of_2x5" material="part_1__configuration_copy_of_2x5_material"/>
+        <!-- Part sensor_2 -->
+        <geom type="mesh" class="visual" pos="0.0333718 0.0242142 -0.0068" quat="0 0.906306 0.422622 -0" mesh="sensor" material="sensor_material"/>
+        <geom type="mesh" class="collision" pos="0.0333718 0.0242142 -0.0068" quat="0 0.906306 0.422622 -0" mesh="sensor" material="sensor_material"/>
+        <!-- Link distal_l -->
+        <body name="distal_l" pos="0.0321391 0.0383025 -0" quat="0 0 -1 -0">
+          <!-- Joint from proximal_bend_l to distal_l -->
+          <joint axis="0 0 1" name="distal" type="hinge" range="-1.5707963267948966 0.0"/>
+          <inertial pos="-0.0104681 0.0190995 -0.023707" mass="0.0254111" fullinertia="1.18331e-05 8.7926e-06 7.48869e-06 1.30414e-06 1.3505e-07 -2.46366e-07"/>
+          <!-- Part distal_l -->
+          <geom type="mesh" class="visual" pos="0.242583 -0.0225751 0.001" quat="1 -0 -0 0" mesh="distal_l" material="distal_l_material"/>
+          <geom type="mesh" class="collision" pos="0.242583 -0.0225751 0.001" quat="1 -0 -0 0" mesh="distal_l" material="distal_l_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_19 -->
+          <geom type="mesh" class="visual" pos="0 0 -0.0528" quat="1 -0 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="0 0 -0.0528" quat="1 -0 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_20 -->
+          <geom type="mesh" class="visual" pos="-0.0251042 0.0257931 -0.0232" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0251042 0.0257931 -0.0232" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part radial_magnet__configuration__4x2mm_2 -->
+          <geom type="mesh" class="visual" pos="-0 -0 0.002" quat="1 -0 -0 0" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
+          <geom type="mesh" class="collision" pos="-0 -0 0.002" quat="1 -0 -0 0" mesh="radial_magnet__configuration__4x2mm" material="radial_magnet__configuration__4x2mm_material"/>
+          <!-- Part distal_soft_tip -->
+          <geom type="mesh" class="visual" pos="0.0425827 -0.0225751 -0.0474" quat="0 -0 1 -0" mesh="distal_soft_tip" material="distal_soft_tip_material"/>
+          <geom type="mesh" class="collision" pos="0.0425827 -0.0225751 -0.0474" quat="0 -0 1 -0" mesh="distal_soft_tip" material="distal_soft_tip_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_21 -->
+          <geom type="mesh" class="visual" pos="-0.0114064 0.0331157 -0.0422" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0114064 0.0331157 -0.0422" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_22 -->
+          <geom type="mesh" class="visual" pos="-0.0114064 0.0331157 -0.0042" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0114064 0.0331157 -0.0042" quat="0.193835 -0.193835 0.680021 -0.680021" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_2 -->
+          <geom type="mesh" class="visual" pos="0 0 -0.0509" quat="0 1 0 0" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
+          <geom type="mesh" class="collision" pos="0 0 -0.0509" quat="0 1 0 0" mesh="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5" material="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material"/>
+          <!-- Frame finger_tip -->
+          <site group="3" name="finger_tip" pos="-0.0243384 0.0565209 -0.0232" quat="0.670835 -0.670835 0.223562 -0.223562"/>
+        </body>
       </body>
+    </body>
+    <!-- Link camera_flex_l -->
+    <body name="camera_flex_l" pos="0 0 0" quat="1 0 0 0" childclass="grabette_left">
+      <freejoint name="camera_flex_l_freejoint"/>
+      <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
     </body>
   </worldbody>
   <asset>
-    <mesh file="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b.stl"/>
-    <mesh file="button.stl"/>
-    <mesh file="arducam_fisheye.stl"/>
-    <mesh file="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46.stl"/>
-    <mesh file="pivot_bot_l.stl"/>
-    <mesh file="lens_adhesive.stl"/>
-    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
-    <mesh file="proximal_shell_l.stl"/>
-    <mesh file="hmi.stl"/>
-    <mesh file="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
-    <mesh file="bushing_6x8x4.stl"/>
-    <mesh file="sr_lens_py058.stl"/>
-    <mesh file="sensor.stl"/>
-    <mesh file="grip_shell_l.stl"/>
-    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
-    <mesh file="grip_l.stl"/>
     <mesh file="distal_l.stl"/>
-    <mesh file="ase01187_elec_rpi_hat.stl"/>
-    <mesh file="612_00001_tim_thermal_oak_d_poe.stl"/>
+    <mesh file="grip_l.stl"/>
+    <mesh file="sensor.stl"/>
     <mesh file="part_1__configuration_copy_of_2x5.stl"/>
     <mesh file="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5.stl"/>
-    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
-    <mesh file="spacer_h8_5.stl"/>
-    <mesh file="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+    <mesh file="grip_shell_l.stl"/>
     <mesh file="proximal_bend_l.stl"/>
-    <mesh file="611_00020_1.stl"/>
-    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
-    <mesh file="raspi_box_l.stl"/>
-    <mesh file="grip_soft_tip_l.stl"/>
     <mesh file="pisugar3plus.stl"/>
-    <mesh file="606_00020_sr_front_cover.stl"/>
-    <mesh file="distal_soft_tip.stl"/>
+    <mesh file="pz_pan_head_screw_m2_5x0_45_x_6__1594e833f5b11f4fecc3a0ad0b729b46.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
+    <mesh file="sr_lens_py058.stl"/>
     <mesh file="radial_magnet__configuration__4x2mm.stl"/>
-    <mesh file="606_00021_sr_back_cover_py074.stl"/>
+    <mesh file="arducam_fisheye.stl"/>
+    <mesh file="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
     <mesh file="611_00020.stl"/>
+    <mesh file="proximal_shell_l.stl"/>
+    <mesh file="606_00020_sr_front_cover.stl"/>
+    <mesh file="611_00020_1.stl"/>
+    <mesh file="button.stl"/>
+    <mesh file="612_00001_tim_thermal_oak_d_poe.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
+    <mesh file="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b.stl"/>
+    <mesh file="pivot_bot_l.stl"/>
+    <mesh file="bushing_6x8x4.stl"/>
+    <mesh file="lens_adhesive.stl"/>
+    <mesh file="ase01187_elec_rpi_hat.stl"/>
+    <mesh file="distal_soft_tip.stl"/>
+    <mesh file="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
+    <mesh file="hmi.stl"/>
+    <mesh file="spacer_h8_5.stl"/>
     <mesh file="raspberry_pi_4_model_b.stl"/>
+    <mesh file="grip_soft_tip_l.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
     <mesh file="cameras_holder_l.stl"/>
+    <mesh file="606_00021_sr_back_cover_py074.stl"/>
+    <mesh file="raspi_box_l.stl"/>
     <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material" rgba="0.901961 0.901961 0.901961 1"/>
-    <material name="proximal_shell_l_material" rgba="1 1 1 1"/>
-    <material name="proximal_bend_l_material" rgba="1 1 1 1"/>
-    <material name="part_1__configuration_copy_of_2x5_material" rgba="0.901961 0.901961 0.901961 1"/>
-    <material name="pivot_bot_l_material" rgba="1 1 1 1"/>
-    <material name="bushing_6x8x4_material" rgba="0 0 0 1"/>
-    <material name="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material" rgba="0.603922 0.647059 0.686275 1"/>
-    <material name="sensor_material" rgba="0.768627 0.886275 0.952941 1"/>
-    <material name="distal_l_material" rgba="1 1 1 1"/>
-    <material name="radial_magnet__configuration__4x2mm_material" rgba="0.713725 0.760784 0.8 1"/>
-    <material name="distal_soft_tip_material" rgba="0.301961 0.301961 0.301961 1"/>
     <material name="cameras_holder_l_material" rgba="0.262745 0.282353 0.301961 1"/>
     <material name="hmi_material" rgba="0.231373 0.380392 0.705882 1"/>
     <material name="grip_shell_l_material" rgba="1 1 1 1"/>
     <material name="raspi_box_l_material" rgba="0.262745 0.282353 0.301961 1"/>
     <material name="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material" rgba="0.603922 0.647059 0.686275 1"/>
+    <material name="part_1__configuration_copy_of_2x5_material" rgba="0.901961 0.901961 0.901961 1"/>
     <material name="arducam_fisheye_material" rgba="0.235294 0.235294 0.235294 1"/>
     <material name="button_material" rgba="0.498039 0.498039 0.498039 1"/>
     <material name="grip_l_material" rgba="0.917647 0.917647 0.917647 1"/>
+    <material name="radial_magnet__configuration__4x2mm_material" rgba="0.713725 0.760784 0.8 1"/>
     <material name="grip_soft_tip_l_material" rgba="0.301961 0.301961 0.301961 1"/>
     <material name="hexalobular_socket_pan_head_screw_m2_5x0_45_x_16__d027c88750a7a6e541e7a7a21ff46b0b_material" rgba="0.603922 0.647059 0.686275 1"/>
     <material name="spacer_h8_5_material" rgba="0.262745 0.282353 0.301961 1"/>
@@ -342,10 +339,18 @@
     <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material" rgba="0 0 0 1"/>
     <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material" rgba="0 0 0 1"/>
     <material name="606_00020_sr_front_cover_material" rgba="0.262745 0.282353 0.301961 1"/>
+    <material name="proximal_shell_l_material" rgba="1 1 1 1"/>
+    <material name="proximal_bend_l_material" rgba="1 1 1 1"/>
+    <material name="pivot_bot_l_material" rgba="1 1 1 1"/>
+    <material name="bushing_6x8x4_material" rgba="0 0 0 1"/>
+    <material name="plain_washer_large_grade_a_m2_5__9a369f0dc77bf9c598cdf3fb468977e5_material" rgba="0.603922 0.647059 0.686275 1"/>
+    <material name="sensor_material" rgba="0.768627 0.886275 0.952941 1"/>
+    <material name="distal_l_material" rgba="1 1 1 1"/>
+    <material name="distal_soft_tip_material" rgba="0.301961 0.301961 0.301961 1"/>
   </asset>
   <actuator>
-    <position class="grabette_left" name="distal" joint="distal" inheritrange="1"/>
     <position class="grabette_left" name="proximal" joint="proximal" inheritrange="1"/>
+    <position class="grabette_left" name="distal" joint="distal" inheritrange="1"/>
   </actuator>
   <equality/>
 </mujoco>
