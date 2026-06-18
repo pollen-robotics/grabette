@@ -677,7 +677,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def check_hf_auth_on_load():
         result = client.hf_check_auth()
         authenticated = result.get("authenticated", False)
-        return gr.update(visible=not authenticated), _ds_upload_btn_update(authenticated)
+        if authenticated:
+            namespaces = client.hf_get_namespaces()
+            ns_choices = [f"{ns}/" for ns in namespaces]
+            ns_update = gr.update(choices=ns_choices, value=ns_choices[0] if ns_choices else None)
+        else:
+            ns_update = gr.update(choices=[], value=None)
+        return gr.update(visible=not authenticated), _ds_upload_btn_update(authenticated), ns_update
 
     def load_datasets_page():
         sessions = _get_sessions()
@@ -1084,10 +1090,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=ds_upload_msg,
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
-        datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn])
+        datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         ds_auth_timer = gr.Timer(3.0)
-        ds_auth_timer.tick(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn])
+        ds_auth_timer.tick(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         batt_popup_ds = gr.HTML(visible=False)
         batt_timer_ds = gr.Timer(60.0)
