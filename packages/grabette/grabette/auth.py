@@ -7,10 +7,12 @@ state. The token is persisted with the standard ``huggingface_hub`` mechanism
 Config is read from the environment so the team can point it at their own HF
 OAuth app:
 
-    GRABETTE_BASE_URL    Public URL this dashboard is reachable at.
-                         The OAuth callback is appended to it and the resulting
-                         URL must be registered with the HF OAuth app.
-                         (default: http://localhost:8000)
+    GRABETTE_RELAY_URL   URL of the grabette-fleet Space acting as OAuth relay.
+                         Defaults to the Pollen fleet Space — no config needed on Pi.
+                         Set to empty string to disable relay (e.g. for local dev).
+    GRABETTE_BASE_URL    Direct public URL of this grabette (overrides auto-detect).
+                         Only needed when not using the relay (e.g. local dev).
+                         (default without relay: http://localhost:8000)
     HF_OAUTH_CLIENT_ID   Client id of YOUR HF OAuth app.
     HF_OAUTH_SCOPES      Space-separated scopes. For dataset upload you need at
                          least ``write-repos`` (and ``manage-repos`` to create).
@@ -25,6 +27,7 @@ import hashlib
 import json
 import os
 import secrets
+import socket
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,9 +39,23 @@ from huggingface_hub import get_token, logout, whoami
 from huggingface_hub.errors import HfHubHTTPError
 
 # --- configuration ----------------------------------------------------------
-BASE_URL = os.environ.get("GRABETTE_BASE_URL", "http://localhost:8000").rstrip("/")
+# The hostname is encoded into the OAuth state when using the relay, so the
+# relay knows which grabette to forward the callback to.
+_HOSTNAME = socket.gethostname()
+
+_DEFAULT_RELAY_URL = "https://glannuzel-grabette-fleet.hf.space"
+_RELAY_URL = os.environ.get("GRABETTE_RELAY_URL", _DEFAULT_RELAY_URL).rstrip("/")
 OAUTH_CALLBACK_PATH = "/api/hf-auth/oauth/callback"
-OAUTH_REDIRECT_URI = f"{BASE_URL}{OAUTH_CALLBACK_PATH}"
+
+if _RELAY_URL:
+    # Relay mode: redirect_uri points to the fleet Space (one registered URL
+    # for all grabettes). The hostname is encoded into the state parameter.
+    OAUTH_REDIRECT_URI = f"{_RELAY_URL}/oauth/grabette/callback"
+    BASE_URL = os.environ.get("GRABETTE_BASE_URL", f"http://{_HOSTNAME}.local:8000").rstrip("/")
+else:
+    # Direct mode: for local dev or a grabette with a known public URL.
+    BASE_URL = os.environ.get("GRABETTE_BASE_URL", "http://localhost:8000").rstrip("/")
+    OAUTH_REDIRECT_URI = f"{BASE_URL}{OAUTH_CALLBACK_PATH}"
 
 # To replace - currently not from Pollen org
 _DEFAULT_OAUTH_CLIENT_ID = "528a5f59-3676-4d5b-8aca-6c5a4db99b42"
@@ -147,23 +164,27 @@ class HFAuth:
         if not self.client_id:
             return {"status": "error", "message": "OAuth not configured. Set HF_OAUTH_CLIENT_ID."}
 
-        state = secrets.token_urlsafe(32)
+        session_id = secrets.token_urlsafe(32)
         code_verifier, code_challenge = self._pkce_pair()
-        self._sessions[state] = OAuthSession(
-            session_id=state, state=state, code_verifier=code_verifier
+        self._sessions[session_id] = OAuthSession(
+            session_id=session_id, state=session_id, code_verifier=code_verifier
         )
+        # When using the relay, encode the grabette hostname into the state so
+        # the relay knows where to forward the callback. The grabette uses only
+        # the session_id part to look up the session on return.
+        oauth_state = f"{_HOSTNAME}|{session_id}" if _RELAY_URL else session_id
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
             "scope": self.scopes,
             "response_type": "code",
-            "state": state,
+            "state": oauth_state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
         return {
             "status": "success",
-            "session_id": state,
+            "session_id": session_id,
             "auth_url": f"https://huggingface.co/oauth/authorize?{urlencode(params)}",
             "expires_in": _OAUTH_SESSION_TTL,
         }
