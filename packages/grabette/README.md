@@ -99,20 +99,35 @@ journalctl -u grabette -f   # logs
 
 ### Bluetooth WiFi configuration
 
-A standalone BLE GATT service allows configuring WiFi credentials without SSH or a screen. Connect from a phone or laptop via Bluetooth Low Energy, authenticate with a PIN, and send WiFi credentials.
+A standalone BLE GATT service allows configuring WiFi credentials without SSH or a screen. To make it operational : 
 
 ```bash
-sudo apt install python3-dbus python3-gi   # system deps (usually pre-installed)
-sudo cp systemd/grabette-bluetooth.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now grabette-bluetooth
+make install-rpi
 ```
 
-**Important**: set `ControllerMode = le` in `/etc/bluetooth/main.conf` to disable classic Bluetooth (prevents audio profile interference and hostname leak). See the gripette [Bluetooth setup guide](https://github.com/pollen-robotics/gripette/blob/main/docs/bluetooth_setup.md) for detailed instructions.
+Then, connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge and follow those steps : 
+1. Select Grabette and click on Connect
+2. Select your Grabette on the pop-up, then Pair
+3. Authenticate with the PIN
+4. Scan networks, select your wifi and send WiFi credentials.
 
-PIN is configurable via `GRABETTE_BT_PIN` env var (default: `00000`).
 
-**Web Bluetooth client**: open the [BT Tool](https://pollen-robotics.github.io/gripette/) in Chrome/Edge — select "Grabette" from the dropdown to connect (also available locally at `docs/index.html`).
+PIN is configurable via the `GRABETTE_BT_PIN` env var (default: `00000`); set it in `systemd/grabette-bluetooth.service` (`Environment=GRABETTE_BT_PIN=...`) before installing.
+
+**Commands** (written to the COMMAND characteristic as UTF-8; responses arrive as notifications):
+
+| Command | Response |
+|---|---|
+| `PING` | `PONG` |
+| `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` (required before the WIFI commands) |
+| `WIFI_SCAN` | JSON array of nearby SSIDs (strongest first) |
+| `WIFI ssid password` | `OK: Connecting to <ssid>` / `ERROR: ...` (connects via an explicit WPA-PSK profile) |
+| `WIFI_RESET` | `OK: WiFi connections cleared` |
+
+
+No pairing is required: the characteristics are unencrypted and the adapter advertises with `Pairable = False`, so clients connect "connection-only" — no pairing dialog, no terminal needed.
+
+> **If a client still tries to pair** (e.g. a stale bond from an earlier version): clear it on both ends — `bluetoothctl remove <mac.address.of.Grabette>` on the Pi and the client, plus Forget the device in `chrome://bluetooth-internals`. As a last resort, run an auto-accept agent on the client: in a terminal, `bluetoothctl` → `agent NoInputNoOutput` → `default-agent` (leave it open).
 
 ## Configuration
 
