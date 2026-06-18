@@ -79,14 +79,18 @@ def scan_networks() -> list[dict]:
     """Return visible WiFi networks sorted by signal, excluding the current connection."""
     own_ssid = get_current_ssid() or ""
     # Trigger the scan separately: --rescan yes on 'list' causes NM to return an
-    # empty list when it throttles consecutive forced scans; --rescan auto skips
-    # the scan if NM thinks the cache is fresh enough. Calling 'rescan' first
-    # blocks until NM completes the scan, then we read the updated cache.
-    _run(["nmcli", "dev", "wifi", "rescan"], timeout=10)
+    # empty list when it throttles consecutive forced scans. We call 'rescan'
+    # first (blocks until NM finishes), then read the updated cache with
+    # --rescan no. If rescan fails (permission, interface busy), fall back to
+    # --rescan auto so at least cached data is shown.
+    rescan = _run(["nmcli", "dev", "wifi", "rescan"], timeout=10)
+    if rescan.returncode != 0:
+        logger.warning("wifi rescan failed (rc=%d): %s", rescan.returncode, rescan.stderr.strip())
+    rescan_flag = "no" if rescan.returncode == 0 else "auto"
     try:
         result = _run(
             ["nmcli", "--escape", "no", "-t", "-f", "SSID,SIGNAL",
-             "dev", "wifi", "list", "--rescan", "no"],
+             "dev", "wifi", "list", "--rescan", rescan_flag],
             timeout=10,
         )
     except subprocess.TimeoutExpired:
