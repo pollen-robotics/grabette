@@ -41,6 +41,14 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def get_camera_status(self) -> dict | None:
+        try:
+            r = self._http.get("/api/camera/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     # -- Sensor state --
 
     def get_state(self) -> dict | None:

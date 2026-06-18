@@ -32,6 +32,16 @@ class Backend(ABC):
     @abstractmethod
     def get_frame_jpeg(self) -> bytes | None: ...
 
+    @property
+    def is_camera_connected(self) -> bool:
+        """True if the RGB camera device is connected/initialized.
+
+        Unlike get_frame_jpeg() this stays True during capture, so it can
+        drive a connection indicator. Default False for backends that don't
+        track it.
+        """
+        return False
+
     def get_depth_jpeg(self) -> bytes | None:
         """Optional: colorized OAK-D depth JPEG for live view. Default: None."""
         return None

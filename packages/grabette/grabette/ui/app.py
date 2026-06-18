@@ -85,6 +85,76 @@ _WIFI_SETTINGS_HTML = (
     '</iframe>'
 )
 
+# Rendered as explicit HTML rather than Markdown so the title font is pinned to a
+# complete system sans-serif stack. The Markdown <h1> inherited the theme's
+# webfont (--font), which renders inconsistently — and falls back to serif — when
+# it loads partially or fails (e.g. the robot runs offline).
+_TITLE_HTML = (
+    "<h1 style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
+    "Roboto,Helvetica,Arial,sans-serif;font-weight:700;"
+    "font-size:var(--text-xxl,2rem);color:var(--body-text-color);"
+    "margin:var(--spacing-xxl) 0 var(--spacing-lg);\">GRABETTE</h1>"
+)
+
+
+def _status_bar_html(sys_info, oakd_status, cam_status):
+    """Build the Episodes status strip (battery + RGB + OAK-D) from already-fetched dicts.
+
+    Pure function (no network calls) so it can be unit-tested. Each argument
+    may be None when the corresponding API call failed.
+    """
+
+    # (value color, border color). Neutral gray covers off / N/A / unknown.
+    GRAY = ("#94a3b8", "#334155")
+    GREEN = ("#22c55e", "#166534")
+    ORANGE = ("#f97316", "#9a3412")
+    RED = ("#ef4444", "#991b1b")
+
+    def _badge(label, value, colors):
+        value_color, border_color = colors
+        return (
+            f"<div style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
+            f"border:2px solid {border_color};flex:1;min-width:0;'>"
+            f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
+            f"color:#94a3b8;margin-bottom:0.2rem;'>{label}</div>"
+            f"<div style='font-size:0.9rem;font-weight:700;color:{value_color};"
+            f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{value}</div>"
+            f"</div>"
+        )
+
+    # Battery
+    if sys_info and "battery_pct" in sys_info:
+        pct = sys_info["battery_pct"]
+        colors = GREEN if pct > 60 else ORANGE if pct > 20 else RED
+        batt_badge = _badge("Battery", f"{pct} %", colors)
+    else:
+        batt_badge = _badge("Battery", "N/A", GRAY)
+
+    # RGB camera (2-state: connected / disconnected; N/A if call failed)
+    if cam_status is None:
+        rgb_badge = _badge("RGB Camera", "N/A", GRAY)
+    elif cam_status.get("connected"):
+        rgb_badge = _badge("RGB Camera", "Connected", GREEN)
+    else:
+        rgb_badge = _badge("RGB Camera", "Disconnected", RED)
+
+    # OAK-D (3-state: connected / off / error; N/A when unsupported)
+    if not oakd_status or not oakd_status.get("supported"):
+        oakd_badge = _badge("OAK-D", "N/A", GRAY)
+    elif oakd_status.get("initialized"):
+        oakd_badge = _badge("OAK-D", "Connected", GREEN)
+    elif oakd_status.get("enabled"):
+        oakd_badge = _badge("OAK-D", "Error", RED)
+    else:
+        oakd_badge = _badge("OAK-D", "Off", GRAY)
+
+    return (
+        "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;"
+        "margin:0.25rem 0 0.75rem;'>"
+        + batt_badge + rgb_badge + oakd_badge
+        + "</div>"
+    )
+
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
     client = GrabetteClient(base_url=api_url)
@@ -649,6 +719,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         return bar, _battery_popup_html(info)
 
+    # ── Episodes status strip (battery + camera connections) ─────────
+
+    def get_episode_status_bar():
+        return _status_bar_html(
+            client.get_system_info(),
+            client.get_oakd_status(),
+            client.get_camera_status(),
+        )
+
     # ── WiFi network info (Settings page) ────────────────────────────
 
     def get_wifi_network_info():
@@ -739,7 +818,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
+        gr.HTML(_TITLE_HTML)
 
         # ── Main layout ───────────────────────────────────────────────
         with gr.Row():
@@ -780,6 +859,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
                 # Capture (always at top so the primary action is prominent)
                 session_banner = gr.HTML("")
+                episode_status_bar = gr.HTML("")
                 capture_title = gr.Markdown("### Capture")
                 with gr.Row():
                     capture_box = gr.Textbox(
@@ -1006,8 +1086,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_timer_ep = gr.Timer(60.0)
         batt_timer_ep.tick(fn=check_battery_warning, outputs=batt_popup_ep)
 
+        status_bar_timer = gr.Timer(3.0)
+        status_bar_timer.tick(fn=get_episode_status_bar, outputs=episode_status_bar)
+
         demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
         demo.load(fn=check_battery_warning, outputs=batt_popup_ep)
+        demo.load(fn=get_episode_status_bar, outputs=episode_status_bar)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Datasets (HF auth popup + upload)
@@ -1106,7 +1190,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Live View") as live_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
+        gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
         dv_system_bar = gr.HTML()
@@ -1202,7 +1286,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with demo.route("Settings") as settings_demo:
         gr.Navbar(main_page_name="Episodes")
-        gr.Markdown("# GRABETTE")
+        gr.HTML(_TITLE_HTML)
 
         with gr.Row(equal_height=False):
 
