@@ -3,8 +3,8 @@
 Visualize OAK-D RGBD SLAM trajectory using Rerun.
 
 Usage:
-    uv run python scripts/rgbd_slam/visualize_rgbd_trajectory.py <episode_dir>
-    uv run python scripts/rgbd_slam/visualize_rgbd_trajectory.py <episode_dir> --video-skip 3
+    uv run python scripts/visualize/visualize_rgbd_trajectory.py <episode_dir>
+    uv run python scripts/visualize/visualize_rgbd_trajectory.py <episode_dir> --video-skip 3
 """
 
 import json

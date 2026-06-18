@@ -12,111 +12,52 @@ from pathlib import Path
 from grabette_postprocess.convert import convert_episode
 from grabette_postprocess.oak_slam import run_oak_slam
 from grabette_postprocess.dataset import build_dataset
-from grabette_postprocess.trajectory import analyze_trajectory
-from grabette_postprocess.episode_check import check_episode
+from grabette_postprocess.episode_manager import find_episodes
+from grabette_postprocess.checks.trajectory import check_trajectory
+from grabette_postprocess.checks.recording import check_recording
+from grabette_postprocess.checks.sync import check_sync
 
 BINARY = os.environ.get("OAK_VSLAM_BINARY", "/usr/local/bin/offline_vslam")
 
 
 def find_episode_dirs(root: Path) -> list[Path]:
-    """Every directory containing a raw OAK-D recording, anywhere under root.
-
-    Recursive so it works whether the dataset wraps episodes in a folder, puts
-    them at the top level, or is a single episode at the root.
-    """
-    return sorted({p.parent for p in Path(root).rglob("oakd_left.mp4")})
+    """Every directory containing a raw OAK-D recording (oakd_left.mp4), anywhere
+    under root. Delegates to the package's single discovery helper."""
+    return find_episodes(root, anchor="oakd_left.mp4")
 
 
-def _process_episode(ep: Path):
-    """Convert + SLAM + quality-check one episode (runs in a worker thread).
-
-    Returns (episode_dir | None, log_lines, report | None). The dir is None when
-    SLAM produced no trajectory (the episode is dropped outright) — report is then
-    None too. Log lines are collected rather than emitted directly so concurrent
-    episodes don't interleave in the output. The trajectory quality check is
-    advisory at this stage: a BAD/WARN verdict is logged and the report returned,
-    so the caller can offer the user a chance to drop flagged episodes before the
-    dataset is built (see build_lerobot's `review` hook).
-
-    Pause is enforced by run_slam at dispatch time (it gates before starting each
-    episode), so a paused run never reaches this function for not-yet-started
-    episodes; one already running its SLAM subprocess finishes on its own.
-    """
-    # Advisory input check — validates the raw recording (Arducam / OAK RGBD+IMU
-    # / gripper angles) before SLAM. Logged, never blocks (a noisy episode can
-    # still produce a usable trajectory).
-    lines = []
-    # require_right=False: the Space skips downloading oakd_right.mp4 (unused by
-    # SLAM/dataset), so checking for it would falsely flag every episode.
-    chk = check_episode(ep, require_right=False)
-    if chk["errors"] or chk["warnings"]:
-        verdict = "ERROR" if chk["errors"] else "WARN"
-        lines.append(f"  [input/{verdict}] {ep.name}")
-        for msg in (*chk["errors"], *chk["warnings"]):
-            lines.append(f"      • {msg}")
-
-    lines.append(f"▶ {ep.name}: convert")
-    convert_episode(ep)
-
-    lines.append(f"▶ {ep.name}: SLAM")
-    r = run_oak_slam(ep, binary=BINARY, show_progress=False)
-    if r.trajectory_path is None:
-        lines.append(f"  ✗ {ep.name}: SLAM failed (rc={r.returncode})")
-        return None, lines, None
-    lines.append(f"  ✓ {ep.name}: tracking {r.tracking_pct:.1f}% ({r.tracked_frames}/{r.total_frames})")
-
-    # Trajectory quality check — flags drift/jumps/zigzag. The verdict is returned
-    # so the caller can let the user drop flagged episodes (build_lerobot review).
-    report = analyze_trajectory(r.trajectory_path, ep / "slam_metadata.json")
-    lines.append(
-        f"  [{report.verdict}] {ep.name}: dist={report.total_distance_m:.2f}m "
-        f"med_step={report.median_step_mm:.1f}mm jumps={report.n_jumps}"
-    )
-    for msg in (*report.errors, *report.warnings):
-        lines.append(f"      • {msg}")
-    return ep, lines, report
-
-
-def run_slam(dataset_dir, log=print, should_stop=None, on_progress=None,
-             gate=None) -> list[tuple[Path, "TrajectoryReport"]]:
-    """Convert + SLAM every episode in parallel.
-
-    Returns a list of (episode_dir, trajectory_report) for every episode that
-    produced a trajectory, sorted by episode name. Episodes whose SLAM failed are
-    dropped outright (not returned). The report carries the quality verdict so the
-    caller can offer the user a chance to drop flagged episodes before building.
+def _run_parallel(episodes, fn, log, on_progress, phase, gate, should_stop):
+    """Run fn(ep) -> (value, log_lines) over every episode concurrently, returning
+    the list of values in completion order (callers sort/filter). Shared by the
+    pre-SLAM check phase and the SLAM phase — both walk the same episode set with
+    the same pause/stop semantics, only the per-episode work differs.
 
     Episodes are independent (each reads/writes only its own dir), so they run
-    concurrently. SLAM is a single-threaded CPU-bound subprocess, so workers are
-    capped at the core count; processing whole episodes per worker also overlaps
-    one episode's convert with another's SLAM for free.
+    concurrently, capped at the core count (SLAM is a single-threaded CPU-bound
+    subprocess; optical-flow likewise saturates one core).
 
-    should_stop: optional no-arg predicate; when it returns True the loop stops
-    collecting results and cancels not-yet-started episodes (a running SLAM
-    finishes on its own — a subprocess can't be interrupted mid-call).
-    on_progress: optional callback(done, total, "slam") fired per finished episode.
-    gate: optional no-arg pause checkpoint. It is honored at dispatch time — before
-        each episode is submitted — NOT inside the worker, so a paused run holds
-        *between* episodes (it stops starting new ones) while any in-flight SLAM
-        subprocess finishes on its own (a subprocess can't be interrupted mid-call).
+    log_lines are collected per episode and emitted together rather than printed
+    from the worker, so concurrent episodes don't interleave in the output.
+    on_progress: optional callback(done, total, phase) fired per finished episode.
+    gate: optional no-arg pause checkpoint, honored at dispatch time — before each
+        episode is submitted, NOT inside the worker — so a paused run holds
+        *between* episodes (it stops starting new ones) while any in-flight work
+        finishes on its own (a SLAM subprocess can't be interrupted mid-call).
+    should_stop: optional no-arg predicate; when True the loop stops collecting and
+        cancels not-yet-started episodes.
     """
-    episodes = find_episode_dirs(Path(dataset_dir))
-    if not episodes:
-        raise ValueError(f"No episodes (oakd_left.mp4) found under {dataset_dir}")
-
     total = len(episodes)
-    log(f"Found {total} episode(s) : {', '.join(ep.name for ep in episodes)}")
     if on_progress:
-        on_progress(0, total, "slam")
+        on_progress(0, total, phase)
     workers = min(total, os.cpu_count() or 2)
-    processed = []
+    out = []
     done = 0
     pending = iter(episodes)
 
     def _dispatch_next():
-        """Pause/stop checkpoint, then return the next episode to start (or None when
+        """Pause/stop checkpoint, then the next episode to start (or None when
         drained / stopped). gate() blocks here while paused, so no NEW episode is
-        started until the user resumes — this is what makes Pause work during SLAM."""
+        started until the user resumes — this is what makes Pause work mid-phase."""
         if gate:
             gate()  # blocks while paused; returns at once if a stop is requested
         if should_stop and should_stop():
@@ -129,19 +70,18 @@ def run_slam(dataset_dir, log=print, should_stop=None, on_progress=None,
             ep = _dispatch_next()
             if ep is None:
                 break
-            in_flight.add(pool.submit(_process_episode, ep))
+            in_flight.add(pool.submit(fn, ep))
 
         while in_flight:
             finished, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
             for fut in finished:
-                ep, lines, report = fut.result()
+                value, lines = fut.result()
                 for line in lines:
                     log(line)
-                if ep is not None:
-                    processed.append((ep, report))
+                out.append(value)
                 done += 1
                 if on_progress:
-                    on_progress(done, total, "slam")
+                    on_progress(done, total, phase)
             if should_stop and should_stop():
                 log("⛔ Stop requested — abandoning remaining episodes")
                 pool.shutdown(wait=False, cancel_futures=True)
@@ -150,7 +90,94 @@ def run_slam(dataset_dir, log=print, should_stop=None, on_progress=None,
                 ep = _dispatch_next()
                 if ep is None:
                     break
-                in_flight.add(pool.submit(_process_episode, ep))
+                in_flight.add(pool.submit(fn, ep))
+    return out
+
+
+def _precheck_episode(ep: Path):
+    """Completeness + synchronization check for one raw episode, BEFORE SLAM
+    (runs in a worker thread). Returns (result_dict, log_lines).
+
+    result_dict = {ep, name, errors, warnings, sync} where sync is the
+    arducam↔OAK-gyro verdict dict (or None when it couldn't be computed). The
+    caller uses errors/warnings/sync to decide which episodes to flag for the
+    pre-SLAM review. Operates on the raw recording layout (before convert_episode).
+    """
+    lines = []
+    # require_right=False: the unused right OAK camera shouldn't gate a run — its
+    # absence is irrelevant to SLAM/dataset, even though we now download it.
+    chk = check_recording(ep, require_right=False)
+    if chk["errors"] or chk["warnings"]:
+        verdict = "ERROR" if chk["errors"] else "WARN"
+        lines.append(f"  [check/{verdict}] {ep.name}")
+        for msg in (*chk["errors"], *chk["warnings"]):
+            lines.append(f"      • {msg}")
+
+    sync = None
+    try:
+        sync = check_sync(ep)
+    except Exception as e:  # a sync failure must never abort the whole run
+        lines.append(f"  ⚠️ {ep.name}: sync check failed: {e}")
+    if sync is not None:
+        lines.append(f"  [sync/{sync['verdict']}] {ep.name}: {sync['message']}")
+
+    return {"ep": ep, "name": ep.name, "errors": chk["errors"],
+            "warnings": chk["warnings"], "sync": sync}, lines
+
+
+def precheck_episodes(episode_dirs, log=print, should_stop=None, on_progress=None,
+                      gate=None) -> list[dict]:
+    """Completeness (check_recording) + arducam↔gyro sync on every episode, in
+    parallel, BEFORE any SLAM. Returns the per-episode check dicts, sorted by name
+    (see _precheck_episode for the dict shape)."""
+    results = _run_parallel(episode_dirs, _precheck_episode, log, on_progress,
+                            "check", gate, should_stop)
+    return sorted(results, key=lambda c: c["name"])
+
+
+def _slam_episode(ep: Path):
+    """Convert + SLAM + trajectory quality-check one episode (runs in a worker
+    thread). Returns ((episode_dir | None, report | None), log_lines).
+
+    The dir is None when SLAM produced no trajectory (the episode is dropped
+    outright) — report is then None too. The trajectory verdict is returned so the
+    caller can let the user drop flagged episodes before the dataset is built (see
+    build_lerobot's `review` hook). Completeness/sync are NOT re-checked here —
+    that happens in the pre-SLAM phase (precheck_episodes)."""
+    lines = []
+    lines.append(f"▶ {ep.name}: convert")
+    convert_episode(ep)
+
+    lines.append(f"▶ {ep.name}: SLAM")
+    r = run_oak_slam(ep, binary=BINARY, show_progress=False)
+    if r.trajectory_path is None:
+        lines.append(f"  ✗ {ep.name}: SLAM failed (rc={r.returncode})")
+        return (None, None), lines
+    lines.append(f"  ✓ {ep.name}: tracking {r.tracking_pct:.1f}% ({r.tracked_frames}/{r.total_frames})")
+
+    report = check_trajectory(r.trajectory_path, ep / "slam_metadata.json")
+    lines.append(
+        f"  [{report.verdict}] {ep.name}: dist={report.total_distance_m:.2f}m "
+        f"med_step={report.median_step_mm:.1f}mm jumps={report.n_jumps}"
+    )
+    for msg in (*report.errors, *report.warnings):
+        lines.append(f"      • {msg}")
+    return (ep, report), lines
+
+
+def run_slam(episode_dirs, log=print, should_stop=None, on_progress=None,
+             gate=None) -> list[tuple[Path, "TrajectoryReport"]]:
+    """Convert + SLAM every given episode in parallel.
+
+    Takes an explicit episode list (the pre-SLAM review may have dropped some) and
+    returns a list of (episode_dir, trajectory_report) for every episode that
+    produced a trajectory, sorted by episode name. SLAM-failed episodes are
+    dropped outright. The report carries the quality verdict so the caller can
+    offer the user a chance to drop flagged episodes before building.
+    """
+    results = _run_parallel(episode_dirs, _slam_episode, log, on_progress,
+                            "slam", gate, should_stop)
+    processed = [(ep, report) for ep, report in results if ep is not None]
     return sorted(processed, key=lambda t: t[0].name)
 
 
@@ -207,19 +234,26 @@ def _push_to_branch(ds, target_repo, branch, log, token, attempts=3):
 
 def build_lerobot(dataset_dir, target_repo, task, root, log=print,
                   should_stop=None, to_branch=False, on_progress=None,
-                  token=None, gate=None, review=None) -> list:
-    """Convert + SLAM + build the LeRobot dataset on disk under `root`.
+                  token=None, gate=None, pre_review=None, review=None) -> list:
+    """Check + SLAM + build the LeRobot dataset on disk under `root`.
 
-    Returns the list of processed episode dirs. Does NOT push — call push_lerobot()
-    afterwards. Splitting build from push lets a failed push be retried (the built
-    dataset stays on disk) without re-running the slow SLAM step.
+    Pipeline: completeness/sync prechecks → (pre_review drop) → convert+SLAM →
+    (trajectory review drop) → build. Returns the list of processed episode dirs.
+    Does NOT push — call push_lerobot() afterwards. Splitting build from push lets
+    a failed push be retried (the built dataset stays on disk) without re-running
+    the slow SLAM step.
 
     should_stop: optional no-arg predicate; checked before the build so a stop
         request never produces a dataset.
     token: HF token (exported as HF_TOKEN; also used to resolve the username for
         the per-episode traceability sidecar when to_branch is set).
-    gate: optional no-arg pause checkpoint; honored per episode during SLAM and
-        once more before the build step.
+    gate: optional no-arg pause checkpoint; honored per episode during the check
+        and SLAM phases and once more before the build step.
+    pre_review: optional callback(checks) -> list[Path], called between the
+        completeness/sync prechecks and SLAM with the list of per-episode check
+        dicts. Returns the episode dirs to keep — letting the caller drop episodes
+        flagged as incomplete or desynced BEFORE the slow SLAM runs. When None,
+        every episode is kept.
     review: optional callback(results) -> list[Path], called between SLAM and the
         build with the list of (episode_dir, trajectory_report) tuples. It returns
         the episode dirs to keep — letting the caller drop episodes whose
@@ -230,7 +264,29 @@ def build_lerobot(dataset_dir, target_repo, task, root, log=print,
     if token:
         os.environ["HF_TOKEN"] = token
 
-    results = run_slam(dataset_dir, log=log, should_stop=should_stop,
+    episodes = find_episode_dirs(Path(dataset_dir))
+    if not episodes:
+        raise ValueError(f"No episodes (oakd_left.mp4) found under {dataset_dir}")
+    log(f"Found {len(episodes)} episode(s) : {', '.join(ep.name for ep in episodes)}")
+
+    # ---- Pre-SLAM phase: completeness + sync checks, then optional drop --------
+    checks = precheck_episodes(episodes, log=log, should_stop=should_stop,
+                               on_progress=on_progress, gate=gate)
+    if should_stop and should_stop():
+        raise RuntimeError("Stopped by user — nothing pushed.")
+    if pre_review is not None:
+        episodes = pre_review(checks)
+    else:
+        episodes = [c["ep"] for c in checks]
+    if should_stop and should_stop():
+        raise RuntimeError("Stopped by user — nothing pushed.")
+    if not episodes:
+        raise RuntimeError("All episodes were dropped in the pre-SLAM review — nothing to process.")
+    if gate:
+        gate()  # pause checkpoint before the (slow) SLAM phase
+
+    # ---- SLAM phase ------------------------------------------------------------
+    results = run_slam(episodes, log=log, should_stop=should_stop,
                        on_progress=on_progress, gate=gate)
     if should_stop and should_stop():
         raise RuntimeError("Stopped by user — nothing pushed.")
@@ -311,20 +367,19 @@ def push_lerobot(target_repo, task, root, n_episodes, to_branch=False,
         return n_episodes, branch_url, "branch"
 
     log(f"Pushing to https://huggingface.co/datasets/{target_repo} …")
-    ds.push_to_hub(tags=["lerobot", "grabette"])
+    try:
+        ds.push_to_hub(tags=["lerobot", "grabette"])
+    except Exception as e:
+        # This path creates the repo (target didn't exist at pre-flight). A 401/403
+        # here means the sign-in token lacks the 'manage-repos' scope creation needs
+        # — pre-flight normally catches this, so reaching it implies partial/stale
+        # consent. Give the same actionable message rather than a raw HF traceback.
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        if status in (401, 403):
+            raise RuntimeError(
+                f"Could not create '{target_repo}' (HTTP {status}): creating a new "
+                f"dataset needs the 'manage-repos' permission, which your sign-in "
+                f"token is missing. Sign out and back in to grant it, then re-run."
+            ) from e
+        raise
     return n_episodes, None, "main"
-
-
-def process_dataset(dataset_dir, target_repo, task, root, log=print,
-                    should_stop=None, to_branch=False, on_progress=None,
-                    token=None) -> tuple[int, str | None, str]:
-    """Convert + SLAM + build a LeRobot dataset, then push it to the Hub.
-
-    Thin wrapper over build_lerobot() + push_lerobot() for callers that want the
-    whole thing in one call. Returns (episode_count, link_or_None, mode).
-    """
-    processed = build_lerobot(dataset_dir, target_repo, task, root, log=log,
-                              should_stop=should_stop, to_branch=to_branch,
-                              on_progress=on_progress, token=token)
-    return push_lerobot(target_repo, task, root, len(processed), to_branch=to_branch,
-                        token=token, log=log, on_progress=on_progress)

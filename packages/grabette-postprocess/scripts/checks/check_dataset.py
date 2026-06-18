@@ -10,18 +10,19 @@ For each episode, checks the recordings produced by the current rig:
   - SLAM outputs (if present)  : camera_trajectory.csv (+ slam_metadata.json)
 
 Counts are cross-checked against metadata.json. The check logic lives in
-grabette_postprocess.episode_check so it can be reused by the HF Space pipeline;
-this file is just the CLI.
+grabette_postprocess.checks.recording so it can be reused by the HF Space
+pipeline; this file is just the CLI.
 
 Usage:
-    uv run python scripts/check_dataset.py ~/data/dataset
+    uv run python scripts/checks/check_dataset.py ~/data/dataset
 """
 
 from pathlib import Path
 
 import click
 
-from grabette_postprocess.episode_check import check_episode
+from grabette_postprocess.checks.recording import check_recording
+from grabette_postprocess.episode_manager import find_episodes
 
 
 @click.command()
@@ -32,9 +33,7 @@ def main(dataset_dir, verbose):
     dataset_dir = Path(dataset_dir).expanduser().absolute()
 
     # An episode is any dir containing an OAK recording (oakd_imu.json is the anchor).
-    episodes = sorted({p.parent for p in dataset_dir.rglob("oakd_imu.json")})
-    if not episodes and (dataset_dir / "oakd_imu.json").is_file():
-        episodes = [dataset_dir]  # dataset_dir is itself a single episode
+    episodes = find_episodes(dataset_dir, anchor="oakd_imu.json")
     if not episodes:
         print(f"No episodes (oakd_imu.json) found under {dataset_dir}")
         return
@@ -43,7 +42,7 @@ def main(dataset_dir, verbose):
 
     n_errors = n_warnings = n_ok = 0
     for ep_dir in episodes:
-        s = check_episode(ep_dir)
+        s = check_recording(ep_dir)
         label = s["name"]
         traj = f"  {s['trajectory']}" if "trajectory" in s else ""
 

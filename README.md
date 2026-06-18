@@ -59,7 +59,7 @@ Work on a single component without pulling the rest:
 
 ```bash
 uv sync --package grabette-postprocess
-uv run --package grabette-postprocess python scripts/arducam_slam/generate_dataset.py --help
+uv run --package grabette-postprocess python scripts/pipeline/generate_dataset.py --help
 ```
 
 ### Notes

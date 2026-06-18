@@ -5,25 +5,26 @@ Validate SLAM trajectory quality.
 Detects common failure modes: IMU drift, relocalization jumps, zigzagging,
 and unrealistic motion. Works on individual episodes or entire datasets.
 
-The analysis logic lives in grabette_postprocess.trajectory so it can be reused
-by the HF Space pipeline; this file is just the CLI.
+The analysis logic lives in grabette_postprocess.checks.trajectory so it can be
+reused by the HF Space pipeline; this file is just the CLI.
 
 Usage:
     # Check a single episode
-    uv run python scripts/check_trajectory.py test_data/test_HF/episodes/20260331_095957
+    uv run python scripts/checks/check_trajectory.py test_data/test_HF/episodes/20260331_095957
 
     # Check all episodes in a dataset
-    uv run python scripts/check_trajectory.py test_data/test_HF/episodes
+    uv run python scripts/checks/check_trajectory.py test_data/test_HF/episodes
 
     # Verbose output with per-frame details
-    uv run python scripts/check_trajectory.py test_data/test_HF/episodes -v
+    uv run python scripts/checks/check_trajectory.py test_data/test_HF/episodes -v
 """
 
 from pathlib import Path
 
 import click
 
-from grabette_postprocess.trajectory import analyze_trajectory, find_trajectory_episodes
+from grabette_postprocess.checks.trajectory import check_trajectory
+from grabette_postprocess.episode_manager import find_trajectory_episodes
 
 
 @click.command()
@@ -51,7 +52,7 @@ def main(path, verbose, jump_threshold, max_speed):
             traj = ep_dir / "mapping_camera_trajectory.csv"
         meta = ep_dir / "slam_metadata.json"
 
-        report = analyze_trajectory(
+        report = check_trajectory(
             traj, meta,
             jump_threshold_mm=jump_threshold,
             max_reasonable_speed_ms=max_speed,

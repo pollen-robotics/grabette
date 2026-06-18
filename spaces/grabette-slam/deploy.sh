@@ -23,6 +23,7 @@ trap 'rm -rf "$STAGE"' EXIT
 
 # Space files
 cp "$HERE/Dockerfile" "$HERE/app.py" "$HERE/pipeline.py" \
+   "$HERE/views.py" "$HERE/controller.py" "$HERE/review.py" \
    "$HERE/requirements.txt" "$HERE/README.md" "$STAGE/"
 
 # Vendored package (working tree), minus caches

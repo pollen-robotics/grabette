@@ -6,9 +6,9 @@ run_oak_slam.py / docker/oak_vslam. See grabette_postprocess/convert.py for
 the conversion details.
 
 Usage:
-    python scripts/rgbd_slam/convert_episode_to_oak.py -i /path/to/episode_dir
+    python scripts/pipeline/convert_episode_to_oak.py -i /path/to/episode_dir
     # then:
-    python scripts/rgbd_slam/run_oak_slam.py -i /path/to/episode_dir
+    python scripts/pipeline/run_oak_slam.py -i /path/to/episode_dir
 """
 
 import sys

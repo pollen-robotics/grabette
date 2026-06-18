@@ -9,11 +9,12 @@ hf_oauth: true
 hf_oauth_scopes:
   - read-repos
   - write-repos
+  - manage-repos
 ---
 
 # Grabette SLAM → LeRobot
 
-A HuggingFace Space that turns a raw OAK-D recording dataset into a
+A HuggingFace Space that turns a raw Grabette recording dataset into a
 [LeRobot](https://github.com/huggingface/lerobot) dataset and pushes it to the Hub.
 
 1. **Sign in** with your Hugging Face account (OAuth).

@@ -67,7 +67,7 @@ ENV HOME=/home/user \
 # SYSTEM=spaces lets Gradio's get_space() recognize this Docker Space so it uses
 # the real HF OAuth flow (vars injected by hf_oauth: true) instead of the local mock.
 WORKDIR /home/user/app
-COPY --chown=user app.py pipeline.py /home/user/app/
+COPY --chown=user app.py pipeline.py views.py controller.py review.py /home/user/app/
 
 EXPOSE 7860
 CMD ["python", "app.py"]
