@@ -444,10 +444,32 @@ class Application(dbus.service.Object):
 # Network helpers
 # =====================================================================
 
-def get_network_status() -> str:
-    """Return network status string: "{MODE} [iface] ip ; [iface] ip".
+def _active_wifi_ssid() -> str:
+    """Name of the currently-connected WiFi network, or "" if none.
 
-    MODE is one of: CONNECTED, HOTSPOT, OFFLINE.
+    Reads the active connections (no scan, so it stays fast enough for the
+    periodic mainloop refresh): the active 802-11-wireless connection's NAME is
+    the SSID (NetworkManager names WiFi connections after the SSID by default).
+    """
+    try:
+        result = subprocess.run(
+            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"],
+            capture_output=True, text=True, timeout=5,
+        )
+        for line in result.stdout.splitlines():
+            if line.endswith(":802-11-wireless"):
+                name = line[: -len(":802-11-wireless")]
+                return name.replace("\\:", ":")  # un-escape nmcli's ':'
+    except Exception:
+        pass
+    return ""
+
+
+def get_network_status() -> str:
+    """Return network status string: "{MODE} (ssid) [iface] ip ; [iface] ip".
+
+    MODE is one of: CONNECTED, HOTSPOT, OFFLINE. The "(ssid)" segment is present
+    only when connected to a WiFi network.
     """
     try:
         result = subprocess.run(
@@ -473,7 +495,9 @@ def get_network_status() -> str:
         wlan_ip = interfaces.get("wlan0", "")
         mode = "HOTSPOT" if wlan_ip.startswith("10.42.0.") else "CONNECTED"
         parts = [f"[{iface}] {ip}" for iface, ip in interfaces.items()]
-        return f"{mode} {' ; '.join(parts)}"
+        ssid = _active_wifi_ssid() if mode == "CONNECTED" else ""
+        prefix = f"{mode} ({ssid})" if ssid else mode
+        return f"{prefix} {' ; '.join(parts)}"
     except Exception as e:
         logger.error("Error getting network status: %s", e)
         return "ERROR"
@@ -734,13 +758,18 @@ class BluetoothWifiService:
 
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
-        # Set the adapter alias so the device shows as "Gripette" (not hostname)
+        # Set the adapter alias so the device shows as "Grabette" (not hostname)
         adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(self.device_name))
         adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
         adapter_props.Set(
             "org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(0)
         )
-        adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(True))
+        # Pairable=False: the GATT characteristics are unencrypted, so clients
+        # connect "connection-only" and use them WITHOUT bonding. This avoids the
+        # pairing-confirmation prompt the client OS would otherwise raise (which
+        # on a laptop needs an interactive agent), so end users just connect from
+        # the web tool — no terminal, no pairing dialog.
+        adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(False))
 
         # Register GATT application
         service_manager = dbus.Interface(adapter, GATT_MANAGER_IFACE)

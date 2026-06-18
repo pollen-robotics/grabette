@@ -17,7 +17,10 @@ help:
 install-rpi: install-udev-oak
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
-	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg
+	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
+	  python3-dbus python3-gi
+	@# python3-dbus / python3-gi: system deps the bluetooth WiFi service imports
+	@# (dbus, gi.repository.GLib); the venv reaches them via --system-site-packages.
 	cd $(WORKSPACE_ROOT) && rm -rf .venv \
 	  && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package grabette --extra rpi --extra ui
@@ -41,12 +44,7 @@ install-udev-oak:
 		echo "OAK-D udev rule already present."; \
 	fi
 
-# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises
-# cleanly: in dual-mode, classic BR/EDR audio profiles (A2DP/Handsfree/AVRCP)
-# get negotiated on connect and destabilise the LE link (writes fail, links
-# drop). Idempotent — replaces any existing ControllerMode line (even a
-# commented one) or adds one under [General], then restarts bluetoothd. The
-# setting lives in main.conf so it persists across reboots.
+# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
 ensure-ble-only:
 	@CONF=/etc/bluetooth/main.conf; \
 	sudo grep -q '^\[General\]' "$$CONF" || echo '[General]' | sudo tee -a "$$CONF" >/dev/null; \
