@@ -282,34 +282,17 @@ class CommandCharacteristic(Characteristic):
 
 
 class ResponseCharacteristic(Characteristic):
-    """Read/notify characteristic that holds the last command response.
-
-    Tracks the client's notification subscription (StartNotify/StopNotify) so
-    BlueZ versions that gate forwarding on it behave correctly. The last value
-    is always stored so a client that reads instead of subscribing still works.
-    """
+    """Read/notify characteristic that holds the last command response."""
 
     def __init__(self, bus, index, service):
         super().__init__(bus, index, RESPONSE_CHAR_UUID, ["read", "notify"], service)
-        self.notifying = False
-
-    @dbus.service.method(GATT_CHRC_IFACE, in_signature="", out_signature="")
-    def StartNotify(self):
-        self.notifying = True
-        logger.info("Response notifications enabled")
-
-    @dbus.service.method(GATT_CHRC_IFACE, in_signature="", out_signature="")
-    def StopNotify(self):
-        self.notifying = False
-        logger.info("Response notifications disabled")
 
     def send_notification(self, text: str) -> None:
-        """Store the result and push it to subscribed clients.
+        """Store the result and notify subscribed clients.
 
         Must run on the GLib mainloop thread (DBus signal emission). The value
-        is stored unconditionally so a reading client still sees it; the
-        PropertiesChanged signal is emitted regardless of ``notifying`` because
-        BlueZ only forwards it to centrals that actually subscribed.
+        is stored so a reading client still sees it; BlueZ only forwards the
+        PropertiesChanged signal to centrals that subscribed.
         """
         encoded = [dbus.Byte(b) for b in text.encode("utf-8")]
         self.value = encoded
@@ -659,37 +642,27 @@ class BluetoothWifiService:
         WIFI ssid password → OK: Connecting to <ssid> / ERROR: ...
         WIFI_RESET         → OK: WiFi connections cleared / ERROR: ...
 
-    A successful PIN opens an authenticated session (SESSION_TTL_S seconds);
-    WIFI/WIFI_RESET are allowed while it is live, so no re-PIN per command.
-    The session is reset when the BLE central disconnects.
+    PIN authentication is required before WIFI/WIFI_SCAN/WIFI_RESET. Auth is
+    consumed by WIFI/WIFI_RESET (re-PIN for each) but NOT by WIFI_SCAN, so a
+    client can scan then connect with a single PIN. Auth is reset when the BLE
+    central disconnects.
     Network status is readable from the STATUS service (updates every 10s).
     """
-
-    # A successful PIN opens an authenticated session valid for this long, so a
-    # client can chain PIN → WIFI (or retry WIFI) without re-authenticating
-    # before every command, while an abandoned session does not stay privileged
-    # forever.
-    SESSION_TTL_S = 300
 
     def __init__(self, device_name: str = "Grabette", pin_code: str = "00000"):
         self.device_name = device_name
         self.pin_code = pin_code
-        # Monotonic deadline of the TTL-bounded authenticated session.
-        self._authed_until = 0.0
+        self.authenticated = False
         self.bus = None
         self.app = None
         self.adv = None
         self.mainloop = None
         # Advertising manager + the object path of the currently-connected
-        # central. Used to reset session state and re-assert advertising when a
-        # central drops (including ungraceful drops like an app crash) so the
-        # device stays reconnectable.
+        # central. Used to reset auth and re-assert advertising when a central
+        # drops (including ungraceful drops like an app crash) so the device
+        # stays reconnectable.
         self._ad_manager = None
         self._connected_device_path = None
-
-    def _is_authed(self) -> bool:
-        """Whether the TTL-bounded authenticated session is still valid."""
-        return self._authed_until > time.monotonic()
 
     def _handle_command(self, value: bytes) -> str:
         """Dispatch a BLE command and return response string."""
@@ -702,36 +675,39 @@ class BluetoothWifiService:
         if upper == "PING":
             return "PONG"
 
-        # PIN_xxxxx — authenticate, opening a TTL-bounded session
+        # PIN_xxxxx — authenticate
         if upper.startswith("PIN_"):
             pin = command_str[4:].strip()
             if pin == self.pin_code:
-                self._authed_until = time.monotonic() + self.SESSION_TTL_S
+                self.authenticated = True
                 return "OK: Connected"
             else:
                 return "ERROR: Incorrect PIN"
 
-        # WIFI_SCAN — list nearby networks (requires a live session)
+        # WIFI_SCAN — list nearby networks (requires auth; does NOT consume it,
+        # so the client can scan then connect with a single PIN)
         if upper == "WIFI_SCAN":
-            if not self._is_authed():
+            if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             return _wifi_scan()
 
-        # WIFI ssid password — requires a live session
+        # WIFI ssid password — requires auth
         if upper.startswith("WIFI "):
-            if not self._is_authed():
+            if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             # Parse: "WIFI ssid password" (password may contain spaces)
             parts = command_str.split(" ", 2)
             if len(parts) < 3:
                 return "ERROR: Usage: WIFI <ssid> <password>"
             ssid, password = parts[1], parts[2]
+            self.authenticated = False  # one-shot auth
             return _wifi_connect(ssid, password)
 
-        # WIFI_RESET — requires a live session
+        # WIFI_RESET — requires auth
         if upper == "WIFI_RESET":
-            if not self._is_authed():
+            if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
+            self.authenticated = False  # one-shot auth
             return _wifi_reset()
 
         return f"ERROR: Unknown command: {command_str}"
@@ -826,8 +802,8 @@ class BluetoothWifiService:
                 self._on_central_disconnected()
 
     def _on_central_disconnected(self):
-        """Reset session and re-assert advertising after a central drops."""
-        self._authed_until = 0.0
+        """Reset auth and re-assert advertising after a central drops."""
+        self.authenticated = False
         self._reassert_advertising()
 
     def _reassert_advertising(self):
