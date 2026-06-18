@@ -132,6 +132,7 @@ LOGIN_CARD = """
  <div id="hfStatus">Checking…</div>
  <div id="hfLogin" style="margin-top:.8rem">
   <button class="oauth" id="hfOauth" style="display:none">One-click login (OAuth)</button>
+  <p id="hfOr" class="muted" style="display:none;text-align:center;margin:.5rem 0">or use a token:</p>
   <div class="row"><input id="hfTok" placeholder="hf_..." autocomplete="off">
    <button class="primary" id="hfSave">Save</button></div>
   <div class="err" id="hfErr"></div>
@@ -147,7 +148,9 @@ async function hfRefresh(){
  }else{
   _$('hfStatus').textContent='Not logged in.';_$('hfLogin').style.display='block';
   const c=await(await fetch(`${HF}/oauth/configured`)).json();
-  if(c.configured)_$('hfOauth').style.display='block';
+  const showOauth=c.configured;
+  _$('hfOauth').style.display=showOauth?'block':'none';
+  _$('hfOr').style.display=showOauth?'block':'none';
  }
  if(window.grabetteAuthChanged)window.grabetteAuthChanged(s);
 }
@@ -162,5 +165,6 @@ _$('hfOauth').onclick=async()=>{const r=await(await fetch(`${HF}/oauth/start`)).
   if(st.status==='authorized'){clearInterval(t);if(p)p.close();hfRefresh();}
   else if(st.status==='error'||st.status==='expired'){clearInterval(t);_$('hfErr').textContent=st.message||'failed';}},1500);};
 hfRefresh();
+setInterval(hfRefresh,5000);
 </script>
 """
