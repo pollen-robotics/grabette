@@ -73,6 +73,11 @@ async def _handle_relay_command(cmd: dict) -> dict:
     if ctype == "get_state":
         return {"status": "ok", "state": daemon.status}
 
+    if ctype == "logout":
+        from huggingface_hub import logout as hf_logout
+        hf_logout()
+        return {"status": "ok"}
+
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
 
@@ -91,10 +96,6 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "not capturing"}
         result = await backend.stop_capture()
         return {"status": "ok", "result": result}
-    if ctype == "logout":
-        from huggingface_hub import logout as hf_logout
-        hf_logout()
-        return {"status": "ok"}
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 
 
