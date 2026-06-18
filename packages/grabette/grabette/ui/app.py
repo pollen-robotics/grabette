@@ -782,29 +782,58 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=task_choices, value=[]), ns_update
 
     def on_ds_upload(task_ids, namespace, repo_name):
+        import time
         if not task_ids:
-            return "Select at least one task"
+            yield "Select at least one task"
+            return
         if not namespace or not repo_name.strip():
-            return "Enter an owner and a repository name"
-        repo_id = f"{namespace}{repo_name.strip()}"
+            yield "Enter an owner and a repository name"
+            return
+        name = repo_name.strip()
+        target_repo = f"{namespace}{name}"
+        raw_repo = f"{namespace}{name}-raw"
+
+        # Build task description from all selected tasks
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
-        jobs, errors = [], []
-        for tid in task_ids:
-            s = session_map.get(tid)
-            if not s:
-                continue
-            for ep in s.get("episodes", []):
-                result = client.hf_upload_episode(ep["episode_id"], repo_id)
-                if "error" in result:
-                    errors.append(f"{ep['episode_id']}: {result['error']}")
-                else:
-                    jobs.append(result.get("job_id", "?"))
-        if errors:
-            return f"Errors: {'; '.join(errors)}"
-        if not jobs:
-            return "No episodes found in selected tasks"
-        return f"Started {len(jobs)} upload job(s)"
+        descriptions = [
+            s["description"]
+            for tid in task_ids
+            if (s := session_map.get(tid)) and s.get("description")
+        ]
+        task_description = ", ".join(descriptions) if descriptions else name
+
+        yield f"Starting… uploading to {raw_repo}, then processing to {target_repo}"
+
+        result = client.hf_push_and_process(
+            task_ids=list(task_ids),
+            target_repo=target_repo,
+            raw_repo=raw_repo,
+            task_description=task_description,
+        )
+        if "error" in result:
+            yield f"Error: {result['error']}"
+            return
+
+        job_id = result["job_id"]
+        while True:
+            time.sleep(3)
+            job = client.hf_get_job(job_id)
+            if job is None:
+                yield "Error: job lost"
+                return
+            status = job.get("status", "running")
+            msg = job.get("message") or job.get("error") or ""
+            pct = job.get("progress", 0)
+            if status == "completed":
+                link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
+                yield f"✅ Done! Dataset: {link}"
+                return
+            elif status == "failed":
+                yield f"❌ Failed: {msg}"
+                return
+            else:
+                yield f"[{pct:.0f}%] {msg}"
 
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
@@ -1170,7 +1199,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         gr.HTML("</div>")
         ds_upload_msg = gr.Textbox(
-            show_label=False, interactive=False, max_lines=2, container=False,
+            show_label=False, interactive=False, max_lines=3, container=False,
         )
         gr.HTML("</div>")
 
