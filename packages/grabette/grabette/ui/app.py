@@ -753,13 +753,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             variant="secondary",
         )
 
-    def check_hf_auth_on_load():
+    def check_hf_auth_on_load(current_ns: str | None = None):
         result = client.hf_check_auth()
         authenticated = result.get("authenticated", False)
         if authenticated:
             namespaces = client.hf_get_namespaces()
             ns_choices = [f"{ns}/" for ns in namespaces]
-            ns_update = gr.update(choices=ns_choices, value=ns_choices[0] if ns_choices else None)
+            # Preserve the user's selection if it's still valid; only reset on
+            # first load (current_ns is None) or if the value disappeared.
+            if current_ns and current_ns in ns_choices:
+                value = current_ns
+            else:
+                value = ns_choices[0] if ns_choices else None
+            ns_update = gr.update(choices=ns_choices, value=value)
         else:
             ns_update = gr.update(choices=[], value=None)
         return gr.update(visible=not authenticated), _ds_upload_btn_update(authenticated), ns_update
@@ -779,7 +785,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if not task_ids:
             return "Select at least one task"
         if not namespace or not repo_name.strip():
-            return "Enter a namespace and a repository name"
+            return "Enter an owner and a repository name"
         repo_id = f"{namespace}{repo_name.strip()}"
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
@@ -1141,14 +1147,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
           <div>
             <div style="font-weight:600;font-size:1rem;">Name your destination repository</div>
             <div style="color:#94a3b8;font-size:0.85rem;">
-              Choose a namespace and give a name to the dataset.
+              Choose an owner and give a name to the dataset.
             </div>
           </div>
         </div>
         """)
         with gr.Row():
             ds_namespace = gr.Dropdown(
-                label="Namespace", choices=[], interactive=True, scale=1,
+                label="Owner", choices=[], interactive=True, scale=1,
             )
             ds_repo_name = gr.Textbox(
                 label="Repository name", placeholder="grabette-data",
@@ -1177,7 +1183,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         ds_auth_timer = gr.Timer(3.0)
-        ds_auth_timer.tick(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
+        ds_auth_timer.tick(fn=check_hf_auth_on_load, inputs=[ds_namespace], outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         batt_popup_ds = gr.HTML(visible=False)
         batt_timer_ds = gr.Timer(60.0)
