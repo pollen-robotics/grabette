@@ -14,9 +14,11 @@ Changes from reference:
 - Simplified status service (network status only)
 """
 
+import json
 import logging
 import subprocess
 import threading
+import time
 from typing import Callable
 
 import dbus
@@ -61,38 +63,49 @@ USER_DESCRIPTION_UUID = "00002901-0000-1000-8000-00805f9b34fb"
 class NoInputAgent(dbus.service.Object):
     """BLE Agent for Just Works pairing (NoInputNoOutput capability)."""
 
+    # NB: the method signatures below MUST match the org.bluez.Agent1 API
+    # exactly. BlueZ invokes them with arguments (device object path, passkey,
+    # uuid, …); declaring in_signature="" desyncs the introspected signature
+    # from the call and makes BlueZ cancel the pairing — which manifests
+    # client-side as "Connection attempt failed", especially with laptops that
+    # negotiate numeric-comparison instead of plain Just Works.
+
     @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def Release(self, *args):
+    def Release(self):
         logger.info("Agent released")
 
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="s")
-    def RequestPinCode(self, *args):
-        logger.info("RequestPinCode — returning empty (Just Works)")
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
+    def RequestPinCode(self, device):
+        logger.info("RequestPinCode (%s) — returning empty (Just Works)", device)
         return ""
 
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="u")
-    def RequestPasskey(self, *args):
-        logger.info("RequestPasskey — returning 0 (Just Works)")
+    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
+    def DisplayPinCode(self, device, pincode):
+        pass
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
+    def RequestPasskey(self, device):
+        logger.info("RequestPasskey (%s) — returning 0 (Just Works)", device)
         return dbus.UInt32(0)
 
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def RequestConfirmation(self, *args):
-        logger.info("RequestConfirmation — auto-accepting")
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def DisplayPinCode(self, *args):
+    @dbus.service.method("org.bluez.Agent1", in_signature="ouq", out_signature="")
+    def DisplayPasskey(self, device, passkey, entered):
         pass
 
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def DisplayPasskey(self, *args):
-        pass
+    @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
+    def RequestConfirmation(self, device, passkey):
+        logger.info("RequestConfirmation (%s) — auto-accepting", device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
+    def RequestAuthorization(self, device):
+        logger.info("RequestAuthorization (%s) — auto-accepting", device)
+
+    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
+    def AuthorizeService(self, device, uuid):
+        logger.info("AuthorizeService (%s, %s) — auto-accepting", device, uuid)
 
     @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def AuthorizeService(self, *args):
-        logger.info("AuthorizeService — auto-accepting")
-
-    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
-    def Cancel(self, *args):
+    def Cancel(self):
         logger.info("Agent request canceled")
 
 
@@ -258,26 +271,53 @@ class CommandCharacteristic(Characteristic):
 
     def _run_command(self, command_bytes: bytes) -> None:
         response = self.command_handler(command_bytes)
-        # Update response char on the GLib main loop thread (thread-safe).
+        # Deliver the result on the GLib main loop thread (DBus is not
+        # thread-safe). The client awaits exactly one notification per command,
+        # so we emit a single final response (never an intermediate ack).
         def _update():
-            encoded = [dbus.Byte(b) for b in response.encode("utf-8")]
-            self.service.response_char.value = encoded
-            # Notify subscribed BLE clients so they don't need to poll.
-            self.service.response_char.PropertiesChanged(
-                GATT_CHRC_IFACE,
-                {"Value": dbus.Array(encoded, signature="y")},
-                dbus.Array([], signature="s"),
-            )
+            self.service.response_char.send_notification(response)
             logger.info("Command processed, response: %s", response)
             return False  # one-shot
         GLib.idle_add(_update)
 
 
 class ResponseCharacteristic(Characteristic):
-    """Read/notify characteristic that holds the last command response."""
+    """Read/notify characteristic that holds the last command response.
+
+    Tracks the client's notification subscription (StartNotify/StopNotify) so
+    BlueZ versions that gate forwarding on it behave correctly. The last value
+    is always stored so a client that reads instead of subscribing still works.
+    """
 
     def __init__(self, bus, index, service):
         super().__init__(bus, index, RESPONSE_CHAR_UUID, ["read", "notify"], service)
+        self.notifying = False
+
+    @dbus.service.method(GATT_CHRC_IFACE, in_signature="", out_signature="")
+    def StartNotify(self):
+        self.notifying = True
+        logger.info("Response notifications enabled")
+
+    @dbus.service.method(GATT_CHRC_IFACE, in_signature="", out_signature="")
+    def StopNotify(self):
+        self.notifying = False
+        logger.info("Response notifications disabled")
+
+    def send_notification(self, text: str) -> None:
+        """Store the result and push it to subscribed clients.
+
+        Must run on the GLib mainloop thread (DBus signal emission). The value
+        is stored unconditionally so a reading client still sees it; the
+        PropertiesChanged signal is emitted regardless of ``notifying`` because
+        BlueZ only forwards it to centrals that actually subscribed.
+        """
+        encoded = [dbus.Byte(b) for b in text.encode("utf-8")]
+        self.value = encoded
+        self.PropertiesChanged(
+            GATT_CHRC_IFACE,
+            {"Value": dbus.Array(encoded, signature="y")},
+            dbus.Array([], signature="s"),
+        )
 
 
 class DynamicCharacteristic(Characteristic):
@@ -456,18 +496,122 @@ def get_network_status() -> str:
         return "ERROR"
 
 
-def _wifi_connect(ssid: str, password: str) -> str:
-    """Connect to a WiFi network using nmcli. Returns status message."""
+# A scan reply must fit a single BLE notification, whose payload is bounded by
+# the negotiated ATT MTU. 180 bytes is safe even on a small MTU; SSIDs beyond
+# that budget are dropped (strongest-signal networks are kept first).
+WIFI_SCAN_MTU_BUDGET = 180
+
+
+def _wifi_scan() -> str:
+    """Rescan and return nearby SSIDs as a JSON array, strongest signal first.
+
+    The list is bounded to WIFI_SCAN_MTU_BUDGET bytes so it fits one BLE
+    notification. Returns an "ERROR: ..." string on failure.
+    """
+    # Best-effort active rescan so the list isn't stale; ignore failures
+    # (the radio may be briefly busy) and fall back to the cached list.
+    try:
+        subprocess.run(
+            ["nmcli", "device", "wifi", "rescan"],
+            capture_output=True, text=True, timeout=12,
+        )
+    except Exception:
+        pass
     try:
         result = subprocess.run(
-            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
-            capture_output=True, text=True, timeout=30,
+            ["nmcli", "-t", "-f", "SSID,SIGNAL", "device", "wifi", "list"],
+            capture_output=True, text=True, timeout=10,
         )
-        if result.returncode == 0:
+    except Exception as e:
+        return f"ERROR: {e}"
+
+    seen: set = set()
+    networks = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        # -t output is "SSID:SIGNAL"; SIGNAL is the numeric last field, and
+        # any ':' inside the SSID is backslash-escaped by nmcli.
+        ssid, _, signal = line.rpartition(":")
+        ssid = ssid.replace("\\:", ":").replace("\\\\", "\\").strip()
+        if not ssid or ssid in seen:  # skip hidden (empty) and duplicates
+            continue
+        seen.add(ssid)
+        try:
+            strength = int(signal)
+        except ValueError:
+            strength = 0
+        networks.append((strength, ssid))
+
+    networks.sort(key=lambda n: n[0], reverse=True)
+    out: list = []
+    for _, ssid in networks:
+        trial = out + [ssid]
+        encoded = json.dumps(trial, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded.encode("utf-8")) > WIFI_SCAN_MTU_BUDGET:
+            break
+        out = trial
+    return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
+
+
+def _wifi_connect(ssid: str, password: str) -> str:
+    """Connect to a WiFi network using nmcli. Returns status message.
+
+    Robust against a stale scan cache: ``nmcli device wifi connect`` infers the
+    AP's security from the scan list, so if the network isn't freshly visible
+    it fails with "No network with SSID found" or builds a profile with no
+    ``key-mgmt``. We rescan first, and delete any incomplete profile a previous
+    failed attempt left under the same name (a common cause of the key-mgmt
+    error on retry), then connect fresh.
+    """
+    # Active rescan so the AP is visible to NetworkManager. Timeouts are kept
+    # tight so the whole flow stays under the client's 35s notification timeout.
+    try:
+        subprocess.run(
+            ["nmcli", "device", "wifi", "rescan"],
+            capture_output=True, text=True, timeout=10,
+        )
+        time.sleep(1.5)  # let the scan results populate
+    except Exception:
+        pass  # best-effort
+
+    # Drop any stale/half-built profile of the same name from a prior attempt.
+    subprocess.run(
+        ["nmcli", "connection", "delete", ssid],
+        capture_output=True, text=True,
+    )
+
+    # Create the profile EXPLICITLY as WPA-PSK rather than letting
+    # `nmcli device wifi connect` infer the security from the scan: that
+    # inference fails (profile built with no key-mgmt → "key-mgmt is missing")
+    # whenever the AP isn't freshly in the scan cache. Setting key-mgmt by hand
+    # is deterministic for the common WPA/WPA2-PSK case.
+    try:
+        add = subprocess.run(
+            [
+                "nmcli", "connection", "add", "type", "wifi",
+                "con-name", ssid, "ssid", ssid,
+                "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if add.returncode != 0:
+            return f"ERROR: {add.stderr.strip() or add.stdout.strip()}"
+
+        up = subprocess.run(
+            ["nmcli", "connection", "up", ssid],
+            capture_output=True, text=True, timeout=20,
+        )
+        if up.returncode == 0:
             return f"OK: Connecting to {ssid}"
-        else:
-            error = result.stderr.strip() or result.stdout.strip()
-            return f"ERROR: {error}"
+        # Bring-up failed (wrong password, out of range…): remove the profile
+        # so the next attempt starts clean.
+        error = up.stderr.strip() or up.stdout.strip()
+        subprocess.run(
+            ["nmcli", "connection", "delete", ssid],
+            capture_output=True, text=True,
+        )
+        return f"ERROR: {error}"
     except subprocess.TimeoutExpired:
         return "ERROR: Connection timed out"
     except Exception as e:
@@ -511,21 +655,41 @@ class BluetoothWifiService:
     Commands (written to COMMAND characteristic as UTF-8):
         PING               → PONG
         PIN_xxxxx          → OK: Connected / ERROR: Incorrect PIN
+        WIFI_SCAN          → JSON array of nearby SSIDs / ERROR: ...
         WIFI ssid password → OK: Connecting to <ssid> / ERROR: ...
         WIFI_RESET         → OK: WiFi connections cleared / ERROR: ...
 
-    PIN authentication is required before WIFI/WIFI_RESET commands.
+    A successful PIN opens an authenticated session (SESSION_TTL_S seconds);
+    WIFI/WIFI_RESET are allowed while it is live, so no re-PIN per command.
+    The session is reset when the BLE central disconnects.
     Network status is readable from the STATUS service (updates every 10s).
     """
+
+    # A successful PIN opens an authenticated session valid for this long, so a
+    # client can chain PIN → WIFI (or retry WIFI) without re-authenticating
+    # before every command, while an abandoned session does not stay privileged
+    # forever.
+    SESSION_TTL_S = 300
 
     def __init__(self, device_name: str = "Grabette", pin_code: str = "00000"):
         self.device_name = device_name
         self.pin_code = pin_code
-        self.authenticated = False
+        # Monotonic deadline of the TTL-bounded authenticated session.
+        self._authed_until = 0.0
         self.bus = None
         self.app = None
         self.adv = None
         self.mainloop = None
+        # Advertising manager + the object path of the currently-connected
+        # central. Used to reset session state and re-assert advertising when a
+        # central drops (including ungraceful drops like an app crash) so the
+        # device stays reconnectable.
+        self._ad_manager = None
+        self._connected_device_path = None
+
+    def _is_authed(self) -> bool:
+        """Whether the TTL-bounded authenticated session is still valid."""
+        return self._authed_until > time.monotonic()
 
     def _handle_command(self, value: bytes) -> str:
         """Dispatch a BLE command and return response string."""
@@ -538,32 +702,36 @@ class BluetoothWifiService:
         if upper == "PING":
             return "PONG"
 
-        # PIN_xxxxx — authenticate
+        # PIN_xxxxx — authenticate, opening a TTL-bounded session
         if upper.startswith("PIN_"):
             pin = command_str[4:].strip()
             if pin == self.pin_code:
-                self.authenticated = True
+                self._authed_until = time.monotonic() + self.SESSION_TTL_S
                 return "OK: Connected"
             else:
                 return "ERROR: Incorrect PIN"
 
-        # WIFI ssid password — requires auth
+        # WIFI_SCAN — list nearby networks (requires a live session)
+        if upper == "WIFI_SCAN":
+            if not self._is_authed():
+                return "ERROR: Not authenticated. Send PIN_xxxxx first."
+            return _wifi_scan()
+
+        # WIFI ssid password — requires a live session
         if upper.startswith("WIFI "):
-            if not self.authenticated:
+            if not self._is_authed():
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             # Parse: "WIFI ssid password" (password may contain spaces)
             parts = command_str.split(" ", 2)
             if len(parts) < 3:
                 return "ERROR: Usage: WIFI <ssid> <password>"
             ssid, password = parts[1], parts[2]
-            self.authenticated = False  # one-shot auth
             return _wifi_connect(ssid, password)
 
-        # WIFI_RESET — requires auth
+        # WIFI_RESET — requires a live session
         if upper == "WIFI_RESET":
-            if not self.authenticated:
+            if not self._is_authed():
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
-            self.authenticated = False  # one-shot auth
             return _wifi_reset()
 
         return f"ERROR: Unknown command: {command_str}"
@@ -610,6 +778,7 @@ class BluetoothWifiService:
 
         # Register BLE advertisement
         ad_manager = dbus.Interface(adapter, LE_ADVERTISING_MANAGER_IFACE)
+        self._ad_manager = ad_manager
         self.adv = Advertisement(self.bus, 0, "peripheral", self.device_name)
         self.adv.service_uuids = [STATUS_SERVICE_UUID]
         ad_manager.RegisterAdvertisement(
@@ -621,10 +790,73 @@ class BluetoothWifiService:
             ),
         )
 
+        # Watch central connect/disconnect. BlueZ emits PropertiesChanged on
+        # org.bluez.Device1 with Connected=true/false; we use the false edge to
+        # reset the session and re-assert advertising — crucially including
+        # UNGRACEFUL drops (app crash), where advertising would otherwise not
+        # resume and the device becomes unreconnectable until a restart.
+        self.bus.add_signal_receiver(
+            self._on_device_properties_changed,
+            dbus_interface=DBUS_PROP_IFACE,
+            signal_name="PropertiesChanged",
+            arg0="org.bluez.Device1",
+            path_keyword="path",
+        )
+
         # Periodic network status refresh (every 10s)
         GLib.timeout_add_seconds(10, self.app.status_service.update_network_status)
 
         logger.info("Bluetooth service started as '%s'", self.device_name)
+
+    def _on_device_properties_changed(
+        self, interface, changed, invalidated, path=None
+    ):
+        """React to BlueZ Device1 connect/disconnect transitions."""
+        if interface != "org.bluez.Device1" or "Connected" not in changed:
+            return
+        if bool(changed["Connected"]):
+            self._connected_device_path = path
+            logger.info("BLE central connected: %s", path)
+        else:
+            logger.info("BLE central disconnected: %s", path)
+            # Only act on the device we tracked, so a stale disconnect signal
+            # can't clobber a client that just reconnected.
+            if self._connected_device_path in (None, path):
+                self._connected_device_path = None
+                self._on_central_disconnected()
+
+    def _on_central_disconnected(self):
+        """Reset session and re-assert advertising after a central drops."""
+        self._authed_until = 0.0
+        self._reassert_advertising()
+
+    def _reassert_advertising(self):
+        """Re-register the advertisement so the device stays discoverable.
+
+        BlueZ usually resumes a registered connectable advert after a link
+        drops, but that is version-dependent. Unregister (best-effort) then
+        register again; both errors are non-fatal (an AlreadyExists on register
+        just means it was still active).
+        """
+        if self._ad_manager is None or self.adv is None:
+            return
+        try:
+            self._ad_manager.UnregisterAdvertisement(self.adv.get_path())
+        except dbus.exceptions.DBusException:
+            pass  # not currently registered — fine
+        try:
+            self._ad_manager.RegisterAdvertisement(
+                self.adv.get_path(),
+                {},
+                reply_handler=lambda: logger.info(
+                    "Advertisement re-asserted after disconnect"
+                ),
+                error_handler=lambda e: logger.warning(
+                    "Re-assert advertisement failed (non-fatal): %s", e
+                ),
+            )
+        except dbus.exceptions.DBusException as e:
+            logger.warning("Re-assert advertisement raised (non-fatal): %s", e)
 
     def _find_adapter(self):
         """Find the first BlueZ adapter that supports GATT + LE advertising."""

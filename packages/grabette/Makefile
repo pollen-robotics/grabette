@@ -1,4 +1,4 @@
-.PHONY: install-rpi install-udev-oak install-systemd help
+.PHONY: install-rpi install-udev-oak install-systemd ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -8,7 +8,8 @@ help:
 	@echo "Targets:"
 	@echo "  install-rpi       Install apt deps + udev rule, create venv, sync, verify"
 	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
-	@echo "  install-systemd   Install + enable the grabette systemd service"
+	@echo "  install-systemd   Install + enable the grabette + bluetooth systemd services (BLE-only)"
+	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
@@ -40,11 +41,32 @@ install-udev-oak:
 		echo "OAK-D udev rule already present."; \
 	fi
 
-install-systemd:
-	@# Patch the unit's hardcoded path to this device's actual workspace root
+# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises
+# cleanly: in dual-mode, classic BR/EDR audio profiles (A2DP/Handsfree/AVRCP)
+# get negotiated on connect and destabilise the LE link (writes fail, links
+# drop). Idempotent — replaces any existing ControllerMode line (even a
+# commented one) or adds one under [General], then restarts bluetoothd. The
+# setting lives in main.conf so it persists across reboots.
+ensure-ble-only:
+	@CONF=/etc/bluetooth/main.conf; \
+	sudo grep -q '^\[General\]' "$$CONF" || echo '[General]' | sudo tee -a "$$CONF" >/dev/null; \
+	if sudo grep -qE '^[[:space:]]*#?[[:space:]]*ControllerMode' "$$CONF"; then \
+	  sudo sed -i -E 's|^[[:space:]]*#?[[:space:]]*ControllerMode.*|ControllerMode = le|' "$$CONF"; \
+	else \
+	  sudo sed -i '/^\[General\]/a ControllerMode = le' "$$CONF"; \
+	fi
+	sudo systemctl restart bluetooth
+	@echo "BlueZ set to BLE-only (ControllerMode = le)"
+
+install-systemd: ensure-ble-only
+	@# Patch each unit's placeholder path to this device's actual workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
 	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette.service \
 	  | sudo tee /etc/systemd/system/grabette.service >/dev/null
+	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette-bluetooth.service \
+	  | sudo tee /etc/systemd/system/grabette-bluetooth.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now grabette
+	sudo systemctl enable --now grabette-bluetooth
 	@echo "Logs: journalctl -u grabette -f"
+	@echo "      journalctl -u grabette-bluetooth -f"
