@@ -126,6 +126,10 @@ class RpiBackend(Backend):
         self._start_time = None
         logger.info("RpiBackend stopped")
 
+    @property
+    def is_camera_connected(self) -> bool:
+        return self._camera is not None and self._camera.is_open
+
     # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
 
     @property
