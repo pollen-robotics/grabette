@@ -78,11 +78,15 @@ def get_local_ip() -> str | None:
 def scan_networks() -> list[dict]:
     """Return visible WiFi networks sorted by signal, excluding the current connection."""
     own_ssid = get_current_ssid() or ""
-    result = _run(
-        ["nmcli", "--escape", "no", "-t", "-f", "SSID,SIGNAL",
-         "dev", "wifi", "list", "--rescan", "yes"],
-        timeout=15,
-    )
+    try:
+        result = _run(
+            ["nmcli", "--escape", "no", "-t", "-f", "SSID,SIGNAL",
+             "dev", "wifi", "list", "--rescan", "auto"],
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        logger.warning("wifi scan timed out")
+        return []
     networks: list[dict] = []
     seen: set[str] = set()
     for line in result.stdout.splitlines():
