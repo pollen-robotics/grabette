@@ -83,7 +83,7 @@
     </inertial>
     <!-- Part dm_j8009p_2_step_1 -->
     <visual>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j8009p_2_step_1.stl"/>
       </geometry>
@@ -92,14 +92,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j8009p_2_step_1.stl"/>
       </geometry>
     </collision>
     <!-- Part j1_e_1_step -->
     <visual>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 -0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j1_e_1_step.stl"/>
       </geometry>
@@ -108,14 +108,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 -0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j1_e_1_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j1_d_1_step -->
     <visual>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j1_d_1_step.stl"/>
       </geometry>
@@ -124,14 +124,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j1_d_1_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j1_c_1_step -->
     <visual>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j1_c_1_step.stl"/>
       </geometry>
@@ -140,7 +140,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.697 0.0925" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.697 -0.0925" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j1_c_1_step.stl"/>
       </geometry>
@@ -155,7 +155,7 @@
     </inertial>
     <!-- Part j2_a_1_step -->
     <visual>
-      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.1525 0.697 -0.0301" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/j2_a_1_step.stl"/>
       </geometry>
@@ -164,14 +164,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.1525 0.697 -0.0301" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/j2_a_1_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j2_c_2_step -->
     <visual>
-      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.1525 0.697 -0.0301" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/j2_c_2_step.stl"/>
       </geometry>
@@ -180,14 +180,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.1525 0.697 -0.0301" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/j2_c_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j2_b_2_step -->
     <visual>
-      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.1525 0.697 -0.0301" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/j2_b_2_step.stl"/>
       </geometry>
@@ -196,7 +196,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.1525 -0.697 0.0301" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.1525 0.697 -0.0301" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/j2_b_2_step.stl"/>
       </geometry>
@@ -211,7 +211,7 @@
     </inertial>
     <!-- Part dm_j4340p_2_step -->
     <visual>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4340p_2_step.stl"/>
       </geometry>
@@ -220,14 +220,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4340p_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part fl6803zz_2_step -->
     <visual>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/fl6803zz_2_step.stl"/>
       </geometry>
@@ -236,14 +236,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/fl6803zz_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j4_a_2_step -->
     <visual>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_a_2_step.stl"/>
       </geometry>
@@ -252,14 +252,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_a_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part dm_j4340_2_step -->
     <visual>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4340_2_step.stl"/>
       </geometry>
@@ -268,14 +268,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4340_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j4_b_2_step -->
     <visual>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_b_2_step.stl"/>
       </geometry>
@@ -284,7 +284,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="9.5302e-05 0.1525 -0.63075" rpy="0 -0 -0.000624931"/>
+      <origin xyz="1e-12 -0.1525 0.63075" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_b_2_step.stl"/>
       </geometry>
@@ -299,7 +299,7 @@
     </inertial>
     <!-- Part j4_d_2_step -->
     <visual>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_d_2_step.stl"/>
       </geometry>
@@ -308,14 +308,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_d_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j4_c_2_step -->
     <visual>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 0"/>
       <geometry>
         <mesh filename="package://assets/j4_c_2_step.stl"/>
       </geometry>
@@ -324,14 +324,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 0"/>
       <geometry>
         <mesh filename="package://assets/j4_c_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part dm_j4310_1_2_step -->
     <visual>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4310_1_2_step.stl"/>
       </geometry>
@@ -340,14 +340,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4310_1_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j4_e_2_step -->
     <visual>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_e_2_step.stl"/>
       </geometry>
@@ -356,7 +356,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.477 0.18405" rpy="1.5708 -0 0"/>
+      <origin xyz="1e-12 -0.477 -0.18405" rpy="-1.5708 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j4_e_2_step.stl"/>
       </geometry>
@@ -371,7 +371,7 @@
     </inertial>
     <!-- Part j6_d_3_step -->
     <visual>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j6_d_3_step.stl"/>
       </geometry>
@@ -380,14 +380,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j6_d_3_step.stl"/>
       </geometry>
     </collision>
     <!-- Part dm_j4310_1_2_step_1 -->
     <visual>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4310_1_2_step_1.stl"/>
       </geometry>
@@ -396,14 +396,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/dm_j4310_1_2_step_1.stl"/>
       </geometry>
     </collision>
     <!-- Part j6_b_3_step -->
     <visual>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j6_b_3_step.stl"/>
       </geometry>
@@ -412,14 +412,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j6_b_3_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j5_a_3_step -->
     <visual>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j5_a_3_step.stl"/>
       </geometry>
@@ -428,14 +428,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j5_a_3_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j6_a_3_step -->
     <visual>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j6_a_3_step.stl"/>
       </geometry>
@@ -444,14 +444,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 -0"/>
       <geometry>
         <mesh filename="package://assets/j6_a_3_step.stl"/>
       </geometry>
     </collision>
     <!-- Part j6_c_right_2_step -->
     <visual>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 0"/>
       <geometry>
         <mesh filename="package://assets/j6_c_right_2_step.stl"/>
       </geometry>
@@ -460,7 +460,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.00377459 0.152503 -0.3815" rpy="0 -0 -0.0247458"/>
+      <origin xyz="1e-12 -0.15255 0.3815" rpy="-3.14159 0 0"/>
       <geometry>
         <mesh filename="package://assets/j6_c_right_2_step.stl"/>
       </geometry>
@@ -492,11 +492,11 @@
   </link>
   <!-- Joint from j6_a_3_step to j7_e_2_step -->
   <joint name="r_wrist_roll" type="revolute">
-    <origin xyz="0.0171947 -0.000425585 -0.0455" rpy="-1.5708 0.0176931 1.54605"/>
+    <origin xyz="0.0172 -0 0.0455" rpy="1.5708 0.00215838 -1.5708"/>
     <parent link="j6_a_3_step"/>
     <child link="j7_e_2_step"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-0.803091" upper="0.767705"/>
+    <limit effort="10" velocity="10" lower="-0.78324" upper="0.787556"/>
   </joint>
   <!-- Link dm_j4310_1_2_step_2 -->
   <link name="dm_j4310_1_2_step_2">
@@ -621,13 +621,13 @@
   <!-- Link j8_a_2_step -->
   <link name="j8_a_2_step">
     <inertial>
-      <origin xyz="0.0168653 0.0836013 0.0169536" rpy="0 0 0"/>
+      <origin xyz="0.0168653 -0.0836013 -0.0169536" rpy="0 0 0"/>
       <mass value="0.227294"/>
-      <inertia ixx="0.000379489" ixy="7.53636e-05" ixz="-2.59208e-05" iyy="0.000539617" iyz="-3.44239e-05" izz="0.000403409"/>
+      <inertia ixx="0.000379489" ixy="-7.53636e-05" ixz="2.59208e-05" iyy="0.000539617" iyz="-3.44239e-05" izz="0.000403409"/>
     </inertial>
     <!-- Part 611_00020_1 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/611_00020_1.stl"/>
       </geometry>
@@ -636,14 +636,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/611_00020_1.stl"/>
       </geometry>
     </collision>
     <!-- Part sr_lens_py058 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/sr_lens_py058.stl"/>
       </geometry>
@@ -652,14 +652,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/sr_lens_py058.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default -->
     <visual>
-      <origin xyz="-0 0.129426 0.0833323" rpy="-3.14159 1.17152 1.5708"/>
+      <origin xyz="-0 -0.129426 -0.0833323" rpy="-0 -1.17152 -1.5708"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -668,14 +668,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0 0.129426 0.0833323" rpy="-3.14159 1.17152 1.5708"/>
+      <origin xyz="-0 -0.129426 -0.0833323" rpy="-0 -1.17152 -1.5708"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1 -->
     <visual>
-      <origin xyz="0.0554246 0.0485 -0.00845136" rpy="1.5708 1.5708 0"/>
+      <origin xyz="0.0554246 -0.0485 0.00845136" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
       </geometry>
@@ -684,14 +684,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0554246 0.0485 -0.00845136" rpy="1.5708 1.5708 0"/>
+      <origin xyz="0.0554246 -0.0485 0.00845136" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_2 -->
     <visual>
-      <origin xyz="-0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <origin xyz="-0.019 -0.13453 -0.0686628" rpy="-0 -1.17152 -1.5708"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -700,14 +700,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <origin xyz="-0.019 -0.13453 -0.0686628" rpy="-0 -1.17152 -1.5708"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default -->
     <visual>
-      <origin xyz="0.0177 0.07175 -0.0477356" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0177 -0.07175 0.0477356" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -716,14 +716,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0177 0.07175 -0.0477356" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0177 -0.07175 0.0477356" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part j8_b_2_step -->
     <visual>
-      <origin xyz="-9.99999e-07 0.260999 0.17305" rpy="1.5708 -0 0"/>
+      <origin xyz="-9.99999e-07 -0.260999 -0.17305" rpy="-1.5708 -0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_b_2_step.stl"/>
       </geometry>
@@ -732,14 +732,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-9.99999e-07 0.260999 0.17305" rpy="1.5708 -0 0"/>
+      <origin xyz="-9.99999e-07 -0.260999 -0.17305" rpy="-1.5708 -0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_b_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_3 -->
     <visual>
-      <origin xyz="0.0830084 0.0650719 0.0130486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.0830084 -0.0650719 -0.0130486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -748,14 +748,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0830084 0.0650719 0.0130486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.0830084 -0.0650719 -0.0130486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part part_1__configuration_copy_of_2x8 -->
     <visual>
-      <origin xyz="0.03101 0.0593 0.04195" rpy="-3.14159 1.5708 0"/>
+      <origin xyz="0.03101 -0.0593 -0.04195" rpy="-0 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
@@ -764,14 +764,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.03101 0.0593 0.04195" rpy="-3.14159 1.5708 0"/>
+      <origin xyz="0.03101 -0.0593 -0.04195" rpy="-0 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_2 -->
     <visual>
-      <origin xyz="-0.0182 0.0755 -0.0477356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0755 0.0477356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -780,14 +780,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0182 0.0755 -0.0477356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0755 0.0477356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_4 -->
     <visual>
-      <origin xyz="0.0830084 0.0650719 0.0420486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.0830084 -0.0650719 -0.0420486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -796,14 +796,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0830084 0.0650719 0.0420486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.0830084 -0.0650719 -0.0420486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part cameras_holder_r -->
     <visual>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="-3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/cameras_holder_r.stl"/>
       </geometry>
@@ -812,14 +812,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="-3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/cameras_holder_r.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_sts3215__configuration_default -->
     <visual>
-      <origin xyz="-0.0096 0.079 -0.0133" rpy="-3.14159 -0 -1.5708"/>
+      <origin xyz="-0.0096 -0.079 0.0133" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
       </geometry>
@@ -828,14 +828,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0096 0.079 -0.0133" rpy="-3.14159 -0 -1.5708"/>
+      <origin xyz="-0.0096 -0.079 0.0133" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_3 -->
     <visual>
-      <origin xyz="0.0177 0.07175 -0.0682356" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0177 -0.07175 0.0682356" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -844,14 +844,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0177 0.07175 -0.0682356" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0177 -0.07175 0.0682356" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_4 -->
     <visual>
-      <origin xyz="-0.0182 0.0755 -0.0682356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0755 0.0682356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -860,14 +860,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0182 0.0755 -0.0682356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0755 0.0682356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part gripper_base_r -->
     <visual>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/gripper_base_r.stl"/>
       </geometry>
@@ -876,14 +876,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/gripper_base_r.stl"/>
       </geometry>
     </collision>
     <!-- Part arducam_fisheye -->
     <visual>
-      <origin xyz="0.0977284 0.0670242 0.0275486" rpy="-1.91986 1.5708 0"/>
+      <origin xyz="0.0977284 -0.0670242 -0.0275486" rpy="1.22173 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/arducam_fisheye.stl"/>
       </geometry>
@@ -892,14 +892,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0977284 0.0670242 0.0275486" rpy="-1.91986 1.5708 0"/>
+      <origin xyz="0.0977284 -0.0670242 -0.0275486" rpy="1.22173 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/arducam_fisheye.stl"/>
       </geometry>
     </collision>
     <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
       </geometry>
@@ -908,14 +908,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_5 -->
     <visual>
-      <origin xyz="0.01535 0.07946 0.0489995" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.01535 -0.07946 -0.0489995" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -924,14 +924,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.01535 0.07946 0.0489995" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.01535 -0.07946 -0.0489995" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part bulkhead -->
     <visual>
-      <origin xyz="0.01845 0.0825 0.0634995" rpy="1.5708 -1.5708 0"/>
+      <origin xyz="0.01845 -0.0825 -0.0634995" rpy="-1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/bulkhead.stl"/>
       </geometry>
@@ -940,14 +940,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.01845 0.0825 0.0634995" rpy="1.5708 -1.5708 0"/>
+      <origin xyz="0.01845 -0.0825 -0.0634995" rpy="-1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/bulkhead.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_6 -->
     <visual>
-      <origin xyz="0.110259 0.0749905 0.0130486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.110259 -0.0749905 -0.0130486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -956,14 +956,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.110259 0.0749905 0.0130486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.110259 -0.0749905 -0.0130486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_2 -->
     <visual>
-      <origin xyz="0.0554246 0.0485 0.0365486" rpy="1.5708 1.5708 0"/>
+      <origin xyz="0.0554246 -0.0485 -0.0365486" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
       </geometry>
@@ -972,14 +972,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0554246 0.0485 0.0365486" rpy="1.5708 1.5708 0"/>
+      <origin xyz="0.0554246 -0.0485 -0.0365486" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
       </geometry>
     </collision>
     <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
       </geometry>
@@ -988,14 +988,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
       </geometry>
     </collision>
     <!-- Part 606_00020_sr_front_cover -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/606_00020_sr_front_cover.stl"/>
       </geometry>
@@ -1004,14 +1004,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/606_00020_sr_front_cover.stl"/>
       </geometry>
     </collision>
     <!-- Part part_1__configuration_copy_of_2x8_2 -->
     <visual>
-      <origin xyz="0.03101 0.0823 -0.01605" rpy="-3.14159 1.5708 0"/>
+      <origin xyz="0.03101 -0.0823 0.01605" rpy="-0 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
@@ -1020,14 +1020,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.03101 0.0823 -0.01605" rpy="-3.14159 1.5708 0"/>
+      <origin xyz="0.03101 -0.0823 0.01605" rpy="-0 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/part_1__configuration_copy_of_2x8.stl"/>
       </geometry>
     </collision>
     <!-- Part j8_a_2_step -->
     <visual>
-      <origin xyz="1e-12 0.261 0.17305" rpy="1.5708 0 0"/>
+      <origin xyz="1e-12 -0.261 -0.17305" rpy="-1.5708 -0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_a_2_step.stl"/>
       </geometry>
@@ -1036,14 +1036,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="1e-12 0.261 0.17305" rpy="1.5708 0 0"/>
+      <origin xyz="1e-12 -0.261 -0.17305" rpy="-1.5708 -0 0"/>
       <geometry>
         <mesh filename="package://assets/j8_a_2_step.stl"/>
       </geometry>
     </collision>
     <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
       </geometry>
@@ -1052,14 +1052,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
       </geometry>
     </collision>
     <!-- Part grip_soft_tip_r -->
     <visual>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="-3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/grip_soft_tip_r.stl"/>
       </geometry>
@@ -1068,14 +1068,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="-3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/grip_soft_tip_r.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_5 -->
     <visual>
-      <origin xyz="-0.0182 0.0962 -0.0682356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0962 0.0682356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1084,14 +1084,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0182 0.0962 -0.0682356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0962 0.0682356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974 -->
     <visual>
-      <origin xyz="0.03161 0.0593 -0.01605" rpy="0 1.5708 0"/>
+      <origin xyz="0.03161 -0.0593 0.01605" rpy="3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
       </geometry>
@@ -1100,14 +1100,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.03161 0.0593 -0.01605" rpy="0 1.5708 0"/>
+      <origin xyz="0.03161 -0.0593 0.01605" rpy="3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_7 -->
     <visual>
-      <origin xyz="0.0404 0.0449 0.0426436" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0404 -0.0449 -0.0426436" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1116,14 +1116,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0404 0.0449 0.0426436" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0404 -0.0449 -0.0426436" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
       </geometry>
@@ -1132,14 +1132,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_6 -->
     <visual>
-      <origin xyz="-0.0182 0.0962 -0.0477356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0962 0.0477356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1148,14 +1148,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0182 0.0962 -0.0477356" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.0182 -0.0962 0.0477356" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_8 -->
     <visual>
-      <origin xyz="0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <origin xyz="0.019 -0.13453 -0.0686628" rpy="-0 -1.17152 -1.5708"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1164,14 +1164,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.019 0.13453 0.0686628" rpy="-3.14159 1.17152 1.5708"/>
+      <origin xyz="0.019 -0.13453 -0.0686628" rpy="-0 -1.17152 -1.5708"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part 612_00001_tim_thermal_oak_d_poe -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/612_00001_tim_thermal_oak_d_poe.stl"/>
       </geometry>
@@ -1180,14 +1180,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/612_00001_tim_thermal_oak_d_poe.stl"/>
       </geometry>
     </collision>
     <!-- Part hub_dyn -->
     <visual>
-      <origin xyz="0.02381 0.0858 0.04545" rpy="-3.14159 1.5708 0"/>
+      <origin xyz="0.02381 -0.0858 -0.04545" rpy="-0 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hub_dyn.stl"/>
       </geometry>
@@ -1196,14 +1196,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.02381 0.0858 0.04545" rpy="-3.14159 1.5708 0"/>
+      <origin xyz="0.02381 -0.0858 -0.04545" rpy="-0 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hub_dyn.stl"/>
       </geometry>
     </collision>
     <!-- Part grip_shell_r -->
     <visual>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="-0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="-3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/grip_shell_r.stl"/>
       </geometry>
@@ -1212,14 +1212,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0242 0.120227 -0.00285636" rpy="-0 1.5708 0"/>
+      <origin xyz="0.0242 -0.120227 0.00285636" rpy="-3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/grip_shell_r.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_9 -->
     <visual>
-      <origin xyz="0.110259 0.0749905 0.0420486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.110259 -0.0749905 -0.0420486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1228,14 +1228,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.110259 0.0749905 0.0420486" rpy="1.22173 1.5708 0"/>
+      <origin xyz="0.110259 -0.0749905 -0.0420486" rpy="-1.91986 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_2 -->
     <visual>
-      <origin xyz="0.03161 0.0823 0.04195" rpy="0 1.5708 0"/>
+      <origin xyz="0.03161 -0.0823 -0.04195" rpy="3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
       </geometry>
@@ -1244,14 +1244,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.03161 0.0823 0.04195" rpy="0 1.5708 0"/>
+      <origin xyz="0.03161 -0.0823 -0.04195" rpy="3.14159 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
       </geometry>
     </collision>
     <!-- Part 606_00021_sr_back_cover_py074 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/606_00021_sr_back_cover_py074.stl"/>
       </geometry>
@@ -1260,14 +1260,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/606_00021_sr_back_cover_py074.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default -->
     <visual>
-      <origin xyz="-0.01905 0.1045 -0.0702128" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.01905 -0.1045 0.0702128" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1276,14 +1276,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.01905 0.1045 -0.0702128" rpy="1.5708 1.5708 0"/>
+      <origin xyz="-0.01905 -0.1045 0.0702128" rpy="-1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part lens_adhesive -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/lens_adhesive.stl"/>
       </geometry>
@@ -1292,14 +1292,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/lens_adhesive.stl"/>
       </geometry>
     </collision>
     <!-- Part 611_00020 -->
     <visual>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/611_00020.stl"/>
       </geometry>
@@ -1308,14 +1308,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0400246 0.072 -0.00845136" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.0400246 -0.072 0.00845136" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/611_00020.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_10 -->
     <visual>
-      <origin xyz="0.0404 0.0449 0.0126436" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0404 -0.0449 -0.0126436" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1324,14 +1324,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.0404 0.0449 0.0126436" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="0.0404 -0.0449 -0.0126436" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part rasp_pi_0_2w__configuration_default -->
     <visual>
-      <origin xyz="0.02872 0.0708 0.01295" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.02872 -0.0708 -0.01295" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/rasp_pi_0_2w__configuration_default.stl"/>
       </geometry>
@@ -1340,14 +1340,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.02872 0.0708 0.01295" rpy="-1.5708 -1.5708 0"/>
+      <origin xyz="0.02872 -0.0708 -0.01295" rpy="1.5708 1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/rasp_pi_0_2w__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_11 -->
     <visual>
-      <origin xyz="-0.01715 0.07946 0.0490995" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="-0.01715 -0.07946 -0.0490995" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1356,7 +1356,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.01715 0.07946 0.0490995" rpy="-1.5708 1.5708 0"/>
+      <origin xyz="-0.01715 -0.07946 -0.0490995" rpy="1.5708 -1.5708 0"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1372,7 +1372,7 @@
     </inertial>
   </link>
   <joint name="camera_frame" type="fixed">
-    <origin xyz="0.0963261 0.070877 0.0275486" rpy="-1.91986 1.5708 0"/>
+    <origin xyz="0.0933847 -0.0789583 -0.0275486" rpy="1.22173 -1.5708 0"/>
     <parent link="j8_a_2_step"/>
     <child link="camera"/>
     <axis xyz="0 0 0"/>
@@ -1387,7 +1387,7 @@
     </inertial>
   </link>
   <joint name="gripper_base_frame" type="fixed">
-    <origin xyz="-0 0.0495 0.0205" rpy="1.5708 1.5708 0"/>
+    <origin xyz="-0 -0.0495 -0.0205" rpy="-1.5708 -1.5708 0"/>
     <parent link="j8_a_2_step"/>
     <child link="gripper_base"/>
     <axis xyz="0 0 0"/>
@@ -1402,7 +1402,7 @@
     </inertial>
   </link>
   <joint name="oak_l_frame" type="fixed">
-    <origin xyz="0.0530246 0.078833 0.0240486" rpy="-1.5708 1.5708 0"/>
+    <origin xyz="0.0530246 -0.078833 -0.0240486" rpy="1.5708 -1.5708 0"/>
     <parent link="j8_a_2_step"/>
     <child link="oak_l"/>
     <axis xyz="0 0 0"/>
@@ -1417,7 +1417,7 @@
     </inertial>
   </link>
   <joint name="oak_r_frame" type="fixed">
-    <origin xyz="0.0530246 0.078833 0.00404864" rpy="-1.5708 1.5708 0"/>
+    <origin xyz="0.0530246 -0.078833 -0.00404864" rpy="1.5708 -1.5708 0"/>
     <parent link="j8_a_2_step"/>
     <child link="oak_r"/>
     <axis xyz="0 0 0"/>
@@ -1432,7 +1432,7 @@
     </inertial>
   </link>
   <joint name="gripper_center_frame" type="fixed">
-    <origin xyz="-0 0.138087 0.0240485" rpy="1.5708 0 1.5708"/>
+    <origin xyz="-0 -0.138087 -0.0240485" rpy="-1.5708 0 -1.5708"/>
     <parent link="j8_a_2_step"/>
     <child link="gripper_center"/>
     <axis xyz="0 0 0"/>
@@ -1447,7 +1447,7 @@
     </inertial>
   </link>
   <joint name="thumb_tip_frame" type="fixed">
-    <origin xyz="-0 0.159661 0.0777992" rpy="3.14159 0.771348 -1.5708"/>
+    <origin xyz="-0 -0.159661 -0.0777992" rpy="0 -0.771348 1.5708"/>
     <parent link="j8_a_2_step"/>
     <child link="thumb_tip"/>
     <axis xyz="0 0 0"/>
@@ -1461,7 +1461,7 @@
     </inertial>
     <!-- Part proximal_top_r -->
     <visual>
-      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/proximal_top_r.stl"/>
       </geometry>
@@ -1470,14 +1470,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/proximal_top_r.stl"/>
       </geometry>
     </collision>
     <!-- Part proximal_bot_r -->
     <visual>
-      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/proximal_bot_r.stl"/>
       </geometry>
@@ -1486,7 +1486,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/proximal_bot_r.stl"/>
       </geometry>
@@ -1509,7 +1509,7 @@
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_7 -->
     <visual>
-      <origin xyz="-0.0261619 0.0819783 0.03705" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0.0261619 0.0819783 0.03705" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1518,7 +1518,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0261619 0.0819783 0.03705" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0.0261619 0.0819783 0.03705" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1557,7 +1557,7 @@
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_8 -->
     <visual>
-      <origin xyz="-0.0078849 0.0722603 0.00055" rpy="1.5708 0 1.5708"/>
+      <origin xyz="-0.0078849 0.0722603 0.00055" rpy="1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1566,14 +1566,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0078849 0.0722603 0.00055" rpy="1.5708 0 1.5708"/>
+      <origin xyz="-0.0078849 0.0722603 0.00055" rpy="1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_5 -->
     <visual>
-      <origin xyz="-0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0.007 0.0569128 0.04055" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1582,7 +1582,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0.007 0.0569128 0.04055" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1605,7 +1605,7 @@
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_9 -->
     <visual>
-      <origin xyz="-0.014198 0.0523993 0.03705" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0.014198 0.0523993 0.03705" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1614,7 +1614,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.014198 0.0523993 0.03705" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0.014198 0.0523993 0.03705" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1637,7 +1637,7 @@
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_7 -->
     <visual>
-      <origin xyz="0 0.0639128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0 0.0639128 0.04055" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1646,7 +1646,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0.0639128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0 0.0639128 0.04055" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1669,7 +1669,7 @@
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_9 -->
     <visual>
-      <origin xyz="0 0.0499128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0 0.0499128 0.04055" rpy="-1.5708 0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1678,14 +1678,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0.0499128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="-0 0.0499128 0.04055" rpy="-1.5708 0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_10 -->
     <visual>
-      <origin xyz="-0.0175091 0.0541598 0.00055" rpy="1.5708 0 1.5708"/>
+      <origin xyz="-0.0175091 0.0541598 0.00055" rpy="1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1694,14 +1694,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0175091 0.0541598 0.00055" rpy="1.5708 0 1.5708"/>
+      <origin xyz="-0.0175091 0.0541598 0.00055" rpy="1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part cross_bar -->
     <visual>
-      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/cross_bar.stl"/>
       </geometry>
@@ -1710,7 +1710,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 0 1.5708"/>
+      <origin xyz="-0.0157273 -0.0104436 0.04325" rpy="0 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/cross_bar.stl"/>
       </geometry>
@@ -1733,7 +1733,7 @@
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_10 -->
     <visual>
-      <origin xyz="0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="0.007 0.0569128 0.04055" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1742,14 +1742,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.007 0.0569128 0.04055" rpy="-1.5708 0 1.5708"/>
+      <origin xyz="0.007 0.0569128 0.04055" rpy="-1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_12 -->
     <visual>
-      <origin xyz="-0.0298053 0.00790851 0.03925" rpy="1.5708 0 2.44347"/>
+      <origin xyz="-0.0298053 0.00790851 0.03925" rpy="1.5708 -0 2.44347"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1758,14 +1758,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0298053 0.00790851 0.03925" rpy="1.5708 0 2.44347"/>
+      <origin xyz="-0.0298053 0.00790851 0.03925" rpy="1.5708 -0 2.44347"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_13 -->
     <visual>
-      <origin xyz="-0.0298053 0.00790851 -0.00115" rpy="1.5708 0 2.44347"/>
+      <origin xyz="-0.0298053 0.00790851 -0.00115" rpy="1.5708 -0 2.44347"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
@@ -1774,14 +1774,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0298053 0.00790851 -0.00115" rpy="1.5708 0 2.44347"/>
+      <origin xyz="-0.0298053 0.00790851 -0.00115" rpy="1.5708 -0 2.44347"/>
       <geometry>
         <mesh filename="package://assets/std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_pt_screw_2x6__configuration_default_12 -->
     <visual>
-      <origin xyz="-0.0261619 0.0819783 0.00055" rpy="1.5708 0 1.5708"/>
+      <origin xyz="-0.0261619 0.0819783 0.00055" rpy="1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
@@ -1790,14 +1790,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0261619 0.0819783 0.00055" rpy="1.5708 0 1.5708"/>
+      <origin xyz="-0.0261619 0.0819783 0.00055" rpy="1.5708 -0 1.5708"/>
       <geometry>
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_sts3215__configuration_default_2 -->
     <visual>
-      <origin xyz="-0.0157873 0.0201676 0.00935" rpy="-1.5708 -0 -0.488692"/>
+      <origin xyz="-0.0157873 0.0201676 0.00935" rpy="-1.5708 0 -0.488692"/>
       <geometry>
         <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
       </geometry>
@@ -1806,7 +1806,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0157873 0.0201676 0.00935" rpy="-1.5708 -0 -0.488692"/>
+      <origin xyz="-0.0157873 0.0201676 0.00935" rpy="-1.5708 0 -0.488692"/>
       <geometry>
         <mesh filename="package://assets/feetech_sts3215__configuration_default.stl"/>
       </geometry>
@@ -1853,7 +1853,7 @@
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_13 -->
     <visual>
-      <origin xyz="-0.0337189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <origin xyz="-0.0337189 0.050251 0.04025" rpy="-1.5708 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1862,7 +1862,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0337189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <origin xyz="-0.0337189 0.050251 0.04025" rpy="-1.5708 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1885,7 +1885,7 @@
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_14 -->
     <visual>
-      <origin xyz="-0.0267189 0.043251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <origin xyz="-0.0267189 0.043251 0.04025" rpy="-1.5708 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1894,14 +1894,14 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0267189 0.043251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <origin xyz="-0.0267189 0.043251 0.04025" rpy="-1.5708 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
     </collision>
     <!-- Part feetech_screw_m3x6__configuration_default_15 -->
     <visual>
-      <origin xyz="-0.0197189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <origin xyz="-0.0197189 0.050251 0.04025" rpy="-1.5708 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -1910,7 +1910,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="-0.0197189 0.050251 0.04025" rpy="-1.5708 -0 2.05949"/>
+      <origin xyz="-0.0197189 0.050251 0.04025" rpy="-1.5708 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/feetech_screw_m3x6__configuration_default.stl"/>
       </geometry>
@@ -2013,7 +2013,7 @@
     </collision>
     <!-- Part distal_r -->
     <visual>
-      <origin xyz="0.039924 -0.0269999 0.04325" rpy="-0 0 2.05949"/>
+      <origin xyz="0.039924 -0.0269999 0.04325" rpy="0 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/distal_r.stl"/>
       </geometry>
@@ -2022,7 +2022,7 @@
       </material>
     </visual>
     <collision>
-      <origin xyz="0.039924 -0.0269999 0.04325" rpy="-0 0 2.05949"/>
+      <origin xyz="0.039924 -0.0269999 0.04325" rpy="0 0 2.05949"/>
       <geometry>
         <mesh filename="package://assets/distal_r.stl"/>
       </geometry>
@@ -2045,7 +2045,7 @@
   </joint>
   <!-- Joint from feetech_sts3215__configuration_default to distal_soft_tip -->
   <joint name="distal" type="revolute">
-    <origin xyz="-0.0383025 0.0321391 -0.0001" rpy="-0 -0 -0.488692"/>
+    <origin xyz="-0.0383025 0.0321391 -0.0001" rpy="-0 0 -0.488692"/>
     <parent link="feetech_sts3215__configuration_default"/>
     <child link="distal_soft_tip"/>
     <axis xyz="0 0 1"/>
@@ -2053,7 +2053,7 @@
   </joint>
   <!-- Joint from j8_a_2_step to feetech_sts3215__configuration_default -->
   <joint name="proximal" type="revolute">
-    <origin xyz="-0.01905 0.1045 -0.0133" rpy="-1.5708 -0 -1.5708"/>
+    <origin xyz="-0.01905 -0.1045 0.0133" rpy="1.5708 -0 1.5708"/>
     <parent link="j8_a_2_step"/>
     <child link="feetech_sts3215__configuration_default"/>
     <axis xyz="0 0 1"/>
@@ -2061,15 +2061,15 @@
   </joint>
   <!-- Joint from dm_j4310_1_2_step_2 to j8_a_2_step -->
   <joint name="r_wrist_pitch" type="revolute">
-    <origin xyz="0.0205 -0 -0.0343" rpy="1.5708 -1.54715 -1.5708"/>
+    <origin xyz="0.0205 0 -0.0343" rpy="1.5708 -1.56452 1.5708"/>
     <parent link="dm_j4310_1_2_step_2"/>
     <child link="j8_a_2_step"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-1.54715" upper="1.59445"/>
+    <limit effort="10" velocity="10" lower="-1.56452" upper="1.57707"/>
   </joint>
   <!-- Joint from j6_a_3_step to dm_j4310_1_2_step_2 -->
   <joint name="r_wrist_roll_mimic" type="revolute">
-    <origin xyz="0.0342895 -0.000848696 -0.1205" rpy="-1.5708 -0.0176931 -1.59554"/>
+    <origin xyz="0.0343 -0 0.1205" rpy="1.5708 -0.00215838 1.5708"/>
     <parent link="j6_a_3_step"/>
     <child link="dm_j4310_1_2_step_2"/>
     <axis xyz="0 0 1"/>
@@ -2078,42 +2078,42 @@
   </joint>
   <!-- Joint from dm_j4310_1_2_step to j6_a_3_step -->
   <joint name="r_wrist_yaw" type="revolute">
-    <origin xyz="-0 0.0955 0.0315" rpy="1.5708 -0 0"/>
+    <origin xyz="-0 -0.0955 -0.0315" rpy="1.5708 0 -0"/>
     <parent link="dm_j4310_1_2_step"/>
     <child link="j6_a_3_step"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-1.54605" upper="1.59554"/>
+    <limit effort="10" velocity="10" lower="-1.5708" upper="1.5708"/>
   </joint>
   <!-- Joint from dm_j4340_2_step to dm_j4310_1_2_step -->
   <joint name="r_elbow" type="revolute">
-    <origin xyz="-1.97166e-05 -0.03155 -0.15375" rpy="-1.5708 -5.7e-11 -0.000624931"/>
+    <origin xyz="0 0.03155 0.15375" rpy="-1.5708 0 0"/>
     <parent link="dm_j4340_2_step"/>
     <child link="dm_j4310_1_2_step"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-2.44346" upper="5.7e-11"/>
+    <limit effort="10" velocity="10" lower="0" upper="2.44346"/>
   </joint>
   <!-- Joint from j2_b_2_step to dm_j4340_2_step -->
   <joint name="r_arm_yaw" type="revolute">
-    <origin xyz="-0 -0.06625 0.0301" rpy="-1.5708 -1.5708 0"/>
+    <origin xyz="-0 0.06625 -0.0301" rpy="-1.5708 1.5708 0"/>
     <parent link="j2_b_2_step"/>
     <child link="dm_j4340_2_step"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-1.57017" upper="1.57142"/>
+    <limit effort="10" velocity="10" lower="-1.5708" upper="1.5708"/>
   </joint>
   <!-- Joint from dm_j8009p_2_step_1 to j2_b_2_step -->
   <joint name="r_arm_roll" type="revolute">
-    <origin xyz="-0.0301 -0 -0.06" rpy="-1.5708 -1.56864 -1.5708"/>
+    <origin xyz="-0.0301 -0 0.06" rpy="-3.14159 1.5708 0"/>
     <parent link="dm_j8009p_2_step_1"/>
     <child link="j2_b_2_step"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-3.31828" upper="0.172375"/>
+    <limit effort="10" velocity="10" lower="-1.74533" upper="1.74533"/>
   </joint>
   <!-- Joint from hfsb6_6060_750_1_step to dm_j8009p_2_step_1 -->
   <joint name="r_arm_pitch" type="revolute">
-    <origin xyz="-0 -0.0925 0.689" rpy="-1.5708 0.00627138 -0"/>
+    <origin xyz="-0 -0.0925 0.689" rpy="1.5708 0 -0"/>
     <parent link="hfsb6_6060_750_1_step"/>
     <child link="dm_j8009p_2_step_1"/>
     <axis xyz="0 0 1"/>
-    <limit effort="10" velocity="10" lower="-3.00627" upper="0.993715"/>
+    <limit effort="10" velocity="10" lower="-1.39626" upper="3.49066"/>
   </joint>
 </robot>

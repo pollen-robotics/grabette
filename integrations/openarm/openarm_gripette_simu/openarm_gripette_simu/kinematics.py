@@ -22,6 +22,7 @@ ARM_JOINT_NAMES = [
 # Frame names
 CAMERA_FRAME = "camera"
 GRIPPER_FRAME = "gripper_center"
+OAKL_FRAME = "oak_l"   # SLAM / control frame the grasp trajectory commands
 
 
 class Kinematics:
@@ -68,9 +69,12 @@ class Kinematics:
         self._frame_task = self.solver.add_frame_task(CAMERA_FRAME, T_cam)
         self._frame_task.configure(CAMERA_FRAME, "soft", position_weight, orientation_weight)
 
-        # Fixed offset: gripper → camera (for converting gripper targets to camera targets)
+        # Fixed offsets to the camera frame (the solver always tasks the camera),
+        # so targets given in other frames can be converted to a camera target.
         T_grip = self.robot.get_T_world_frame(GRIPPER_FRAME)
         self._T_grip_to_cam = np.linalg.inv(T_grip) @ T_cam
+        T_oakl = self.robot.get_T_world_frame(OAKL_FRAME)
+        self._T_oakl_to_cam = np.linalg.inv(T_oakl) @ T_cam
 
     def forward(self, joint_positions: np.ndarray, frame: str = CAMERA_FRAME) -> np.ndarray:
         """Compute a frame's pose from arm joint positions.
@@ -112,9 +116,12 @@ class Kinematics:
                 self.robot.set_joint(name, current_joint_positions[i])
             self.robot.update_kinematics()
 
-        # Convert gripper target to camera target using fixed offset
+        # Convert a target given in another frame to the camera target the
+        # solver tasks, using the fixed offset for that frame.
         if frame == GRIPPER_FRAME:
             cam_target = target_pose @ self._T_grip_to_cam
+        elif frame == OAKL_FRAME:
+            cam_target = target_pose @ self._T_oakl_to_cam
         else:
             cam_target = target_pose
 

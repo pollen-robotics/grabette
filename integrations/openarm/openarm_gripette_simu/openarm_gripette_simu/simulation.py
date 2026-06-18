@@ -22,28 +22,42 @@ GRIPETTE_CAM = "gripette_cam"
 
 
 def _load_model(scene_xml: Path) -> mujoco.MjModel:
-    """Load a MuJoCo model, injecting meshdir when the scene is outside the model dir.
+    """Load a MuJoCo model, resolving the robot include's mesh paths.
 
-    MuJoCo resolves mesh paths relative to the main XML file. When a scene
-    in a different directory includes robot.xml, the mesh paths break.
-    This injects an absolute meshdir so meshes are always found.
+    MuJoCo ignores `meshdir` from <include>d files and resolves their bare
+    mesh filenames relative to the included file's own directory — missing
+    the `assets/` subdir the export uses (robot.xml has meshdir="assets").
+    So we inline the robot file in place of the <include>, with its meshdir
+    rewritten to an absolute path. Derived from the robot file itself, this
+    works for both the `assets/` layout and the older flat layout.
     """
     xml = scene_xml.read_text()
+    inc = re.search(r'<include\s+file="([^"]*)"\s*/>', xml)
+    if inc is None:
+        return mujoco.MjModel.from_xml_path(str(scene_xml))
 
-    # Only inject meshdir if not already set in the scene
-    if 'meshdir=' not in xml.split('<include')[0]:
-        meshdir_tag = f'<compiler meshdir="{OPENARM_RIGHT_DIR}"/>'
-        xml = re.sub(r'(<include\s)', meshdir_tag + r'\n    \1', xml, count=1)
-        # Write temp file next to the scene so relative includes still resolve
-        with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.xml', dir=scene_xml.parent, delete=False
-        ) as f:
-            f.write(xml)
-            tmp_path = Path(f.name)
-        try:
-            return mujoco.MjModel.from_xml_path(str(tmp_path))
-        finally:
-            tmp_path.unlink()
+    robot_path = (scene_xml.parent / inc.group(1)).resolve()
+    robot_xml = robot_path.read_text()
+
+    # Make the robot's meshdir absolute (it is relative to the robot file dir).
+    md = re.search(r'meshdir="([^"]*)"', robot_xml)
+    abs_meshdir = (robot_path.parent / (md.group(1) if md else ".")).resolve()
+    if md:
+        robot_xml = robot_xml.replace(md.group(0), f'meshdir="{abs_meshdir}"')
+
+    # Inline the robot file's body where the <include> was.
+    inner = re.search(r'<mujoco[^>]*>(.*)</mujoco>', robot_xml, re.S).group(1)
+    xml = xml.replace(inc.group(0), inner)
+
+    with tempfile.NamedTemporaryFile(
+        mode='w', suffix='.xml', dir=scene_xml.parent, delete=False
+    ) as f:
+        f.write(xml)
+        tmp_path = Path(f.name)
+    try:
+        return mujoco.MjModel.from_xml_path(str(tmp_path))
+    finally:
+        tmp_path.unlink()
 
     return mujoco.MjModel.from_xml_path(str(scene_xml))
 

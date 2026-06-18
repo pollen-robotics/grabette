@@ -61,8 +61,14 @@ from grabette_trajectory import (  # noqa: E402
     slerp_quat,
     smoothstep,
 )
-from openarm_gripette_simu import DRConfig, IKFeasibilityChecker, Simulation, randomize_scene
-from openarm_gripette_simu.kinematics import CAMERA_FRAME, Kinematics
+from openarm_gripette_simu import (
+    DRConfig,
+    IKFeasibilityChecker,
+    Simulation,
+    StartCollisionChecker,
+    randomize_scene,
+)
+from openarm_gripette_simu.kinematics import OAKL_FRAME, Kinematics
 
 # LeRobot dataset writer + axis-angle helper (same imports as Stage 0).
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -323,12 +329,29 @@ def phase_close(sim: Simulation, mocap_id: int,
 
 # ----- Episode driver ---------------------------------------------------------
 
+def _sample_uncollided(rng, sample_kwargs, start_checker, max_tries: int = 50):
+    """Draw an episode plan whose HOME pose does not put the free-floating
+    gripper inside the table. With ``start_checker=None`` this is a single
+    draw. Otherwise we resample (up to ``max_tries``) until the start clears
+    the table; the last draw is returned regardless so callers always get a
+    plan (the IK filter is the hard gate)."""
+    wp = sample_episode_waypoints(rng, **sample_kwargs)
+    if start_checker is None:
+        return wp
+    for _ in range(max_tries):
+        if not start_checker.collides(wp.home_xyz, wp.home_quat):
+            break
+        wp = sample_episode_waypoints(rng, **sample_kwargs)
+    return wp
+
+
 def plan_episode(
     rng: np.random.Generator,
     *,
     cube_x_range: tuple[float, float],
     cube_y_range: tuple[float, float],
     checker: IKFeasibilityChecker | None = None,
+    start_checker: "StartCollisionChecker | None" = None,
     max_attempts: int = 50,
 ):
     """Sample an episode plan; optionally reject IK-infeasible ones.
@@ -339,16 +362,22 @@ def plan_episode(
     planned per-frame trajectory is fully reachable on the target arm, or
     we exhaust ``max_attempts``.
 
+    ``start_checker`` (optional) additionally rejects home poses where the
+    free-floating gripper penetrates the table, so recorded episodes never
+    start inside it. The free-floating scene only physically collides on the
+    soft tips, so this is a geometric mesh-vs-table test (see
+    ``StartCollisionChecker``).
+
     Returns ``(waypoints | None, stats | None)``. ``stats`` is None when no
     filter was applied; otherwise it carries the rejection-sampling outcome.
     """
     sample_kwargs = dict(cube_x_range=cube_x_range, cube_y_range=cube_y_range)
 
     if checker is None:
-        return sample_episode_waypoints(rng, **sample_kwargs), None
+        return _sample_uncollided(rng, sample_kwargs, start_checker), None
 
     def builder():
-        wp = sample_episode_waypoints(rng, **sample_kwargs)
+        wp = _sample_uncollided(rng, sample_kwargs, start_checker)
         return episode_target_poses(wp), wp
 
     _poses, wp, stats = checker.sample_feasible_trajectory(
@@ -510,15 +539,9 @@ def run_episode(scene_xml: Path, wp: EpisodeWaypoints, use_viewer: bool = False,
                  FRAMES_LIFT, (PROXIMAL_CLOSED, DISTAL_CLOSED),
                  prox_id, dist_id, frames, viewer)
 
-    # 12. Retract: lift -> home + extra (slerp orientation back to home_quat).
-    retract_target = home_xyz + np.array([0.0, 0.0, RETRACT_EXTRA])
-    phase_smooth(sim, mocap_id,
-                 lift_target, grasp_quat, retract_target, home_quat,
-                 FRAMES_RETRACT, (PROXIMAL_CLOSED, DISTAL_CLOSED),
-                 prox_id, dist_id, frames, viewer)
-
-    # 13. Final settle.
-    phase_hold(sim, mocap_id, retract_target, home_quat,
+    # 12. Hold at the lifted pose to confirm the grasp is stable. The task ends
+    # here — grasp-and-lift, no retract back to home (shorter, simpler episodes).
+    phase_hold(sim, mocap_id, lift_target, grasp_quat,
                FRAMES_FINAL_SETTLE, (PROXIMAL_CLOSED, DISTAL_CLOSED),
                prox_id, dist_id, frames, viewer)
 
@@ -579,7 +602,7 @@ def main():
                          "weighted to prioritise position (Placo position task "
                          "100x orientation task), so we record whatever "
                          "orientation the arm achieves at the right position. "
-                         "Default 30° is loose enough that 70% of trajectories "
+                         "Default 30° is loose enough that 70%% of trajectories "
                          "pass the filter while keeping pose realistic.")
 
     # Episode-type mix: standard grasp + a few release / hover episodes.
@@ -638,7 +661,7 @@ def main():
         from check_grabette_reachable import ARM_IK_SEED  # avoid duplicating the seed
         checker = IKFeasibilityChecker(
             Kinematics(),
-            frame=CAMERA_FRAME,
+            frame=OAKL_FRAME,
             seed_joints=ARM_IK_SEED,
             pos_tol_m=args.ik_pos_tol,
             rot_tol_deg=args.ik_rot_tol_deg,
@@ -651,6 +674,12 @@ def main():
         )
     else:
         logger.info("IK filter DISABLED — all sampled plans go to physics.")
+
+    # Start-pose collision guard: reject home poses where the free-floating
+    # gripper penetrates the table (the scene only physically collides on the
+    # soft tips, so this is a geometric mesh-vs-table test). Cheap; always on.
+    start_checker = StartCollisionChecker(SCENE)
+    logger.info("Start-collision guard ENABLED — table-penetrating home poses are resampled.")
 
     # Visual DR config (None disables the channel entirely).
     dr_cfg: DRConfig | None = None
@@ -705,14 +734,14 @@ def main():
         f"Episode-type mix: normal={p_normal:.2f}, release={p_release:.2f}, hover={p_hover:.2f}"
     )
 
-    pbar = tqdm(
-        range(args.episodes),
-        desc="episodes",
-        unit="ep",
-        smoothing=0.1,
-        dynamic_ncols=True,
-    )
-    for ep in pbar:
+    # Rejection-sampling loop: keep planning (IK-filter) + running until we have
+    # SAVED the requested number of successful episodes — not just attempted that
+    # many. Safety cap avoids an infinite loop if the target can't be reached.
+    pbar = tqdm(total=args.episodes, desc="episodes", unit="ep", smoothing=0.1, dynamic_ncols=True)
+    max_attempts = max(args.episodes * 20, 50)
+    ep = 0
+    while n_saved < args.episodes and ep < max_attempts:
+        ep += 1
         t0 = time.perf_counter()
 
         # Choose this episode's type from the mix.
@@ -731,6 +760,7 @@ def main():
             cube_x_range=cube_x_range,
             cube_y_range=cube_y_range,
             checker=checker,
+            start_checker=start_checker,
             max_attempts=args.max_ik_attempts,
         )
         ik_try = ik_stats.n_attempts if ik_stats is not None else 0
@@ -776,16 +806,20 @@ def main():
         n_saved += 1
         n_success += 1
         saved_frame_counts.append(len(frames))
-        pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, refresh=False)
+        pbar.update(1)
+        pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, attempts=ep, refresh=False)
 
     pbar.close()
+    if n_saved < args.episodes:
+        logger.warning(f"Hit attempt cap ({max_attempts}); saved {n_saved}/{args.episodes}. "
+                       f"Raise the IK yield or the cap.")
     dataset.finalize()
 
-    rate = 100.0 * n_success / args.episodes if args.episodes else 0.0
+    rate = 100.0 * n_saved / ep if ep else 0.0   # saved per attempt (overall yield)
     avg_frames = float(np.mean(saved_frame_counts)) if saved_frame_counts else 0.0
     logger.info(
-        f"Done. Saved {n_saved}/{args.episodes} episodes "
-        f"({n_success} success, {rate:.1f}%). "
+        f"Done. Saved {n_saved}/{args.episodes} episodes in {ep} attempts "
+        f"({n_ik_dropped} IK-dropped; overall yield {rate:.1f}%). "
         f"Avg frames per saved episode: {avg_frames:.1f}. "
         f"Dataset root: {dataset.root}")
     logger.info(

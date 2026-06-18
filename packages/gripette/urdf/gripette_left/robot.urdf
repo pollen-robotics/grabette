@@ -185,22 +185,6 @@
         <mesh filename="package://assets/feetech_pt_screw_2x6__configuration_default.stl"/>
       </geometry>
     </collision>
-    <!-- Part flex_camera_l -->
-    <visual>
-      <origin xyz="0.302576 0.0145735 0.00141996" rpy="-0 -0 -0"/>
-      <geometry>
-        <mesh filename="package://assets/flex_camera_l.stl"/>
-      </geometry>
-      <material name="flex_camera_l_material">
-        <color rgba="0.756863 0.462745 0.109804 1"/>
-      </material>
-    </visual>
-    <collision>
-      <origin xyz="0.302576 0.0145735 0.00141996" rpy="-0 -0 -0"/>
-      <geometry>
-        <mesh filename="package://assets/flex_camera_l.stl"/>
-      </geometry>
-    </collision>
     <!-- Part gripper_base_l -->
     <visual>
       <origin xyz="0.302444 0.0157273 0.001" rpy="0 -0 0"/>
@@ -724,7 +708,7 @@
     </inertial>
   </link>
   <joint name="camera_frame" type="fixed">
-    <origin xyz="0.0408486 -0.033623 0.0731261" rpy="-1.91986 -0 -0"/>
+    <origin xyz="0.0408486 -0.0255417 0.0701847" rpy="-1.91986 -0 -0"/>
     <parent link="gripper_base_l"/>
     <child link="camera"/>
     <axis xyz="0 0 0"/>

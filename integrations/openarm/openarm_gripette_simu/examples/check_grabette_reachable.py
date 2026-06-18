@@ -45,7 +45,7 @@ from grabette_trajectory import (  # noqa: E402
     sample_episode_waypoints,
 )
 from openarm_gripette_simu import IKFeasibilityChecker, Kinematics  # noqa: E402
-from openarm_gripette_simu.kinematics import CAMERA_FRAME  # noqa: E402
+from openarm_gripette_simu.kinematics import OAKL_FRAME  # noqa: E402
 
 # Per-frame pose tolerances. IK solver returns clamped/best-effort joints; we
 # read residual from FK.
@@ -84,7 +84,7 @@ def main():
 
     checker = IKFeasibilityChecker(
         Kinematics(),
-        frame=CAMERA_FRAME,
+        frame=OAKL_FRAME,
         seed_joints=ARM_IK_SEED,
         pos_tol_m=args.pos_tol,
         rot_tol_deg=args.rot_tol_deg,

@@ -44,7 +44,6 @@ from grabette_trajectory import (  # noqa: E402
     LIFT_SUCCESS_THRESHOLD,
     PROXIMAL_CLOSED,
     PROXIMAL_OPEN,
-    RETRACT_EXTRA,
     body_pose_to_camera_pose,
     episode_target_poses,
     pose_T,
@@ -71,8 +70,19 @@ FRAMES_PRE_GRIP_SETTLE = 25
 FRAMES_CLOSE = 30
 FRAMES_HOLD = 50
 FRAMES_LIFT = 60
-FRAMES_RETRACT = 50
 FRAMES_FINAL_SETTLE = 15
+
+# Gripper close command for the ARM scene. The arm model
+# (openarm_gripette_model/openarm_right) closes its `proximal` joint POSITIVE
+# (range [0, +pi/2]), whereas the free-floating grabette_right that generates
+# the dataset closes it NEGATIVE (range [-pi/2, 0]); `distal` matches in both.
+# So the dataset's PROXIMAL_CLOSED (negative) is clamped to 0 by the arm's
+# actuator ctrlrange and the gripper never moves. Flip the sign here so the
+# arm actually closes. NOTE: this papers over a real model inconsistency — the
+# two grabette_right exports disagree on the proximal sign, and the recorded
+# action stores the (negative) free-floating angle, so the data convention does
+# not directly drive the arm/real gripper. Unify the exports to fix it properly.
+ARM_PROXIMAL_CLOSED = -PROXIMAL_CLOSED   # +0.448 (positive close for the arm)
 
 
 # --------------------------------------------------------------------------- #
@@ -171,7 +181,7 @@ def close_gripper(sim: Simulation, arm_q: np.ndarray, n_frames: int,
     for i in range(n_frames):
         t = (i + 1) / n_frames
         sim.set_arm_commands(arm_q)
-        sim.data.ctrl[prox_id] = (1.0 - t) * PROXIMAL_OPEN + t * PROXIMAL_CLOSED
+        sim.data.ctrl[prox_id] = (1.0 - t) * PROXIMAL_OPEN + t * ARM_PROXIMAL_CLOSED
         sim.data.ctrl[dist_id] = (1.0 - t) * DISTAL_OPEN + t * DISTAL_CLOSED
         for _ in range(SIM_SUBSTEPS):
             sim.step()
@@ -260,7 +270,7 @@ def run_trial(rng: np.random.Generator, checker: IKFeasibilityChecker,
     hold_arm(sim, arm_q, FRAMES_PRE_GRIP_SETTLE, (PROXIMAL_OPEN, DISTAL_OPEN),
              prox_id, dist_id, viewer)
     close_gripper(sim, arm_q, FRAMES_CLOSE, prox_id, dist_id, viewer)
-    hold_arm(sim, arm_q, FRAMES_HOLD, (PROXIMAL_CLOSED, DISTAL_CLOSED),
+    hold_arm(sim, arm_q, FRAMES_HOLD, (ARM_PROXIMAL_CLOSED, DISTAL_CLOSED),
              prox_id, dist_id, viewer)
 
     # Lift: grasp -> grasp + (0, 0, LIFT_HEIGHT).
@@ -268,21 +278,13 @@ def run_trial(rng: np.random.Generator, checker: IKFeasibilityChecker,
         sim, kin, arm_q,
         smooth_segment_targets(wp.grasp_xyz, wp.grasp_quat, wp.lift_xyz, wp.lift_quat,
                                 FRAMES_LIFT),
-        (PROXIMAL_CLOSED, DISTAL_CLOSED), prox_id, dist_id, viewer,
+        (ARM_PROXIMAL_CLOSED, DISTAL_CLOSED), prox_id, dist_id, viewer,
     )
     max_pos = max(max_pos, p); max_rot_rad = max(max_rot_rad, r)
 
-    # Retract: lift -> home + RETRACT_EXTRA, slerp orientation back to home_quat.
-    retract_xyz = wp.home_xyz + np.array([0.0, 0.0, RETRACT_EXTRA])
-    arm_q, p, r = drive_targets(
-        sim, kin, arm_q,
-        smooth_segment_targets(wp.lift_xyz, wp.grasp_quat, retract_xyz, wp.home_quat,
-                                FRAMES_RETRACT),
-        (PROXIMAL_CLOSED, DISTAL_CLOSED), prox_id, dist_id, viewer,
-    )
-    max_pos = max(max_pos, p); max_rot_rad = max(max_rot_rad, r)
-
-    hold_arm(sim, arm_q, FRAMES_FINAL_SETTLE, (PROXIMAL_CLOSED, DISTAL_CLOSED),
+    # Final settle: hold at the lifted pose. The task ends here (grasp-and-lift,
+    # no retract back to home) — matches collect_grasp_dataset.run_episode.
+    hold_arm(sim, arm_q, FRAMES_FINAL_SETTLE, (ARM_PROXIMAL_CLOSED, DISTAL_CLOSED),
              prox_id, dist_id, viewer)
 
     cube_final = sim.data.body("red_cube").xpos.copy()
