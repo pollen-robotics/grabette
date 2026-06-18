@@ -825,6 +825,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
         gr.Navbar(main_page_name="Episodes")
         gr.HTML(_TITLE_HTML)
+        episode_status_bar = gr.HTML("")
 
         # ── Main layout ───────────────────────────────────────────────
         with gr.Row():
@@ -865,7 +866,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
                 # Capture (always at top so the primary action is prominent)
                 session_banner = gr.HTML("")
-                episode_status_bar = gr.HTML("")
                 capture_title = gr.Markdown("### Capture")
                 with gr.Row():
                     capture_box = gr.Textbox(
