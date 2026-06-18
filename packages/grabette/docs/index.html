@@ -56,6 +56,9 @@
         .btn-success { background: #66bb6a; color: #1a1a2e; }
         .btn-danger  { background: #ef5350; color: #fff; }
         .btn-secondary { background: #546e7a; color: #fff; }
+        #networkList { max-height: 220px; overflow-y: auto; }
+        #networkList:not(:empty) { margin-bottom: 8px; }
+        #networkList button { background: #37474f; color: #fff; font-weight: 400; text-align: left; }
         select, input {
             display: block;
             width: 100%;
@@ -139,6 +142,10 @@
         <!-- WiFi Configuration -->
         <div class="card">
             <h2>WiFi Configuration</h2>
+            <button class="btn-secondary" id="btnScan" onclick="scanWifi()" disabled>
+                Scan networks
+            </button>
+            <div id="networkList"></div>
             <input type="text" id="ssidInput" placeholder="WiFi SSID">
             <input type="password" id="passwordInput" placeholder="WiFi Password">
             <button class="btn-success" id="btnWifi" onclick="sendWifi()" disabled>
@@ -199,6 +206,7 @@
         document.getElementById('deviceSelect').disabled = connected;
         document.getElementById('btnDisconnect').disabled = !connected;
         document.getElementById('btnPin').disabled = !connected;
+        document.getElementById('btnScan').disabled = !connected;
         document.getElementById('btnWifi').disabled = !connected;
         document.getElementById('btnWifiReset').disabled = !connected;
         document.getElementById('btnPing').disabled = !connected;
@@ -300,6 +308,38 @@
     async function sendWifiReset() {
         if (!confirm('Delete ALL saved WiFi networks?')) return;
         await sendCommand('WIFI_RESET');
+    }
+
+    async function scanWifi() {
+        const listEl = document.getElementById('networkList');
+        listEl.innerHTML = '<em>Scanning… (may take a few seconds)</em>';
+        const response = await sendCommand('WIFI_SCAN');
+        if (response === null) { listEl.innerHTML = ''; return; }
+        if (response.startsWith('ERROR')) { listEl.innerHTML = ''; return; }
+        let ssids;
+        try {
+            ssids = JSON.parse(response);
+        } catch (e) {
+            log('Could not parse scan result', 'log-err');
+            listEl.innerHTML = '';
+            return;
+        }
+        if (!ssids.length) {
+            listEl.innerHTML = '<em>No networks found</em>';
+            return;
+        }
+        // Render each SSID as a button that fills the SSID field on click.
+        listEl.innerHTML = '';
+        for (const ssid of ssids) {
+            const btn = document.createElement('button');
+            btn.className = 'btn-secondary';
+            btn.textContent = ssid;
+            btn.onclick = () => {
+                document.getElementById('ssidInput').value = ssid;
+                document.getElementById('passwordInput').focus();
+            };
+            listEl.appendChild(btn);
+        }
     }
 
     async function readNetworkStatus() {
