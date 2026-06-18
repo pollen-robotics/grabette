@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import subprocess
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -87,31 +88,41 @@ def scan_networks() -> list[dict]:
     if rescan.returncode != 0:
         logger.warning("wifi rescan failed (rc=%d): %s", rescan.returncode, rescan.stderr.strip())
     rescan_flag = "no" if rescan.returncode == 0 else "auto"
-    try:
-        result = _run(
-            ["nmcli", "--escape", "no", "-t", "-f", "SSID,SIGNAL",
-             "dev", "wifi", "list", "--rescan", rescan_flag],
-            timeout=10,
-        )
-    except subprocess.TimeoutExpired:
-        logger.warning("wifi scan timed out")
-        return []
-    networks: list[dict] = []
-    seen: set[str] = set()
-    for line in result.stdout.splitlines():
-        idx = line.rfind(":")
-        if idx < 0:
-            continue
-        ssid = line[:idx].strip()
-        if not ssid or ssid == own_ssid or ssid in seen:
-            continue
-        seen.add(ssid)
+
+    # nmcli dev wifi rescan may return before the radio scan finishes (driver-
+    # dependent). Retry listing up to 3 times with a short wait so we don't
+    # return an empty list just because the cache hasn't been populated yet.
+    for attempt in range(3):
+        if attempt > 0:
+            time.sleep(2)
         try:
-            signal = int(line[idx + 1:].strip())
-        except ValueError:
-            continue
-        networks.append({"ssid": ssid, "signal": signal})
-    return sorted(networks, key=lambda n: n["signal"], reverse=True)
+            result = _run(
+                ["nmcli", "--escape", "no", "-t", "-f", "SSID,SIGNAL",
+                 "dev", "wifi", "list", "--rescan", rescan_flag],
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("wifi scan timed out")
+            return []
+        networks: list[dict] = []
+        seen: set[str] = set()
+        for line in result.stdout.splitlines():
+            idx = line.rfind(":")
+            if idx < 0:
+                continue
+            ssid = line[:idx].strip()
+            if not ssid or ssid == own_ssid or ssid in seen:
+                continue
+            seen.add(ssid)
+            try:
+                signal = int(line[idx + 1:].strip())
+            except ValueError:
+                continue
+            networks.append({"ssid": ssid, "signal": signal})
+        if networks:
+            return sorted(networks, key=lambda n: n["signal"], reverse=True)
+        logger.debug("wifi list attempt %d returned empty, retrying", attempt + 1)
+    return []
 
 
 def wifi_connect(ssid: str, password: str) -> str:
