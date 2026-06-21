@@ -13,7 +13,7 @@ import threading
 import numpy as np
 import mujoco
 
-from .kinematics import Kinematics, GRIPPER_FRAME
+from .kinematics import Kinematics, CONTROL_FRAME
 from .rotation import rotation_matrix_to_6d, rotation_6d_to_matrix
 from .proto import arm_pb2, arm_pb2_grpc
 
@@ -39,7 +39,12 @@ TABLE_X_MAX = 0.735
 TABLE_Y_MIN = -0.285
 TABLE_Y_MAX = 0.285
 
-# Success threshold: cube displacement in XY (meters)
+# Success = cube LIFTED by at least this (meters), matching the grasp-and-lift
+# task the dataset is collected/trained on. MUST equal
+# grabette_trajectory.LIFT_SUCCESS_THRESHOLD so eval and data collection use the
+# same definition of success (a mere horizontal nudge must NOT count).
+LIFT_SUCCESS_THRESHOLD = 0.05
+# Kept as a secondary diagnostic only (how far the cube slid in XY).
 CUBE_MOVED_THRESHOLD = 0.005
 
 
@@ -61,6 +66,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
 
         # Cube initial position for success tracking (set on reset)
         self._cube_start_xy = np.array([CUBE_NOMINAL_X, CUBE_NOMINAL_Y])
+        self._cube_start_z = CUBE_Z   # lift is measured against this
 
         # Internal Cartesian target — initialized from current FK
         self._sync_target_from_sim()
@@ -68,7 +74,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
     def _sync_target_from_sim(self):
         """Initialize the internal target from the current sim state."""
         arm_joints = self._sim.get_arm_positions()
-        T = self._kin.forward(arm_joints)
+        T = self._kin.forward(arm_joints, frame=CONTROL_FRAME)
         self._target_pos = T[:3, 3].copy()
         self._target_r6d = rotation_matrix_to_6d(T[:3, :3]).copy()
 
@@ -127,12 +133,13 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 break
 
         self._cube_start_xy = np.array([cube_x, cube_y])
+        self._cube_start_z = CUBE_Z
         return cube_x, cube_y, CUBE_Z
 
     def _get_state_from_sim(self):
         """Read actual arm state from the simulation."""
         arm_joints = self._sim.get_arm_positions()
-        T = self._kin.forward(arm_joints)
+        T = self._kin.forward(arm_joints, frame=CONTROL_FRAME)
         pos = T[:3, 3]
         r6d = rotation_matrix_to_6d(T[:3, :3])
         return pos, r6d, arm_joints
@@ -189,7 +196,8 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 T_target[:3, 3] = self._target_pos
 
                 arm_joints = self._sim.get_arm_positions()
-                target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints)
+                target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints,
+                                                  frame=CONTROL_FRAME)
                 self._sim.set_arm_commands(target_joints)
 
             return arm_pb2.ArmCommandResponse(success=True)
@@ -230,6 +238,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                     )
                 cx, cy, cz = result
                 self._cube_start_xy = np.array([cx, cy])
+                self._cube_start_z = cz
                 logger.info(f"Reset (training-dist): cube=[{cx:.3f}, {cy:.3f}]")
                 return arm_pb2.ResetResponse(success=True, cube_x=cx, cube_y=cy, cube_z=cz)
 
@@ -260,7 +269,14 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
             return arm_pb2.ResetResponse(success=False, error=str(e))
 
     def GetSuccessStatus(self, request, context):
-        """Check if the cube was touched (moved from its initial position).
+        """Check if the cube was GRASPED AND LIFTED — the actual task.
+
+        goal_reached = (cube rose by >= LIFT_SUCCESS_THRESHOLD above its start
+        z), matching the dataset/collector definition. A mere horizontal nudge
+        no longer counts as success. ``cube_displacement`` reports the vertical
+        lift (cube_z - start_z) so the client can see how high it got; this RPC
+        is instantaneous, so the client should query it at episode end (after
+        any settle) to judge a sustained grasp.
 
         Returns goal_reached=False / displacement=0 if the scene has no cube.
         """
@@ -270,14 +286,14 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                     goal_reached=False,
                     cube_displacement=0.0,
                 )
-            cube_xy = self._sim.data.body("red_cube").xpos[:2].copy()
+            cube_z = float(self._sim.data.body("red_cube").xpos[2])
 
-        displacement = float(np.linalg.norm(cube_xy - self._cube_start_xy))
-        goal_reached = displacement > CUBE_MOVED_THRESHOLD
+        lift = cube_z - self._cube_start_z
+        goal_reached = lift > LIFT_SUCCESS_THRESHOLD
 
         return arm_pb2.SuccessStatusResponse(
             goal_reached=goal_reached,
-            cube_displacement=displacement,
+            cube_displacement=lift,
         )
 
     def Ping(self, request, context):

@@ -24,6 +24,15 @@ CAMERA_FRAME = "camera"
 GRIPPER_FRAME = "gripper_center"
 OAKL_FRAME = "oak_l"   # SLAM / control frame the grasp trajectory commands
 
+# THE control frame: the single frame the whole pipeline (recorded data action,
+# IK feasibility filter, arm Cartesian-delta control, server reset, replay) must
+# agree on. The policy commands this frame; IK targets it. Change it HERE only.
+# Must be oak_l for the current free-floating dataset (the scene is rooted at
+# oak_l, so the recorded mocap pose IS the oak_l pose — see collect_grasp_dataset
+# and the assert there). Switching to CAMERA_FRAME additionally requires the data
+# recording + IK targets to apply the oak_l->camera transform.
+CONTROL_FRAME = OAKL_FRAME
+
 
 class Kinematics:
     """Placo wrapper for FK/IK on the OpenArm right arm."""
@@ -76,12 +85,12 @@ class Kinematics:
         T_oakl = self.robot.get_T_world_frame(OAKL_FRAME)
         self._T_oakl_to_cam = np.linalg.inv(T_oakl) @ T_cam
 
-    def forward(self, joint_positions: np.ndarray, frame: str = CAMERA_FRAME) -> np.ndarray:
+    def forward(self, joint_positions: np.ndarray, frame: str = CONTROL_FRAME) -> np.ndarray:
         """Compute a frame's pose from arm joint positions.
 
         Args:
             joint_positions: 7-element array of arm joint angles (rad).
-            frame: frame name to compute FK for (default: camera).
+            frame: frame name to compute FK for (default: CONTROL_FRAME).
 
         Returns:
             4x4 homogeneous transform (world -> frame).
@@ -96,7 +105,7 @@ class Kinematics:
         target_pose: np.ndarray,
         current_joint_positions: np.ndarray | None = None,
         n_iter: int = 500,
-        frame: str = CAMERA_FRAME,
+        frame: str = CONTROL_FRAME,
     ) -> np.ndarray:
         """Solve IK for a target pose of the given frame.
 

@@ -52,7 +52,7 @@ from grabette_trajectory import (  # noqa: E402
     smoothstep,
 )
 from openarm_gripette_simu import IKFeasibilityChecker, Simulation  # noqa: E402
-from openarm_gripette_simu.kinematics import CAMERA_FRAME, Kinematics  # noqa: E402
+from openarm_gripette_simu.kinematics import CONTROL_FRAME, Kinematics  # noqa: E402
 
 SCENE = Path(__file__).parent.parent / "scenes" / "table_grasp.xml"
 
@@ -137,7 +137,7 @@ def drive_targets(sim: Simulation, kin: Kinematics, arm_q: np.ndarray,
     `targets` is a list of (body_xyz, body_quat) keyframes from the planner.
     The pipeline-wide convention is camera-frame poses (world-positioned,
     gravity-aligned), so we convert each waypoint via body_pose_to_camera_pose
-    and pass the result to Placo IK with frame=CAMERA_FRAME. Tracking error
+    and pass the result to Placo IK with frame=CONTROL_FRAME. Tracking error
     is reported in camera space (= the convention the dataset records).
 
     Returns (final arm_q, max camera-pos err, max camera-rot err in radians).
@@ -148,7 +148,7 @@ def drive_targets(sim: Simulation, kin: Kinematics, arm_q: np.ndarray,
         cam_xyz, cam_quat = body_pose_to_camera_pose(body_xyz, body_quat)
         T_cam_target = pose_T(cam_xyz, cam_quat)
         arm_q = kin.inverse(T_cam_target, current_joint_positions=arm_q,
-                             n_iter=50, frame=CAMERA_FRAME)
+                             n_iter=50, frame=CONTROL_FRAME)
         sim.set_arm_commands(arm_q)
         sim.data.ctrl[prox_id] = gripper_ctrl[0]
         sim.data.ctrl[dist_id] = gripper_ctrl[1]
@@ -156,7 +156,7 @@ def drive_targets(sim: Simulation, kin: Kinematics, arm_q: np.ndarray,
             sim.step()
         if viewer is not None:
             viewer.sync()
-        T_cam_actual = kin.forward(sim.get_arm_positions(), frame=CAMERA_FRAME)
+        T_cam_actual = kin.forward(sim.get_arm_positions(), frame=CONTROL_FRAME)
         pos_err = float(np.linalg.norm(T_cam_actual[:3, 3] - cam_xyz))
         max_pos = max(max_pos, pos_err)
         max_rot_rad = max(max_rot_rad, _rot_err_rad(T_cam_target[:3, :3], T_cam_actual[:3, :3]))
@@ -231,7 +231,7 @@ def run_trial(rng: np.random.Generator, checker: IKFeasibilityChecker,
     home_cam_xyz, home_cam_quat = body_pose_to_camera_pose(wp.home_xyz, wp.home_quat)
     home_T = pose_T(home_cam_xyz, home_cam_quat)
     home_arm_q = kin.inverse(home_T, current_joint_positions=ARM_IK_SEED.copy(),
-                              n_iter=200, frame=CAMERA_FRAME)
+                              n_iter=200, frame=CONTROL_FRAME)
     sim.reset_arm(home_arm_q)
     sim.data.ctrl[prox_id] = PROXIMAL_OPEN
     sim.data.ctrl[dist_id] = DISTAL_OPEN
@@ -323,7 +323,7 @@ def main():
     rng = np.random.default_rng(args.seed)
     checker = IKFeasibilityChecker(
         Kinematics(),
-        frame=CAMERA_FRAME,
+        frame=CONTROL_FRAME,
         seed_joints=ARM_IK_SEED,
         pos_tol_m=args.ik_pos_tol,
         rot_tol_deg=args.ik_rot_tol_deg,

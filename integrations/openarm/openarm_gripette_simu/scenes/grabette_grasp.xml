@@ -26,6 +26,7 @@
     <texture type="2d" name="wood" builtin="flat" rgb1="0.65 0.45 0.25" rgb2="0.55 0.35 0.18" mark="random" markrgb="0.60 0.40 0.22" width="256" height="256" />
     <material name="wood" texture="wood" texrepeat="3 3" shininess="0.1" specular="0.1" />
     <material name="red_cube" rgba="0.85 0.15 0.1 1" shininess="0.3" specular="0.5" />
+    <material name="silver" rgba="0.6 0.6 0.63 1" shininess="0.6" specular="0.5" reflectance="0.2" />
     <mesh file="distal_soft_tip.stl" />
     <mesh file="hmi.stl" />
     <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl" />
@@ -113,7 +114,16 @@
     </body>
     <body name="red_cube" pos="0.44 -0.142 0.41">
       <freejoint name="red_cube_joint" />
-      <geom name="red_cube" type="box" size="0.02 0.02 0.06" material="red_cube" mass="0.1" friction="1.0 0.1 0.005" condim="6" solref="0.005 1" solimp="0.99 0.99 0.001" />
+      <!-- Coke-can-like object: red cylinder (Ø40mm x 120mm) with silver end
+           caps. A single curved collision surface (no flat faces) so the object
+           self-centers in the gripper instead of tumbling off a face. Silver
+           caps are visual-only (contype=0, mass=0). -->
+      <geom name="red_cube" type="cylinder" size="0.025 0.06" material="red_cube" mass="0.1" friction="1.0 0.1 0.005" condim="6" solref="0.005 1" solimp="0.99 0.99 0.001" />
+      <!-- Thin (~2mm) silver end rims. Radius 0.021 (1mm proud) and centered ON
+           the red ends (z=±0.06) so they straddle/enclose the red top+bottom
+           faces — no surface is coplanar with the red body, avoiding z-fighting. -->
+      <geom type="cylinder" size="0.026 0.001" pos="0 0 0.06" material="silver" contype="0" conaffinity="0" mass="0" />
+      <geom type="cylinder" size="0.026 0.001" pos="0 0 -0.06" material="silver" contype="0" conaffinity="0" mass="0" />
     </body>
     <body name="grabette_mocap" mocap="true" pos="0.44 -0.142 0.7" quat="0 1 0 0" />
     <body name="grabette_root" pos="0.44 -0.142 0.7" quat="0 1 0 0" childclass="grabette">
@@ -170,6 +180,8 @@
         <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material" />
         <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material" />
         <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material" />
+        <site name="thumb_tip" pos="-0.0910992 0.0551614 -0.0232" quat="0.651364 -0.651364 0.275181 -0.275181" group="4" />
+        <site name="gripper_center" pos="-0.0373485 0.0335873 -0.0232" quat="0.707107 0 0 0.707107" group="4" />
         <camera name="gripette_cam" pos="-0.0408486 -0.0255417 0.0701847" quat="0.8191522 0.5735762 0 0" fovy="130" />
         <body name="proximal_bend_r" pos="0 0 0" quat="0 0 1 0">
           <joint name="proximal" type="hinge" axis="0 0 1" range="-1.5707963267948966 0.0" />
@@ -203,14 +215,15 @@
             <geom type="mesh" class="visual" pos="0.0114064 0.0331157 -0.0042" quat="0.680021 0.680021 -0.193835 -0.193835" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material" />
             <geom type="mesh" class="visual" pos="0.0114064 0.0331157 -0.0422" quat="0.680021 0.680021 -0.193835 -0.193835" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material" />
             <geom type="mesh" class="visual" pos="-0 0 -0.051" quat="0 1 -0 -0" mesh="plain_washer_normal_grade_a_m4__69c500a05bd97449cdbc310c67ad03bb" material="plain_washer_normal_grade_a_m4__69c500a05bd97449cdbc310c67ad03bb_material" />
+            <site name="finger_tip" pos="0.0243384 0.0565209 -0.0232" quat="0.670835 -0.670835 -0.223562 0.223562" group="4" />
           </body>
         </body>
       </body>
     </body>
   </worldbody>
   <actuator>
-    <position class="grabette" name="proximal" joint="proximal" inheritrange="1" />
-    <position class="grabette" name="distal" joint="distal" inheritrange="1" />
+    <position class="grabette" name="proximal" joint="proximal" inheritrange="1" kp="120" />
+    <position class="grabette" name="distal" joint="distal" inheritrange="1" kp="120" />
   </actuator>
   <equality>
     <weld body1="grabette_mocap" body2="grabette_root" relpose="0 0 0 1 0 0 0" />
