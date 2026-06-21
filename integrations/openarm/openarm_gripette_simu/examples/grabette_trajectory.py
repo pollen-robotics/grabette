@@ -129,14 +129,29 @@ SENTRY_OFFSET = 0.10      # 10 cm back along approach axis
 # recorded video, while keeping IK-filter acceptance usable.
 HOME_X_OFFSET_RANGE = (0.05, 0.20)     # 5-20 cm behind the cube in -X
 HOME_Y_OFFSET_RANGE = (-0.25, -0.05)     # 5-25 cm in -Y from the cube
-HOME_Z_ABOVE_TABLE_RANGE = (0.08, 0.18)  # 0.65-0.75 m world Z. Stage-5g: dropped the 0.40-0.45 upper slice — at home_z ≥ 0.42 the arm operates near joint limits and the policy's residual orientation error during descend is large enough to miss grasps. v4 eval failures clustered there. Visible diversity loss is small; stability gain matters.
+# Raised from (0.08,0.18): with the camera ~13 cm above the fingertips, the old
+# range put thumb_tip/finger_tip at ~table level (mean +28 mm, 24% of starts
+# dipping a tip below the table top — looked like it started on the table).
+# (0.12,0.22) lifts the lower tip to ~+7 cm mean while keeping ~10 cm of height
+# variation. Watch the IK yield: higher home_z pushes the arm toward joint
+# limits (an old note saw grasp failures cluster above ~home_z 0.42 ≈ 0.20 here).
+HOME_Z_ABOVE_TABLE_RANGE = (0.12, 0.22)
 
 # Orientation: gripper finger axis tilted forward-down at this pitch below
 # horizontal. Pitch=90 deg -> straight down. Steep angles only.
 HOME_PITCH_RANGE_DEG = (0.0, 65.0)
-# Yaw is asymmetric — the camera site convention only reaches positive-yaw
-# orientations within the arm's workspace.
-HOME_YAW_RANGE_DEG = (-45.0, -20.0)
+# Home YAW is no longer a fixed range — it is COMPUTED per episode so the
+# gripette camera actually frames the cube. A fixed range can't: the cube-
+# centering yaw spans ~+10..+74 deg across the home-position box (position and
+# orientation are sampled independently). Instead we aim the camera at the cube:
+#   yaw_deg = atan2(-dy, -dx) + HOME_CAM_YAW_OFFSET_DEG + jitter
+# where (dx, dy) is the home offset from the cube and the offset is the camera's
+# fixed mounting heading (calibrated: -91.6 +/- 0.9 deg over position+pitch, so
+# the term is nearly constant). Jitter adds variability while keeping the cube
+# framed (the 130-deg FOV tolerates it). This centers the cube HORIZONTALLY;
+# vertical framing still varies with HOME_PITCH (intended).
+HOME_CAM_YAW_OFFSET_DEG = -92.0
+HOME_YAW_JITTER_DEG = 27.0               # +/- jitter around the aim direction
 HOME_ROLL_RANGE_DEG = (0.0, 0.0)        # roll disabled per spec
 
 # Pre-grasp pose: fingers fully down (pitch=90, yaw=0, roll=0)
@@ -158,11 +173,12 @@ PRE_GRASP_ROLL_DEG = 0.0
 # pragmatic compromise: visibly diagonal motion vs the prior pure top-down,
 # but geometrically close enough to vertical that the V-pocket still holds.
 GRASP_TILT_RANGE_DEG = (10.0, 35.0)   # widened off-vertical diversity (grabette_right tips hold)
-# Camera-frame convention: the arm-feasible azimuth half is positive (+15 to
-# +40°), opposite of the body/site-frame number we had in Stage 5b. Symmetric
-# ±60° sampling collapses to a tight strip on the +y side under IK filter,
-# so the sampler is restricted to that strip directly.
-GRASP_AZIMUTH_RANGE_DEG = (+10.0, +40.0)   # azimuth spread (symmetric; IK filter off)
+# Final grasp yaw (azimuth about world +Z). The object is now a CYLINDER (can),
+# which is rotationally symmetric — so unlike the cube (which needed the gripper
+# roughly face-aligned) ANY arm-reachable heading is a valid grasp. Widened from
+# (10,40) to (0,45) for more final-yaw variation; the IK filter prunes whatever
+# the arm can't reach (the feasible band sits on the +y side).
+GRASP_AZIMUTH_RANGE_DEG = (0.0, 45.0)
 
 # Per-episode grasp-pose noise — sim-only diversity in place of visual DR
 # (the pipeline is tested in sim, so we vary the grasp itself, not the visuals).
@@ -328,12 +344,19 @@ def sample_home_pose(rng: np.random.Generator, cube_x: float, cube_y: float):
         home_quat: (4,) MuJoCo (w, x, y, z) quaternion (forward-down tilt)
         debug:    dict with the sampled scalar params (for logging)
     """
-    home_x = cube_x + rng.uniform(*HOME_X_OFFSET_RANGE)
-    home_y = cube_y + rng.uniform(*HOME_Y_OFFSET_RANGE)
+    dx = rng.uniform(*HOME_X_OFFSET_RANGE)
+    dy = rng.uniform(*HOME_Y_OFFSET_RANGE)
+    home_x = cube_x + dx
+    home_y = cube_y + dy
     home_z = TABLE_TOP_Z + rng.uniform(*HOME_Z_ABOVE_TABLE_RANGE)
 
     pitch_deg = rng.uniform(*HOME_PITCH_RANGE_DEG)
-    yaw_deg = rng.uniform(*HOME_YAW_RANGE_DEG)
+    # Aim the gripette camera at the cube: heading from home toward the cube
+    # (-dx, -dy) plus the camera's fixed mounting offset, then jitter. This is
+    # invariant under the later GOAL_YAW_CORRECTION (a rigid rotation about the
+    # cube), so computing it here in the pre-correction frame is correct.
+    aim_yaw_deg = np.degrees(np.arctan2(-dy, -dx)) + HOME_CAM_YAW_OFFSET_DEG
+    yaw_deg = aim_yaw_deg + rng.uniform(-HOME_YAW_JITTER_DEG, HOME_YAW_JITTER_DEG)
     if HOME_ROLL_RANGE_DEG[0] == HOME_ROLL_RANGE_DEG[1]:
         roll_deg = HOME_ROLL_RANGE_DEG[0]
     else:

@@ -586,8 +586,8 @@
     <position class="openarm_gripette_right" name="r_wrist_yaw" joint="r_wrist_yaw" inheritrange="1"/>
     <position class="openarm_gripette_right" name="r_wrist_roll" joint="r_wrist_roll" inheritrange="1"/>
     <position class="openarm_gripette_right" name="r_wrist_pitch" joint="r_wrist_pitch" inheritrange="1"/>
-    <position class="openarm_gripette_right" name="proximal" joint="proximal" inheritrange="1"/>
-    <position class="openarm_gripette_right" name="distal" joint="distal" inheritrange="1"/>
+    <position class="openarm_gripette_right" name="proximal" joint="proximal" inheritrange="1" kp="120"/>
+    <position class="openarm_gripette_right" name="distal" joint="distal" inheritrange="1" kp="120"/>
   </actuator>
   <equality>
     <joint joint1="r_wrist_roll_mimic" joint2="r_wrist_roll" polycoef="0 -1.0 0 0 0"/>
