@@ -9,13 +9,21 @@ https://github.com/pollen-robotics/reachy_mini/tree/main/src/reachy_mini/daemon/
 Changes from reference:
 - Device name: "Grabette"
 - PIN: from env var GRABETTE_BT_PIN (not dfu-util serial)
-- Direct WIFI/WIFI_RESET commands via nmcli (no CMD_ shell scripts)
+- Direct nmcli (no CMD_ shell scripts); crypto done in-process (no daemon split)
 - No Device Info Service (unnecessary)
 - Simplified status service (network status only)
+
+The WiFi password is never sent in clear over the BLE link. The client runs
+WIFI_KEYEX to fetch the robot's ephemeral X25519 public key, derives a shared
+key with HKDF-SHA256 (salt = PIN), and seals the password with AES-256-GCM
+(AAD = SSID); the sealed blob is sent via WIFI_CONNECT_ENC. This mirrors the
+reachy_mini scheme, with crypto done in-process here rather than in a daemon.
 """
 
+import base64
 import json
 import logging
+import socket
 import subprocess
 import threading
 import time
@@ -24,6 +32,14 @@ from typing import Callable
 import dbus
 import dbus.mainloop.glib
 import dbus.service
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric.x25519 import (
+    X25519PrivateKey,
+    X25519PublicKey,
+)
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from gi.repository import GLib
 
 logger = logging.getLogger(__name__)
@@ -54,6 +70,13 @@ AGENT_PATH = "/org/bluez/agent"
 
 # Descriptor UUIDs
 USER_DESCRIPTION_UUID = "00002901-0000-1000-8000-00805f9b34fb"
+
+# ---- WiFi password sealing (X25519 + HKDF-SHA256 + AES-256-GCM) ----
+
+# HKDF context string — must match the web client byte-for-byte.
+HKDF_INFO = b"grabette-wifi-psk-v1"
+# Algorithm tag advertised in the WIFI_KEYEX reply.
+KEYEX_ALG = "x25519-hkdf-sha256-aesgcm"
 
 
 # =====================================================================
@@ -593,12 +616,19 @@ def _wifi_connect(ssid: str, password: str) -> str:
     # inference fails (profile built with no key-mgmt → "key-mgmt is missing")
     # whenever the AP isn't freshly in the scan cache. Setting key-mgmt by hand
     # is deterministic for the common WPA/WPA2-PSK case.
+    #
+    # psk-flags 0 (NM_SETTING_SECRET_FLAG_NONE) forces the PSK to be stored in
+    # the system connection. Without it the secret can end up "agent-owned",
+    # and activation then fails headless with "Secrets were required, but not
+    # provided" because there is no secret agent to ask.
     try:
         add = subprocess.run(
             [
                 "nmcli", "connection", "add", "type", "wifi",
                 "con-name", ssid, "ssid", ssid,
-                "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+                "wifi-sec.key-mgmt", "wpa-psk",
+                "wifi-sec.psk", password,
+                "wifi-sec.psk-flags", "0",
             ],
             capture_output=True, text=True, timeout=15,
         )
@@ -660,21 +690,29 @@ class BluetoothWifiService:
     """BLE GATT service for WiFi configuration.
 
     Commands (written to COMMAND characteristic as UTF-8):
-        PING               → PONG
-        PIN_xxxxx          → OK: Connected / ERROR: Incorrect PIN
-        WIFI_SCAN          → JSON array of nearby SSIDs / ERROR: ...
-        WIFI ssid password → OK: Connecting to <ssid> / ERROR: ...
-        WIFI_RESET         → OK: WiFi connections cleared / ERROR: ...
+        PING                  → PONG
+        PIN_xxxxx             → OK: Connected / ERROR: Incorrect PIN
+        WIFI_SCAN             → JSON array of nearby SSIDs / ERROR: ...
+        WIFI_KEYEX            → {"kid","pk","alg"} ephemeral pubkey for sealing
+        WIFI_CONNECT_ENC json → OK: Connecting to <ssid> / ERROR: ...
+        WIFI_RESET            → OK: WiFi connections cleared / ERROR: ...
 
-    PIN authentication is required before WIFI/WIFI_SCAN/WIFI_RESET. Auth is
-    consumed by WIFI/WIFI_RESET (re-PIN for each) but NOT by WIFI_SCAN, so a
-    client can scan then connect with a single PIN. Auth is reset when the BLE
-    central disconnects.
-    Network status is readable from the STATUS service (updates every 10s).
+    The WiFi password is sealed client-side (see _wifi_connect_enc) and never
+    sent in clear — there is no plaintext connect command.
+
+    PIN authentication is required before WIFI_SCAN/WIFI_CONNECT_ENC/WIFI_RESET.
+    Auth is consumed by WIFI_CONNECT_ENC/WIFI_RESET (re-PIN for each) but NOT by
+    WIFI_SCAN, so a client can scan then connect with a single PIN. WIFI_KEYEX
+    is public (it returns only a public key). Auth is reset when the BLE central
+    disconnects. Network status is readable from the STATUS service (every 10s).
     """
 
     def __init__(self, device_name: str = "Grabette", pin_code: str = "00000"):
         self.device_name = device_name
+        # Name shown in the browser's device chooser. Includes the hostname so
+        # several robots of the same type are distinguishable; the web client
+        # filters by the "{device_name}" prefix, so this MUST start with it.
+        self.advertised_name = f"{device_name} ({socket.gethostname()})"
         self.pin_code = pin_code
         self.authenticated = False
         self.bus = None
@@ -687,6 +725,13 @@ class BluetoothWifiService:
         # stays reconnectable.
         self._ad_manager = None
         self._connected_device_path = None
+        # Ephemeral X25519 key for sealing the WiFi password. Regenerated on
+        # each WIFI_KEYEX; only one central connects at a time and KEYEX is
+        # immediately followed by CONNECT_ENC, so a single current key is
+        # enough — and gives fresh per-exchange forward secrecy. kid lets a
+        # stale CONNECT_ENC be rejected cleanly.
+        self._ephemeral_key = None
+        self._ephemeral_kid = 0
 
     def _handle_command(self, value: bytes) -> str:
         """Dispatch a BLE command and return response string."""
@@ -715,17 +760,20 @@ class BluetoothWifiService:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             return _wifi_scan()
 
-        # WIFI ssid password — requires auth
-        if upper.startswith("WIFI "):
+        # WIFI_KEYEX — hand out the ephemeral public key for sealing. Public:
+        # a public key leaks nothing, and the client needs it before it can PIN.
+        if upper == "WIFI_KEYEX":
+            return self._wifi_keyex()
+
+        # WIFI_CONNECT_ENC <json> — sealed connect (requires auth)
+        if upper.startswith("WIFI_CONNECT_ENC"):
             if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
-            # Parse: "WIFI ssid password" (password may contain spaces)
-            parts = command_str.split(" ", 2)
-            if len(parts) < 3:
-                return "ERROR: Usage: WIFI <ssid> <password>"
-            ssid, password = parts[1], parts[2]
+            parts = command_str.split(" ", 1)
+            if len(parts) < 2:
+                return "ERROR: Usage: WIFI_CONNECT_ENC <json>"
             self.authenticated = False  # one-shot auth
-            return _wifi_connect(ssid, password)
+            return self._wifi_connect_enc(parts[1])
 
         # WIFI_RESET — requires auth
         if upper == "WIFI_RESET":
@@ -735,6 +783,63 @@ class BluetoothWifiService:
             return _wifi_reset()
 
         return f"ERROR: Unknown command: {command_str}"
+
+    # ---- WiFi password sealing ----
+
+    def _wifi_keyex(self) -> str:
+        """Generate a fresh ephemeral key, return it as JSON: {kid, pk(b64), alg}."""
+        self._ephemeral_kid += 1
+        self._ephemeral_key = X25519PrivateKey.generate()
+        pk = self._ephemeral_key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw
+        )
+        return json.dumps(
+            {
+                "kid": str(self._ephemeral_kid),
+                "pk": base64.b64encode(pk).decode(),
+                "alg": KEYEX_ALG,
+            },
+            separators=(",", ":"),
+        )
+
+    def _wifi_connect_enc(self, blob: str) -> str:
+        """Decrypt a sealed WIFI_CONNECT_ENC payload, then connect.
+
+        Payload JSON: {ssid, kid, epk(b64 32B), nonce(b64 12B), ct(b64 ct||tag)}.
+        Key = HKDF-SHA256(ecdh, salt=PIN, info=HKDF_INFO, 32B); AES-256-GCM with
+        AAD=ssid. A wrong PIN, tampered ciphertext or stale key all surface as a
+        single opaque decrypt failure (no oracle on which part was wrong).
+        """
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            return "ERROR: Invalid payload (expected JSON)"
+        try:
+            ssid = data["ssid"]
+            kid = data["kid"]
+            epk = base64.b64decode(data["epk"])
+            nonce = base64.b64decode(data["nonce"])
+            ct = base64.b64decode(data["ct"])
+        except (KeyError, TypeError, ValueError):
+            return "ERROR: Malformed encrypted payload"
+
+        if self._ephemeral_key is None or kid != str(self._ephemeral_kid):
+            return "ERROR: Stale key — re-run WIFI_KEYEX"
+        priv = self._ephemeral_key
+        try:
+            shared = priv.exchange(X25519PublicKey.from_public_bytes(epk))
+            key = HKDF(
+                algorithm=hashes.SHA256(),
+                length=32,
+                salt=self.pin_code.encode("utf-8"),
+                info=HKDF_INFO,
+            ).derive(shared)
+            password = AESGCM(key).decrypt(
+                nonce, ct, ssid.encode("utf-8")
+            ).decode("utf-8")
+        except Exception:
+            return "ERROR: Decryption failed (wrong PIN?)"
+        return _wifi_connect(ssid, password)
 
     def start(self):
         """Initialize BlueZ DBus objects and start advertising."""
@@ -758,8 +863,9 @@ class BluetoothWifiService:
 
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
-        # Set the adapter alias so the device shows as "Grabette" (not hostname)
-        adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(self.device_name))
+        # Adapter alias = advertised name (e.g. "Grabette (grabette-01)") so the
+        # device chooser shows the hostname and several robots are distinguishable.
+        adapter_props.Set("org.bluez.Adapter1", "Alias", dbus.String(self.advertised_name))
         adapter_props.Set("org.bluez.Adapter1", "Discoverable", dbus.Boolean(True))
         adapter_props.Set(
             "org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(0)
@@ -784,8 +890,11 @@ class BluetoothWifiService:
         # Register BLE advertisement
         ad_manager = dbus.Interface(adapter, LE_ADVERTISING_MANAGER_IFACE)
         self._ad_manager = ad_manager
-        self.adv = Advertisement(self.bus, 0, "peripheral", self.device_name)
-        self.adv.service_uuids = [STATUS_SERVICE_UUID]
+        self.adv = Advertisement(self.bus, 0, "peripheral", self.advertised_name)
+        # No service UUID in the advert: a 128-bit UUID eats ~18 of the 31 adv
+        # bytes, which would truncate the (longer) hostname-bearing LocalName.
+        # The web client filters by name prefix, not service, and reaches the
+        # services via optionalServices after connecting — so this is safe.
         ad_manager.RegisterAdvertisement(
             self.adv.get_path(),
             {},
@@ -811,7 +920,7 @@ class BluetoothWifiService:
         # Periodic network status refresh (every 10s)
         GLib.timeout_add_seconds(10, self.app.status_service.update_network_status)
 
-        logger.info("Bluetooth service started as '%s'", self.device_name)
+        logger.info("Bluetooth service started as '%s'", self.advertised_name)
 
     def _on_device_properties_changed(
         self, interface, changed, invalidated, path=None
