@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 _SLAM_SPACE_URL = os.environ.get(
     "GRABETTE_SLAM_SPACE_URL",
-    "https://pollen-robotics-grabette-slam.hf.space",
+    "https://glannuzel-grabette-slam-test.hf.space",
 ).rstrip("/")
 
 
