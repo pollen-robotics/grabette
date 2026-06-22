@@ -823,7 +823,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 yield "Error: job lost"
                 return
             status = job.get("status", "running")
-            msg = job.get("message") or job.get("error") or ""
+            error = job.get("error") or ""
+            msg = (error if status == "failed" else None) or job.get("message") or error
             pct = job.get("progress", 0)
             if status == "completed":
                 link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
