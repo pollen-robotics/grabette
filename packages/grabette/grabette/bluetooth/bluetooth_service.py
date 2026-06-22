@@ -870,12 +870,22 @@ class BluetoothWifiService:
         adapter_props.Set(
             "org.bluez.Adapter1", "DiscoverableTimeout", dbus.UInt32(0)
         )
-        # Pairable=False: the GATT characteristics are unencrypted, so clients
-        # connect "connection-only" and use them WITHOUT bonding. This avoids the
-        # pairing-confirmation prompt the client OS would otherwise raise (which
-        # on a laptop needs an interactive agent), so end users just connect from
-        # the web tool — no terminal, no pairing dialog.
-        adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(False))
+        # Pairable=True is REQUIRED for cross-platform reliability. The GATT
+        # characteristics are unencrypted, so a central CAN use them
+        # "connection-only" without bonding (this is what macOS does — which is
+        # why Pairable=False appeared to work). But other stacks — notably
+        # Windows, and some Linux/BlueZ centrals — INSIST on bonding before any
+        # GATT operation. With Pairable=False BlueZ refuses their SMP pairing
+        # request and the central drops the link ~0.5s after connect, looping
+        # forever (observed as "Device disconnected / GATT Server is
+        # disconnected" with connect→disconnect cycles every ~0.5s).
+        #
+        # With Pairable=True and the NoInputNoOutput agent above, those centrals
+        # complete a SILENT Just Works bond (the SMP IO-capability mapping always
+        # degrades to Just Works when either side is NoInputNoOutput — numeric
+        # comparison can never be selected, so no confirmation dialog is raised),
+        # while connection-only centrals are unaffected.
+        adapter_props.Set("org.bluez.Adapter1", "Pairable", dbus.Boolean(True))
 
         # Register GATT application
         service_manager = dbus.Interface(adapter, GATT_MANAGER_IFACE)
