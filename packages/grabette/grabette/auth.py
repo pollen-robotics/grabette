@@ -43,7 +43,7 @@ from huggingface_hub.errors import HfHubHTTPError
 # relay knows which grabette to forward the callback to.
 _HOSTNAME = socket.gethostname()
 
-_DEFAULT_RELAY_URL = "https://glannuzel-grabette-fleet.hf.space"
+_DEFAULT_RELAY_URL = "https://pollen-robotics-grabette-fleet.hf.space"
 _RELAY_URL = os.environ.get("GRABETTE_RELAY_URL", _DEFAULT_RELAY_URL).rstrip("/")
 OAUTH_CALLBACK_PATH = "/api/hf-auth/oauth/callback"
 

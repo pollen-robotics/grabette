@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Fleet relay
-    relay_url: str = "https://glannuzel-grabette-fleet.hf.space"
+    relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
     relay_enabled: bool = True
     device_id: str = ""
     device_name: str = ""
