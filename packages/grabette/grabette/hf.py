@@ -103,13 +103,13 @@ class HuggingFaceClient:
             folder_path=str(episode_dir),
             repo_id=repo_id,
             repo_type="dataset",
-            path_in_repo=f"episodes/{episode_id}",
+            path_in_repo=episode_id,
         )
 
         if progress_callback:
             progress_callback(100.0, "Upload complete")
 
-        url = f"https://huggingface.co/datasets/{repo_id}/tree/main/episodes/{episode_id}"
+        url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{episode_id}"
         logger.info("Episode %s uploaded to %s", episode_id, url)
         return url
 
