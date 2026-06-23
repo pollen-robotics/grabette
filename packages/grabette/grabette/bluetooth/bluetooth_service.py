@@ -73,10 +73,28 @@ USER_DESCRIPTION_UUID = "00002901-0000-1000-8000-00805f9b34fb"
 
 # ---- WiFi password sealing (X25519 + HKDF-SHA256 + AES-256-GCM) ----
 
-# HKDF context string — must match the web client byte-for-byte.
+# HKDF context string — must match the web client byte-for-byte. Shared by all
+# robot types (Grabette/Gripette/Casquette) on purpose: the web client offers a
+# single device chooser and seals against whichever robot is selected, so a
+# per-robot string would break cross-provisioning. It is only domain separation
+# from other protocols — secrecy comes from the per-session X25519 keys, not this.
 HKDF_INFO = b"grabette-wifi-psk-v1"
 # Algorithm tag advertised in the WIFI_KEYEX reply.
 KEYEX_ALG = "x25519-hkdf-sha256-aesgcm"
+
+# ---- PIN brute-force rate limiting ----
+
+# A PIN is short (the default is 5 digits), so without a limiter a central in
+# BLE range could exhaust the keyspace in minutes by spamming PIN_xxxxx. After
+# MAX_PIN_ATTEMPTS consecutive wrong PINs we refuse further attempts for a
+# lockout window that DOUBLES on each repeated lockout (PIN_LOCKOUT_SECONDS,
+# 2×, 4×, … capped at MAX_PIN_LOCKOUT_SECONDS), so a determined guesser is
+# slowed geometrically. The counters live on the service, not the connection,
+# and are NOT reset on disconnect — an attacker can't clear them by dropping and
+# re-opening the BLE link. Only a correct PIN (or a service restart) resets them.
+MAX_PIN_ATTEMPTS = 5
+PIN_LOCKOUT_SECONDS = 30
+MAX_PIN_LOCKOUT_SECONDS = 3600
 
 
 # =====================================================================
@@ -715,6 +733,14 @@ class BluetoothWifiService:
         self.advertised_name = f"{device_name} ({socket.gethostname()})"
         self.pin_code = pin_code
         self.authenticated = False
+        # PIN brute-force state (see MAX_PIN_ATTEMPTS). Guarded by _pin_lock
+        # because each BLE write is dispatched on its own daemon thread, so
+        # concurrent PIN_ writes would otherwise race the counter. Held here on
+        # the service (not per-connection) so it survives reconnects.
+        self._pin_lock = threading.Lock()
+        self._pin_failures = 0
+        self._pin_lockout_rounds = 0
+        self._pin_lockout_until = 0.0
         self.bus = None
         self.app = None
         self.adv = None
@@ -744,14 +770,9 @@ class BluetoothWifiService:
         if upper == "PING":
             return "PONG"
 
-        # PIN_xxxxx — authenticate
+        # PIN_xxxxx — authenticate (rate-limited; see _check_pin)
         if upper.startswith("PIN_"):
-            pin = command_str[4:].strip()
-            if pin == self.pin_code:
-                self.authenticated = True
-                return "OK: Connected"
-            else:
-                return "ERROR: Incorrect PIN"
+            return self._check_pin(command_str[4:].strip())
 
         # WIFI_SCAN — list nearby networks (requires auth; does NOT consume it,
         # so the client can scan then connect with a single PIN)
@@ -783,6 +804,49 @@ class BluetoothWifiService:
             return _wifi_reset()
 
         return f"ERROR: Unknown command: {command_str}"
+
+    def _check_pin(self, pin: str) -> str:
+        """Validate the PIN with brute-force rate limiting.
+
+        While locked out, every attempt is refused WITHOUT checking the PIN (so
+        the lockout can't be sidestepped, and a guess made during the window is
+        never tested). A correct PIN clears all counters; each block of
+        MAX_PIN_ATTEMPTS wrong guesses arms the next, longer lockout. See
+        MAX_PIN_ATTEMPTS for the persistence/escalation rationale.
+        """
+        with self._pin_lock:
+            now = time.monotonic()
+            remaining = self._pin_lockout_until - now
+            if remaining > 0:
+                logger.warning(
+                    "PIN attempt rejected — locked out for %ds more", int(remaining)
+                )
+                return f"ERROR: Too many attempts. Locked for {int(remaining) + 1}s."
+
+            if pin == self.pin_code:
+                self._pin_failures = 0
+                self._pin_lockout_rounds = 0
+                self.authenticated = True
+                return "OK: Connected"
+
+            self._pin_failures += 1
+            if self._pin_failures < MAX_PIN_ATTEMPTS:
+                return "ERROR: Incorrect PIN"
+
+            # Threshold reached — arm the next lockout window (doubling each time)
+            # and reset the per-window counter so the next block must re-earn it.
+            self._pin_lockout_rounds += 1
+            lockout = min(
+                PIN_LOCKOUT_SECONDS * (2 ** (self._pin_lockout_rounds - 1)),
+                MAX_PIN_LOCKOUT_SECONDS,
+            )
+            self._pin_lockout_until = now + lockout
+            self._pin_failures = 0
+            logger.warning(
+                "PIN brute-force lockout #%d: %ds after %d wrong attempts",
+                self._pin_lockout_rounds, lockout, MAX_PIN_ATTEMPTS,
+            )
+            return f"ERROR: Too many attempts. Locked for {lockout}s."
 
     # ---- WiFi password sealing ----
 

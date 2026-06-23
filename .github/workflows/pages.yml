@@ -1,0 +1,43 @@
+name: Deploy BT Tool to Pages
+
+# Publishes the single shared Bluetooth WiFi-provisioning web client
+# (docs/index.html) to https://pollen-robotics.github.io/grabette/. The page
+# has a device chooser, so the one site provisions any robot (Grabette /
+# Gripette / Casquette). The per-package packages/*/docs/index.html are symlinks
+# to docs/index.html, so this single source is the only thing to deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least privilege for the Pages deploy: read the repo, mint the OIDC token,
+# write the Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let an in-progress run finish (don't cancel) so a
+# half-published site is never left live.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+      - id: deployment
+        uses: actions/deploy-pages@v4
