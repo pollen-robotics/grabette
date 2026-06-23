@@ -11,6 +11,11 @@ dependencies = [
     "pydantic-settings>=2.13.1",
     "opencv-contrib-python>=4.13.0.92",
     "requests>=2.34.2",
+    # BLE WiFi provisioning seals the password with X25519+HKDF+AES-GCM
+    # (casquette.bluetooth.bluetooth_service). Ships aarch64 wheels — no source
+    # build on a 64-bit Pi Zero 2W OS (a 32-bit armv7l OS would build from
+    # source via Rust, ~slow; deploy 64-bit Pi OS).
+    "cryptography>=42.0",
 ]
 
 [project.optional-dependencies]
