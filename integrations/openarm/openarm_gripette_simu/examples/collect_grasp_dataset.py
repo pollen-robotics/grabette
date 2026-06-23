@@ -20,11 +20,14 @@ no-arm setup. Gripper joint angles come straight from the proximal/distal
 qpos (radians).
 
 Schema written here matches `collect_grasp_data.py` (Stage 0):
-    * observation.images.cam0: video, (3, 972, 1296) uint8
+    * observation.images.cam0: video, (3, 720, 960) uint8, H.264 (libx264)
     * action: float32 (8,) [x, y, z, ax, ay, az, proximal_rad, distal_rad]
     * task: constant string
-    * 50 fps. Per-frame action is the absolute pose at the next frame, so
+    * 30 fps. Per-frame action is the absolute pose at the next frame, so
       `convert_dataset.py` can compute deltas from neighbour frames.
+    Video codec / resolution / fps are chosen to match the real Grabette
+    recordings (H.264, 960x720, 30 fps); av1 / 1296x972 / 50 fps degraded
+    training.
 
 Usage:
     uv run python examples/collect_grasp_dataset.py --episodes 10 --repo_id sim_grabette_grasp
@@ -61,8 +64,14 @@ from grabette_trajectory import (  # noqa: E402
     slerp_quat,
     smoothstep,
 )
-from openarm_gripette_simu import DRConfig, IKFeasibilityChecker, Simulation, randomize_scene
-from openarm_gripette_simu.kinematics import CAMERA_FRAME, Kinematics
+from openarm_gripette_simu import (
+    DRConfig,
+    IKFeasibilityChecker,
+    Simulation,
+    StartCollisionChecker,
+    randomize_scene,
+)
+from openarm_gripette_simu.kinematics import CONTROL_FRAME, OAKL_FRAME, Kinematics
 
 # LeRobot dataset writer + axis-angle helper (same imports as Stage 0).
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -72,40 +81,42 @@ logger = logging.getLogger(__name__)
 
 SCENE = Path(__file__).parent.parent / "scenes" / "grabette_grasp.xml"
 
-# --- Phase frame counts (recorded frames at 50 fps -> 20 ms / frame).
-# These mirror the manual test's sim-step counts, divided by SIM_SUBSTEPS=20:
-#   manual STEPS_INITIAL_SETTLE=100  -> 5 frames
-#   manual STEPS_APPROACH=1600       -> 80 frames
-#   manual STEPS_DESCEND=500         -> 25 frames
-#   manual STEPS_PRE_GRIP_SETTLE=200 -> 10 frames
-#   manual STEPS_CLOSE=200           -> 10 frames
-#   manual STEPS_HOLD=500            -> 25 frames
-#   manual STEPS_LIFT=600            -> 30 frames
-#   manual STEPS_RETRACT=1000        -> 50 frames
-#   manual STEPS_FINAL_SETTLE=300    -> 15 frames
-# Total ~ 250 frames per episode (~5.0 s at 50 fps).
-FPS = 50
-SIM_SUBSTEPS = 20  # 20 ms per frame at sim dt=0.001
-FRAMES_INITIAL_SETTLE = 5
-FRAMES_OPEN_RAMP = 15            # release-episode: ramp closed -> open
-FRAMES_HOVER = 50                # hover-episode: extra time at grasp pose with gripper still open
-FRAMES_APPROACH = 80
+# --- Phase frame counts, recorded at 30 fps to match the real Grabette.
+# Physics steps at sim dt=0.001; we record one frame every SIM_SUBSTEPS steps.
+# SIM_SUBSTEPS=33 -> 33 ms/frame -> 30.3 fps, which we label 30 fps. The <=1%
+# skew is well inside the real camera's ±1% clock-drift tolerance.
+# The per-phase TOTAL sim-step counts are preserved from the previous 50 fps /
+# 20-substep tuning (so the contact dynamics that give ~100% grasp are
+# unchanged); only the recorded-frame cadence dropped (50->30 fps). Each new
+# count = round(old_frames * 20 / 33), i.e. the same wall-clock at coarser
+# sampling:
+#   INITIAL_SETTLE 5->3   APPROACH 80->48   DESCEND 50->30   PRE_GRIP 25->15
+#   CLOSE 30->18   HOLD 50->30   LIFT 60->36   RETRACT 50->30   FINAL 15->9
+# Total ~150 frames per episode (~5.0 s at 30 fps — same duration as before).
+FPS = 30
+SIM_SUBSTEPS = 33  # 33 ms per frame at sim dt=0.001 (≈30 fps)
+FRAMES_INITIAL_SETTLE = 3
+FRAMES_OPEN_RAMP = 9             # release-episode: ramp closed -> open
+FRAMES_HOVER = 30                # hover-episode: extra time at grasp pose with gripper still open
+FRAMES_APPROACH = 48
 # Stage 5e: slowed contact-critical phases. Arm replay shows the kinematic
 # motion is correct but contact transients on close/lift kick the cube out
 # of the V-pocket. Lengthening close/hold/lift gives the contact dynamics
 # time to settle: cube is gripped firmly before lift starts, lift
 # acceleration stays under the cube's static-friction budget.
-FRAMES_DESCEND = 50          # was 25
-FRAMES_PRE_GRIP_SETTLE = 25
-FRAMES_CLOSE = 30            # was 10 — gentler close ramp
-FRAMES_HOLD = 50             # was 25
-FRAMES_LIFT = 60             # was 30 — gentler lift
-FRAMES_RETRACT = 50
-FRAMES_FINAL_SETTLE = 15
+FRAMES_DESCEND = 30
+FRAMES_PRE_GRIP_SETTLE = 15
+FRAMES_CLOSE = 18            # gentle close ramp
+FRAMES_HOLD = 30
+FRAMES_LIFT = 36            # gentle lift
+FRAMES_RETRACT = 30
+FRAMES_FINAL_SETTLE = 9
 
-# --- Image dimensions (must match Simulation.render_camera) ---
-IMG_HEIGHT = 972
-IMG_WIDTH = 1296
+# --- Image dimensions. The fisheye camera renders+distorts at the calibration
+# resolution (1296x972); record_frame downscales to match the real Grabette
+# stream (960x720, same 4:3 aspect, so the KB8 calibration stays valid). ---
+IMG_HEIGHT = 720
+IMG_WIDTH = 960
 
 # --- Constant task label ---
 TASK = "grasp_and_lift_cube"
@@ -161,9 +172,14 @@ def mocap_state_8d(sim: Simulation, mocap_id: int) -> np.ndarray:
     cam_pos, cam_quat = body_pose_to_camera_pose(body_pos, body_quat)
     qw, qx, qy, qz = cam_quat
     rotvec = LeRobotRotation.from_quat([qx, qy, qz, qw]).as_rotvec()
+    # Record the gripper COMMAND (ctrl), not the actual joint angle. With the
+    # compliant (low-kp) grip + over-command, the actual angle stalls at contact
+    # while the command goes further; recording the command is what lets the
+    # policy learn to over-command -> apply holding pressure at eval. (Also makes
+    # the gripper consistent with the pose above, which is the mocap command.)
     grip = np.array([
-        sim.data.joint("proximal").qpos[0],
-        sim.data.joint("distal").qpos[0],
+        sim.data.ctrl[sim.model.actuator("proximal").id],
+        sim.data.ctrl[sim.model.actuator("distal").id],
     ])
     return np.concatenate([cam_pos, rotvec, grip]).astype(np.float32)
 
@@ -209,7 +225,9 @@ def set_grabette_pose(sim: Simulation, mocap_id: int, pos: np.ndarray, quat: np.
 def record_frame(sim: Simulation, mocap_id: int, frames: list[dict]):
     """Snapshot current state + camera image into the per-episode buffer."""
     state_8d = mocap_state_8d(sim, mocap_id)
-    img_rgb = sim.render_camera()
+    # Render at the real Grabette stream size (fisheye distortion is applied at
+    # the calibration res internally, then downscaled — see render_camera).
+    img_rgb = sim.render_camera(out_size=(IMG_WIDTH, IMG_HEIGHT))
     frames.append({"state_8d": state_8d, "image": img_rgb})
 
 
@@ -323,12 +341,29 @@ def phase_close(sim: Simulation, mocap_id: int,
 
 # ----- Episode driver ---------------------------------------------------------
 
+def _sample_uncollided(rng, sample_kwargs, start_checker, max_tries: int = 50):
+    """Draw an episode plan whose HOME pose does not put the free-floating
+    gripper inside the table. With ``start_checker=None`` this is a single
+    draw. Otherwise we resample (up to ``max_tries``) until the start clears
+    the table; the last draw is returned regardless so callers always get a
+    plan (the IK filter is the hard gate)."""
+    wp = sample_episode_waypoints(rng, **sample_kwargs)
+    if start_checker is None:
+        return wp
+    for _ in range(max_tries):
+        if not start_checker.collides(wp.home_xyz, wp.home_quat):
+            break
+        wp = sample_episode_waypoints(rng, **sample_kwargs)
+    return wp
+
+
 def plan_episode(
     rng: np.random.Generator,
     *,
     cube_x_range: tuple[float, float],
     cube_y_range: tuple[float, float],
     checker: IKFeasibilityChecker | None = None,
+    start_checker: "StartCollisionChecker | None" = None,
     max_attempts: int = 50,
 ):
     """Sample an episode plan; optionally reject IK-infeasible ones.
@@ -339,16 +374,22 @@ def plan_episode(
     planned per-frame trajectory is fully reachable on the target arm, or
     we exhaust ``max_attempts``.
 
+    ``start_checker`` (optional) additionally rejects home poses where the
+    free-floating gripper penetrates the table, so recorded episodes never
+    start inside it. The free-floating scene only physically collides on the
+    soft tips, so this is a geometric mesh-vs-table test (see
+    ``StartCollisionChecker``).
+
     Returns ``(waypoints | None, stats | None)``. ``stats`` is None when no
     filter was applied; otherwise it carries the rejection-sampling outcome.
     """
     sample_kwargs = dict(cube_x_range=cube_x_range, cube_y_range=cube_y_range)
 
     if checker is None:
-        return sample_episode_waypoints(rng, **sample_kwargs), None
+        return _sample_uncollided(rng, sample_kwargs, start_checker), None
 
     def builder():
-        wp = sample_episode_waypoints(rng, **sample_kwargs)
+        wp = _sample_uncollided(rng, sample_kwargs, start_checker)
         return episode_target_poses(wp), wp
 
     _poses, wp, stats = checker.sample_feasible_trajectory(
@@ -510,15 +551,9 @@ def run_episode(scene_xml: Path, wp: EpisodeWaypoints, use_viewer: bool = False,
                  FRAMES_LIFT, (PROXIMAL_CLOSED, DISTAL_CLOSED),
                  prox_id, dist_id, frames, viewer)
 
-    # 12. Retract: lift -> home + extra (slerp orientation back to home_quat).
-    retract_target = home_xyz + np.array([0.0, 0.0, RETRACT_EXTRA])
-    phase_smooth(sim, mocap_id,
-                 lift_target, grasp_quat, retract_target, home_quat,
-                 FRAMES_RETRACT, (PROXIMAL_CLOSED, DISTAL_CLOSED),
-                 prox_id, dist_id, frames, viewer)
-
-    # 13. Final settle.
-    phase_hold(sim, mocap_id, retract_target, home_quat,
+    # 12. Hold at the lifted pose to confirm the grasp is stable. The task ends
+    # here — grasp-and-lift, no retract back to home (shorter, simpler episodes).
+    phase_hold(sim, mocap_id, lift_target, grasp_quat,
                FRAMES_FINAL_SETTLE, (PROXIMAL_CLOSED, DISTAL_CLOSED),
                prox_id, dist_id, frames, viewer)
 
@@ -544,11 +579,25 @@ def main():
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument(
         "--repo_id", type=str, required=True,
-        help="Dataset repo id, e.g. 'sim_grabette_grasp'. Local-only; no Hub push.")
+        help="Dataset repo id, e.g. 'sim_grabette_grasp'. For --push_to_hub it "
+             "must be a Hub id 'namespace/name'.")
     parser.add_argument(
         "--output_root", type=str, default=None,
         help="Optional explicit local dataset root. If unset, LeRobot uses its "
              "standard cache (~/.cache/huggingface/lerobot/<repo_id>).")
+    parser.add_argument(
+        "--push_to_hub", action="store_true",
+        help="After collection, push the dataset to the HuggingFace Hub under "
+             "--repo_id (requires `huggingface-cli login`). Off by default; "
+             "collection is always saved locally first regardless.")
+    parser.add_argument(
+        "--private", action="store_true",
+        help="When pushing to the Hub, create the dataset repo as private.")
+    parser.add_argument(
+        "--vcodec", type=str, default="h264",
+        help="Video codec for the dataset's videos (LeRobot name). Default h264 "
+             "(maps to libx264) to match the real Grabette recordings; the "
+             "default av1 (libsvtav1) degrades training performance.")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--viewer", action="store_true",
                         help="Open the MuJoCo passive viewer per episode (off by default).")
@@ -579,7 +628,7 @@ def main():
                          "weighted to prioritise position (Placo position task "
                          "100x orientation task), so we record whatever "
                          "orientation the arm achieves at the right position. "
-                         "Default 30° is loose enough that 70% of trajectories "
+                         "Default 30° is loose enough that 70%% of trajectories "
                          "pass the filter while keeping pose realistic.")
 
     # Episode-type mix: standard grasp + a few release / hover episodes.
@@ -589,11 +638,13 @@ def main():
                          "CLOSED and ramp it open before approach. Teaches the "
                          "policy closed→open transitions it would otherwise "
                          "never see in a grasp-only dataset. Default 0.15.")
-    et.add_argument("--hover_fraction", type=float, default=0.15,
+    et.add_argument("--hover_fraction", type=float, default=0.0,
                     help="Fraction of episodes that approach the cube and "
                          "HOVER with gripper still open instead of grasping. "
-                         "Negative example: 'near cube + open gripper does NOT "
-                         "mean close yet'. Default 0.15.")
+                         "Default 0.0: these are no-grasp negatives that "
+                         "contradict the grasp signal (same observation labelled "
+                         "'close' in normal episodes), so they hurt a behavior-"
+                         "cloning grasp policy. Opt in explicitly if you want them.")
 
     # Visual domain randomization (nuisance variation only — same red cube,
     # no distractors, no semantic change to the task).
@@ -612,6 +663,17 @@ def main():
     dr.add_argument("--dr_camera_pos_jitter_m", type=float, default=0.01,
                     help="Per-axis position jitter on the gripper camera (m).")
     args = parser.parse_args()
+
+    # The recorded action pose is the free-floating mocap pose, and the scene is
+    # rooted at oak_l (grabette_grasp.xml), so the data is in the oak_l frame.
+    # The IK filter + episode_target_poses must therefore target oak_l too. If
+    # you switch CONTROL_FRAME to camera, you must also make mocap_state_8d and
+    # episode_target_poses apply the oak_l->camera transform before recording.
+    assert CONTROL_FRAME == OAKL_FRAME, (
+        f"Data generation assumes CONTROL_FRAME == oak_l (the free-floating "
+        f"scene root), but CONTROL_FRAME={CONTROL_FRAME!r}. Add the "
+        f"oak_l->{CONTROL_FRAME} transform to mocap_state_8d / episode_target_poses "
+        f"before generating data in that frame.")
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     rng = np.random.default_rng(args.seed)
@@ -638,7 +700,7 @@ def main():
         from check_grabette_reachable import ARM_IK_SEED  # avoid duplicating the seed
         checker = IKFeasibilityChecker(
             Kinematics(),
-            frame=CAMERA_FRAME,
+            frame=CONTROL_FRAME,
             seed_joints=ARM_IK_SEED,
             pos_tol_m=args.ik_pos_tol,
             rot_tol_deg=args.ik_rot_tol_deg,
@@ -651,6 +713,12 @@ def main():
         )
     else:
         logger.info("IK filter DISABLED — all sampled plans go to physics.")
+
+    # Start-pose collision guard: reject home poses where the free-floating
+    # gripper penetrates the table (the scene only physically collides on the
+    # soft tips, so this is a geometric mesh-vs-table test). Cheap; always on.
+    start_checker = StartCollisionChecker(SCENE)
+    logger.info("Start-collision guard ENABLED — table-penetrating home poses are resampled.")
 
     # Visual DR config (None disables the channel entirely).
     dr_cfg: DRConfig | None = None
@@ -680,8 +748,10 @@ def main():
         root=output_root,
         robot_type="openarm_gripette_sim",
         use_videos=True,
+        vcodec=args.vcodec,
     )
-    logger.info(f"Created LeRobotDataset at {dataset.root}")
+    logger.info(f"Created LeRobotDataset at {dataset.root} (vcodec={args.vcodec}, {FPS} fps, "
+                f"{IMG_WIDTH}x{IMG_HEIGHT})")
     logger.info(f"Collecting {args.episodes} episodes -> repo_id={args.repo_id}")
 
     n_saved = 0
@@ -705,14 +775,14 @@ def main():
         f"Episode-type mix: normal={p_normal:.2f}, release={p_release:.2f}, hover={p_hover:.2f}"
     )
 
-    pbar = tqdm(
-        range(args.episodes),
-        desc="episodes",
-        unit="ep",
-        smoothing=0.1,
-        dynamic_ncols=True,
-    )
-    for ep in pbar:
+    # Rejection-sampling loop: keep planning (IK-filter) + running until we have
+    # SAVED the requested number of successful episodes — not just attempted that
+    # many. Safety cap avoids an infinite loop if the target can't be reached.
+    pbar = tqdm(total=args.episodes, desc="episodes", unit="ep", smoothing=0.1, dynamic_ncols=True)
+    max_attempts = max(args.episodes * 20, 50)
+    ep = 0
+    while n_saved < args.episodes and ep < max_attempts:
+        ep += 1
         t0 = time.perf_counter()
 
         # Choose this episode's type from the mix.
@@ -731,6 +801,7 @@ def main():
             cube_x_range=cube_x_range,
             cube_y_range=cube_y_range,
             checker=checker,
+            start_checker=start_checker,
             max_attempts=args.max_ik_attempts,
         )
         ik_try = ik_stats.n_attempts if ik_stats is not None else 0
@@ -776,16 +847,25 @@ def main():
         n_saved += 1
         n_success += 1
         saved_frame_counts.append(len(frames))
-        pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, refresh=False)
+        pbar.update(1)
+        pbar.set_postfix(saved=n_saved, ik_drop=n_ik_dropped, attempts=ep, refresh=False)
 
     pbar.close()
+    if n_saved < args.episodes:
+        logger.warning(f"Hit attempt cap ({max_attempts}); saved {n_saved}/{args.episodes}. "
+                       f"Raise the IK yield or the cap.")
     dataset.finalize()
 
-    rate = 100.0 * n_success / args.episodes if args.episodes else 0.0
+    if args.push_to_hub:
+        logger.info(f"Pushing dataset to the Hub: {args.repo_id} (private={args.private})...")
+        dataset.push_to_hub(private=args.private, tags=["sim", "grabette", "grasp"])
+        logger.info("Push complete.")
+
+    rate = 100.0 * n_saved / ep if ep else 0.0   # saved per attempt (overall yield)
     avg_frames = float(np.mean(saved_frame_counts)) if saved_frame_counts else 0.0
     logger.info(
-        f"Done. Saved {n_saved}/{args.episodes} episodes "
-        f"({n_success} success, {rate:.1f}%). "
+        f"Done. Saved {n_saved}/{args.episodes} episodes in {ep} attempts "
+        f"({n_ik_dropped} IK-dropped; overall yield {rate:.1f}%). "
         f"Avg frames per saved episode: {avg_frames:.1f}. "
         f"Dataset root: {dataset.root}")
     logger.info(

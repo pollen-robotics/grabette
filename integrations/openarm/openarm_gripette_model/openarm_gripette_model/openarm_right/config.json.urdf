@@ -1,0 +1,8 @@
+{
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/25c822efb72989a8d89a69ff/e/c77dbd6d3fbd22e2e0636f89",
+    "robot_name": "openarm_gripette_right",
+    "output_format": "urdf",
+    "simplify_stls": true,
+
+    "_comment": "URDF export config. The MuJoCo-only tuning (kp/armature/collision via joint_properties + geom_properties) lives in config.json.mujoco. To export URDF: copy this to config.json, then run onshape-to-robot."
+}
