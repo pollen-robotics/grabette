@@ -50,12 +50,16 @@ class MockBackend(Backend):
             accel=(noise(), noise(), 9.81 + noise()),
             gyro=(noise(), noise(), noise()),
         )
-        # Simulate slow-drifting angle sensors
+        # Simulate slow-drifting angle sensors, sweeping within the URDF joint
+        # limits so the 3D viewer shows realistic in-range motion.
+        #   proximal limit [-1.5708, 0]: centre -0.785, amplitude 0.7
+        #   distal   limit [0, 1.5708]:  viewer renders -distal, so the sample
+        #                                stays negative and flips positive on display.
         t = time.time() - (self._start_time or time.time())
         angle = AngleSample(
             timestamp_ms=now_ms,
-            proximal=math.sin(t * 0.1) * 0.5,
-            distal=math.cos(t * 0.15) * 0.3,
+            proximal=-0.785 + 0.7 * math.sin(t * 0.3),
+            distal=-0.785 + 0.7 * math.cos(t * 0.4),
         )
         return SensorState(
             imu=imu,

@@ -122,7 +122,7 @@ class IKFeasibilityChecker:
         transform and `inverse(target_T, current_joint_positions=...,
         n_iter=..., frame=...)` returning a joint vector.
     frame : str
-        Frame name passed through to the kinematics solver (e.g. "gripper").
+        Frame name passed through to the kinematics solver (e.g. "gripper_center").
     seed_joints : np.ndarray
         Default starting configuration for the IK warm-start. Picking a
         sensible seed matters because the IK is non-convex; in practice the

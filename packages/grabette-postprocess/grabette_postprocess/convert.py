@@ -176,7 +176,27 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
             }
 
         # Copy matched depth frames → oak/depth/<idx>.png
+        # Resolve each depth seq to a source PNG. For the video format, decode
+        # it once to temp PNGs; frame i ↔ depth_ts[i].seq (encode order). For
+        # the legacy dir format, the PNG is named by seq.
+        if depth_mkv.is_file():
+            tmp_depth = Path(tmp) / "depth"
+            _extract_depth_video(depth_mkv, tmp_depth)
+            seq_to_png = {
+                int(s["seq"]): tmp_depth / f"{i:06d}.png"
+                for i, s in enumerate(depth_ts)
+            }
+        else:
+            seq_to_png = {
+                int(s["seq"]): depth_dir / f'{int(s["seq"]):08d}.png'
+                for s in depth_ts
+            }
+
+        # Copy matched depth frames → oak/depth/<idx>.png
         for idx, (seq, _) in enumerate(matched[:n]):
+            depth_png = seq_to_png.get(seq)
+            if depth_png is None or not depth_png.exists():
+                raise FileNotFoundError(f"depth frame missing for seq {seq}")
             depth_png = seq_to_png.get(seq)
             if depth_png is None or not depth_png.exists():
                 raise FileNotFoundError(f"depth frame missing for seq {seq}")
