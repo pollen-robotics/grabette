@@ -88,27 +88,35 @@ scene.add(new THREE.GridHelper(0.4, 16, 0x334466, 0x222244));
 
 // ── Inline URDF parser (avoids urdf-loader CDN dep) ─────────────────
 
-const PACKAGES  = { grabette_right: '/urdf/grabette_right/' };
-const LINK_COLORS = {
-  thumb_base:       0x7a8a9a,
-  phalanx_1_bottom: 0x4488cc,
-  phalanx_2:        0xcc8844,
-};
+// Canonical reference frame the model is anchored on (same name across models,
+// e.g. grabette_left). The viewer places this frame at the world origin.
+const BASE_FRAME = 'gripper_base';
 
 function parseVec(s) {
   return (s || '0 0 0').trim().split(/\\s+/).map(Number);
 }
 
-function resolvePackageURL(filename) {
+// URDF material colors are rgba floats in [0,1]; pack into a THREE hex int.
+function parseColor(rgba) {
+  if (!rgba) return 0x888888;                // fallback grey
+  const [r, g, b] = rgba.trim().split(/\\s+/).map(Number);
+  return (Math.round(r * 255) << 16) | (Math.round(g * 255) << 8) | Math.round(b * 255);
+}
+
+// Resolve package:// mesh URIs against the loaded model's own directory, so
+// adding new models (grabette_left, …) needs no per-model mapping here. The
+// reworked URDFs emit paths like package://assets/merged/x.stl relative to
+// the model dir; baseURL is that dir (always ends with '/').
+function resolvePackageURL(filename, baseURL) {
   if (!filename.startsWith('package://')) return filename;
-  const rest = filename.slice(10);           // strip package://
-  const i    = rest.indexOf('/');
-  const pkg  = rest.slice(0, i);
-  return (PACKAGES[pkg] || '') + rest.slice(i + 1);
+  return baseURL + filename.slice(10);       // strip package://
 }
 
 async function parseURDF(url) {
-  const resp = await fetch(url);
+  const baseURL = url.slice(0, url.lastIndexOf('/') + 1);  // model dir, e.g. /urdf/grabette_right/
+  // no-store: the URDF is tiny and changes when models are swapped/renamed;
+  // never serve a stale cached copy (StaticFiles sets no cache-control).
+  const resp = await fetch(url, { cache: 'no-store' });
   const xml  = await resp.text();
   const doc  = new DOMParser().parseFromString(xml, 'text/xml');
 
@@ -122,7 +130,8 @@ async function parseURDF(url) {
       visuals.push({
         xyz: parseVec(orig?.getAttribute('xyz')),
         rpy: parseVec(orig?.getAttribute('rpy')),
-        file: resolvePackageURL(meshEl.getAttribute('filename')),
+        file: resolvePackageURL(meshEl.getAttribute('filename'), baseURL),
+        color: parseColor(vis.querySelector('material > color')?.getAttribute('rgba')),
       });
     }
     links[el.getAttribute('name')] = visuals;
@@ -132,6 +141,7 @@ async function parseURDF(url) {
   for (const el of doc.querySelectorAll('joint')) {
     const orig = el.querySelector('origin');
     const axEl = el.querySelector('axis');
+    const limEl = el.querySelector('limit');
     joints[el.getAttribute('name')] = {
       type:   el.getAttribute('type'),
       parent: el.querySelector('parent').getAttribute('link'),
@@ -139,6 +149,8 @@ async function parseURDF(url) {
       xyz:    parseVec(orig?.getAttribute('xyz')),
       rpy:    parseVec(orig?.getAttribute('rpy')),
       axis:   parseVec(axEl?.getAttribute('xyz') || '0 0 1'),
+      limit:  limEl ? { lower: Number(limEl.getAttribute('lower')),
+                        upper: Number(limEl.getAttribute('upper')) } : null,
     };
   }
   return { links, joints };
@@ -165,13 +177,12 @@ async function buildRobot(urdf) {
     const group = new THREE.Group();
     group.name = name;
     linkGroups[name] = group;
-    const color = LINK_COLORS[name] || 0x888888;
 
     for (const vis of visuals) {
       const p = loadSTL(stlLoader, vis.file).then(geo => {
         geo.computeVertexNormals();
         const mesh = new THREE.Mesh(geo, new THREE.MeshPhongMaterial({
-          color, specular: 0x444444, shininess: 80,
+          color: vis.color, specular: 0x444444, shininess: 80,
         }));
         mesh.castShadow = true;
         mesh.receiveShadow = true;
@@ -204,6 +215,7 @@ async function buildRobot(urdf) {
 
     const pivot = new THREE.Group();
     pivot.userData.axis = new THREE.Vector3(...j.axis).normalize();
+    pivot.userData.limit = j.limit;          // clamp range from URDF (null if unlimited)
     transform.add(pivot);
     pivot.add(cGroup);
     pGroup.add(transform);
@@ -214,12 +226,36 @@ async function buildRobot(urdf) {
 
   // Root = link that is not a child of any joint
   const rootName = Object.keys(urdf.links).find(n => !children.has(n));
-  return { root: linkGroups[rootName], pivots };
+  const naturalRoot = linkGroups[rootName];
+
+  // Anchor the model on BASE_FRAME: wrap the kinematic root in a group whose
+  // transform places gripper_base at the world origin. Because gripper_base
+  // hangs off the moving grip_r body, reanchor() must be re-run whenever a
+  // joint changes so the base stays fixed and the rest articulates around it.
+  const baseGroup = linkGroups[BASE_FRAME];
+  if (!baseGroup)
+    console.warn('[viewer] "' + BASE_FRAME + '" link not in URDF — model NOT re-anchored. '
+               + 'If the model was just renamed, hard-reload (Ctrl/Cmd+Shift+R) to clear a cached robot.urdf.');
+  const anchor = new THREE.Group();
+  anchor.add(naturalRoot);
+  anchor.matrixAutoUpdate = false;
+
+  function reanchor() {
+    if (!baseGroup) return;
+    anchor.matrix.identity();
+    anchor.updateMatrixWorld(true);                       // base world with anchor = I
+    anchor.matrix.copy(baseGroup.matrixWorld).invert();   // cancel it out
+    anchor.updateMatrixWorld(true);                       // base now sits at origin
+  }
+  reanchor();
+
+  return { root: anchor, pivots, reanchor };
 }
 
 // ── Main ────────────────────────────────────────────────────────────
 
 let jointPivots = {};
+let rebaseModel = null;
 
 (async () => {
   try {
@@ -227,6 +263,10 @@ let jointPivots = {};
     const robot = await buildRobot(urdf);
     scene.add(robot.root);
     jointPivots = robot.pivots;
+    rebaseModel = robot.reanchor;
+
+    // Mark the gripper_base frame (now at the world origin) with an axis triad.
+    scene.add(new THREE.AxesHelper(0.03));
 
     // Fit camera to model
     const box    = new THREE.Box3().setFromObject(robot.root);
@@ -245,7 +285,10 @@ let jointPivots = {};
 function setJoint(name, angle) {
   const pivot = jointPivots[name];
   if (!pivot) return;
+  const lim = pivot.userData.limit;          // enforce URDF joint limits
+  if (lim) angle = Math.max(lim.lower, Math.min(lim.upper, angle));
   pivot.quaternion.setFromAxisAngle(pivot.userData.axis, angle);
+  if (rebaseModel) rebaseModel();            // keep gripper_base fixed at origin
 }
 
 // ── Joint angle updates ─────────────────────────────────────────────

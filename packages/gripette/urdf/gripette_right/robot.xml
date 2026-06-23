@@ -1,6 +1,6 @@
 <?xml version="1.0" ?>
 <!-- Generated using onshape-to-robot -->
-<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/70d590d987c43934e5d14436/e/85669cf219241d3a19aa8f5a -->
+<!-- Onshape https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/25c822efb72989a8d89a69ff/e/85669cf219241d3a19aa8f5a -->
 <mujoco model="gripette_right">
   <compiler angle="radian" meshdir="assets" autolimits="true"/>
   <default>
@@ -16,94 +16,345 @@
     </default>
   </default>
   <worldbody>
-    <!-- Link gripper_base -->
-    <body name="gripper_base" pos="0 0 0.1" quat="1 0 0 0" childclass="gripette_right">
-      <inertial pos="0.012014 -0.0472552 0.0253228" mass="0.225894" fullinertia="0.000189198 0.000336735 0.000412863 3.05033e-05 -4.28826e-06 -3.1272e-08"/>
+    <!-- Link gripper_base_r -->
+    <body name="gripper_base_r" pos="0 0 0" quat="1 0 0 0" childclass="gripette_right">
+      <freejoint name="gripper_base_r_freejoint"/>
+      <inertial pos="-0.0302536 -0.0208987 -0.00633466" mass="0.227294" fullinertia="0.000403409 0.000539617 0.000379489 3.44239e-05 2.59208e-05 7.53636e-05"/>
+      <!-- Part feetech_pt_screw_2x6__configuration_default -->
+      <geom type="mesh" class="visual" pos="0.0549356 -0.03275 -0.0055" quat="0.707107 -0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0549356 -0.03275 -0.0055" quat="0.707107 -0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <!-- Part feetech_screw_m3x6__configuration_default -->
+      <geom type="mesh" class="visual" pos="0.0569128 0 -0.04225" quat="0.707107 0.707107 0 0" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0569128 0 -0.04225" quat="0.707107 0.707107 0 0" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+      <!-- Part part_1__configuration_copy_of_2x8 -->
+      <geom type="mesh" class="visual" pos="0.00275 -0.0222 0.00781" quat="0 -1 -0 -0" mesh="part_1__configuration_copy_of_2x8" material="part_1__configuration_copy_of_2x8_material"/>
+      <geom type="mesh" class="collision" pos="0.00275 -0.0222 0.00781" quat="0 -1 -0 -0" mesh="part_1__configuration_copy_of_2x8" material="part_1__configuration_copy_of_2x8_material"/>
+      <!-- Part rasp_pi_0_2w__configuration_default -->
+      <geom type="mesh" class="visual" pos="-0.02625 -0.0337 0.00552" quat="0 -0 -0.707107 -0.707107" mesh="rasp_pi_0_2w__configuration_default" material="rasp_pi_0_2w__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.02625 -0.0337 0.00552" quat="0 -0 -0.707107 -0.707107" mesh="rasp_pi_0_2w__configuration_default" material="rasp_pi_0_2w__configuration_default_material"/>
       <!-- Part feetech_sts3215__configuration_default -->
-      <geom type="mesh" class="visual" pos="0.0394727 -0.0499168 0.0344888" quat="0.454519 0.454519 -0.541675 -0.541675" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
-      <geom type="mesh" class="collision" pos="0.0394727 -0.0499168 0.0344888" quat="0.454519 0.454519 -0.541675 -0.541675" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
-      <!-- Part gripper_base -->
-      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 -0.000111233" quat="1 0 0 0" mesh="gripper_base" material="gripper_base_material"/>
-      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 -0.000111233" quat="1 0 0 0" mesh="gripper_base" material="gripper_base_material"/>
-      <!-- Part b0404 -->
-      <geom type="mesh" class="visual" pos="0.0030569 -0.0784041 0.0938888" quat="0.707107 -0.707107 0 0" mesh="b0404" material="b0404_material"/>
-      <geom type="mesh" class="collision" pos="0.0030569 -0.0784041 0.0938888" quat="0.707107 -0.707107 0 0" mesh="b0404" material="b0404_material"/>
-      <!-- Part elec_support_square -->
-      <geom type="mesh" class="visual" pos="0.0165181 -0.00416521 8.87673e-05" quat="1 -0 -0 0" mesh="elec_support_square" material="elec_support_square_material"/>
-      <geom type="mesh" class="collision" pos="0.0165181 -0.00416521 8.87673e-05" quat="1 -0 -0 0" mesh="elec_support_square" material="elec_support_square_material"/>
-      <!-- Part camera_imu_support -->
-      <geom type="mesh" class="visual" pos="0.033457 -0.00907682 0.0498888" quat="1 0 0 0" mesh="camera_imu_support" material="camera_imu_support_material"/>
-      <geom type="mesh" class="collision" pos="0.033457 -0.00907682 0.0498888" quat="1 0 0 0" mesh="camera_imu_support" material="camera_imu_support_material"/>
-      <!-- Part elec_support -->
-      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support" material="elec_support_material"/>
-      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support" material="elec_support_material"/>
-      <!-- Part backplate -->
-      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 0 -0 0" mesh="backplate" material="backplate_material"/>
-      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 0 -0 0" mesh="backplate" material="backplate_material"/>
-      <!-- Part rasp_support -->
-      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="rasp_support" material="rasp_support_material"/>
-      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="rasp_support" material="rasp_support_material"/>
-      <!-- Part elec_support_square_2 -->
-      <geom type="mesh" class="visual" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support_square" material="elec_support_square_material"/>
-      <geom type="mesh" class="collision" pos="0.044518 -0.00416521 8.87673e-05" quat="1 -0 0 0" mesh="elec_support_square" material="elec_support_square_material"/>
-      <!-- Frame openarm_fix -->
-      <site group="3" name="openarm_fix" pos="0.00863865 -0.0824044 0.0250888" quat="0.707107 0.707107 2.70466e-06 2.70466e-06"/>
+      <geom type="mesh" class="visual" pos="0 -0.0255 -0.0328" quat="0.5 -0.5 0.5 -0.5" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0 -0.0255 -0.0328" quat="0.5 -0.5 0.5 -0.5" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+      <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974 -->
+      <geom type="mesh" class="visual" pos="0.00275 -0.0452 0.00841" quat="1 0 -0 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_material"/>
+      <geom type="mesh" class="collision" pos="0.00275 -0.0452 0.00841" quat="1 0 -0 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_material"/>
+      <!-- Part feetech_pt_screw_2x6__configuration_default_2 -->
+      <geom type="mesh" class="visual" pos="0.0344356 -0.03275 -0.0055" quat="0.707107 -0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0344356 -0.03275 -0.0055" quat="0.707107 -0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <!-- Part feetech_pt_screw_2x6__configuration_default_3 -->
+      <geom type="mesh" class="visual" pos="0.0549356 -0.0083 -0.0414" quat="0.707107 0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0549356 -0.0083 -0.0414" quat="0.707107 0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default -->
+      <geom type="mesh" class="visual" pos="-0.0819628 0.0300304 -0.0422" quat="0.693063 0.693063 0.140229 0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0819628 0.0300304 -0.0422" quat="0.693063 0.693063 0.140229 0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_2 -->
+      <geom type="mesh" class="visual" pos="-0.0263486 -0.0295095 0.0870595" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0263486 -0.0295095 0.0870595" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part feetech_pt_screw_2x6__configuration_default_4 -->
+      <geom type="mesh" class="visual" pos="0.0344356 -0.029 -0.0414" quat="0.707107 0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0344356 -0.029 -0.0414" quat="0.707107 0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_3 -->
+      <geom type="mesh" class="visual" pos="-0.0559436 -0.0596 0.0172" quat="0.707107 -0.707107 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0559436 -0.0596 0.0172" quat="0.707107 -0.707107 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_4 -->
+      <geom type="mesh" class="visual" pos="-0.0819628 0.0300304 -0.0042" quat="0.693063 0.693063 0.140229 0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0819628 0.0300304 -0.0042" quat="0.693063 0.693063 0.140229 0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.056 0.0322246" quat="0.707107 0.707107 -0 0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.056 0.0322246" quat="0.707107 0.707107 -0 0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <!-- Part gripper_base_r -->
+      <geom type="mesh" class="visual" pos="-0.0104436 0.0157273 0.001" quat="1 0 0 -0" mesh="gripper_base_r" material="gripper_base_r_material"/>
+      <geom type="mesh" class="collision" pos="-0.0104436 0.0157273 0.001" quat="1 0 0 -0" mesh="gripper_base_r" material="gripper_base_r_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_5 -->
+      <geom type="mesh" class="visual" pos="-0.0622995 -0.02504 -0.00785" quat="0.707107 -0.707107 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0622995 -0.02504 -0.00785" quat="0.707107 -0.707107 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_6 -->
+      <geom type="mesh" class="visual" pos="-0.0623995 -0.02504 -0.04035" quat="0.707107 -0.707107 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0623995 -0.02504 -0.04035" quat="0.707107 -0.707107 -0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_2 -->
+      <geom type="mesh" class="visual" pos="-0.05525 -0.0222 0.00841" quat="1 0 -0 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_material"/>
+      <geom type="mesh" class="collision" pos="-0.05525 -0.0222 0.00841" quat="1 0 -0 0" mesh="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974" material="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_material"/>
+      <!-- Part hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_2 -->
+      <geom type="mesh" class="visual" pos="-0.0498486 -0.056 0.0322246" quat="0.707107 0.707107 -0 0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <geom type="mesh" class="collision" pos="-0.0498486 -0.056 0.0322246" quat="0.707107 0.707107 -0 0" mesh="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1" material="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material"/>
+      <!-- Part grip_shell_r -->
+      <geom type="mesh" class="visual" pos="-0.0104436 0.0157273 0.001" quat="1 0 -0 0" mesh="grip_shell_r" material="grip_shell_r_material"/>
+      <geom type="mesh" class="collision" pos="-0.0104436 0.0157273 0.001" quat="1 0 -0 0" mesh="grip_shell_r" material="grip_shell_r_material"/>
+      <!-- Part arducam_fisheye -->
+      <geom type="mesh" class="visual" pos="-0.0408486 -0.0374758 0.0745284" quat="0.573576 -0.819152 0 -0" mesh="arducam_fisheye" material="arducam_fisheye_material"/>
+      <geom type="mesh" class="collision" pos="-0.0408486 -0.0374758 0.0745284" quat="0.573576 -0.819152 0 -0" mesh="arducam_fisheye" material="arducam_fisheye_material"/>
+      <!-- Part bulkhead -->
+      <geom type="mesh" class="visual" pos="-0.0767995 -0.022 -0.00475" quat="0 -0 0.707107 -0.707107" mesh="bulkhead" material="bulkhead_material"/>
+      <geom type="mesh" class="collision" pos="-0.0767995 -0.022 -0.00475" quat="0 -0 0.707107 -0.707107" mesh="bulkhead" material="bulkhead_material"/>
+      <!-- Part feetech_pt_screw_2x6__configuration_default_5 -->
+      <geom type="mesh" class="visual" pos="0.0549356 -0.029 -0.0414" quat="0.707107 0.707107 -0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0549356 -0.029 -0.0414" quat="0.707107 0.707107 -0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_7 -->
+      <geom type="mesh" class="visual" pos="-0.0553486 -0.0394281 0.0598084" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0553486 -0.0394281 0.0598084" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part cameras_holder_r -->
+      <geom type="mesh" class="visual" pos="-0.0104436 0.0157273 0.001" quat="1 0 -0 0" mesh="cameras_holder_r" material="cameras_holder_r_material"/>
+      <geom type="mesh" class="collision" pos="-0.0104436 0.0157273 0.001" quat="1 0 -0 0" mesh="cameras_holder_r" material="cameras_holder_r_material"/>
+      <!-- Part feetech_pt_screw_2x6__configuration_default_6 -->
+      <geom type="mesh" class="visual" pos="0.0344356 -0.0083 -0.0414" quat="0.707107 0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <geom type="mesh" class="collision" pos="0.0344356 -0.0083 -0.0414" quat="0.707107 0.707107 0 0" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_8 -->
+      <geom type="mesh" class="visual" pos="-0.0966323 0.0249261 -0.0232" quat="0.693063 0.693063 0.140229 0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0966323 0.0249261 -0.0232" quat="0.693063 0.693063 0.140229 0.140229" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part grip_soft_tip_r -->
+      <geom type="mesh" class="visual" pos="-0.0104436 0.0157273 0.001" quat="1 0 0 -0" mesh="grip_soft_tip_r" material="grip_soft_tip_r_material"/>
+      <geom type="mesh" class="collision" pos="-0.0104436 0.0157273 0.001" quat="1 0 0 -0" mesh="grip_soft_tip_r" material="grip_soft_tip_r_material"/>
+      <!-- Part part_1__configuration_copy_of_2x8_2 -->
+      <geom type="mesh" class="visual" pos="-0.05525 -0.0452 0.00781" quat="0 -1 -0 -0" mesh="part_1__configuration_copy_of_2x8" material="part_1__configuration_copy_of_2x8_material"/>
+      <geom type="mesh" class="collision" pos="-0.05525 -0.0452 0.00781" quat="0 -1 -0 -0" mesh="part_1__configuration_copy_of_2x8" material="part_1__configuration_copy_of_2x8_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_9 -->
+      <geom type="mesh" class="visual" pos="-0.0263486 -0.0394281 0.0598084" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0263486 -0.0394281 0.0598084" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part hub_dyn -->
+      <geom type="mesh" class="visual" pos="-0.05875 -0.0187 0.00061" quat="0 -1 -0 0" mesh="hub_dyn" material="hub_dyn_material"/>
+      <geom type="mesh" class="collision" pos="-0.05875 -0.0187 0.00061" quat="0 -1 -0 0" mesh="hub_dyn" material="hub_dyn_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_10 -->
+      <geom type="mesh" class="visual" pos="-0.0553486 -0.0295095 0.0870595" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0553486 -0.0295095 0.0870595" quat="0.819152 0.573576 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_11 -->
+      <geom type="mesh" class="visual" pos="-0.0259436 -0.0596 0.0172" quat="0.707107 -0.707107 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <geom type="mesh" class="collision" pos="-0.0259436 -0.0596 0.0172" quat="0.707107 -0.707107 0 0" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+      <!-- Part 611_00020_1 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="611_00020_1" material="611_00020_1_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="611_00020_1" material="611_00020_1_material"/>
+      <!-- Part 611_00020 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="611_00020" material="611_00020_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="611_00020" material="611_00020_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material"/>
+      <!-- Part sr_lens_py058 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="sr_lens_py058" material="sr_lens_py058_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="sr_lens_py058" material="sr_lens_py058_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material"/>
+      <!-- Part 612_00001_tim_thermal_oak_d_poe -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="612_00001_tim_thermal_oak_d_poe" material="612_00001_tim_thermal_oak_d_poe_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="612_00001_tim_thermal_oak_d_poe" material="612_00001_tim_thermal_oak_d_poe_material"/>
+      <!-- Part lens_adhesive -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="lens_adhesive" material="lens_adhesive_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="lens_adhesive" material="lens_adhesive_material"/>
+      <!-- Part 606_00021_sr_back_cover_py074 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="606_00021_sr_back_cover_py074" material="606_00021_sr_back_cover_py074_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="606_00021_sr_back_cover_py074" material="606_00021_sr_back_cover_py074_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material"/>
+      <!-- Part 602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3 -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3" material="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material"/>
+      <!-- Part 606_00020_sr_front_cover -->
+      <geom type="mesh" class="visual" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material"/>
+      <geom type="mesh" class="collision" pos="-0.00484864 -0.0325 0.0168246" quat="0 0 -0.707107 -0.707107" mesh="606_00020_sr_front_cover" material="606_00020_sr_front_cover_material"/>
       <!-- Frame camera -->
-      <site group="3" name="camera" pos="0.0030569 -0.0657041 0.0938888" quat="0.707107 -0.707107 0 0"/>
-      <!-- Link feetech_sts3215__configuration_default -->
-      <body name="feetech_sts3215__configuration_default" pos="0.0439007 -0.0248042 0.0428388" quat="0 0.996195 -0.0871519 0">
-        <!-- Joint from gripper_base to feetech_sts3215__configuration_default -->
-        <joint axis="0 0 1" name="proximal" type="hinge" range="-1.5707886768702144 7.649924682162634e-06"/>
-        <inertial pos="0.0182592 -0.0259026 0.0175524" mass="0.101487" fullinertia="5.99713e-05 4.50716e-05 3.99848e-05 6.78604e-06 -4.30903e-07 1.10027e-06"/>
-        <!-- Part proximal_side -->
-        <geom type="mesh" class="visual" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_side" material="proximal_side_material"/>
-        <geom type="mesh" class="collision" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_side" material="proximal_side_material"/>
-        <!-- Part proximal_bottom -->
-        <geom type="mesh" class="visual" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_bottom" material="proximal_bottom_material"/>
-        <geom type="mesh" class="collision" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 0" mesh="proximal_bottom" material="proximal_bottom_material"/>
+      <site group="3" name="camera" pos="-0.0408486 -0.0255417 0.0701847" quat="0.573576 -0.819152 0 -0"/>
+      <!-- Frame gripper_base -->
+      <site group="3" name="gripper_base" pos="-0.0338 -0.055 -0.0232" quat="0.707107 0.707107 0 0"/>
+      <!-- Frame oak_l -->
+      <site group="3" name="oak_l" pos="-0.0373486 -0.025667 0.0298246" quat="0.707107 -0.707107 -0 0"/>
+      <!-- Frame oak_r -->
+      <site group="3" name="oak_r" pos="-0.0173486 -0.025667 0.0298246" quat="0.707107 -0.707107 -0 0"/>
+      <!-- Frame gripper_center -->
+      <site group="3" name="gripper_center" pos="-0.0373485 0.0335873 -0.0232" quat="0.707107 0 -0 0.707107"/>
+      <!-- Frame thumb_tip -->
+      <site group="3" name="thumb_tip" pos="-0.0910992 0.0551614 -0.0232" quat="0.651364 -0.651364 0.275181 -0.275181"/>
+      <!-- Link proximal_bot_r -->
+      <body name="proximal_bot_r" pos="0 0 -0.04225" quat="0.707107 0 -0 -0.707107">
+        <!-- Joint from gripper_base_r to proximal_bot_r -->
+        <joint axis="0 0 1" name="proximal" type="hinge" range="0.0 1.5707963267948966"/>
+        <inertial pos="-0.0253697 0.0243883 0.0242046" mass="0.0769363" fullinertia="3.19064e-05 3.84967e-05 2.83826e-05 7.34138e-06 -4.06564e-06 3.31711e-06"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_2 -->
+        <geom type="mesh" class="visual" pos="-0.007 0.0569128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.007 0.0569128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part feetech_pt_screw_2x6__configuration_default_7 -->
+        <geom type="mesh" class="visual" pos="-0.0261619 0.0819783 0.00055" quat="0.5 0.5 0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0261619 0.0819783 0.00055" quat="0.5 0.5 0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <!-- Part feetech_pt_screw_2x6__configuration_default_8 -->
+        <geom type="mesh" class="visual" pos="-0.014198 0.0523993 0.03705" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.014198 0.0523993 0.03705" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_3 -->
+        <geom type="mesh" class="visual" pos="-0 0.0639128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0 0.0639128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part feetech_pt_screw_2x6__configuration_default_9 -->
+        <geom type="mesh" class="visual" pos="-0.00457385 0.0704997 0.03705" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.00457385 0.0704997 0.03705" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_4 -->
+        <geom type="mesh" class="visual" pos="-0.007 0.0569128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.007 0.0569128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part feetech_pt_screw_2x6__configuration_default_10 -->
+        <geom type="mesh" class="visual" pos="-0.0175091 0.0541598 0.00055" quat="0.5 0.5 0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0175091 0.0541598 0.00055" quat="0.5 0.5 0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <!-- Part feetech_pt_screw_2x6__configuration_default_11 -->
+        <geom type="mesh" class="visual" pos="-0.0261619 0.0819783 0.03705" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0261619 0.0819783 0.03705" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_5 -->
+        <geom type="mesh" class="visual" pos="0.007 0.0569128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="0.007 0.0569128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_12 -->
+        <geom type="mesh" class="visual" pos="-0.0298053 0.00790851 0.03925" quat="0.241842 0.241842 0.664464 0.664464" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0298053 0.00790851 0.03925" quat="0.241842 0.241842 0.664464 0.664464" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_13 -->
+        <geom type="mesh" class="visual" pos="-0.0298053 0.00790851 -0.00115" quat="0.241842 0.241842 0.664464 0.664464" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0298053 0.00790851 -0.00115" quat="0.241842 0.241842 0.664464 0.664464" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_6 -->
+        <geom type="mesh" class="visual" pos="-0.0115835 0.0823901 -0.0001" quat="0.606109 0.606109 0.364187 0.364187" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0115835 0.0823901 -0.0001" quat="0.606109 0.606109 0.364187 0.364187" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part proximal_shell_r -->
+        <geom type="mesh" class="visual" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 0 0 0.707107" mesh="proximal_shell_r" material="proximal_shell_r_material"/>
+        <geom type="mesh" class="collision" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 0 0 0.707107" mesh="proximal_shell_r" material="proximal_shell_r_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_7 -->
+        <geom type="mesh" class="visual" pos="-0 0.0499128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0 0.0499128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part proximal_bot_r -->
+        <geom type="mesh" class="visual" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 -0 0 0.707107" mesh="proximal_bot_r" material="proximal_bot_r_material"/>
+        <geom type="mesh" class="collision" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 -0 0 0.707107" mesh="proximal_bot_r" material="proximal_bot_r_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_8 -->
+        <geom type="mesh" class="visual" pos="0.007 0.0569128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="0.007 0.0569128 0.04055" quat="0.5 -0.5 -0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_9 -->
+        <geom type="mesh" class="visual" pos="-0 0.0499128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0 0.0499128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Part feetech_pt_screw_2x6__configuration_default_12 -->
+        <geom type="mesh" class="visual" pos="-0.0078849 0.0722603 0.00055" quat="0.5 0.5 0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0078849 0.0722603 0.00055" quat="0.5 0.5 0.5 0.5" mesh="feetech_pt_screw_2x6__configuration_default" material="feetech_pt_screw_2x6__configuration_default_material"/>
         <!-- Part feetech_sts3215__configuration_default_2 -->
-        <geom type="mesh" class="visual" pos="0.0122498 -0.0212176 0.0089" quat="0.353553 -0.353553 -0.612372 0.612372" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
-        <geom type="mesh" class="collision" pos="0.0122498 -0.0212176 0.0089" quat="0.353553 -0.353553 -0.612372 0.612372" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
-        <!-- Part proximal_top -->
-        <geom type="mesh" class="visual" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 -0" mesh="proximal_top" material="proximal_top_material"/>
-        <geom type="mesh" class="collision" pos="-0.00297594 -0.0204326 0.0435" quat="0 -0.996195 0.0871557 -0" mesh="proximal_top" material="proximal_top_material"/>
-        <!-- Link distal -->
-        <body name="distal" pos="0.0249998 -0.0433013 -0.00055" quat="0.5 0 0 0.866025">
-          <!-- Joint from feetech_sts3215__configuration_default to distal -->
-          <joint axis="0 0 1" name="distal" type="hinge" range="-2.0943951023931953 0.0"/>
-          <inertial pos="-0.0288978 0.00403421 0.0180018" mass="0.0471678" fullinertia="1.19203e-05 1.88956e-05 1.16157e-05 2.06538e-06 3.61884e-07 1.38375e-07"/>
-          <!-- Part distal -->
-          <geom type="mesh" class="visual" pos="0.0337928 0.0127932 0.0435" quat="0 0.422618 -0.906308 0" mesh="distal" material="distal_material"/>
-          <geom type="mesh" class="collision" pos="0.0337928 0.0127932 0.0435" quat="0 0.422618 -0.906308 0" mesh="distal" material="distal_material"/>
+        <geom type="mesh" class="visual" pos="-0.0157873 0.0201676 0.00935" quat="0.686103 -0.686103 0.171065 -0.171065" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0.0157873 0.0201676 0.00935" quat="0.686103 -0.686103 0.171065 -0.171065" mesh="feetech_sts3215__configuration_default" material="feetech_sts3215__configuration_default_material"/>
+        <!-- Part cross_bar -->
+        <geom type="mesh" class="visual" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 -0 0 0.707107" mesh="cross_bar" material="cross_bar_material"/>
+        <geom type="mesh" class="collision" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 -0 0 0.707107" mesh="cross_bar" material="cross_bar_material"/>
+        <!-- Part proximal_top_r -->
+        <geom type="mesh" class="visual" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 -0 0 0.707107" mesh="proximal_top_r" material="proximal_top_r_material"/>
+        <geom type="mesh" class="collision" pos="-0.0157273 -0.0104436 0.04325" quat="0.707107 -0 0 0.707107" mesh="proximal_top_r" material="proximal_top_r_material"/>
+        <!-- Part feetech_screw_m3x6__configuration_default_10 -->
+        <geom type="mesh" class="visual" pos="-0 0.0639128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <geom type="mesh" class="collision" pos="-0 0.0639128 -0.00245" quat="0.5 0.5 0.5 0.5" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+        <!-- Link distal_r -->
+        <body name="distal_r" pos="-0.0383025 0.0321391 -0.0001" quat="0.970296 -0 -0 -0.241922">
+          <!-- Joint from proximal_bot_r to distal_r -->
+          <joint axis="0 0 1" name="distal" type="hinge" range="-9.769962616701378e-15 1.570796326794887"/>
+          <inertial pos="-0.0238598 -0.000329979 0.0190584" mass="0.0238623" fullinertia="7.50665e-06 1.03037e-05 6.05691e-06 -2.56698e-07 -2.063e-09 -3.57e-10"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_11 -->
+          <geom type="mesh" class="visual" pos="-0.0337189 0.050251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0337189 0.050251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_14 -->
+          <geom type="mesh" class="visual" pos="-0.0345944 -0.00547559 0.03805" quat="0.516385 0.516385 0.483059 0.483059" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0345944 -0.00547559 0.03805" quat="0.516385 0.516385 0.483059 0.483059" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_12 -->
+          <geom type="mesh" class="visual" pos="-0.0267189 0.057251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0267189 0.057251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part distal_soft_tip -->
+          <geom type="mesh" class="visual" pos="0.039924 -0.0269999 0.04325" quat="0.515038 0 0 0.857167" mesh="distal_soft_tip" material="distal_soft_tip_material"/>
+          <geom type="mesh" class="collision" pos="0.039924 -0.0269999 0.04325" quat="0.515038 0 0 0.857167" mesh="distal_soft_tip" material="distal_soft_tip_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_13 -->
+          <geom type="mesh" class="visual" pos="-0.0267189 0.057251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0267189 0.057251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_14 -->
+          <geom type="mesh" class="visual" pos="-0.0337189 0.050251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0337189 0.050251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_15 -->
+          <geom type="mesh" class="visual" pos="-0.0345944 -0.00547559 5e-05" quat="0.516385 0.516385 0.483059 0.483059" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0345944 -0.00547559 5e-05" quat="0.516385 0.516385 0.483059 0.483059" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part distal_r -->
+          <geom type="mesh" class="visual" pos="0.039924 -0.0269999 0.04325" quat="0.515038 0 0 0.857167" mesh="distal_r" material="distal_r_material"/>
+          <geom type="mesh" class="collision" pos="0.039924 -0.0269999 0.04325" quat="0.515038 0 0 0.857167" mesh="distal_r" material="distal_r_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_15 -->
+          <geom type="mesh" class="visual" pos="-0.0197189 0.050251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0197189 0.050251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_16 -->
+          <geom type="mesh" class="visual" pos="-0.0267189 0.043251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0267189 0.043251 0.04025" quat="0.364187 -0.364187 -0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_17 -->
+          <geom type="mesh" class="visual" pos="-0.0197189 0.050251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0197189 0.050251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Part std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_16 -->
+          <geom type="mesh" class="visual" pos="-0.0345597 0.0100566 0.01905" quat="0.516385 0.516385 0.483059 0.483059" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0345597 0.0100566 0.01905" quat="0.516385 0.516385 0.483059 0.483059" mesh="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default" material="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material"/>
+          <!-- Part feetech_screw_m3x6__configuration_default_18 -->
+          <geom type="mesh" class="visual" pos="-0.0267189 0.043251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <geom type="mesh" class="collision" pos="-0.0267189 0.043251 -0.00215" quat="0.364187 0.364187 0.606109 0.606109" mesh="feetech_screw_m3x6__configuration_default" material="feetech_screw_m3x6__configuration_default_material"/>
+          <!-- Frame finger_tip -->
+          <site group="3" name="finger_tip" pos="-0.0613312 -0.00504543 0.01905" quat="0.153876 -0.153876 -0.690161 0.690161"/>
         </body>
       </body>
     </body>
+    <!-- Link distal_cable_r -->
+    <body name="distal_cable_r" pos="0 0 0" quat="1 0 0 0" childclass="gripette_right">
+      <freejoint name="distal_cable_r_freejoint"/>
+      <inertial pos="0 0 0" mass="1e-09" fullinertia="1e-09 1e-09 1e-09 0 0 0"/>
+    </body>
   </worldbody>
   <asset>
-    <mesh file="proximal_side.stl"/>
-    <mesh file="distal.stl"/>
-    <mesh file="rasp_support.stl"/>
-    <mesh file="b0404.stl"/>
-    <mesh file="proximal_bottom.stl"/>
+    <mesh file="feetech_screw_m3x6__configuration_default.stl"/>
+    <mesh file="distal_soft_tip.stl"/>
+    <mesh file="feetech_pt_screw_2x6__configuration_default.stl"/>
+    <mesh file="611_00020_1.stl"/>
+    <mesh file="distal_r.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2.stl"/>
+    <mesh file="arducam_fisheye.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3.stl"/>
+    <mesh file="proximal_bot_r.stl"/>
+    <mesh file="611_00020.stl"/>
+    <mesh file="proximal_top_r.stl"/>
+    <mesh file="lens_adhesive.stl"/>
+    <mesh file="part_1__configuration_copy_of_2x8.stl"/>
+    <mesh file="gripper_base_r.stl"/>
+    <mesh file="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1.stl"/>
+    <mesh file="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802.stl"/>
+    <mesh file="cross_bar.stl"/>
+    <mesh file="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default.stl"/>
+    <mesh file="grip_shell_r.stl"/>
+    <mesh file="rasp_pi_0_2w__configuration_default.stl"/>
     <mesh file="feetech_sts3215__configuration_default.stl"/>
-    <mesh file="elec_support_square.stl"/>
-    <mesh file="backplate.stl"/>
-    <mesh file="elec_support.stl"/>
-    <mesh file="gripper_base.stl"/>
-    <mesh file="camera_imu_support.stl"/>
-    <mesh file="proximal_top.stl"/>
+    <mesh file="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974.stl"/>
+    <mesh file="hub_dyn.stl"/>
+    <mesh file="grip_soft_tip_r.stl"/>
+    <mesh file="sr_lens_py058.stl"/>
+    <mesh file="bulkhead.stl"/>
+    <mesh file="606_00021_sr_back_cover_py074.stl"/>
+    <mesh file="proximal_shell_r.stl"/>
+    <mesh file="cameras_holder_r.stl"/>
+    <mesh file="606_00020_sr_front_cover.stl"/>
+    <mesh file="612_00001_tim_thermal_oak_d_poe.stl"/>
+    <material name="feetech_pt_screw_2x6__configuration_default_material" rgba="0.901961 0.901961 0.901961 1"/>
+    <material name="feetech_screw_m3x6__configuration_default_material" rgba="0.901961 0.901961 0.901961 1"/>
+    <material name="part_1__configuration_copy_of_2x8_material" rgba="0.901961 0.901961 0.901961 1"/>
+    <material name="rasp_pi_0_2w__configuration_default_material" rgba="0.972549 0.529412 0.00392157 1"/>
     <material name="feetech_sts3215__configuration_default_material" rgba="0.647059 0.647059 0.647059 1"/>
-    <material name="gripper_base_material" rgba="0.615686 0.811765 0.929412 1"/>
-    <material name="b0404_material" rgba="0.372549 0.654902 0.239216 1"/>
-    <material name="elec_support_square_material" rgba="0.498039 0.498039 0.498039 1"/>
-    <material name="camera_imu_support_material" rgba="0.615686 0.811765 0.929412 1"/>
-    <material name="elec_support_material" rgba="0.972549 0.529412 0.00392157 1"/>
-    <material name="backplate_material" rgba="0.917647 0.917647 0.917647 1"/>
-    <material name="rasp_support_material" rgba="0.768627 0.886275 0.952941 1"/>
-    <material name="proximal_side_material" rgba="0.647059 0.647059 0.647059 1"/>
-    <material name="proximal_bottom_material" rgba="0.647059 0.647059 0.647059 1"/>
-    <material name="proximal_top_material" rgba="0.647059 0.647059 0.647059 1"/>
-    <material name="distal_material" rgba="0.231373 0.380392 0.705882 1"/>
+    <material name="hexalobular_socket_pan_head_screw_m2_5x0_45_x_6__a0337967dd2415a96d32f4de9af75974_material" rgba="0.603922 0.647059 0.686275 1"/>
+    <material name="std00333_plast_tcb_torx_2_5x8__configuration_copy_of_default_material" rgba="0.901961 0.901961 0.901961 1"/>
+    <material name="hex_socket_head_cap_screw_m4x0_70_x_8__a416dc2a8d778a4ef6150c0739aa89d1_material" rgba="0.603922 0.647059 0.686275 1"/>
+    <material name="gripper_base_r_material" rgba="1 1 1 1"/>
+    <material name="grip_shell_r_material" rgba="1 1 1 1"/>
+    <material name="arducam_fisheye_material" rgba="0.235294 0.235294 0.235294 1"/>
+    <material name="bulkhead_material" rgba="0.980392 0.713725 0.00392157 1"/>
+    <material name="cameras_holder_r_material" rgba="0.262745 0.282353 0.301961 1"/>
+    <material name="grip_soft_tip_r_material" rgba="0.301961 0.301961 0.301961 1"/>
+    <material name="hub_dyn_material" rgba="0.615686 0.811765 0.929412 1"/>
+    <material name="611_00020_1_material" rgba="0 0 0 1"/>
+    <material name="611_00020_material" rgba="0 0 0 1"/>
+    <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_1_material" rgba="0 0 0 1"/>
+    <material name="sr_lens_py058_material" rgba="0.262745 0.282353 0.301961 0.376471"/>
+    <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_material" rgba="0 0 0 1"/>
+    <material name="612_00001_tim_thermal_oak_d_poe_material" rgba="0.596078 0.666667 0.686275 1"/>
+    <material name="lens_adhesive_material" rgba="0.262745 0.282353 0.301961 1"/>
+    <material name="606_00021_sr_back_cover_py074_material" rgba="0.262745 0.282353 0.301961 1"/>
+    <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_2_material" rgba="0 0 0 1"/>
+    <material name="602_00009_phillips_flat_head__m2_x_0_40mm_thread__14mm_long_screw_92010a802_3_material" rgba="0 0 0 1"/>
+    <material name="606_00020_sr_front_cover_material" rgba="0.262745 0.282353 0.301961 1"/>
+    <material name="proximal_shell_r_material" rgba="1 1 1 1"/>
+    <material name="proximal_bot_r_material" rgba="1 1 1 1"/>
+    <material name="cross_bar_material" rgba="0.917647 0.917647 0.917647 1"/>
+    <material name="proximal_top_r_material" rgba="1 1 1 1"/>
+    <material name="distal_soft_tip_material" rgba="0.301961 0.301961 0.301961 1"/>
+    <material name="distal_r_material" rgba="1 1 1 1"/>
   </asset>
   <actuator>
     <position class="gripette_right" name="proximal" joint="proximal" inheritrange="1"/>
