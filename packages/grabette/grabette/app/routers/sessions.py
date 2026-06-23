@@ -147,15 +147,24 @@ async def start_capture(
         raise HTTPException(status_code=409, detail="Already capturing")
     episode_id = sm.create_episode(req.session_id)
     episode_dir = sm.episode_dir(episode_id)
-    await backend.start_capture(episode_dir)
+    try:
+        await backend.start_capture(episode_dir)
+    except Exception:
+        sm.discard_pending_episode()
+        raise
     return {"episode_id": episode_id, "status": "capturing"}
 
 
 @router.post("/api/episodes/stop")
-async def stop_capture(backend: Backend = Depends(get_backend)):
+async def stop_capture(
+    backend: Backend = Depends(get_backend),
+    sm: SessionManager = Depends(get_session_manager),
+):
     if not backend.is_capturing:
         raise HTTPException(status_code=409, detail="Not capturing")
     status = await backend.stop_capture()
+    # File the episode into its session only now that its data is written.
+    sm.register_episode(getattr(status, "session_id", None))
     return status
 
 

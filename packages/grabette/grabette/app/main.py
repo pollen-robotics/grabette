@@ -89,12 +89,17 @@ async def _handle_relay_command(cmd: dict) -> dict:
         session_id = cmd.get("args", {}).get("session_id")
         episode_id = sm.create_episode(session_id)
         episode_dir = sm.episode_dir(episode_id)
-        await backend.start_capture(episode_dir)
+        try:
+            await backend.start_capture(episode_dir)
+        except Exception:
+            sm.discard_pending_episode()
+            raise
         return {"status": "ok", "episode_id": episode_id}
     if ctype == "stop_capture":
         if not backend.is_capturing:
             return {"status": "error", "message": "not capturing"}
         result = await backend.stop_capture()
+        get_session_manager().register_episode(getattr(result, "session_id", None))
         return {"status": "ok", "result": result}
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 

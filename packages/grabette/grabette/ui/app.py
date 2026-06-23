@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import time
 
 import gradio as gr
 from PIL import Image
@@ -138,11 +139,13 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     else:
         rgb_badge = _badge("RGB Camera", "Disconnected", RED)
 
-    # OAK-D (3-state: connected / off / error; N/A when unsupported)
+    # OAK-D (4-state: connected / starting / off / error; N/A when unsupported)
     if not oakd_status or not oakd_status.get("supported"):
         oakd_badge = _badge("OAK-D", "N/A", GRAY)
     elif oakd_status.get("initialized"):
         oakd_badge = _badge("OAK-D", "Connected", GREEN)
+    elif oakd_status.get("initializing"):
+        oakd_badge = _badge("OAK-D", "Starting…", ORANGE)
     elif oakd_status.get("enabled"):
         oakd_badge = _badge("OAK-D", "Error", RED)
     else:
@@ -154,6 +157,54 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
         + batt_badge + rgb_badge + oakd_badge
         + "</div>"
     )
+
+
+def _text_bar(pct: float, width: int = 22) -> str:
+    """Render a fixed-width text progress bar like ██████░░░░ for markdown."""
+    pct = max(0.0, min(100.0, pct))
+    filled = int(round(pct / 100.0 * width))
+    return "`" + "█" * filled + "░" * (width - filled) + f"` {pct:.0f}%"
+
+
+def _upload_progress_md(repo_id: str, rows: list[dict], finished: bool) -> str:
+    """Build the markdown shown while/after pushing episodes to HF Hub.
+
+    rows: list of {episode_id, status, progress, message}. A pure function so
+    it's easy to reason about — the polling loop just feeds it fresh job state.
+    """
+    total = len(rows)
+    done = sum(1 for r in rows if r["status"] in ("completed", "failed"))
+    ok = sum(1 for r in rows if r["status"] == "completed")
+    # Overall %: finished jobs count as 100, in-flight contribute their own %.
+    overall = (
+        sum(100.0 if r["status"] in ("completed", "failed") else r.get("progress", 0.0)
+            for r in rows) / total
+        if total else 0.0
+    )
+
+    icon = {"completed": "✅", "failed": "❌", "running": "⏳", "pending": "⏳"}
+    lines: list[str] = []
+    if finished:
+        lines.append(f"### {'✅' if ok == total else '⚠️'} Pushed {ok}/{total} episode(s) to HuggingFace")
+        if ok:
+            lines.append(
+                f"\n**[Open dataset → {repo_id}](https://huggingface.co/datasets/{repo_id})**\n"
+            )
+    else:
+        lines.append(f"### Pushing {total} episode(s) to `{repo_id}` …")
+        lines.append(f"\n{_text_bar(overall)} — {done}/{total} done\n")
+
+    for r in rows:
+        mark = icon.get(r["status"], "⏳")
+        eid = r["episode_id"]
+        if r["status"] == "failed":
+            detail = r.get("message") or r.get("error") or "failed"
+        elif r["status"] == "completed":
+            detail = "uploaded"
+        else:
+            detail = f"{r.get('message', '')} ({r.get('progress', 0):.0f}%)"
+        lines.append(f"- {mark} `{eid}` — {detail}")
+    return "\n".join(lines)
 
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
@@ -782,29 +833,76 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=task_choices, value=[]), ns_update
 
     def on_ds_upload(task_ids, namespace, repo_name):
+        """Start one upload job per episode, then poll until all finish,
+        streaming progress + per-episode status, and end on a dataset link.
+
+        A generator: each yield updates the status markdown live."""
         if not task_ids:
-            return "Select at least one task"
+            yield "Select at least one task"
+            return
         if not namespace or not repo_name.strip():
-            return "Enter an owner and a repository name"
+            yield "Enter an owner and a repository name"
+            return
         repo_id = f"{namespace}{repo_name.strip()}"
+
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
-        jobs, errors = [], []
+        episode_ids: list[str] = []
         for tid in task_ids:
             s = session_map.get(tid)
             if not s:
                 continue
             for ep in s.get("episodes", []):
-                result = client.hf_upload_episode(ep["episode_id"], repo_id)
-                if "error" in result:
-                    errors.append(f"{ep['episode_id']}: {result['error']}")
-                else:
-                    jobs.append(result.get("job_id", "?"))
-        if errors:
-            return f"Errors: {'; '.join(errors)}"
-        if not jobs:
-            return "No episodes found in selected tasks"
-        return f"Started {len(jobs)} upload job(s)"
+                episode_ids.append(ep["episode_id"])
+        if not episode_ids:
+            yield "No episodes found in selected tasks"
+            return
+
+        # Kick off all uploads (they run as background jobs on the daemon).
+        # job_id keyed by episode so we can track each independently.
+        jobs: dict[str, str] = {}
+        rows: list[dict] = []
+        for eid in episode_ids:
+            result = client.hf_upload_episode(eid, repo_id)
+            if "error" in result:
+                rows.append({"episode_id": eid, "status": "failed",
+                             "progress": 0.0, "message": result["error"]})
+            else:
+                jobs[eid] = result.get("job_id", "")
+                rows.append({"episode_id": eid, "status": "pending",
+                             "progress": 0.0, "message": "Queued…"})
+        yield _upload_progress_md(repo_id, rows, finished=False)
+
+        # Poll the job manager until every started job reaches a terminal state.
+        # Cap the wait so an unreachable daemon can't loop forever (uploads of
+        # large videos can legitimately take many minutes, hence the high bound).
+        polls = 0
+        max_polls = 3600  # ~1h at 1s/poll
+        while jobs and polls < max_polls:
+            polls += 1
+            time.sleep(1.0)
+            all_jobs = {j["job_id"]: j for j in client.hf_list_jobs()}
+            pending = False
+            for r in rows:
+                jid = jobs.get(r["episode_id"])
+                if jid is None:
+                    continue  # failed to start — already terminal
+                jd = all_jobs.get(jid)
+                if jd is None:
+                    pending = True
+                    continue
+                r["status"] = jd.get("status", "running")
+                r["progress"] = jd.get("progress", 0.0)
+                r["message"] = jd.get("message", "")
+                if jd.get("error"):
+                    r["message"] = jd["error"]
+                if r["status"] not in ("completed", "failed"):
+                    pending = True
+            yield _upload_progress_md(repo_id, rows, finished=False)
+            if not pending:
+                break
+
+        yield _upload_progress_md(repo_id, rows, finished=True)
 
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
@@ -1064,9 +1162,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # Session button + capture title + banner sync
             if cap_session.get("active"):
                 task_name = cap_session.get("task_name", "")
-                count = cap_session.get("count", 0)
-                # Don't count the episode currently in progress
-                display_count = max(0, count - 1) if is_recording else count
+                # The count already excludes any in-progress capture — episodes
+                # are registered only once recording stops.
+                display_count = cap_session.get("count", 0)
                 sess_btn = gr.update(value="■ Stop Session", variant="stop")
                 cap_title = gr.update(value=f"### Capture a new episode for *{task_name}*")
                 banner = gr.update(value=_session_banner_html(task_name, display_count))
@@ -1169,9 +1267,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             interactive=False,
         )
         gr.HTML("</div>")
-        ds_upload_msg = gr.Textbox(
-            show_label=False, interactive=False, max_lines=2, container=False,
-        )
+        ds_upload_msg = gr.Markdown(container=False)
         gr.HTML("</div>")
 
         ds_upload_btn.click(

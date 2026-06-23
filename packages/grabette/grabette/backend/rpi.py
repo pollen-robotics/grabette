@@ -36,6 +36,10 @@ class RpiBackend(Backend):
         self._start_time: float | None = None
         self._capturing = False
         self._starting = False
+        # True while the OAK-D device is being brought up (init in progress).
+        # Distinguishes the normal warm-up window from a genuine init failure
+        # so the UI can show "Starting…" instead of "Error".
+        self._oakd_initializing = False
         self._capture_session_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
@@ -140,6 +144,10 @@ class RpiBackend(Backend):
     def is_oakd_initialized(self) -> bool:
         return self._oakd is not None and self._oakd.is_initialized
 
+    @property
+    def is_oakd_initializing(self) -> bool:
+        return self._oakd_initializing
+
     async def set_oakd_enabled(self, on: bool) -> None:
         if self._capturing:
             raise RuntimeError("cannot toggle OAK-D while a capture is running")
@@ -162,7 +170,11 @@ class RpiBackend(Backend):
 
         if on:
             self._enable_oakd = True
-            await loop.run_in_executor(None, self._init_oakd)
+            self._oakd_initializing = True
+            try:
+                await loop.run_in_executor(None, self._init_oakd)
+            finally:
+                self._oakd_initializing = False
             logger.info("OAK-D enabled via UI")
         else:
             self._enable_oakd = False

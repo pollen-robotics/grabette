@@ -22,10 +22,12 @@ router = APIRouter(prefix="/api/oakd", tags=["oakd"])
 def _status(backend: Backend) -> dict:
     enabled = getattr(backend, "is_oakd_enabled", False)
     initialized = getattr(backend, "is_oakd_initialized", False)
+    initializing = getattr(backend, "is_oakd_initializing", False)
     return {
         "supported": hasattr(backend, "set_oakd_enabled"),
         "enabled": bool(enabled),
         "initialized": bool(initialized),
+        "initializing": bool(initializing),
     }
 
 
