@@ -1,4 +1,4 @@
-.PHONY: install-rpi install-udev-oak install-systemd install-netdev help
+.PHONY: install-rpi install-udev-oak install-systemd install-netdev install-poweroff help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -10,6 +10,7 @@ help:
 	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
 	@echo "  install-systemd   Install + enable the grabette systemd service"
 	@echo "  install-netdev    Allow 'rasp' user to trigger WiFi scans via nmcli"
+	@echo "  install-poweroff  Allow 'rasp' user to power off the Pi from the web UI"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
@@ -47,6 +48,21 @@ install-udev-oak:
 install-netdev:
 	sudo usermod -aG netdev rasp
 	@echo "Group change applied. A reboot (or 'sudo systemctl restart grabette') is needed."
+
+# Lets the web UI's "Power Off" button halt the Pi. Grants the service user
+# the right to run exactly `systemctl poweroff` (nothing else) without a
+# password. Validated with `visudo -c` before install so a typo can never lock
+# out sudo. Idempotent.
+install-poweroff:
+	@tmp=$$(mktemp); \
+	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff' > $$tmp; \
+	if sudo visudo -cf $$tmp; then \
+		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/grabette-poweroff; \
+		echo "Installed /etc/sudoers.d/grabette-poweroff"; \
+	else \
+		echo "sudoers syntax check failed, aborting"; rm -f $$tmp; exit 1; \
+	fi; \
+	rm -f $$tmp
 
 install-systemd:
 	@# Patch the unit's hardcoded path to this device's actual workspace root

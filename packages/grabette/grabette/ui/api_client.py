@@ -308,6 +308,16 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def shutdown(self) -> dict:
+        try:
+            r = self._http.post("/api/system/shutdown")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- HuggingFace --
 
     def hf_check_auth(self) -> dict:

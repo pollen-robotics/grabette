@@ -6,9 +6,14 @@ import platform
 import socket
 import subprocess
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
 router = APIRouter(prefix="/api/system", tags=["system"])
+
+# Exact command the sudoers drop-in (see `make install-poweroff`) grants the
+# unprivileged service user. The pre-check, the permission rule, and the actual
+# dispatch must all use this identical string or the NOPASSWD match fails.
+_POWEROFF_CMD = ("/usr/bin/systemctl", "poweroff")
 
 
 _battery_ema: float | None = None
@@ -105,6 +110,57 @@ async def stream_logs(ws: WebSocket):
             proc.kill()
         except Exception:
             pass
+
+
+@router.post("/shutdown")
+async def system_shutdown():
+    """Cleanly power off the Raspberry Pi.
+
+    Refuses while a recording is in progress (would truncate the episode), then
+    verifies the service user is actually allowed to run the poweroff command
+    before dispatching it. The poweroff itself is fired detached with a short
+    delay so this HTTP response reaches the browser before systemd tears the
+    server down.
+    """
+    # Guard: never power off mid-recording. If the daemon isn't running (mock
+    # backend / not yet initialised) there's nothing to protect — allow it.
+    try:
+        from grabette.app.main import get_daemon_instance
+
+        daemon = get_daemon_instance()
+        if daemon is not None and daemon.state.value == "running":
+            cap = daemon.backend.get_state().capture
+            if cap.is_capturing or cap.is_starting:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A recording is in progress. Stop the capture before powering off.",
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
+
+    # Permission pre-check: `sudo -n -l <cmd>` reports whether the command is
+    # permitted without running it or prompting for a password.
+    check = await asyncio.create_subprocess_exec(
+        "sudo", "-n", "-l", *_POWEROFF_CMD,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    await check.wait()
+    if check.returncode != 0:
+        raise HTTPException(
+            status_code=500,
+            detail="Shutdown not permitted. Run 'make install-poweroff' on the device.",
+        )
+
+    # Dispatch detached so the 200 below is sent before the box goes down.
+    await asyncio.create_subprocess_exec(
+        "sh", "-c", f"sleep 1; sudo -n {' '.join(_POWEROFF_CMD)}",
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    return {"status": "shutting_down"}
 
 
 @router.post("/update")
