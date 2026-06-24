@@ -11,6 +11,7 @@ import av
 import cv2
 import numpy as np
 
+from grabette_postprocess.episode_manager import find_trajectory_csv
 from grabette_postprocess.trajectory import (
     load_trajectory_csv,
     trajectory_to_poses,
@@ -66,7 +67,8 @@ def _load_video_timestamps(episode_dir: Path, video_path: Path) -> np.ndarray:
     if ft_path.is_file():
         with open(ft_path) as f:
             ts_ms = json.load(f)
-        return np.array(ts_ms, dtype=np.float64) / 1000.0
+        if ts_ms:  # non-empty; empty [] falls through to the uniform fallback
+            return np.array(ts_ms, dtype=np.float64) / 1000.0
 
     # Fallback: uniform timestamps
     cap = cv2.VideoCapture(str(video_path))
@@ -76,6 +78,39 @@ def _load_video_timestamps(episode_dir: Path, video_path: Path) -> np.ndarray:
     return np.arange(n_frames, dtype=np.float64) / video_fps
 
 
+def _nearest_frame_indices(query_ts: np.ndarray, frame_ts: np.ndarray) -> np.ndarray:
+    """For each query timestamp, the index of the nearest frame timestamp.
+
+    `frame_ts` must be monotonic. Vectorized searchsorted + neighbour compare,
+    O(n log m) instead of an O(n_query x n_frame) argmin loop (seconds saved on
+    long episodes). Returns all-zeros when there are fewer than 2 frames.
+    """
+    if len(frame_ts) < 2:
+        return np.zeros(len(query_ts), dtype=int)
+    pos = np.clip(np.searchsorted(frame_ts, query_ts), 1, len(frame_ts) - 1)
+    left, right = frame_ts[pos - 1], frame_ts[pos]
+    return np.where(query_ts - left <= right - query_ts, pos - 1, pos)
+
+
+def _episode_actions(df, traj_ts: np.ndarray, ep_dir: Path) -> np.ndarray:
+    """(N, 8) action array [x, y, z, ax, ay, az, proximal, distal] for one episode.
+
+    6D pose from the trajectory + the 2 gripper joints interpolated to the
+    trajectory timestamps (zeros if angle_data.json is absent). These are
+    ABSOLUTE states: action[t] = state at frame t. The pi0 training pipeline
+    converts to relative actions (use_relative_actions=true) and derives the
+    proprioception state from this action column (derive_state_from_action=true).
+    """
+    poses = trajectory_to_poses(df)
+    angle_path = ep_dir / "angle_data.json"
+    if angle_path.is_file():
+        joints = interpolate_angles(angle_path, traj_ts)
+    else:
+        print("  Warning: no angle_data.json, joints will be zeros")
+        joints = np.zeros((len(df), 2), dtype=np.float32)
+    return np.concatenate([poses, joints], axis=1).astype(np.float32)
+
+
 def build_dataset(
     repo_id: str,
     episode_dirs: list[Path],
@@ -83,21 +118,26 @@ def build_dataset(
     fps: float | None = None,
     image_size: tuple[int, int] = (720, 960),
     root: Path | None = None,
+    source_user: str | None = None,
 ):
     """Build LeRobot v3 dataset from processed episode directories.
 
     Each episode directory must contain:
-        - raw_video.mp4
-        - imu_data.json (raw, with ANGL stream)
+        - raw_video.mp4 (Arducam observation camera)
+        - angle_data.json (gripper joint angles)
         - camera_trajectory.csv (or mapping_camera_trajectory.csv)
 
     Args:
         repo_id: dataset identifier (e.g. "steve/grabette-demo")
         episode_dirs: list of episode directory paths
         task: task description string
-        fps: dataset frame rate (default: 50fps, the native RPi camera rate)
-        image_size: (height, width) for RPi camera output frames
+        fps: dataset frame rate (default: 50fps, the native Arducam rate)
+        image_size: (height, width) for Arducam output frames
         root: local storage path (default: HF cache)
+        source_user: if set, write a `meta/episode_sources.json` traceability
+            sidecar mapping each episode to its source recording and this user,
+            with a `name` like "20210102_chouziel". Used when several users push
+            into the same repo (e.g. on branches) so episodes stay distinguishable.
     """
     # Lazy import — lerobot is a heavy dependency
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -121,55 +161,39 @@ def build_dataset(
         root=root,
         robot_type="grabette",
         use_videos=True,
-        vcodec="h264",
+        vcodec="h264",  # kept over the libsvtav1 default so the LeRobot web visualizer can play it
+        # Encode frames straight to MP4 as they're added, instead of writing every
+        # frame to disk as PNG and re-reading + re-encoding at save_episode(). The
+        # PNG round-trip is the main cost of the "building dataset" step on CPU.
+        streaming_encoding=True,
     )
+
+    # Source recording name per saved episode, aligned with episode_index (0..N-1
+    # in save order). Episodes skipped below (no trajectory CSV) are not appended.
+    saved_recordings: list[str] = []
 
     for ep_dir in episode_dirs:
         ep_dir = Path(ep_dir).absolute()
         print(f"\nProcessing {ep_dir.name}...")
 
         # Find trajectory file
-        traj_path = ep_dir / "camera_trajectory.csv"
-        if not traj_path.is_file():
-            traj_path = ep_dir / "mapping_camera_trajectory.csv"
-        if not traj_path.is_file():
+        traj_path = find_trajectory_csv(ep_dir)
+        if traj_path is None:
             print(f"  Skipping: no trajectory CSV found")
             continue
 
-        # Load trajectory and convert to 6D poses
+        # Trajectory timestamps in seconds, relative to recording start (t=0),
+        # and the 8D absolute-state action [x,y,z,ax,ay,az,proximal,distal].
         df = load_trajectory_csv(traj_path)
-        poses = trajectory_to_poses(df)
-        # Trajectory timestamps in seconds, relative to recording start (t=0)
         traj_ts = df['timestamp'].values.astype(np.float64)
         n_frames = len(df)
+        actions = _episode_actions(df, traj_ts, ep_dir)
 
-        # Load joint angles from raw IMU (ANGL stream)
-        imu_path = ep_dir / "imu_data.json"
-        if imu_path.is_file():
-            joints = interpolate_angles(imu_path, traj_ts)
-        else:
-            print(f"  Warning: no imu_data.json, joints will be zeros")
-            joints = np.zeros((n_frames, 2), dtype=np.float32)
-
-        # Build state: [x, y, z, ax, ay, az, proximal, distal]
-        state = np.concatenate([poses, joints], axis=1).astype(np.float32)
-
-        # Action[t] = absolute state at frame t.
-        # The pi0 training pipeline converts to relative actions via
-        # use_relative_actions=true and derives proprioception state from
-        # the action column via derive_state_from_action=true.
-        actions = state
-
-        # --- cam0: RPi video, timestamp-based frame selection ---
+        # --- cam0: RPi video, nearest-by-timestamp frame selection ---
         video_path = ep_dir / "raw_video.mp4"
-        # Per-frame timestamps in seconds, relative to recording start
         video_ts = _load_video_timestamps(ep_dir, video_path)
         print(f"  RPi video: {len(video_ts)} frames, {video_ts[-1]:.2f}s")
-
-        # For each trajectory step, find the nearest video frame index
-        cam0_indices = np.array([
-            int(np.argmin(np.abs(video_ts - t))) for t in traj_ts
-        ])
+        cam0_indices = _nearest_frame_indices(traj_ts, video_ts)
         cam0_cache = _load_video_frames_indexed(video_path, image_size,
                                                 set(cam0_indices.tolist()))
 
@@ -180,20 +204,62 @@ def build_dataset(
                 break
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-            frame_data = {
+            dataset.add_frame({
                 "task": task,
                 "observation.images.cam0": img_rgb,
                 "action": actions[i],
-            }
-
-            dataset.add_frame(frame_data)
+            })
 
         dataset.save_episode()
+        saved_recordings.append(ep_dir.name)
         print(f"  Saved episode: {n_frames} frames")
 
     dataset.finalize()
+
+    if source_user:
+        _write_episode_sources(Path(dataset.root), saved_recordings, source_user)
+
     print(f"\nDataset complete: {repo_id}")
     if root:
         print(f"  Location: {root}")
 
-    return dataset
+
+def _write_episode_sources(ds_root: Path, recordings: list[str], user: str) -> None:
+    """Write meta/episode_sources.json: per-episode traceability to its source
+    recording and the user who produced it. Additive sidecar — LeRobot ignores it
+    on load, and push_to_hub uploads it with the rest of the dataset folder."""
+    entries = [
+        {
+            "episode_index": i,
+            "recording": rec,
+            "user": user,
+            "name": f"{rec}_{user}",
+        }
+        for i, rec in enumerate(recordings)
+    ]
+    out = ds_root / "meta" / "episode_sources.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps({"episodes": entries}, indent=2))
+    print(f"  Wrote {out.name}: {len(entries)} episode(s) tagged with user '{user}'")
+
+
+def push_dataset(repo_id: str, root: Path, *, private: bool = False,
+                 tags: tuple[str, ...] = ("lerobot", "grabette"), log=print) -> None:
+    """Load a built LeRobot dataset from `root` and push it to the Hub (main branch).
+
+    The single library entry point for the push step, so the CLI
+    (scripts/pipeline/push_to_hub.py) no longer re-implements it against LeRobot
+    directly. The HF Space keeps its own push_lerobot for the branch/PR-fallback
+    flow, which this intentionally does not cover.
+    """
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    root = Path(root)
+    log(f"Loading dataset {repo_id} from {root}...")
+    ds = LeRobotDataset(repo_id, root=root)
+    log(f"  Episodes: {ds.num_episodes}")
+    log(f"  Frames:   {ds.num_frames}")
+
+    log(f"\nPushing to https://huggingface.co/datasets/{repo_id} ...")
+    ds.push_to_hub(tags=list(tags), private=private)
+    log(f"\nDone: https://huggingface.co/datasets/{repo_id}")

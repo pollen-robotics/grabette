@@ -1,40 +1,67 @@
-#!/usr/bin/env python3
 """Convert a grabette episode directory into the oak/ layout consumed by
-run_oak_slam.py / docker/oak_vslam.
+run_oak_slam / docker/oak_vslam.
 
 Our recording (grabette/hardware/oakd.py) stores compact mp4 + JSON sidecars
-to save disk. The C++ offline_vslam expects per-file PNGs + CSVs. This
-script produces <episode>/oak/{frames,depth,timestamps.csv,imu_acc.csv,
-imu_gyro.csv,calib_offline.json} from <episode>/{oakd_left.mp4, oakd_depth/,
-oakd_left_timestamps.json, oakd_depth_timestamps.json, oakd_imu.json,
-oakd_calib_offline.json}.
+to save disk. The C++ offline_vslam expects per-file PNGs + CSVs. This module
+produces <episode>/oak/{frames,depth,timestamps.csv,imu_acc.csv,imu_gyro.csv,
+imu_rotation.csv,calib_offline.json} from <episode>/{oakd_left.mp4, oakd_depth.mkv
+(or legacy oakd_depth/), oakd_left_timestamps.json, oakd_depth_timestamps.json,
+oakd_imu.json, oakd_calib_offline.json}.
+
+Depth is stored as a single lossless FFV1 16-bit video (oakd_depth.mkv) — one
+file instead of ~600 PNGs, ~2× smaller, and bit-identical once decoded, so the
+SLAM input is unchanged. Older recordings with an oakd_depth/ PNG directory are
+still accepted.
 
 Frame matching: left timestamps and depth timestamps share a seq number
 (both come from the same StereoDepth node). We take seqs present in both,
 in seq order, and assign consecutive idx = 0..N-1. mp4 frames are decoded
 in encoding order (= seq order); we trim to whichever stream is shortest.
 
-Timestamps in the output CSVs are in nanoseconds in the SyncManager (host_ms)
-clock — same convention as my colleague's capture pipeline.
-
-Usage:
-    python scripts/rgbd_slam/convert_episode_to_oak.py -i /path/to/episode_dir
-    # then:
-    python scripts/rgbd_slam/run_oak_slam.py -i /path/to/episode_dir
+Timestamps in the output CSVs are in nanoseconds. Camera frames keep their
+host_ms stamps — the clock the SLAM trajectory (and the downstream Arducam
+alignment in dataset.py) lives on. IMU samples are placed on that same host
+timeline via an affine fit of the OAK device clock → host clock (see
+fit_device_to_host_s): the IMU shares the cameras' device clock, so mapping it
+through the *frame* stream removes the ~tens-of-ms false camera-IMU offset that
+using the IMU stream's own (differently-buffered over USB) host_ms injects.
 """
 
 import json
 import shutil
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
-import click
+import numpy as np
 
 
 def _ms_to_ns(ms: float) -> int:
     return int(round(ms * 1e6))
+
+
+def fit_device_to_host_s(left_ts_samples: list) -> tuple[float, float] | None:
+    """Least-squares affine (slope, intercept) mapping the OAK device clock to
+    the host clock, both in seconds: ``host_s ≈ slope * device_s + intercept``.
+
+    Fitted on the OAK left frame stream (oakd_left_timestamps.json), which
+    carries both ``device_us`` and ``host_ms`` per frame. Used to place the IMU
+    — which shares the cameras' device clock — onto the frame host timeline
+    instead of trusting the IMU stream's own host_ms (whose USB-transfer latency
+    differs from the camera stream's by tens of ms). The same fit is reused by
+    the sync check so it validates exactly what the pipeline produces.
+
+    Returns None when device_us is absent (legacy recordings); callers then fall
+    back to raw host_ms.
+    """
+    pts = [(s["device_us"], s["host_ms"]) for s in left_ts_samples
+           if "device_us" in s and s.get("host_ms") is not None]
+    if len(pts) < 2:
+        return None
+    dev_s = np.array([p[0] for p in pts], dtype=float) * 1e-6
+    host_s = np.array([p[1] for p in pts], dtype=float) * 1e-3
+    slope, intercept = np.polyfit(dev_s, host_s, 1)
+    return float(slope), float(intercept)
 
 
 def _extract_mp4_frames(mp4_path: Path, out_dir: Path) -> int:
@@ -49,6 +76,7 @@ def _extract_mp4_frames(mp4_path: Path, out_dir: Path) -> int:
     ]
     subprocess.run(cmd, check=True)
     return len(list(out_dir.glob("*.png")))
+
 
 def _extract_depth_video(mkv_path: Path, out_dir: Path) -> int:
     """Decode a lossless 16-bit depth video (FFV1 gray16le) to uint16 PNGs
@@ -67,6 +95,48 @@ def _extract_depth_video(mkv_path: Path, out_dir: Path) -> int:
     return len(list(out_dir.glob("*.png")))
 
 
+def _split_imu_to_csvs(imu_json: Path, oak_dir: Path,
+                       dev_to_host_s: tuple[float, float] | None = None) -> tuple[int, int, int]:
+    """Split oakd_imu.json into the three CSVs offline_vslam reads
+    (imu_acc.csv, imu_gyro.csv, imu_rotation.csv). Returns (n_accel, n_gyro, n_rot).
+
+    rotation is the BNO086's fused orientation (IMU body → gravity-aligned world).
+    RTAB-Map's Odometry can take this as orientation per IMU sample and use it for
+    VIO initialization + drift constraint during rotations.
+
+    When `dev_to_host_s` (slope, intercept) is given, each sample's device_us is
+    mapped onto the frame host timeline so the IMU is correctly synced to the
+    cameras; otherwise (or when a sample lacks device_us) the raw host_ms is used.
+    """
+    imu = json.loads(imu_json.read_text())["samples"]
+    n_acc = n_gyr = n_rot = 0
+    with (oak_dir / "imu_acc.csv").open("w") as f_a, \
+         (oak_dir / "imu_gyro.csv").open("w") as f_g, \
+         (oak_dir / "imu_rotation.csv").open("w") as f_r:
+        f_a.write("timestamp_ns,ax,ay,az\n")
+        f_g.write("timestamp_ns,wx,wy,wz\n")
+        f_r.write("timestamp_ns,qx,qy,qz,qw\n")
+        for s in imu:
+            kind = s.get("kind")
+            v = s.get("value")
+            if dev_to_host_s is not None and "device_us" in s:
+                slope, intercept = dev_to_host_s
+                ts_ns = _ms_to_ns((slope * s["device_us"] * 1e-6 + intercept) * 1e3)
+            else:
+                ts_ns = _ms_to_ns(float(s["host_ms"]))
+            if kind == "accel" and v and len(v) >= 3:
+                f_a.write(f"{ts_ns},{v[0]},{v[1]},{v[2]}\n")
+                n_acc += 1
+            elif kind == "gyro" and v and len(v) >= 3:
+                f_g.write(f"{ts_ns},{v[0]},{v[1]},{v[2]}\n")
+                n_gyr += 1
+            elif kind == "rotation" and v and len(v) >= 4:
+                # oakd.py stores rotation as [i, j, k, real] = [qx, qy, qz, qw]
+                f_r.write(f"{ts_ns},{v[0]},{v[1]},{v[2]},{v[3]}\n")
+                n_rot += 1
+    return n_acc, n_gyr, n_rot
+
+
 def convert_episode(ep_dir: Path, force: bool = False) -> Path:
     oak_dir = ep_dir / "oak"
     if oak_dir.exists() and not force:
@@ -82,8 +152,6 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
     left_mp4 = ep_dir / "oakd_left.mp4"
     depth_dir = ep_dir / "oakd_depth"
     depth_mkv = ep_dir / "oakd_depth.mkv"
-    left_mp4 = ep_dir / "oakd_left.mp4"
-    depth_src = ep_dir / "oakd_depth"
     left_ts_json = ep_dir / "oakd_left_timestamps.json"
     depth_ts_json = ep_dir / "oakd_depth_timestamps.json"
     imu_json = ep_dir / "oakd_imu.json"
@@ -91,7 +159,6 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
     for p in (left_mp4, left_ts_json, depth_ts_json, imu_json, calib_src):
         if not p.exists():
             raise FileNotFoundError(f"Missing required input: {p}")
-
     if not depth_mkv.is_file() and not depth_dir.is_dir():
         raise FileNotFoundError(
             f"Missing depth: neither {depth_mkv} nor {depth_dir}")
@@ -106,6 +173,9 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
     # --- Build (seq, host_ms) pairs that exist in BOTH left and depth ---
     left_ts = json.loads(left_ts_json.read_text())["samples"]
     depth_ts = json.loads(depth_ts_json.read_text())["samples"]
+    # device→host fit from the frame stream: lets the IMU below ride the same
+    # host timeline as the frames (removes the false camera-IMU offset).
+    dev_to_host_s = fit_device_to_host_s(left_ts)
     depth_seqs = {int(d["seq"]): d for d in depth_ts}
     matched = [
         (int(l["seq"]), float(l["host_ms"]))
@@ -162,51 +232,9 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
                 f.write(f"{idx},{_ms_to_ns(host_ms)}\n")
 
     # --- Split IMU JSON → imu_acc.csv + imu_gyro.csv + imu_rotation.csv ---
-    # rotation_vector is the BNO086's fused orientation (IMU body → gravity-aligned
-    # world). RTAB-Map's Odometry can take this as orientation per IMU sample and
-    # use it for VIO initialization + drift constraint during rotations.
-    imu = json.loads(imu_json.read_text())["samples"]
-    n_acc = n_gyr = n_rot = 0
-    with (oak_dir / "imu_acc.csv").open("w") as f_a, \
-         (oak_dir / "imu_gyro.csv").open("w") as f_g, \
-         (oak_dir / "imu_rotation.csv").open("w") as f_r:
-        f_a.write("timestamp_ns,ax,ay,az\n")
-        f_g.write("timestamp_ns,wx,wy,wz\n")
-        f_r.write("timestamp_ns,qx,qy,qz,qw\n")
-        for s in imu:
-            kind = s.get("kind")
-            v = s.get("value")
-            ts_ns = _ms_to_ns(float(s["host_ms"]))
-            if kind == "accel" and v and len(v) >= 3:
-                f_a.write(f"{ts_ns},{v[0]},{v[1]},{v[2]}\n")
-                n_acc += 1
-            elif kind == "gyro" and v and len(v) >= 3:
-                f_g.write(f"{ts_ns},{v[0]},{v[1]},{v[2]}\n")
-                n_gyr += 1
-            elif kind == "rotation" and v and len(v) >= 4:
-                # oakd.py stores rotation as [i, j, k, real] = [qx, qy, qz, qw]
-                f_r.write(f"{ts_ns},{v[0]},{v[1]},{v[2]},{v[3]}\n")
-                n_rot += 1
+    n_acc, n_gyr, n_rot = _split_imu_to_csvs(imu_json, oak_dir, dev_to_host_s)
 
-    print(f"  oak/ written: {n} frames, {n_acc} accel, {n_gyr} gyro, {n_rot} rotation samples")
+    clk = "device→host fit" if dev_to_host_s is not None else "raw host_ms (no device_us)"
+    print(f"  oak/ written: {n} frames, {n_acc} accel, {n_gyr} gyro, "
+          f"{n_rot} rotation samples (IMU clock: {clk})")
     return oak_dir
-
-
-@click.command()
-@click.option("-i", "--input_dir", required=True, multiple=True,
-              type=click.Path(exists=True),
-              help="Episode directory (repeatable for batch)")
-@click.option("--force", is_flag=True, help="Overwrite existing oak/ subdir")
-def main(input_dir, force):
-    """Convert episode directories to the oak/ layout for SLAM."""
-    for d in input_dir:
-        ep_dir = Path(d).expanduser().absolute()
-        print(f"Converting {ep_dir.name}...")
-        try:
-            convert_episode(ep_dir, force=force)
-        except Exception as e:
-            print(f"  FAILED: {e}", file=sys.stderr)
-
-
-if __name__ == "__main__":
-    main()
