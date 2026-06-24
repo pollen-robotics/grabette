@@ -38,6 +38,13 @@ MODAL_CSS = """
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid #374151 !important;
 }
+/* "Power Off" is the last navbar entry — push it to the far right and tint it
+   red so it reads as separate from the normal pages. Best-effort: relies on the
+   navbar being a flex row (gradio 6.x); the ⏻ label is the guaranteed cue. */
+#grabette-nav a:last-child {
+    margin-left: auto !important;
+    color: #f87171 !important;
+}
 """
 
 
@@ -827,12 +834,55 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         client.hf_set_auth("")
         return "Not authenticated"
 
+    # ── Power off ─────────────────────────────────────────────────────
+
+    def _poweroff_notice(text: str, color: str = "#f97316") -> str:
+        return (
+            f"<div style='max-width:520px;margin-top:0.75rem;padding:0.85rem 1.1rem;"
+            f"background:#1e293b;border-left:4px solid {color};border-radius:8px;"
+            f"color:#e2e8f0;font-size:0.92rem;'>{text}</div>"
+        )
+
+    def load_poweroff_page():
+        """Arm the button when idle; disable + warn while a recording is active."""
+        cap = (client.get_state() or {}).get("capture", {})
+        if cap.get("is_capturing") or cap.get("is_starting"):
+            return (
+                gr.update(
+                    value=_poweroff_notice(
+                        "A recording is in progress — stop the capture before powering off."
+                    ),
+                    visible=True,
+                ),
+                gr.update(interactive=False, variant="secondary"),
+            )
+        return gr.update(value="", visible=False), gr.update(interactive=True, variant="stop")
+
+    def on_poweroff():
+        result = client.shutdown()
+        if "error" in result:
+            return (
+                gr.update(value=_poweroff_notice(f"⚠ {result['error']}", "#ef4444"), visible=True),
+                gr.update(),
+            )
+        return (
+            gr.update(
+                value=_poweroff_notice(
+                    "Device is shutting down. This page will stop responding shortly — "
+                    "wait ~20 s, then it is safe to unplug.",
+                    "#22c55e",
+                ),
+                visible=True,
+            ),
+            gr.update(interactive=False, variant="secondary"),
+        )
+
     # ══════════════════════════════════════════════════════════════════
     # Page 1 — Episodes
     # ══════════════════════════════════════════════════════════════════
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
         episode_status_bar = gr.HTML("")
 
@@ -1113,7 +1163,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Datasets") as datasets_demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
 
         # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
@@ -1212,7 +1262,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
@@ -1308,7 +1358,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Settings") as settings_demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         with gr.Row(equal_height=False):
@@ -1349,5 +1399,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_timer_st = gr.Timer(60.0)
         batt_timer_st.tick(fn=check_battery_warning, outputs=batt_popup_st)
         settings_demo.load(fn=check_battery_warning, outputs=batt_popup_st)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Page 5 — Power Off
+    # ══════════════════════════════════════════════════════════════════
+
+    with demo.route("⏻ Power Off") as poweroff_demo:
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
+        gr.HTML(_TITLE_HTML)
+
+        gr.HTML(
+            "<div style='max-width:520px;margin-top:1rem;padding:1.5rem;"
+            "background:#1c1310;border:1px solid #991b1b;border-radius:12px;'>"
+            "<h2 style='margin:0 0 0.5rem;color:#f87171;'>Power off the device</h2>"
+            "<p style='color:#e2e8f0;margin:0;font-size:0.95rem;'>"
+            "This performs a clean shutdown of the Raspberry Pi. Once it has halted "
+            "you can safely disconnect power.</p></div>"
+        )
+
+        poweroff_msg = gr.HTML(value="", visible=False)
+        with gr.Row():
+            poweroff_btn = gr.Button("Power off now", variant="stop", scale=0)
+
+        poweroff_btn.click(fn=on_poweroff, outputs=[poweroff_msg, poweroff_btn])
+        poweroff_demo.load(fn=load_poweroff_page, outputs=[poweroff_msg, poweroff_btn])
 
     return demo
