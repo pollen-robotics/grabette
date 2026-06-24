@@ -3,8 +3,8 @@
 Visualize OAK-D RGBD SLAM trajectory using Rerun.
 
 Usage:
-    uv run python scripts/rgbd_slam/visualize_rgbd_trajectory.py <episode_dir>
-    uv run python scripts/rgbd_slam/visualize_rgbd_trajectory.py <episode_dir> --video-skip 3
+    uv run python scripts/visualize/visualize_rgbd_trajectory.py -i <episode_dir>
+    uv run python scripts/visualize/visualize_rgbd_trajectory.py -i <episode_dir> --video-skip 3
 """
 
 import json
@@ -119,7 +119,8 @@ def _log_oak_imu(imu_data: dict, t0: float):
 
 
 @click.command()
-@click.argument('episode_dir', type=click.Path(exists=True))
+@click.option('-i', '--input_dir', 'episode_dir', required=True,
+              type=click.Path(exists=True), help='Episode directory to visualize')
 @click.option('--show-video/--no-video', default=True, help='Show camera frames')
 @click.option('--video-skip', default=5, help='Show every Nth frame')
 @click.option('--app-id', default='grabette_viz', help='Rerun application ID')
