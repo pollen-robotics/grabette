@@ -23,55 +23,39 @@ uv run python main.py
 
 ### Raspberry Pi Zero 2W
 
-Requires system Python 3.11 with `libcamera` and `numpy` installed at the system level.
-
-#### 1. UART configuration
-
-The Pi Zero 2W has two UARTs: PL011 (`ttyAMA0`, full-featured, reliable at 1Mbaud) and mini UART (`ttyS0`, clock-dependent, unreliable at high baudrates). By default Bluetooth uses PL011 and GPIO gets the mini UART — this must be swapped for reliable servo communication.
-
-Edit `/boot/firmware/config.txt` and add (or copy from `config/config.txt`):
-
-```ini
-dtoverlay=miniuart-bt
-enable_uart=1
-```
-
-Edit `/boot/firmware/cmdline.txt` and **remove** `console=serial0,115200` (the kernel serial console conflicts with the servo bus). The file must remain a **single line** — do not add line breaks or the Pi will fail to boot.
-
-Before:
-```
-console=serial0,115200 console=tty1 root=PARTUUID=... rootfstype=ext4 ...
-```
-
-After:
-```
-console=tty1 root=PARTUUID=... rootfstype=ext4 ...
-```
-
-Reboot, then verify:
-```bash
-ls -l /dev/serial0   # should point to ttyAMA0
-```
-
-#### 2. User permissions
-
-Add your user to the `dialout` group for serial port access:
+Prerequisites: a Pi Zero 2W running Raspberry Pi OS (Bookworm or Trixie), with [uv](https://docs.astral.sh/uv/) installed.
 
 ```bash
-sudo usermod -aG dialout rasp
+sudo usermod -aG dialout $USER   # serial bus access — log out + back in for it to take effect
+make install-rpi                  # one-shot: apt deps + UART config + venv + sync + verify
+sudo reboot                       # required if the UART config was changed
+make check                        # post-reboot hardware diagnostic
 ```
 
-Log out and back in (or reboot) for the group change to take effect.
-
-#### 3. Install dependencies
+Then start the service manually or install at boot:
 
 ```bash
-sudo apt install libcap-dev
-
-uv venv --python /usr/bin/python3 --system-site-packages
-uv sync --extra rpi --no-install-package numpy
-uv run python main.py
+uv run --package gripette python -m gripette   # foreground
+# — or —
+make install-systemd                            # boot-time start (main + bluetooth)
 ```
+
+`make install-rpi` is idempotent — re-running it is safe. Under the hood it:
+
+- installs `python3-libcamera`, `python3-picamera2`, `libcap-dev` via apt;
+- runs `make enable-uart` to disable the serial console (`cmdline.txt`) and add `dtoverlay=miniuart-bt` to `config.txt` so the reliable PL011 (`ttyAMA0`) ends up on the GPIO header instead of the mini UART (clock-dependent, unreliable at 1Mbaud);
+- creates a `--system-site-packages` venv at the workspace root so apt's `picamera2` satisfies the dependency tree (otherwise `uv` tries to build `python-prctl` from PyPI);
+- runs `uv sync --package gripette --extra rpi --no-install-package numpy` and verifies that `picamera2`, `serial`, and `rustypot` all import.
+
+`make help` lists every target. The cmdline.txt edit captures the `root=PARTUUID=...` token before editing and rolls back from a `.gripette.bak` backup if it changes — boot is safe.
+
+#### Manual installation (fallback)
+
+If `make install-rpi` fails (e.g. unusual OS), the equivalent manual steps are:
+
+1. **UART**: edit `/boot/firmware/config.txt` to include `dtoverlay=miniuart-bt` and `enable_uart=1`. Edit `/boot/firmware/cmdline.txt` to remove `console=serial0,115200` — keep the file as a single line. Reboot.
+2. **Deps**: `sudo apt install libcap-dev python3-libcamera python3-picamera2`.
+3. **Venv**: from the workspace root, `uv venv --python /usr/bin/python3 --system-site-packages && uv sync --package gripette --extra rpi --no-install-package numpy`.
 
 ## Configuration
 
@@ -110,6 +94,32 @@ with GripperClient("192.168.1.36:50051") as g:
     g.torque_off()
 ```
 
+### Motor assembly
+
+A gripette uses two Feetech STS3215 servos with distinct IDs. Brand-new motors all ship as ID=1 at 1Mbaud in position mode, so for each new gripper one of the two motors must be reconfigured before assembly.
+
+| role     | motor_id | physical position |
+|----------|----------|-------------------|
+| proximal | 1        | base of the finger |
+| distal   | 2        | tip of the finger  |
+
+Use `configure_motor.py` to set each motor's ID. Connect **one motor at a time** on the bus (two motors both at ID=1 collide and the bus returns nothing usable):
+
+```bash
+uv run python scripts/configure_motor.py             # interactive: prompts for role
+uv run python scripts/configure_motor.py --info      # read-only: prints current config
+uv run python scripts/configure_motor.py --role proximal --yes   # non-interactive
+```
+
+The script scans the bus, reports the motor's current state (ID, baudrate, mode, voltage, temperature), and runs the EEPROM unlock → write ID → lock → verify sequence. **Physically label each motor** ("P" or "D") before unplugging — once both are at distinct IDs, it's the only way to tell them apart.
+
+If a motor was previously configured and you don't know its ID, scan the bus:
+
+```bash
+uv run python scripts/scan_motors.py                 # full sweep, IDs 1..253
+uv run python scripts/scan_motors.py --start 1 --end 10
+```
+
 ### Teleoperation bridge
 
 Reads angle sensors from the grabette glove (Pi 4) and forwards them as motor commands to the gripper:
@@ -141,28 +151,23 @@ uv run python scripts/camera_test.py
 
 ## systemd services
 
-### Main service (gRPC motor+camera)
+`make install-systemd` installs both services (`gripette.service` and `gripette-bluetooth.service`), patching the hard-coded `/home/rasp/Project/Repo/gripette` path in each unit file to this device's actual workspace root.
 
 ```bash
-sudo cp systemd/gripette.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable gripette
-sudo systemctl start gripette
+make install-systemd          # install + enable both, start now
+journalctl -u gripette -f             # main service logs
+journalctl -u gripette-bluetooth -f   # BT WiFi-setup service logs
 ```
+
+### Main service
+
+`gripette.service` runs `python -m gripette` as the `rasp` user — the gRPC motor+camera server.
 
 ### Bluetooth WiFi configuration
 
-A standalone BLE GATT service allows configuring WiFi credentials on the enclosed Pi Zero 2W without SSH or a screen. A phone or laptop connects via Bluetooth Low Energy, authenticates with a PIN, and sends WiFi credentials.
+`gripette-bluetooth.service` is a standalone BLE GATT service that lets you configure WiFi credentials on the enclosed Pi Zero 2W without SSH or a screen. A phone or laptop connects via Bluetooth Low Energy, authenticates with a PIN, and sends WiFi credentials.
 
-```bash
-sudo apt install python3-dbus python3-gi   # system deps (usually pre-installed)
-sudo cp systemd/gripette-bluetooth.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable gripette-bluetooth
-sudo systemctl start gripette-bluetooth
-```
-
-Runs as root (required by BlueZ DBus GATT registration). PIN is configurable via `GRIPPER_BT_PIN` env var (default: `00000`).
+Runs as root (required by BlueZ DBus GATT registration). PIN is configurable via `GRIPPER_BT_PIN` env var (default: `00000`). System deps (`python3-dbus`, `python3-gi`) are usually pre-installed on Raspberry Pi OS.
 
 **BLE commands** (written as UTF-8 to the COMMAND characteristic):
 
