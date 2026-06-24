@@ -30,6 +30,18 @@
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
 
+        <!-- Pedestal collision proxy: the 60x60mm hfsb6_6060 aluminium extrusion,
+             for IK collision avoidance. Extrusion base verts measure x,y in
+             [-0.030,0.030] => column centred on the world origin, full 750mm
+             height. The shoulder-pitch motor + brackets at the top (the other
+             hfsb6 convex meshes, y~-0.04..-0.09 at z>0.69) are EXCLUDED — they
+             can't be touched, and including them fattened the box. NON-physical
+             (contype/conaffinity=0): a real colliding box would jam the shoulder
+             at the column top — avoidance is analytic against these bounds.
+             Translucent + group 3 to validate fit. -->
+        <geom name="pedestal_box" type="box" pos="0 0 0.375" size="0.03 0.03 0.375"
+              contype="0" conaffinity="0" group="3" rgba="0.1 0.9 0.2 0.35" />
+
         <!-- Table: top surface at z=0.35, well below all arm parts (min z=0.47) -->
         <body name="table" pos="0.44 -0.142 0">
             <geom name="tabletop" type="box" size="0.15 0.15 0.01" pos="0 0 0.34"

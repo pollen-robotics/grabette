@@ -14,6 +14,7 @@ import numpy as np
 import mujoco
 
 from .kinematics import Kinematics, CONTROL_FRAME
+from .pedestal import PedestalClearance, PEDESTAL_MARGIN
 from .rotation import rotation_matrix_to_6d, rotation_6d_to_matrix
 from .proto import arm_pb2, arm_pb2_grpc
 
@@ -38,6 +39,27 @@ TABLE_X_MIN = 0.165
 TABLE_X_MAX = 0.735
 TABLE_Y_MIN = -0.285
 TABLE_Y_MAX = 0.285
+
+# --- Pedestal collision gate (Route 1) ----------------------------------------
+# Before committing an IK solution in SendCartesianDelta, reject (hold last-good)
+# any arm config that moves a guarded link within PEDESTAL_MARGIN of the pedestal
+# column. The clearance query (box / margin / guarded links) lives in pedestal.py
+# and is SHARED with the data-gen IK filter so they enforce the same constraint.
+
+# --- Grasp-point undershoot diagnostic ----------------------------------------
+# GRASP_OFFSET_OAKL is where the cube sits in the oak_l (control) frame when
+# correctly grasped — the cube position in the gripper-root frame at the recorded
+# grasp pose. MUST match grabette_trajectory.GRASP_OFFSET_BODY (the free-floating
+# capture used oak_l == grabette_root). Used to log how far a COMMANDED oak_l pose
+# would place the cube from where it actually is — the systematic-undershoot probe.
+GRASP_OFFSET_OAKL = np.array([0.0027, 0.05123, 0.090])
+# Gripper finger-pointing axis in the oak_l frame: oak_l-local +Z, which points
+# straight DOWN at a vertical "top grasp" (matches grabette_trajectory's
+# GRIPPER_DOWN_QUAT / grip_quat convention — verified to reproduce the dataset's
+# sampled tilt exactly). Its angle from world straight-down is the grasp TILT:
+# ~0deg = top grasp; the dataset sampled ~10-35deg. Used to log whether the policy
+# reproduces the trained tilt variation or collapses to top grasps.
+TILT_AXIS_OAKL = np.array([0.0, 0.0, 1.0])
 
 # Success = cube LIFTED by at least this (meters), matching the grasp-and-lift
 # task the dataset is collected/trained on. MUST equal
@@ -70,6 +92,70 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
 
         # Internal Cartesian target — initialized from current FK
         self._sync_target_from_sim()
+
+        # Pedestal collision gate (see SendCartesianDelta).
+        self._setup_pedestal_gate()
+        # Grasp-point undershoot diagnostic (per-episode closest approach).
+        self._reset_grasp_diag()
+
+    def _setup_pedestal_gate(self):
+        """Build the shared pedestal clearance query (disabled if the scene has
+        no `pedestal_box` geom)."""
+        self._ped = PedestalClearance(self._sim.model)
+        self._pedestal_reject_count = 0
+        self._pedestal_last_log = 0.0
+        if self._ped.enabled:
+            logger.info("Pedestal collision gate ENABLED: %d arm collision geoms, %.0f mm margin.",
+                        len(self._ped.arm_geom_ids), PEDESTAL_MARGIN * 1000)
+        else:
+            logger.warning("No `pedestal_box` geom in scene; pedestal collision gate DISABLED.")
+
+    def _pedestal_clearance(self, arm_joints) -> float:
+        """Signed min distance from a guarded arm link to the pedestal box (see
+        pedestal.PedestalClearance)."""
+        return self._ped.clearance(arm_joints)
+
+    def _reset_grasp_diag(self):
+        """Per-episode closest-approach tracking for the grasp-point diagnostic."""
+        self._diag_min_gap = np.inf
+        self._diag_snapshot = None
+
+    def _update_grasp_diag(self, T_target, arm_joints):
+        """Track the closest a COMMANDED oak_l pose comes to actually grasping the
+        cube: compare where the command says the cube should be (oak_l target
+        applied to GRASP_OFFSET_OAKL) to the real cube. Records the snapshot at the
+        episode's closest approach (logged in GetSuccessStatus). Cheap; called per
+        command under the lock."""
+        if not self._has_cube():
+            return
+        cube = self._sim.data.body("red_cube").xpos.copy()
+        exp_cmd = T_target[:3, :3] @ GRASP_OFFSET_OAKL + T_target[:3, 3]
+        gap = float(np.linalg.norm(exp_cmd - cube))
+        if gap < self._diag_min_gap:
+            self._diag_min_gap = gap
+            # Where the ACHIEVED arm pose puts the grasp point (separates a
+            # policy/perception shortfall from an IK/tracking shortfall).
+            T_ach = self._kin.forward(arm_joints, frame=CONTROL_FRAME)
+            exp_ach = T_ach[:3, :3] @ GRASP_OFFSET_OAKL + T_ach[:3, 3]
+
+            # Grasp orientation: tilt of the approach axis from world straight-down
+            # (0 = top grasp; dataset ~10-35deg) + its azimuth (heading).
+            def _tilt_azim(R):
+                v = R @ TILT_AXIS_OAKL
+                v = v / (np.linalg.norm(v) + 1e-12)
+                tilt = np.degrees(np.arccos(np.clip(-v[2], -1.0, 1.0)))
+                azim = np.degrees(np.arctan2(v[1], v[0]))
+                return float(tilt), float(azim)
+            tilt_cmd, azim_cmd = _tilt_azim(T_target[:3, :3])
+            tilt_ach, _ = _tilt_azim(T_ach[:3, :3])
+
+            self._diag_snapshot = {
+                "gap_world": (exp_cmd - cube),                       # commanded gap, world
+                "gap_local": T_target[:3, :3].T @ (exp_cmd - cube),  # in oak_l frame (z = approach/depth)
+                "gap_achieved": float(np.linalg.norm(exp_ach - cube)),
+                "oakl_track_mm": float(np.linalg.norm(T_ach[:3, 3] - T_target[:3, 3]) * 1000),
+                "tilt_cmd": tilt_cmd, "tilt_ach": tilt_ach, "azim_cmd": azim_cmd,
+            }
 
     def _sync_target_from_sim(self):
         """Initialize the internal target from the current sim state."""
@@ -181,6 +267,10 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 # integrator without affecting subsequent commands.
                 R_target = rotation_6d_to_matrix(self._target_r6d)
 
+                # Save the pre-delta target so the pedestal gate can roll back.
+                prev_pos = self._target_pos.copy()
+                prev_r6d = self._target_r6d.copy()
+
                 # Position: target_pos += R_target @ delta_local
                 delta_pos_world = R_target @ delta_pos
                 self._target_pos = self._target_pos + delta_pos_world
@@ -198,7 +288,32 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 arm_joints = self._sim.get_arm_positions()
                 target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints,
                                                   frame=CONTROL_FRAME)
+
+                # Pedestal collision gate (anti-deadlock): reject a proposed config
+                # only if it's within PEDESTAL_MARGIN of the column AND moves
+                # CLOSER than the current config. Moves that keep or increase
+                # clearance are always allowed — so if the arm ends up inside the
+                # margin (reset, a singularity jump, or physical overshoot, since
+                # the box proxy is non-physical), it can still command its way out
+                # instead of freezing. On reject: HOLD last-good + roll back the
+                # integrator target so it doesn't drift deeper.
+                proposed_clear = self._pedestal_clearance(target_joints)
+                if proposed_clear < PEDESTAL_MARGIN and proposed_clear < self._pedestal_clearance(arm_joints):
+                    self._target_pos = prev_pos
+                    self._target_r6d = prev_r6d
+                    self._pedestal_reject_count += 1
+                    now = time.monotonic()
+                    if now - self._pedestal_last_log > 1.0:
+                        logger.warning("Pedestal gate: holding arm (%d rejections); "
+                                       "target moves closer to the column (clearance %.1f mm).",
+                                       self._pedestal_reject_count, proposed_clear * 1000.0)
+                        self._pedestal_last_log = now
+                    return arm_pb2.ArmCommandResponse(success=True)
+
                 self._sim.set_arm_commands(target_joints)
+
+                # Diagnostic: track how close the COMMANDED pose comes to a grasp.
+                self._update_grasp_diag(T_target, arm_joints)
 
             return arm_pb2.ArmCommandResponse(success=True)
 
@@ -239,6 +354,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 cx, cy, cz = result
                 self._cube_start_xy = np.array([cx, cy])
                 self._cube_start_z = cz
+                self._reset_grasp_diag()
                 logger.info(f"Reset (training-dist): cube=[{cx:.3f}, {cy:.3f}]")
                 return arm_pb2.ResetResponse(success=True, cube_x=cx, cube_y=cy, cube_z=cz)
 
@@ -259,6 +375,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 self._sim.data.qvel[:] = 0
                 mujoco.mj_forward(self._sim.model, self._sim.data)
                 self._sync_target_from_sim()
+                self._reset_grasp_diag()
 
             logger.info(f"Reset (legacy): arm={joints.round(3).tolist()}, cube=[{cx:.3f}, {cy:.3f}]")
             return arm_pb2.ResetResponse(
@@ -290,6 +407,30 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
 
         lift = cube_z - self._cube_start_z
         goal_reached = lift > LIFT_SUCCESS_THRESHOLD
+
+        # Grasp-point undershoot diagnostic: how close did the COMMANDED oak_l
+        # pose come to a correct grasp, and is any shortfall in the command
+        # (policy/perception) or in tracking (IK)?
+        snap = self._diag_snapshot
+        if snap is not None:
+            gw = snap["gap_world"] * 1000.0
+            gl = snap["gap_local"] * 1000.0
+            logger.info(
+                "[grasp-diag] closest COMMANDED grasp gap=%.1f mm "
+                "(world=[%+.1f %+.1f %+.1f], oak_l-local=[%+.1f %+.1f %+.1f], "
+                "local z=approach/depth); ACHIEVED gap=%.1f mm; oak_l tracking err=%.1f mm. "
+                "Large COMMANDED gap => policy/perception undershoot; small commanded "
+                "but large achieved => IK/tracking.",
+                self._diag_min_gap * 1000.0, gw[0], gw[1], gw[2], gl[0], gl[1], gl[2],
+                snap["gap_achieved"] * 1000.0, snap["oakl_track_mm"],
+            )
+            logger.info(
+                "[grasp-orient] gripper tilt from vertical: commanded=%.1f deg "
+                "simulated=%.1f deg (0=top grasp; dataset sampled ~10-35 deg); "
+                "commanded azimuth=%.1f deg. A persistently small commanded tilt "
+                "=> the policy collapsed to top grasps despite the trained variation.",
+                snap["tilt_cmd"], snap["tilt_ach"], snap["azim_cmd"],
+            )
 
         return arm_pb2.SuccessStatusResponse(
             goal_reached=goal_reached,
