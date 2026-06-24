@@ -32,6 +32,8 @@ class SlamOrchestrator:
         task_description: str,
         hf_client,
         session_manager,
+        exclude_fail: bool = False,
+        exclude_bad: bool = False,
     ) -> str:
         """Upload all episodes from task_ids to raw_repo, trigger SLAM, poll, delete raw.
 
@@ -87,6 +89,8 @@ class SlamOrchestrator:
                             "source_repo": raw_repo,
                             "target_repo": target_repo,
                             "task": task_description,
+                            "exclude_fail": exclude_fail,
+                            "exclude_bad": exclude_bad,
                         },
                     )
                     r.raise_for_status()
@@ -113,6 +117,7 @@ class SlamOrchestrator:
                         if slam_status == "done":
                             result_url = status.get("result") or \
                                 f"https://huggingface.co/datasets/{target_repo}"
+                            quality = status.get("quality")
                             self._jm.update_progress(job_id, 95.0, "Cleaning up…")
                             # Delete raw dataset
                             try:
@@ -121,7 +126,7 @@ class SlamOrchestrator:
                                 )
                             except Exception as e:
                                 logger.warning("Could not delete raw dataset: %s", e)
-                            self._jm.complete_job(job_id, result_url)
+                            self._jm.complete_job(job_id, result_url, quality=quality)
                             return
                         elif slam_status == "error":
                             raise RuntimeError(

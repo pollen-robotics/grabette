@@ -32,6 +32,8 @@ class PushAndProcessRequest(BaseModel):
     target_repo: str  # e.g. "owner/my-dataset"
     raw_repo: str     # e.g. "owner/my-dataset-raw"
     task_description: str
+    exclude_fail: bool = False
+    exclude_bad: bool = False
 
 
 @router.post("/auth")
@@ -100,6 +102,7 @@ def list_jobs():
             "message": j.message,
             "result": j.result,
             "error": j.error,
+            "quality": j.quality,
         }
         for j in jm.list_jobs()
     ]
@@ -119,6 +122,7 @@ def get_job(job_id: str):
         "message": job.message,
         "result": job.result,
         "error": job.error,
+        "quality": job.quality,
     }
 
 
@@ -141,6 +145,8 @@ async def push_and_process(
         task_description=req.task_description,
         hf_client=hf,
         session_manager=sm,
+        exclude_fail=req.exclude_fail,
+        exclude_bad=req.exclude_bad,
     )
     return {"job_id": job_id, "status": "started"}
 

@@ -781,13 +781,193 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         return gr.update(choices=task_choices, value=[]), ns_update
 
-    def on_ds_upload(task_ids, namespace, repo_name):
-        import time
+    def _render_slam_quality(quality: list) -> str:
+        if not quality:
+            return ""
+        _COLORS = {"GOOD": "#22c55e", "WARN": "#f97316", "BAD": "#dc2626", "FAIL": "#7f1d1d"}
+
+        included = [ep for ep in quality if not ep.get("excluded")]
+        excluded = [ep for ep in quality if ep.get("excluded")]
+
+        counts: dict[str, int] = {}
+        for ep in included:
+            counts[ep.get("verdict", "FAIL")] = counts.get(ep.get("verdict", "FAIL"), 0) + 1
+        summary_incl = " &middot; ".join(
+            f'<span style="color:{_COLORS[v]};font-weight:700;">{n} {v}</span>'
+            for v in ("GOOD", "WARN", "BAD", "FAIL") if (n := counts.get(v))
+        ) or '<span style="color:#94a3b8;">none</span>'
+
+        html = (
+            '<div style="margin-top:1rem;padding:1rem;background:#0f172a;'
+            'border-radius:8px;border:1px solid #1e293b;">'
+            '<div style="margin-bottom:0.75rem;font-weight:600;">SLAM quality recap</div>'
+            f'<div style="margin-bottom:0.5rem;font-size:0.85rem;color:#94a3b8;">'
+            f'In dataset ({len(included)} episode(s)) &mdash; {summary_incl}</div>'
+        )
+
+        non_good_incl = [ep for ep in included if ep.get("verdict") != "GOOD"]
+        if not non_good_incl:
+            if included:
+                html += '<div style="color:#22c55e;font-size:0.85rem;margin-bottom:0.75rem;">✅ All included episodes passed quality checks.</div>'
+        else:
+            for ep in non_good_incl:
+                verdict = ep.get("verdict", "FAIL")
+                color = _COLORS.get(verdict, "#dc2626")
+                name = ep.get("name", "?")
+                tracking = ep.get("tracking_pct", 0)
+                n_jumps = ep.get("n_jumps", 0)
+                dist = ep.get("total_distance_m", 0)
+                issues = "".join(
+                    f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
+                    for e in ep.get("errors", [])
+                ) + "".join(
+                    f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
+                    for w in ep.get("warnings", [])
+                )
+                html += (
+                    f'<div style="border-left:3px solid {color};padding:0.5rem 0.75rem;'
+                    f'margin-bottom:0.5rem;background:#1e293b;border-radius:4px;">'
+                    f'<div style="display:flex;align-items:center;gap:0.5rem;">'
+                    f'<span style="font-weight:600;font-family:monospace;">{name}</span>'
+                    f'<span style="background:{color};color:#fff;font-size:0.7rem;'
+                    f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
+                    f'</div>'
+                    f'<div style="color:#94a3b8;font-size:0.82rem;margin-top:2px;">'
+                    f'tracking {tracking:.1f}% &middot; {n_jumps} jumps '
+                    f'&middot; dist {dist:.2f} m</div>'
+                    f'{issues}</div>'
+                )
+
+        if excluded:
+            html += (
+                f'<div style="margin-top:0.75rem;margin-bottom:0.5rem;'
+                f'font-size:0.85rem;color:#94a3b8;">'
+                f'Excluded from dataset ({len(excluded)} episode(s))</div>'
+            )
+            for ep in excluded:
+                verdict = ep.get("verdict", "FAIL")
+                color = _COLORS.get(verdict, "#dc2626")
+                name = ep.get("name", "?")
+                issues = "".join(
+                    f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
+                    for e in ep.get("errors", [])
+                )
+                html += (
+                    f'<div style="border-left:3px solid #475569;padding:0.5rem 0.75rem;'
+                    f'margin-bottom:0.5rem;background:#1e293b;border-radius:4px;opacity:0.7;">'
+                    f'<div style="display:flex;align-items:center;gap:0.5rem;">'
+                    f'<span style="font-weight:600;font-family:monospace;color:#94a3b8;">{name}</span>'
+                    f'<span style="background:{color};color:#fff;font-size:0.7rem;'
+                    f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
+                    f'<span style="background:#475569;color:#e2e8f0;font-size:0.7rem;'
+                    f'padding:1px 6px;border-radius:3px;">excluded</span>'
+                    f'</div>{issues}</div>'
+                )
+
+        html += '</div>'
+        return html
+
+    def _render_pre_check(results: list) -> str:
+        if not results:
+            return ""
+        _COLORS = {"OK": "#22c55e", "WARN": "#f97316", "ERROR": "#dc2626"}
+        counts: dict[str, int] = {}
+        for r in results:
+            v = r.get("verdict", "ERROR")
+            counts[v] = counts.get(v, 0) + 1
+        summary = " &middot; ".join(
+            f'<span style="color:{_COLORS[v]};font-weight:700;">{n} {v}</span>'
+            for v in ("OK", "WARN", "ERROR") if (n := counts.get(v, 0))
+        )
+        html = (
+            '<div style="margin-top:0.75rem;padding:1rem;background:#0f172a;'
+            'border-radius:8px;border:1px solid #1e293b;">'
+            f'<div style="margin-bottom:0.75rem;font-weight:600;">'
+            f'Recording check &mdash; {summary}</div>'
+        )
+        flagged = [r for r in results if r.get("verdict") != "OK"]
+        if not flagged:
+            html += '<div style="color:#22c55e;">✅ All recordings look complete.</div>'
+        else:
+            for r in flagged:
+                verdict = r.get("verdict", "ERROR")
+                color = _COLORS.get(verdict, "#dc2626")
+                name = r.get("episode_id", "?")
+                issues = "".join(
+                    f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
+                    for e in r.get("errors", [])
+                ) + "".join(
+                    f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
+                    for w in r.get("warnings", [])
+                )
+                html += (
+                    f'<div style="border-left:3px solid {color};padding:0.5rem 0.75rem;'
+                    f'margin-bottom:0.5rem;background:#1e293b;border-radius:4px;">'
+                    f'<div style="display:flex;align-items:center;gap:0.5rem;">'
+                    f'<span style="font-weight:600;font-family:monospace;">{name}</span>'
+                    f'<span style="background:{color};color:#fff;font-size:0.7rem;'
+                    f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
+                    f'</div>{issues}</div>'
+                )
+        html += '</div>'
+        return html
+
+    def on_check_recordings(task_ids):
         if not task_ids:
-            yield "Select at least one task"
+            return gr.update(visible=False, value=""), gr.update(visible=False), []
+        sessions = _get_sessions()
+        session_map = {s["id"]: s for s in sessions}
+        episode_ids: list[str] = []
+        for tid in task_ids:
+            s = session_map.get(tid)
+            if s:
+                # Use "episodes" (exists on disk) not "episode_ids" (may include stale refs)
+                episode_ids.extend(
+                    ep["episode_id"]
+                    for ep in s.get("episodes", [])
+                    if ep.get("episode_id")
+                )
+        if not episode_ids:
+            return (
+                gr.update(visible=True, value="<p style='color:#94a3b8;padding:0.5rem;'>No episodes in selected tasks.</p>"),
+                gr.update(visible=False),
+                [],
+            )
+        results = client.check_episodes(episode_ids)
+        html = _render_pre_check(results)
+        n_error = sum(1 for r in results if r.get("verdict") == "ERROR")
+        btn_update = gr.update(
+            visible=n_error > 0,
+            value=f"🗑 Delete {n_error} ERROR episode(s) locally",
+        )
+        return gr.update(visible=True, value=html), btn_update, results
+
+    def on_delete_pre_check_errors(check_results):
+        if not check_results:
+            return "No check results available.", gr.update(visible=False)
+        error_ids = [r["episode_id"] for r in check_results if r.get("verdict") == "ERROR"]
+        if not error_ids:
+            return "No ERROR episodes to delete.", gr.update(visible=False)
+        failed = []
+        for eid in error_ids:
+            result = client.delete_episode(eid)
+            if "error" in result:
+                failed.append(f"{eid}: {result['error']}")
+        if failed:
+            return f"Some deletions failed: {'; '.join(failed)}", gr.update(visible=False)
+        return (
+            f"Deleted {len(error_ids)} ERROR episode(s) locally: {', '.join(error_ids)}",
+            gr.update(visible=False),
+        )
+
+    def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad):
+        import time
+        _reset = (gr.update(visible=False, value=""), gr.update(visible=False), [])
+        if not task_ids:
+            yield ("Select at least one task", *_reset)
             return
         if not namespace or not repo_name.strip():
-            yield "Enter an owner and a repository name"
+            yield ("Enter an owner and a repository name", *_reset)
             return
         name = repo_name.strip()
         target_repo = f"{namespace}{name}"
@@ -803,16 +983,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ]
         task_description = ", ".join(descriptions) if descriptions else name
 
-        yield f"Starting… uploading to {raw_repo}, then processing to {target_repo}"
+        yield (f"Starting… uploading to {raw_repo}, then processing to {target_repo}", *_reset)
 
         result = client.hf_push_and_process(
             task_ids=list(task_ids),
             target_repo=target_repo,
             raw_repo=raw_repo,
             task_description=task_description,
+            exclude_fail=bool(exclude_fail),
+            exclude_bad=bool(exclude_bad),
         )
         if "error" in result:
-            yield f"Error: {result['error']}"
+            yield (f"Error: {result['error']}", *_reset)
             return
 
         job_id = result["job_id"]
@@ -820,7 +1002,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             time.sleep(3)
             job = client.hf_get_job(job_id)
             if job is None:
-                yield "Error: job lost"
+                yield ("Error: job lost", *_reset)
                 return
             status = job.get("status", "running")
             error = job.get("error") or ""
@@ -828,13 +1010,39 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pct = job.get("progress", 0)
             if status == "completed":
                 link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
-                yield f"✅ Done! Dataset: {link}"
+                quality = job.get("quality") or []
+                quality_html = _render_slam_quality(quality)
+                n_bad = sum(1 for ep in quality if ep.get("verdict") in ("BAD", "FAIL"))
+                html_up = gr.update(visible=bool(quality), value=quality_html)
+                btn_up = gr.update(
+                    visible=n_bad > 0,
+                    value=f"🗑 Delete {n_bad} BAD/FAIL episode(s) from local storage",
+                )
+                yield (f"✅ Done! Dataset: {link}", html_up, btn_up, quality)
                 return
             elif status == "failed":
-                yield f"❌ Failed: {msg}"
+                yield (f"❌ Failed: {msg}", *_reset)
                 return
             else:
-                yield f"[{pct:.0f}%] {msg}"
+                yield (f"[{pct:.0f}%] {msg}", gr.update(), gr.update(), gr.update())
+
+    def on_delete_bad_episodes(quality_data):
+        if not quality_data:
+            return "No quality data available.", gr.update(visible=False)
+        bad_ids = [ep["name"] for ep in quality_data if ep.get("verdict") in ("BAD", "FAIL")]
+        if not bad_ids:
+            return "No BAD/FAIL episodes to delete.", gr.update(visible=False)
+        errors = []
+        for eid in bad_ids:
+            result = client.delete_episode(eid)
+            if "error" in result:
+                errors.append(f"{eid}: {result['error']}")
+        if errors:
+            return f"Some deletions failed: {'; '.join(errors)}", gr.update(visible=False)
+        return (
+            f"Deleted {len(bad_ids)} episode(s) locally: {', '.join(bad_ids)}",
+            gr.update(visible=False),
+        )
 
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
@@ -1167,6 +1375,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """)
         ds_task_cbg = gr.CheckboxGroup(choices=[], label=None, container=False)
 
+        # ── Pre-SLAM recording check ───────────────────────────────────
+        gr.HTML("<div style='margin-top:1rem;'>")
+        ds_check_btn = gr.Button("🔍 Check recordings", size="sm", variant="secondary")
+        ds_check_html = gr.HTML("", visible=False)
+        ds_check_state = gr.State([])
+        ds_delete_errors_btn = gr.Button(
+            "🗑 Delete ERROR episodes locally",
+            variant="stop",
+            visible=False,
+            size="sm",
+        )
+        gr.HTML("</div>")
+
         # ── Step 2 ────────────────────────────────────────────────────
         gr.HTML("""
         <div style="display:flex;align-items:center;gap:0.75rem;
@@ -1191,6 +1412,24 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 scale=2,
             )
 
+        # ── Quality filter options ─────────────────────────────────────
+        gr.HTML("""
+        <div style="margin-top:1.25rem;margin-bottom:0.5rem;font-weight:600;font-size:0.95rem;">
+          Processing options
+        </div>
+        <div style="color:#94a3b8;font-size:0.82rem;margin-bottom:0.5rem;">
+          Episodes excluded below will not appear in the published dataset.
+        </div>
+        """)
+        ds_exclude_fail = gr.Checkbox(
+            label="Exclude FAIL episodes (SLAM produced no trajectory)",
+            value=False,
+        )
+        ds_exclude_bad = gr.Checkbox(
+            label="Exclude BAD episodes (unrealistic speed, drift, or zigzag jumps)",
+            value=False,
+        )
+
         # ── Upload ────────────────────────────────────────────────────
         gr.HTML("<div style='margin-top:1.5rem;max-width:260px;'>")
         ds_upload_btn = gr.Button(
@@ -1202,12 +1441,35 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_upload_msg = gr.Textbox(
             show_label=False, interactive=False, max_lines=3, container=False,
         )
+        ds_quality_html = gr.HTML("", visible=False)
+        ds_quality_state = gr.State([])
+        ds_delete_bad_btn = gr.Button(
+            "🗑 Delete BAD/FAIL episodes from local storage",
+            variant="stop",
+            visible=False,
+            size="sm",
+        )
         gr.HTML("</div>")
 
+        ds_check_btn.click(
+            fn=on_check_recordings,
+            inputs=[ds_task_cbg],
+            outputs=[ds_check_html, ds_delete_errors_btn, ds_check_state],
+        )
+        ds_delete_errors_btn.click(
+            fn=on_delete_pre_check_errors,
+            inputs=[ds_check_state],
+            outputs=[ds_upload_msg, ds_delete_errors_btn],
+        )
         ds_upload_btn.click(
             fn=on_ds_upload,
-            inputs=[ds_task_cbg, ds_namespace, ds_repo_name],
-            outputs=ds_upload_msg,
+            inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_exclude_fail, ds_exclude_bad],
+            outputs=[ds_upload_msg, ds_quality_html, ds_delete_bad_btn, ds_quality_state],
+        )
+        ds_delete_bad_btn.click(
+            fn=on_delete_bad_episodes,
+            inputs=[ds_quality_state],
+            outputs=[ds_upload_msg, ds_delete_bad_btn],
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])

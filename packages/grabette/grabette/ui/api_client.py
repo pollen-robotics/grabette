@@ -350,12 +350,28 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def check_episodes(self, episode_ids: list[str]) -> list[dict]:
+        try:
+            r = self._http.post(
+                "/api/episodes/check-recording",
+                json={"episode_ids": episode_ids},
+            )
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return [
+                {"episode_id": eid, "errors": [str(e)], "warnings": [], "verdict": "ERROR"}
+                for eid in episode_ids
+            ]
+
     def hf_push_and_process(
         self,
         task_ids: list[str],
         target_repo: str,
         raw_repo: str,
         task_description: str,
+        exclude_fail: bool = False,
+        exclude_bad: bool = False,
     ) -> dict:
         try:
             r = self._http.post(
@@ -365,6 +381,8 @@ class GrabetteClient:
                     "target_repo": target_repo,
                     "raw_repo": raw_repo,
                     "task_description": task_description,
+                    "exclude_fail": exclude_fail,
+                    "exclude_bad": exclude_bad,
                 },
             )
             r.raise_for_status()

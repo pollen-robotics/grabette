@@ -220,3 +220,44 @@ def move_episodes(
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"moved": req.episode_ids, "target_session_id": req.target_session_id}
+
+
+class CheckEpisodesRequest(BaseModel):
+    episode_ids: list[str]
+
+
+@router.post("/api/episodes/check-recording")
+def check_episodes_recording(
+    req: CheckEpisodesRequest,
+    sm: SessionManager = Depends(get_session_manager),
+):
+    """Run a lightweight local recording check on a batch of episodes.
+
+    Checks file completeness (oakd_left.mp4, oakd_imu.json, calibration, etc.)
+    without heavy dependencies. Returns per-episode verdict: OK / WARN / ERROR.
+    """
+    from grabette.checks import check_recording_local
+
+    results = []
+    for episode_id in req.episode_ids:
+        ep_dir = sm.episode_dir(episode_id)
+        if not ep_dir.exists():
+            results.append({
+                "episode_id": episode_id,
+                "errors": ["Episode directory not found"],
+                "warnings": [],
+                "verdict": "ERROR",
+            })
+            continue
+        try:
+            check = check_recording_local(ep_dir)
+            check["episode_id"] = episode_id
+            results.append(check)
+        except Exception as e:
+            results.append({
+                "episode_id": episode_id,
+                "errors": [f"Check failed: {e}"],
+                "warnings": [],
+                "verdict": "ERROR",
+            })
+    return results

@@ -27,6 +27,7 @@ class Job:
     message: str = ""
     result: str | None = None
     error: str | None = None
+    quality: list | None = None
 
 
 class JobManager:
@@ -53,12 +54,13 @@ class JobManager:
             if job.status == JobStatus.PENDING:
                 job.status = JobStatus.RUNNING
 
-    def complete_job(self, job_id: str, result: str) -> None:
+    def complete_job(self, job_id: str, result: str, quality: list | None = None) -> None:
         job = self._jobs.get(job_id)
         if job:
             job.status = JobStatus.COMPLETED
             job.progress = 100.0
             job.result = result
+            job.quality = quality
 
     def fail_job(self, job_id: str, error: str) -> None:
         job = self._jobs.get(job_id)
