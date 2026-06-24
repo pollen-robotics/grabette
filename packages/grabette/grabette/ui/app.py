@@ -1012,11 +1012,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
                 quality = job.get("quality") or []
                 quality_html = _render_slam_quality(quality)
-                n_bad = sum(1 for ep in quality if ep.get("verdict") in ("BAD", "FAIL"))
+                n_bad = sum(1 for ep in quality if ep.get("verdict") in ("BAD", "WARN", "FAIL"))
                 html_up = gr.update(visible=bool(quality), value=quality_html)
                 btn_up = gr.update(
                     visible=n_bad > 0,
-                    value=f"🗑 Delete {n_bad} BAD/FAIL episode(s) from local storage",
+                    value=f"🗑 Delete {n_bad} BAD/WARN/FAIL episode(s) from local storage",
                 )
                 yield (f"✅ Done! Dataset: {link}", html_up, btn_up, quality)
                 return
@@ -1029,7 +1029,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_delete_bad_episodes(quality_data):
         if not quality_data:
             return "No quality data available.", gr.update(visible=False)
-        bad_ids = [ep["name"] for ep in quality_data if ep.get("verdict") in ("BAD", "FAIL")]
+        bad_ids = [ep["name"] for ep in quality_data if ep.get("verdict") in ("BAD", "WARN", "FAIL")]
         if not bad_ids:
             return "No BAD/FAIL episodes to delete.", gr.update(visible=False)
         errors = []
@@ -1422,11 +1422,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         </div>
         """)
         ds_exclude_fail = gr.Checkbox(
-            label="Exclude FAIL episodes (SLAM produced no trajectory)",
+            label="Exclude FAIL episodes (SLAM produced < 2 tracked frames)",
             value=False,
         )
         ds_exclude_bad = gr.Checkbox(
-            label="Exclude BAD episodes (unrealistic speed, drift, or zigzag jumps)",
+            label="Exclude BAD/WARN episodes (low tracking, speed, drift, or zigzag jumps)",
             value=False,
         )
 
@@ -1444,7 +1444,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_quality_html = gr.HTML("", visible=False)
         ds_quality_state = gr.State([])
         ds_delete_bad_btn = gr.Button(
-            "🗑 Delete BAD/FAIL episodes from local storage",
+            "🗑 Delete BAD/WARN/FAIL episodes from local storage",
             variant="stop",
             visible=False,
             size="sm",
