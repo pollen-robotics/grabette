@@ -1,0 +1,17 @@
+{
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/25c822efb72989a8d89a69ff/e/c77dbd6d3fbd22e2e0636f89",
+    "robot_name": "openarm_gripette_right",
+    "output_format": "mujoco",
+    "simplify_stls": true,
+
+    "_comment": "MuJoCo export config. joint_properties / geom_properties bake in the hand-tuning that previous exports clobbered (see the openarm-export-regressions notes): arm position gain kp=500 + armature 0.1 (the exporter default is kp=50 / armature 0.005), the COMPLIANT gripper kp=120 on proximal/distal (over-close pressure grip), and the 2/1 collision scheme (arm-vs-arm 2&1=0 -> no self-collision; arm-vs-object collides). To export MJCF: copy this to config.json, then run onshape-to-robot.",
+
+    "joint_properties": {
+        "*":        { "kp": 500, "armature": 0.1, "frictionloss": 0.1, "dampratio": 1 },
+        "proximal": { "kp": 120 },
+        "distal":   { "kp": 120 }
+    },
+    "geom_properties": {
+        "*": { "collision": { "contype": 2, "conaffinity": 1 } }
+    }
+}

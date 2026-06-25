@@ -9,3 +9,4 @@ from .ik_feasibility import (
     RejectionSamplingStats,
 )
 from .domain_randomization import DRConfig, randomize_scene
+from .start_collision import StartCollisionChecker
