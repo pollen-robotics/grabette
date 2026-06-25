@@ -27,6 +27,13 @@ class UploadRequest(BaseModel):
     repo_id: str
 
 
+class PushAndProcessRequest(BaseModel):
+    task_ids: list[str]
+    target_repo: str  # e.g. "owner/my-dataset"
+    raw_repo: str     # e.g. "owner/my-dataset-raw"
+    task_description: str
+
+
 @router.post("/auth")
 def set_auth(req: AuthRequest, hf: HuggingFaceClient = Depends(get_hf_client)):
     hf.set_token(req.token)
@@ -113,6 +120,29 @@ def get_job(job_id: str):
         "result": job.result,
         "error": job.error,
     }
+
+
+@router.post("/push")
+async def push_and_process(
+    req: PushAndProcessRequest,
+    hf: HuggingFaceClient = Depends(get_hf_client),
+    sm: SessionManager = Depends(get_session_manager),
+):
+    """Upload all episodes from task_ids to raw_repo, trigger SLAM Space, poll, delete raw."""
+    if not hf.is_authenticated:
+        raise HTTPException(status_code=401, detail="Not authenticated with HuggingFace")
+
+    from grabette.slam import get_slam_orchestrator
+    slam = get_slam_orchestrator()
+    job_id = await slam.push_and_process(
+        task_ids=req.task_ids,
+        raw_repo=req.raw_repo,
+        target_repo=req.target_repo,
+        task_description=req.task_description,
+        hf_client=hf,
+        session_manager=sm,
+    )
+    return {"job_id": job_id, "status": "started"}
 
 
 @router.post("/slam/{episode_id}")

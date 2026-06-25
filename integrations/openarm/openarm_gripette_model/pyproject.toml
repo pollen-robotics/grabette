@@ -4,9 +4,14 @@ version = "0.1.0"
 description = "OpenArm Gripette robot model (URDF, MuJoCo XML, mesh assets)"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["onshape-to-robot>=1.8.1",
-              "pybullet>=3.2.7",
-              "mujoco>=3.6",]
+dependencies = []
+
+[project.optional-dependencies]
+urdf = [
+    "onshape-to-robot>=1.8.1",
+    "pybullet>=3.2.7",
+    "mujoco>=3.6",
+]
 
 [build-system]
 requires = ["hatchling"]

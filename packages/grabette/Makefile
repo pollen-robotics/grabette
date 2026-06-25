@@ -21,7 +21,7 @@ install-rpi: install-udev-oak
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg
 	cd $(WORKSPACE_ROOT) && rm -rf .venv \
 	  && uv venv --python /usr/bin/python3 --system-site-packages \
-	  && uv sync --package grabette --extra rpi --extra ui
+	  && uv sync --package grabette --extra rpi --extra ui --extra hf
 	@echo "--- verifying imports ---"
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
@@ -42,12 +42,21 @@ install-udev-oak:
 		echo "OAK-D udev rule already present."; \
 	fi
 
-# nmcli --rescan yes triggers a real radio scan, which NetworkManager restricts
-# to members of the 'netdev' group. Without this, the scan returns empty or errors
-# on machines where the service user doesn't already have wifi management rights.
+# nmcli --rescan yes triggers a real radio scan, gated by two things:
+# 1. the 'netdev' group (NM membership check)
+# 2. the polkit action org.freedesktop.NetworkManager.wifi.scan
+# Both are required on Bookworm/Trixie; the group alone is not sufficient.
+POLKIT_RULE := /etc/polkit-1/rules.d/10-grabette-wifi-scan.rules
 install-netdev:
 	sudo usermod -aG netdev rasp
-	@echo "Group change applied. A reboot (or 'sudo systemctl restart grabette') is needed."
+	@if [ ! -f $(POLKIT_RULE) ]; then \
+		echo "Installing polkit rule for WiFi scan..."; \
+		printf 'polkit.addRule(function(action, subject) {\n    if (action.id === "org.freedesktop.NetworkManager.wifi.scan" &&\n        subject.isInGroup("netdev")) {\n        return polkit.Result.YES;\n    }\n});\n' \
+		  | sudo tee $(POLKIT_RULE) >/dev/null; \
+	else \
+		echo "Polkit WiFi scan rule already present."; \
+	fi
+	@echo "Done. A reboot (or 'sudo systemctl restart grabette polkit') is needed."
 
 # Lets the web UI's "Power Off" button halt the Pi. Grants the service user
 # the right to run exactly `systemctl poweroff` (nothing else) without a
