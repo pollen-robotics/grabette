@@ -134,34 +134,48 @@ def warn_if_unexpected(cfg: dict) -> None:
 
 
 def change_id(ctrl: Sts3215PyController, current_id: int, new_id: int) -> bool:
-    """Unlock EEPROM → write ID → lock EEPROM → verify. Returns True on success."""
+    """Unlock EEPROM -> write ID -> verify at new ID -> lock EEPROM.
+
+    Returns True on success.
+
+    Note on the write_id timeout: Feetech firmwares commonly send the status
+    reply for an ID-write *from the new ID*, which the host times out waiting
+    on the old ID. The write itself succeeds — we treat the timeout as
+    expected and verify by reading at the new ID immediately after.
+    """
     print(f"  unlocking EEPROM on id {current_id}...")
     ctrl.write_lock(current_id, False)
 
     print(f"  writing new id: {current_id} -> {new_id}...")
-    ctrl.write_id(current_id, new_id)
-
-    # Small settle delay — the motor needs a beat before responding at the new ID.
-    time.sleep(0.05)
-
-    print(f"  locking EEPROM at new id {new_id}...")
     try:
-        ctrl.write_lock(new_id, True)
-    except RuntimeError as e:
-        print(f"  ERROR: motor did not respond at new id {new_id} after write: {e}")
-        print(f"         (the ID write may have failed; power-cycle and re-run)")
-        return False
+        ctrl.write_id(current_id, new_id)
+    except RuntimeError:
+        # Expected — status ACK comes from the new ID. Verify by read below.
+        print("  (status ACK missed — expected for ID writes; verifying...)")
 
-    # Verify by re-reading the ID register at the new ID.
+    # Settle: ~100 ms for the motor to commit and start replying at the new ID.
+    time.sleep(0.1)
+
     try:
         readback = ctrl.read_id(new_id)[0]
     except RuntimeError as e:
-        print(f"  ERROR: could not read back id at {new_id}: {e}")
+        print(f"  ERROR: motor does not respond at new id {new_id}: {e}")
+        print(f"         The ID write did not take effect. Power-cycle the motor")
+        print(f"         and re-run; if it persists at id {current_id}, EEPROM may still be locked.")
         return False
     if readback != new_id:
         print(f"  ERROR: read-back returned {readback}, expected {new_id}")
         return False
     print(f"  verified: motor now responds at id {new_id}")
+
+    print(f"  locking EEPROM at new id {new_id}...")
+    try:
+        ctrl.write_lock(new_id, True)
+    except RuntimeError as e:
+        print(f"  WARNING: could not lock EEPROM at id {new_id}: {e}")
+        print(f"           ID change succeeded; EEPROM left unlocked (harmless,")
+        print(f"           but other EEPROM regs will be writable until next power cycle).")
+
     return True
 
 
