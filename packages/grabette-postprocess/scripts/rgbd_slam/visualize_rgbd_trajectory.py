@@ -22,7 +22,7 @@ from scipy.spatial.transform import Rotation
 
 
 def _gravity_align(positions: np.ndarray, quaternions: np.ndarray,
-                   oak_dir: Path, n_samples: int = 50, account_for_rotate_180: bool = False
+                   oak_dir: Path, n_samples: int = 50,
                    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Rotate trajectory so gravity (in WORLD frame) points to world -Z.
 
@@ -48,9 +48,9 @@ def _gravity_align(positions: np.ndarray, quaternions: np.ndarray,
 
     calib = json.loads((oak_dir / "calib_offline.json").read_text())
     R_imu_to_cam = np.array(calib["imu_to_cam"])[:3, :3]
-    g_cam = R_imu_to_cam @ g_imu
-    if account_for_rotate_180:
-        g_cam = np.array([-g_cam[0], -g_cam[1], g_cam[2]])
+    # Accelerometer at rest = SPECIFIC FORCE (points UP). Negate for physical
+    # gravity (DOWN) so the align-to-(0,0,-1) below gives a Z-UP world.
+    g_cam = -(R_imu_to_cam @ g_imu)
     g_cam_unit = g_cam / np.linalg.norm(g_cam)
 
     # Project gravity into world frame using the FIRST pose's orientation.
@@ -128,12 +128,7 @@ def _log_oak_imu(imu_data: dict, t0: float):
                    'Normally NOT needed — run_oak_slam already does this when '
                    'producing camera_trajectory.csv. Use for legacy CSVs that '
                    'predate the in-pipeline gravity align.')
-@click.option('--rotate180/--no-rotate180', default=False,
-              help='Account for on-device setImageOrientation(ROTATE_180_DEG). '
-                   'Default OFF: empirically, stereo.rectifiedLeft/depth do NOT '
-                   'honor the per-camera image orientation, so SLAM ran on '
-                   'factory-oriented frames.')
-def main(episode_dir, show_video, video_skip, app_id, gravity_align, rotate180):
+def main(episode_dir, show_video, video_skip, app_id, gravity_align):
     """Visualize OAK SLAM trajectory from a processed episode directory."""
     episode_dir = Path(episode_dir)
     oak_dir = episode_dir / "oak"
@@ -169,10 +164,10 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align, rotate180):
             print("Error: --gravity-align requires the oak/ subdir (run convert_episode_to_oak.py first)")
             sys.exit(1)
         positions, quaternions, g_unit_for_log = _gravity_align(
-            positions, quaternions, oak_dir, account_for_rotate_180=rotate180,
+            positions, quaternions, oak_dir,
         )
         print(f"\n=== Gravity Alignment ===")
-        print(f"  Measured g in SLAM camera frame (unit, rotate180={rotate180}): "
+        print(f"  Measured g in SLAM camera frame (unit): "
               f"[{g_unit_for_log[0]:+.3f}, {g_unit_for_log[1]:+.3f}, {g_unit_for_log[2]:+.3f}]")
         print(f"  Rotated so that direction now maps to [0, 0, -1] (world -Z)")
         # Also rotate the position/quaternion columns we still need from df_valid
@@ -276,7 +271,8 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align, rotate180):
             g_imu = imu_acc[["ax", "ay", "az"]].iloc[:50].mean().to_numpy()
             calib = json.loads((oak_dir / "calib_offline.json").read_text())
             R_imu_to_cam = np.array(calib["imu_to_cam"])[:3, :3]
-            g_cam = R_imu_to_cam @ g_imu
+            # Negate: accel at rest is specific force (UP); physical gravity is DOWN.
+            g_cam = -(R_imu_to_cam @ g_imu)
             g_cam /= np.linalg.norm(g_cam)
             R_world_from_cam = Rotation.from_quat(quaternions[0])
             g_world = R_world_from_cam.apply(g_cam)
@@ -342,12 +338,6 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align, rotate180):
             ret, frame = video_cap.read()
             if ret:
                 frame_disp = cv2.resize(frame, (640, 400), interpolation=cv2.INTER_AREA)
-                # stereo.rectifiedLeft does NOT honor camera setImageOrientation
-                # (verified empirically: depth + rectified outputs come out in
-                # factory orientation regardless). Rotate at viz time to match
-                # the user's intuition. This is for DISPLAY ONLY — the actual
-                # SLAM ran on un-rotated frames.
-                frame_disp = cv2.rotate(frame_disp, cv2.ROTATE_180)
                 rr.log("camera_feed", rr.Image(frame_disp))
 
         if frame_i % (video_skip * 10) == 0:

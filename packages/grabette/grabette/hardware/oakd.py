@@ -35,6 +35,7 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -443,6 +444,9 @@ class OakdCapture:
             (self._output_dir / "oakd_clock_pairs.json").write_text(
                 json.dumps({"pairs": self._clock_pairs})
             )
+            # Pack depth PNGs → one lossless video (after its timestamps sidecar
+            # is written), same finalization stage as the H.264 mux above.
+            self._pack_depth_video()
 
         stats = {
             "left_frames": len(self._left_ts),
@@ -705,6 +709,52 @@ class OakdCapture:
             pass
         if result.returncode != 0:
             logger.error("ffmpeg muxing failed for %s: %s", name, result.stderr[-300:])
+
+    def _pack_depth_video(self) -> None:
+        """Finalize depth: encode oakd_depth/*.png → one lossless FFV1 16-bit
+        video (oakd_depth.mkv) in capture (= depth_ts) order, then drop the PNG
+        dir. Mirrors the H.264→mp4 mux above: one file per episode instead of
+        ~600 PNGs, ~2× smaller, and bit-identical once decoded — so the offline
+        SLAM input is unchanged. Best-effort: on any failure the PNGs are kept
+        and used as-is (convert/episode_check accept either layout)."""
+        if not self.enable_depth or not self._output_dir:
+            return
+        depth_dir = self._output_dir / "oakd_depth"
+        if not depth_dir.is_dir() or not self._depth_ts:
+            return
+        out = self._output_dir / "oakd_depth.mkv"
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                stage = Path(tmp)
+                # Symlink (not copy) the PNGs under sequential names in capture
+                # order, so the offline convert can map video frame i back to
+                # depth_ts[i].seq. Symlinks keep staging ~free: no duplicated
+                # bytes, no transient ~2× depth disk usage, and no whole-set copy
+                # into a tmpfs /tmp. ffmpeg reads through them; resolve to an
+                # absolute target so the link works from the temp dir.
+                for i, s in enumerate(self._depth_ts):
+                    src = depth_dir / f'{int(s["seq"]):08d}.png'
+                    if not src.exists():
+                        logger.warning(
+                            "depth pack: missing PNG for seq %s — keeping PNGs", s.get("seq"))
+                        return
+                    (stage / f"{i:06d}.png").symlink_to(src.resolve())
+                cmd = [
+                    "ffmpeg", "-y", "-loglevel", "error",
+                    "-framerate", f"{float(self.fps):.3f}",
+                    "-start_number", "0", "-i", str(stage / "%06d.png"),
+                    "-c:v", "ffv1", "-level", "3", "-pix_fmt", "gray16le", str(out),
+                ]
+                result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error("depth pack ffmpeg failed: %s", result.stderr[-300:])
+                if out.exists():
+                    out.unlink()
+                return
+            shutil.rmtree(depth_dir)
+            logger.info("oakd depth packed → %s (%d frames)", out.name, len(self._depth_ts))
+        except Exception as e:
+            logger.warning("depth pack failed (%s) — keeping PNGs", e)
 
     def shutdown(self) -> None:
         """Stop the pipeline and exit all drainer threads."""

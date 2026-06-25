@@ -21,7 +21,17 @@ ARM_JOINT_NAMES = [
 
 # Frame names
 CAMERA_FRAME = "camera"
-GRIPPER_FRAME = "gripper"
+GRIPPER_FRAME = "gripper_center"
+OAKL_FRAME = "oak_l"   # SLAM / control frame the grasp trajectory commands
+
+# THE control frame: the single frame the whole pipeline (recorded data action,
+# IK feasibility filter, arm Cartesian-delta control, server reset, replay) must
+# agree on. The policy commands this frame; IK targets it. Change it HERE only.
+# Must be oak_l for the current free-floating dataset (the scene is rooted at
+# oak_l, so the recorded mocap pose IS the oak_l pose — see collect_grasp_dataset
+# and the assert there). Switching to CAMERA_FRAME additionally requires the data
+# recording + IK targets to apply the oak_l->camera transform.
+CONTROL_FRAME = OAKL_FRAME
 
 
 class Kinematics:
@@ -68,16 +78,19 @@ class Kinematics:
         self._frame_task = self.solver.add_frame_task(CAMERA_FRAME, T_cam)
         self._frame_task.configure(CAMERA_FRAME, "soft", position_weight, orientation_weight)
 
-        # Fixed offset: gripper → camera (for converting gripper targets to camera targets)
+        # Fixed offsets to the camera frame (the solver always tasks the camera),
+        # so targets given in other frames can be converted to a camera target.
         T_grip = self.robot.get_T_world_frame(GRIPPER_FRAME)
         self._T_grip_to_cam = np.linalg.inv(T_grip) @ T_cam
+        T_oakl = self.robot.get_T_world_frame(OAKL_FRAME)
+        self._T_oakl_to_cam = np.linalg.inv(T_oakl) @ T_cam
 
-    def forward(self, joint_positions: np.ndarray, frame: str = CAMERA_FRAME) -> np.ndarray:
+    def forward(self, joint_positions: np.ndarray, frame: str = CONTROL_FRAME) -> np.ndarray:
         """Compute a frame's pose from arm joint positions.
 
         Args:
             joint_positions: 7-element array of arm joint angles (rad).
-            frame: frame name to compute FK for (default: camera).
+            frame: frame name to compute FK for (default: CONTROL_FRAME).
 
         Returns:
             4x4 homogeneous transform (world -> frame).
@@ -92,7 +105,7 @@ class Kinematics:
         target_pose: np.ndarray,
         current_joint_positions: np.ndarray | None = None,
         n_iter: int = 500,
-        frame: str = CAMERA_FRAME,
+        frame: str = CONTROL_FRAME,
     ) -> np.ndarray:
         """Solve IK for a target pose of the given frame.
 
@@ -101,7 +114,7 @@ class Kinematics:
             current_joint_positions: optional 7-element starting config.
                 If None, uses the robot's current state.
             n_iter: number of solver iterations.
-            frame: which frame to target ('camera' or 'gripper').
+            frame: which frame to target ('camera' or 'gripper_center').
                    Gripper targets are converted to camera targets internally.
 
         Returns:
@@ -112,9 +125,12 @@ class Kinematics:
                 self.robot.set_joint(name, current_joint_positions[i])
             self.robot.update_kinematics()
 
-        # Convert gripper target to camera target using fixed offset
+        # Convert a target given in another frame to the camera target the
+        # solver tasks, using the fixed offset for that frame.
         if frame == GRIPPER_FRAME:
             cam_target = target_pose @ self._T_grip_to_cam
+        elif frame == OAKL_FRAME:
+            cam_target = target_pose @ self._T_oakl_to_cam
         else:
             cam_target = target_pose
 
