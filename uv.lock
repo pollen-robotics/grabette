@@ -2991,20 +2991,26 @@ dataset = [
 dev = [
     { name = "grpcio-tools" },
 ]
+eval = [
+    { name = "lerobot", marker = "python_full_version >= '3.12'" },
+    { name = "scipy" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "grpcio", specifier = ">=1.60" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.60" },
     { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'dataset'", specifier = ">=0.5" },
+    { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'eval'", specifier = ">=0.5.1" },
     { name = "mujoco", specifier = ">=3.6" },
     { name = "numpy" },
     { name = "openarm-gripette-model", editable = "integrations/openarm/openarm_gripette_model" },
     { name = "opencv-python", specifier = ">=4.9" },
     { name = "placo", specifier = ">=0.9" },
     { name = "protobuf", specifier = ">=4.25" },
+    { name = "scipy", marker = "extra == 'eval'", specifier = ">=1.10" },
 ]
-provides-extras = ["dev", "dataset"]
+provides-extras = ["dev", "dataset", "eval"]
 
 [[package]]
 name = "opencv-contrib-python"

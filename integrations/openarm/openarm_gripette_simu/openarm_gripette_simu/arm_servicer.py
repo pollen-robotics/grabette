@@ -46,6 +46,15 @@ TABLE_Y_MAX = 0.285
 # column. The clearance query (box / margin / guarded links) lives in pedestal.py
 # and is SHARED with the data-gen IK filter so they enforce the same constraint.
 
+# Singularity guard: near a kinematic singularity the IK produces an exploding
+# joint jump for a tiny Cartesian step (the arm "flails"). If a proposed config
+# jumps more than this (rad, any single joint) from the current one, hold
+# last-good instead of commanding the explosion. ~0.5 rad/command is already well
+# past the arm's velocity limit (10 rad/s -> ~0.33 rad at 30Hz), so normal motion
+# never trips it; only the explosions do. Tunable: lower if explosions slip
+# through, raise if fast legitimate moves get held.
+JOINT_JUMP_LIMIT = 0.5
+
 # --- Grasp-point undershoot diagnostic ----------------------------------------
 # GRASP_OFFSET_OAKL is where the cube sits in the oak_l (control) frame when
 # correctly grasped — the cube position in the gripper-root frame at the recorded
@@ -104,6 +113,8 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         self._ped = PedestalClearance(self._sim.model)
         self._pedestal_reject_count = 0
         self._pedestal_last_log = 0.0
+        self._singularity_reject_count = 0
+        self._singularity_last_log = 0.0
         if self._ped.enabled:
             logger.info("Pedestal collision gate ENABLED: %d arm collision geoms, %.0f mm margin.",
                         len(self._ped.arm_geom_ids), PEDESTAL_MARGIN * 1000)
@@ -163,6 +174,10 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         T = self._kin.forward(arm_joints, frame=CONTROL_FRAME)
         self._target_pos = T[:3, 3].copy()
         self._target_r6d = rotation_matrix_to_6d(T[:3, :3]).copy()
+        # Last successfully-COMMANDED arm config — the singularity guard measures
+        # the IK jump against this (command-to-command), not the lagging actual
+        # arm, so tracking error doesn't masquerade as an explosion.
+        self._last_good_joints = arm_joints.copy()
 
     def _cube_contacts_robot(self):
         """Check if the cube is in contact with any robot geom."""
@@ -289,6 +304,26 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 target_joints = self._kin.inverse(T_target, current_joint_positions=arm_joints,
                                                   frame=CONTROL_FRAME)
 
+                # Singularity guard: a near-singular target makes IK explode into a
+                # huge joint jump. Compare to the LAST COMMANDED config (not the
+                # lagging actual arm, which would conflate tracking error with an
+                # explosion). Hold last-good + roll back the integrator so the arm
+                # freezes at the last good config (and doesn't fling itself into the
+                # pedestal) instead of flailing; it resumes when the policy commands
+                # away from the singular region.
+                joint_jump = float(np.max(np.abs(target_joints - self._last_good_joints)))
+                if joint_jump > JOINT_JUMP_LIMIT:
+                    self._target_pos = prev_pos
+                    self._target_r6d = prev_r6d
+                    self._singularity_reject_count += 1
+                    now = time.monotonic()
+                    if now - self._singularity_last_log > 1.0:
+                        logger.warning("Singularity guard: holding arm (%d rejections); IK joint "
+                                       "jump %.2f rad > %.2f (near-singular target).",
+                                       self._singularity_reject_count, joint_jump, JOINT_JUMP_LIMIT)
+                        self._singularity_last_log = now
+                    return arm_pb2.ArmCommandResponse(success=True)
+
                 # Pedestal collision gate (anti-deadlock): reject a proposed config
                 # only if it's within PEDESTAL_MARGIN of the column AND moves
                 # CLOSER than the current config. Moves that keep or increase
@@ -311,6 +346,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                     return arm_pb2.ArmCommandResponse(success=True)
 
                 self._sim.set_arm_commands(target_joints)
+                self._last_good_joints = target_joints.copy()
 
                 # Diagnostic: track how close the COMMANDED pose comes to a grasp.
                 self._update_grasp_diag(T_target, arm_joints)
