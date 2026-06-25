@@ -1,40 +1,28 @@
-"""Send sinusoidal commands to motors and record feedback for delay analysis.
-
-Sends commands and reads feedback at LOOP_HZ using the lightweight ReadMotors RPC
-(no camera involved). Outputs a CSV for plotting command vs feedback.
+"""Move both motors to position 0 (fully open) via gRPC.
 
 Usage:
-    uv run python scripts/sinus_test.py [host:port]
+    uv run python scripts/goto_zero.py <host:port>
+    uv run python scripts/goto_zero.py 192.168.1.36:50051
 
-Plot:
-    import pandas as pd, matplotlib.pyplot as plt
-    df = pd.read_csv("sinus_test.csv")
-    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True)
-    ax1.plot(df.timestamp_s, df.cmd1, label="cmd"); ax1.plot(df.timestamp_s, df.fb1, label="fb")
-    ax1.set_ylabel("Motor 1 (rad)"); ax1.legend()
-    ax2.plot(df.timestamp_s, df.cmd2, label="cmd"); ax2.plot(df.timestamp_s, df.fb2, label="fb")
-    ax2.set_ylabel("Motor 2 (rad)"); ax2.legend(); ax2.set_xlabel("Time (s)")
-    plt.tight_layout(); plt.savefig("sinus_test.png", dpi=150); plt.show()
+For a local version that talks to /dev/serial0 directly (no gRPC), use
+scripts/goto_zero_local.py.
 """
 
-import csv
-import math
-import sys
+import argparse
 import time
 
 from gripette.client import GripperClient
 
-TARGET = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.36:50051"
-
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("target", help="Gripette gRPC endpoint as host:port (e.g. 192.168.1.36:50051)")
+    args = parser.parse_args()
 
-    with GripperClient(TARGET) as g:
-        print(f"Connected to {TARGET}")
+    with GripperClient(args.target) as g:
+        print(f"Connected to {args.target}")
         g.torque_on()
 
-
-        # Send command + read feedback
         g.move(0.0, 0.0)
         time.sleep(1.0)
         fb1, fb2 = g.read_motors()

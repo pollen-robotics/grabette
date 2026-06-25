@@ -5,10 +5,11 @@ as motor commands to the gripper. Run with --dry-run first to check
 sign conventions without moving motors.
 
 Usage:
-    uv run python scripts/teleop_bridge.py --dry-run      # just print, no motor commands
-    uv run python scripts/teleop_bridge.py                 # actually move motors
+    uv run python scripts/teleop_bridge.py --grabette HOST[:PORT] --gripper HOST:PORT [--dry-run]
+    uv run python scripts/teleop_bridge.py --grabette 192.168.1.35 --gripper 192.168.1.36:50051
 
-Requires grabette running on 192.168.1.35:8000 and gripette on 192.168.1.36:50051.
+--grabette: HOST or HOST:PORT of the grabette REST API (default port 8000).
+--gripper:  HOST:PORT of the gripette gRPC server.
 """
 
 import argparse
@@ -19,27 +20,31 @@ import urllib.request
 
 from gripette.client import GripperClient
 
-GRABETTE_URL = "http://192.168.1.35:8000/api/state"
-GRIPPER_TARGET = "192.168.1.36:50051"
 LOOP_HZ = 20  # bridge rate
 
 
-def read_grabette_angles() -> tuple[float, float]:
+def read_grabette_angles(url: str) -> tuple[float, float]:
     """Read proximal and distal angles (radians) from grabette REST API."""
-    with urllib.request.urlopen(GRABETTE_URL, timeout=1) as resp:
+    with urllib.request.urlopen(url, timeout=1) as resp:
         data = json.loads(resp.read())
     angle = data["angle"]
     return (angle["proximal"], angle["distal"])
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--grabette", required=True,
+                        help="Grabette REST host (HOST or HOST:PORT, default port 8000)")
+    parser.add_argument("--gripper", required=True,
+                        help="Gripette gRPC endpoint as HOST:PORT (e.g. 192.168.1.36:50051)")
     parser.add_argument("--dry-run", action="store_true", help="Print only, don't move motors")
     args = parser.parse_args()
 
+    grabette_host = args.grabette if ":" in args.grabette else f"{args.grabette}:8000"
+    grabette_url = f"http://{grabette_host}/api/state"
     dt = 1.0 / LOOP_HZ
 
-    with GripperClient(GRIPPER_TARGET) as g:
+    with GripperClient(args.gripper) as g:
         print(f"Gripper connected: {g.ping()}")
 
         if not args.dry_run:
@@ -54,7 +59,7 @@ def main():
         try:
             while True:
                 try:
-                    proximal, distal = read_grabette_angles()
+                    proximal, distal = read_grabette_angles(grabette_url)
                 except Exception:
                     # Network hiccup — skip this iteration
                     next_time += dt
