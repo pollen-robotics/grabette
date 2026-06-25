@@ -1,17 +1,30 @@
-"""Camera ↔ OAK-IMU synchronization check for the OAK + Arducam rig.
+"""Temporal-alignment checks for the OAK + Arducam rig.
 
-Correlates frame-to-frame optical-flow magnitude (a proxy for the angular
-velocity a camera sees) with the OAK gyroscope norm. A timing offset shifts the
-cross-correlation peak away from zero lag; > 20 ms typically degrades SLAM and
-the camera↔pose alignment in the LeRobot dataset.
+All checks cross-correlate two motion signals resampled to a common grid; the
+lag of the correlation peak is the timing offset between the two streams. Three
+checks, each answering a different alignment question:
 
-The reusable core lives here (in the package) so both the CLI
-(scripts/checks/check_sync.py) and the HF Space pipeline can call it — the CLI
-reports both camera↔gyro pairs, while `check_sync` below returns only the
-cross-device arducam↔gyro verdict (the OAK left camera and the gyro share the
-OAK's hardware clock, so that pair is low-risk; the arducam is a separate device
-whose clock alignment with the OAK-derived trajectory/action stream is what the
-policy actually trains on).
+  1. check_oak_imu          — OAK left camera ↔ OAK gyro (SLAM VIO health).
+     Same device, shared OAK clock (device_us). Confirms the visual-inertial
+     SLAM *inputs* are time-aligned. A prerequisite for trusting the trajectory.
+
+  2. check_image_trajectory — Arducam optical flow ↔ SLAM trajectory angular
+     velocity (the end-to-end image↔pose alignment the policy trains on). This
+     goes through the *actual* SLAM output, so it catches any timestamp handling
+     SLAM introduces — unlike correlating against the raw gyro. POST-SLAM:
+     needs camera_trajectory.csv.
+
+  3. check_gripper          — Arducam optical flow ↔ gripper joint-angle speed.
+     Validates that the angle stream is time-aligned with the images. Joint
+     motion is NOT correlated with camera egomotion, so this is only meaningful
+     on a deliberate gripper gesture filmed with the camera roughly still (open/
+     close the gripper in view). A low correlation means egomotion-dominated or
+     no gesture — inconclusive, not a failure.
+
+The reusable core (optical flow, cross-correlation, classification, the data
+loaders) lives here in the package so the CLI (scripts/checks/check_sync.py) and
+any future caller share it. The expensive Arducam Farneback flow is computed once
+and passed into both the trajectory and gripper checks via the `flow` argument.
 """
 
 import json
@@ -19,11 +32,12 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from scipy.spatial.transform import Rotation
 
-from grabette_postprocess.convert import fit_device_to_host_s
+from grabette_postprocess.trajectory import load_trajectory_csv
 
 # Lag thresholds (seconds): below GOOD is fine, between is marginal, above breaks
-# visual-inertial SLAM and the camera↔pose alignment.
+# the temporal alignment between the two streams.
 _GOOD_LAG_S = 0.020
 _MARGINAL_LAG_S = 0.050
 _LOW_CORR = 0.3  # below this the signals barely move together (little motion / desync)
@@ -37,7 +51,7 @@ def _samples(path: Path) -> list:
 def compute_optical_flow_magnitude(
     video_path: Path,
     frame_ts_s: np.ndarray | None = None,
-    max_frames: int = 500,
+    max_frames: int = 300,
     resize: int = 320,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-frame dense optical-flow magnitude from a video.
@@ -51,8 +65,8 @@ def compute_optical_flow_magnitude(
 
     Returns (timestamps_s, flow_magnitude). The flow between frame i-1 and i
     measures motion over [t_{i-1}, t_i], so it is stamped at the interval
-    midpoint — the gyro is instantaneous, and midpoint stamping removes the
-    systematic half-frame bias an endpoint stamp would introduce.
+    midpoint — the reference signals are instantaneous, and midpoint stamping
+    removes the systematic half-frame bias an endpoint stamp would introduce.
     """
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
@@ -126,23 +140,6 @@ def oak_left_frame_ts(episode_dir: Path) -> np.ndarray | None:
     return np.array([s["host_ms"] for s in samples], dtype=float) * 1e-3
 
 
-def gyro_on_host_timeline(device_ts_s: np.ndarray, episode_dir: Path) -> np.ndarray:
-    """Map gyro device-clock timestamps onto the OAK *frame* host timeline — the
-    clock the SLAM trajectory and the Arducam alignment live on — using the
-    affine fit from oakd_left_timestamps.json (the same fit convert.py applies to
-    the IMU). Needed for the cross-device Arducam↔gyro comparison, since the
-    Arducam only carries host timestamps. Returns the input unchanged when no
-    device↔host fit is available (legacy: ts are already host_ms)."""
-    ts_path = episode_dir / "oakd_left_timestamps.json"
-    if not ts_path.is_file():
-        return device_ts_s
-    fit = fit_device_to_host_s(_samples(ts_path))
-    if fit is None:
-        return device_ts_s
-    slope, intercept = fit
-    return slope * device_ts_s + intercept
-
-
 def arducam_frame_ts(episode_dir: Path) -> np.ndarray | None:
     """Per-frame timestamps (seconds) for raw_video.mp4 from frame_timestamps.json,
     or None when absent/empty (caller falls back to uniform fps)."""
@@ -156,6 +153,70 @@ def arducam_frame_ts(episode_dir: Path) -> np.ndarray | None:
     return np.array(ts_ms, dtype=float) * 1e-3
 
 
+def trajectory_angular_velocity(
+    episode_dir: Path, max_gap_s: float = 0.1,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Angular speed (rad/s) of the SLAM trajectory vs time (seconds).
+
+    Reads camera_trajectory.csv (columns include timestamp, q_x..q_w, is_lost),
+    drops lost frames, and takes the geodesic angle between consecutive pose
+    orientations divided by dt. Stamped at the interval midpoint to match
+    compute_optical_flow_magnitude. The Arducam is rigid with the OAK, so this
+    angular velocity tracks the same egomotion the Arducam sees — correlating the
+    two measures the image↔pose timing offset end-to-end through SLAM.
+
+    Pairs spanning a gap > max_gap_s (e.g. across a lost-tracking stretch) are
+    dropped to avoid spurious low-rate velocities. Returns None when the
+    trajectory is missing or has < 2 tracked poses.
+    """
+    path = episode_dir / "camera_trajectory.csv"
+    if not path.is_file():
+        return None
+    df = load_trajectory_csv(path)
+    if "is_lost" in df.columns:
+        df = df[~df["is_lost"].astype(bool)]
+    if len(df) < 2:
+        return None
+
+    t = df["timestamp"].to_numpy(dtype=float)
+    quats = df[["q_x", "q_y", "q_z", "q_w"]].to_numpy(dtype=float)
+    rots = Rotation.from_quat(quats)  # scalar-last [x, y, z, w]
+    rel = rots[:-1].inv() * rots[1:]
+    ang = rel.magnitude()  # geodesic rotation angle (rad) between consecutive poses
+    dt = np.diff(t)
+    ok = (dt > 1e-6) & (dt < max_gap_s)
+    if ok.sum() < 2:
+        return None
+    omega = ang[ok] / dt[ok]
+    ts_mid = (0.5 * (t[:-1] + t[1:]))[ok]
+    return ts_mid, omega
+
+
+def angle_velocity(episode_dir: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """Gripper joint-angle speed vs time (seconds) from angle_data.json.
+
+    Schema {"samples": [{"cts": <ms>, "value": [distal, proximal]}]}. Returns the
+    norm of the per-step change across both joints divided by dt, stamped at the
+    interval midpoint. Spikes when the gripper opens/closes. Returns None when the
+    file is missing or has < 2 samples.
+    """
+    path = episode_dir / "angle_data.json"
+    if not path.is_file():
+        return None
+    samples = _samples(path)
+    if len(samples) < 2:
+        return None
+    cts = np.array([s["cts"] for s in samples], dtype=float) * 1e-3
+    vals = np.array([s["value"] for s in samples], dtype=float)  # (N, 2)
+    dt = np.diff(cts)
+    ok = dt > 1e-6
+    if ok.sum() < 2:
+        return None
+    speed = np.linalg.norm(np.diff(vals, axis=0), axis=1)[ok] / dt[ok]
+    ts_mid = (0.5 * (cts[:-1] + cts[1:]))[ok]
+    return ts_mid, speed
+
+
 def cross_correlate_signals(
     t1: np.ndarray, s1: np.ndarray,
     t2: np.ndarray, s2: np.ndarray,
@@ -165,7 +226,8 @@ def cross_correlate_signals(
 
     Resamples both to a uniform grid, normalizes, and computes cross-correlation.
     Returns (best_lag_s, correlation_at_best_lag, lags_array, correlation_array).
-    A positive lag means signal 1 (camera) leads signal 2 (gyro).
+    A positive lag means signal 1 (the camera/image) leads signal 2 (the
+    reference: gyro, trajectory or angle stream).
     """
     dt = 0.005  # 5ms grid (~200Hz)
     t_start = max(t1[0], t2[0])
@@ -202,56 +264,102 @@ def cross_correlate_signals(
 
 
 def classify_lag(best_lag: float, best_corr: float) -> tuple[str, str]:
-    """Map a (lag, correlation) pair to a (verdict, note) — the shared rule behind
-    both the CLI report and the Space's pre-SLAM sync gate.
+    """Map a (lag, correlation) pair to a (verdict, note).
 
     verdict ∈ {GOOD, MARGINAL, BAD}; note is a one-line human explanation (empty
     for a clean GOOD). A low correlation is appended to the note as a caveat."""
     if abs(best_lag) < _GOOD_LAG_S:
         verdict, note = "GOOD", ""
     elif abs(best_lag) < _MARGINAL_LAG_S:
-        verdict, note = "MARGINAL", "20–50 ms offset — may degrade SLAM / camera↔pose alignment."
+        verdict, note = "MARGINAL", "20–50 ms offset — may degrade temporal alignment."
     else:
-        verdict, note = "BAD", ">50 ms offset — breaks visual-inertial SLAM / camera↔pose alignment."
+        verdict, note = "BAD", ">50 ms offset — breaks temporal alignment."
     if best_corr < _LOW_CORR:
         caveat = f"low correlation ({best_corr:.2f}): little motion, or broken/desynced data."
         note = f"{note} {caveat}".strip()
     return verdict, note
 
 
-def check_sync(ep_dir: Path, max_frames: int = 500) -> dict | None:
-    """Arducam ↔ OAK-gyro synchronization verdict for one raw episode (pre-SLAM).
+def _arducam_flow(episode_dir: Path, max_frames: int) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Arducam optical-flow magnitude (shared by the trajectory & gripper checks)."""
+    video = episode_dir / "raw_video.mp4"
+    if not video.is_file():
+        return None, None
+    flow_ts, flow_mag = compute_optical_flow_magnitude(
+        video, arducam_frame_ts(episode_dir), max_frames)
+    if len(flow_mag) < 2:
+        return None, None
+    return flow_ts, flow_mag
 
-    Returns {verdict, lag, corr, approx, message} where verdict ∈ {GOOD, MARGINAL,
-    BAD}, lag is in seconds (camera leads gyro when positive), and message is a
-    human-readable one-liner. Returns None when the check can't run (no IMU/gyro,
-    missing/short arducam video) — the caller treats that as "not checked", not a
-    failure.
-    """
-    ep_dir = Path(ep_dir)
-    imu_path = ep_dir / "oakd_imu.json"
-    video = ep_dir / "raw_video.mp4"
-    if not imu_path.is_file() or not video.is_file():
+
+def _result(label: str, ref_label: str, cam_ts, cam_sig, ref_ts, ref_sig,
+            *, approx: bool = False) -> dict | None:
+    """Cross-correlate camera vs reference and package a verdict dict (or None
+    when either signal is too short to correlate)."""
+    if cam_ts is None or len(cam_sig) < 2 or ref_ts is None or len(ref_sig) < 2:
         return None
+    best_lag, best_corr, lag_times, corr = cross_correlate_signals(
+        cam_ts, cam_sig, ref_ts, ref_sig)
+    verdict, note = classify_lag(best_lag, best_corr)
+    return {
+        "label": label, "ref_label": ref_label,
+        "verdict": verdict, "lag": best_lag, "corr": best_corr,
+        "note": note, "approx": approx,
+        "cam_ts": cam_ts, "cam_sig": cam_sig, "ref_ts": ref_ts, "ref_sig": ref_sig,
+        "lag_times": lag_times, "corr_curve": corr,
+    }
 
+
+def check_oak_imu(episode_dir: Path, max_frames: int = 300) -> dict | None:
+    """OAK left camera ↔ OAK gyro (SLAM VIO health). None when inputs missing."""
+    episode_dir = Path(episode_dir)
+    video = episode_dir / "oakd_left.mp4"
+    imu = episode_dir / "oakd_imu.json"
+    if not video.is_file() or not imu.is_file():
+        return None
     try:
-        gyro_ts, gyro_norm = load_oak_gyro_norm(imu_path)
+        gyro_ts, gyro_norm = load_oak_gyro_norm(imu)
     except (ValueError, KeyError):
         return None
-
-    frame_ts = arducam_frame_ts(ep_dir)
+    frame_ts = oak_left_frame_ts(episode_dir)
     flow_ts, flow_mag = compute_optical_flow_magnitude(video, frame_ts, max_frames)
-    if len(flow_mag) < 2:
-        return None
+    return _result("OAK-left ↔ OAK-gyro (SLAM VIO health)", "OAK gyro",
+                   flow_ts, flow_mag, gyro_ts, gyro_norm, approx=frame_ts is None)
 
-    # Arducam carries only host timestamps, so bring the device-clock gyro onto
-    # the OAK frame host timeline (the trajectory's clock) before correlating.
-    gyro_host_ts = gyro_on_host_timeline(gyro_ts, ep_dir)
-    best_lag, best_corr, _, _ = cross_correlate_signals(flow_ts, flow_mag, gyro_host_ts, gyro_norm)
-    verdict, note = classify_lag(best_lag, best_corr)
-    approx = frame_ts is None
-    message = (f"arducam↔gyro lag {best_lag * 1000:+.0f} ms (corr {best_corr:.2f})"
-               + (" [approx: no frame timestamps]" if approx else "")
-               + (f" — {note}" if note else ""))
-    return {"verdict": verdict, "lag": best_lag, "corr": best_corr,
-            "approx": approx, "message": message}
+
+def check_image_trajectory(
+    episode_dir: Path, max_frames: int = 300, flow: tuple | None = None,
+) -> dict | None:
+    """Arducam image ↔ SLAM trajectory (image↔pose, end-to-end). POST-SLAM.
+
+    Pass `flow=(flow_ts, flow_mag)` to reuse a precomputed Arducam flow. None when
+    the trajectory or the Arducam video is missing.
+    """
+    episode_dir = Path(episode_dir)
+    traj = trajectory_angular_velocity(episode_dir)
+    if traj is None:
+        return None
+    flow_ts, flow_mag = flow if flow is not None else _arducam_flow(episode_dir, max_frames)
+    return _result("Arducam ↔ trajectory (image↔pose)", "trajectory |ω|",
+                   flow_ts, flow_mag, traj[0], traj[1],
+                   approx=arducam_frame_ts(episode_dir) is None)
+
+
+def check_gripper(
+    episode_dir: Path, max_frames: int = 300, flow: tuple | None = None,
+) -> dict | None:
+    """Arducam image ↔ gripper joint-angle speed (angle-stream sync).
+
+    Only meaningful on a deliberate open/close gesture filmed with low egomotion;
+    a low correlation means no gesture / egomotion-dominated (inconclusive). Pass
+    `flow=(flow_ts, flow_mag)` to reuse a precomputed Arducam flow. None when the
+    angle data or the Arducam video is missing.
+    """
+    episode_dir = Path(episode_dir)
+    av = angle_velocity(episode_dir)
+    if av is None:
+        return None
+    flow_ts, flow_mag = flow if flow is not None else _arducam_flow(episode_dir, max_frames)
+    return _result("Arducam ↔ gripper angle (angle sync)", "angle speed",
+                   flow_ts, flow_mag, av[0], av[1],
+                   approx=arducam_frame_ts(episode_dir) is None)
