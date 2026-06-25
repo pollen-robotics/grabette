@@ -28,9 +28,10 @@ import torchvision.transforms as T
 
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies import make_pre_post_processors
-from lerobot.policies.diffusion import DiffusionConfig, DiffusionPolicy
-from lerobot.utils.feature_utils import dataset_to_policy_features
+from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
+from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
+from lerobot.datasets.feature_utils import dataset_to_policy_features
 
 
 def save_train_state(ckpt_dir: Path, *, optimizer, step: int, best_val_loss: float):
