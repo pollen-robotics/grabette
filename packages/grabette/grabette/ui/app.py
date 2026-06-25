@@ -930,9 +930,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             msg = (error if status == "failed" else None) or job.get("message") or error
             pct = job.get("progress", 0)
             if status == "completed":
-                link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
+                link = job.get("result")
                 quality = job.get("quality") or []
-                yield (f"✅ Done! Dataset: {link}", quality, "all", [])
+                if link:
+                    done_msg = f"✅ Done! Dataset: {link}"
+                else:
+                    done_msg = "⚠ Processing complete — no episodes produced a usable trajectory, dataset not pushed."
+                yield (done_msg, quality, "all", [])
                 return
             elif status == "failed":
                 yield (f"❌ Failed: {msg}", *_reset)
@@ -1296,7 +1300,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 scale=2,
             )
         ds_private = gr.Checkbox(
-            label="Private repository (raw upload and LeRobot dataset will be private)",
+            label="Private repository",
             value=False,
         )
 
