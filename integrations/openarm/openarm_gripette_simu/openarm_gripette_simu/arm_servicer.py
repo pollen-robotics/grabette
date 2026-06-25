@@ -112,9 +112,14 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         no `pedestal_box` geom)."""
         self._ped = PedestalClearance(self._sim.model)
         self._pedestal_reject_count = 0
-        self._pedestal_last_log = 0.0
         self._singularity_reject_count = 0
-        self._singularity_last_log = 0.0
+        # Unified hold state, so the log clearly brackets WHY the arm stops and
+        # when it resumes (a held command means the policy is driving the arm into
+        # a singularity or the column, and the gate is refusing it).
+        self._holding = False
+        self._hold_count = 0
+        self._hold_last_log = 0.0
+        self._hold_reason = ""
         if self._ped.enabled:
             logger.info("Pedestal collision gate ENABLED: %d arm collision geoms, %.0f mm margin.",
                         len(self._ped.arm_geom_ids), PEDESTAL_MARGIN * 1000)
@@ -125,6 +130,28 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         """Signed min distance from a guarded arm link to the pedestal box (see
         pedestal.PedestalClearance)."""
         return self._ped.clearance(arm_joints)
+
+    def _hold(self, prev_pos, prev_r6d, reason: str):
+        """A guard rejected the command: roll the integrator back and HOLD the arm.
+        Logs a clear WARNING on entering a hold and a reminder every ~2s while it
+        persists; the matching 'RESUMED' line is emitted by SendCartesianDelta when
+        a command is next applied. So the server log always says why the arm froze
+        and for how long. Returns success=True (the RPC is fine; the arm just held)."""
+        self._target_pos = prev_pos
+        self._target_r6d = prev_r6d
+        now = time.monotonic()
+        if not self._holding:
+            self._holding = True
+            self._hold_count = 0
+            logger.warning("ARM HELD — not moving: %s. (Policy is commanding into it; "
+                           "the arm will resume when commanded away.)", reason)
+            self._hold_last_log = now
+        elif now - self._hold_last_log > 2.0:
+            logger.warning("ARM still held after %d commands: %s", self._hold_count, reason)
+            self._hold_last_log = now
+        self._hold_count += 1
+        self._hold_reason = reason
+        return arm_pb2.ArmCommandResponse(success=True)
 
     def _reset_grasp_diag(self):
         """Per-episode closest-approach tracking for the grasp-point diagnostic."""
@@ -313,16 +340,10 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 # away from the singular region.
                 joint_jump = float(np.max(np.abs(target_joints - self._last_good_joints)))
                 if joint_jump > JOINT_JUMP_LIMIT:
-                    self._target_pos = prev_pos
-                    self._target_r6d = prev_r6d
                     self._singularity_reject_count += 1
-                    now = time.monotonic()
-                    if now - self._singularity_last_log > 1.0:
-                        logger.warning("Singularity guard: holding arm (%d rejections); IK joint "
-                                       "jump %.2f rad > %.2f (near-singular target).",
-                                       self._singularity_reject_count, joint_jump, JOINT_JUMP_LIMIT)
-                        self._singularity_last_log = now
-                    return arm_pb2.ArmCommandResponse(success=True)
+                    return self._hold(prev_pos, prev_r6d,
+                                      f"near a SINGULARITY (IK joint jump {joint_jump:.2f} rad "
+                                      f"> {JOINT_JUMP_LIMIT} limit)")
 
                 # Pedestal collision gate (anti-deadlock): reject a proposed config
                 # only if it's within PEDESTAL_MARGIN of the column AND moves
@@ -334,16 +355,16 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 # integrator target so it doesn't drift deeper.
                 proposed_clear = self._pedestal_clearance(target_joints)
                 if proposed_clear < PEDESTAL_MARGIN and proposed_clear < self._pedestal_clearance(arm_joints):
-                    self._target_pos = prev_pos
-                    self._target_r6d = prev_r6d
                     self._pedestal_reject_count += 1
-                    now = time.monotonic()
-                    if now - self._pedestal_last_log > 1.0:
-                        logger.warning("Pedestal gate: holding arm (%d rejections); "
-                                       "target moves closer to the column (clearance %.1f mm).",
-                                       self._pedestal_reject_count, proposed_clear * 1000.0)
-                        self._pedestal_last_log = now
-                    return arm_pb2.ArmCommandResponse(success=True)
+                    return self._hold(prev_pos, prev_r6d,
+                                      f"about to hit the PEDESTAL (clearance "
+                                      f"{proposed_clear * 1000.0:.0f} mm < {PEDESTAL_MARGIN * 1000:.0f} mm)")
+
+                # Command accepted: if we were holding, announce the resume.
+                if self._holding:
+                    logger.warning("ARM RESUMED after %d held commands (was: %s).",
+                                   self._hold_count, self._hold_reason)
+                    self._holding = False
 
                 self._sim.set_arm_commands(target_joints)
                 self._last_good_joints = target_joints.copy()
