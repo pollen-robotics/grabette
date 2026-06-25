@@ -33,58 +33,27 @@ OAKL_FRAME = "oak_l"   # SLAM / control frame the grasp trajectory commands
 # recording + IK targets to apply the oak_l->camera transform.
 CONTROL_FRAME = OAKL_FRAME
 
-# --- IK solver robustness knobs (OPT-IN; see Kinematics.__init__) -------------
-# The QP decision variable is the joint velocity dq; near a singularity, matching
-# the task velocity needs a huge dq. These three knobs were investigated as
-# singularity-"explosion" mitigations but DID NOT show a clean win in an offline
-# IK harness (the genuine cause is an IK branch-flip when the integrator target
-# marches past the reachable workspace, which solver-cost tuning can't fix at
-# acceptable position accuracy; damping only bounds the jump at reg>=1 where
-# position error blows past 50mm, and the posture task mostly adds branch-flip
-# accuracy noise). They are kept as OPT-IN kwargs so they can be re-tuned in the
-# REAL MuJoCo eval loop, but default to the original (safe, accurate) behaviour.
-#
-# A) Damped-least-squares damping: Tikhonov penalty 'IK_REGULARIZATION * ||dq||²'.
-#    1e-4 keeps the QP full-rank without perturbing the solution.
-IK_REGULARIZATION = 1e-4
-# C) Posture task toward a preferred resting config (elbow 90°, others neutral;
-#    matches arm_servicer.START_JOINTS). 0.0 = disabled (default).
-IK_POSTURE_WEIGHT = 0.0
-POSTURE_REFERENCE = {
-    "r_arm_pitch": 0.0,
-    "r_arm_roll": 0.0,
-    "r_arm_yaw": 0.0,
-    "r_elbow": np.pi / 2,   # 90°
-    "r_wrist_yaw": 0.0,
-    "r_wrist_roll": 0.0,
-    "r_wrist_pitch": 0.0,
-}
+# Note on the arm-eval "singularity explosion": solver-level mitigations (extra dq
+# damping, a posture task, velocity limits) were investigated and did NOT cleanly
+# help — the explosion is an IK branch-flip when the integrator target marches past
+# the reachable workspace, which solver-cost tuning can't fix at acceptable
+# accuracy. It's handled target-side by the eval gate's singularity guard
+# (arm_servicer), not in the solver.
 
 
 class Kinematics:
     """Placo wrapper for FK/IK on the OpenArm right arm."""
 
     def __init__(self, model_dir=None, position_weight: float = 100.0,
-                 orientation_weight: float = 1.0,
-                 regularization: float = IK_REGULARIZATION,
-                 posture_weight: float = IK_POSTURE_WEIGHT,
-                 velocity_limits: bool = False):
+                 orientation_weight: float = 1.0):
         """
         Args:
             model_dir: URDF dir (defaults to OPENARM_RIGHT_DIR).
             position_weight, orientation_weight: Placo frame-task weights
-                (default 100:1). Higher orientation_weight (e.g. 10) locks
-                rotation more strictly at the cost of position accuracy —
-                useful on real hardware where the kinematic chain is close
-                to a wrist-roll singularity at the typical home pose and
-                position-only priority leaks rotation into the wrist joints.
-            regularization: damped-least-squares damping on dq. Default 1e-4
-                (keeps the QP full-rank). Raising it bounds dq near singularities
-                only at >=1, where position error exceeds 50mm — not recommended.
-            posture_weight: weight of the elbow-90° posture task. 0 disables it
-                (default). Opt-in / experimental — see the module-level note.
-            velocity_limits: per-step joint velocity cap. Default False; enabling
-                it under-converges the offline 500-iter solve (accuracy loss).
+                (default 100:1). The eval server uses orientation_weight=10 to
+                lock rotation more strictly near the home wrist-roll singularity:
+                the ~16cm oak_l→finger lever amplifies oak_l rotation error into a
+                grasp-point miss. The default 1 keeps position-only priority.
         """
         model_dir = str(model_dir) if model_dir else str(OPENARM_RIGHT_DIR)
         self.robot = placo.RobotWrapper(model_dir)
@@ -93,8 +62,6 @@ class Kinematics:
         self.solver = self.robot.make_solver()
         self.solver.mask_fbase(True)  # base is fixed
         self.solver.enable_joint_limits(True)
-        # Optional per-step joint velocity cap (off by default — see kwargs note).
-        self.solver.enable_velocity_limits(velocity_limits)
         self.solver.dt = 0.01
 
         # Mask non-arm joints so IK only moves the 7 arm DOFs
@@ -102,8 +69,8 @@ class Kinematics:
         self.solver.mask_dof("distal")
         self.solver.mask_dof("r_wrist_roll_mimic")
 
-        # QP regularization on dq (damped least squares); see IK_REGULARIZATION.
-        self.solver.add_regularization_task(regularization)
+        # Small regularization keeps the QP full-rank (min-velocity solution).
+        self.solver.add_regularization_task(1e-4)
 
         # Frame task on camera, with position weighted 100x higher than
         # orientation. Equal weighting (the previous default) caused the QP
@@ -116,14 +83,6 @@ class Kinematics:
         T_cam = self.robot.get_T_world_frame(CAMERA_FRAME)
         self._frame_task = self.solver.add_frame_task(CAMERA_FRAME, T_cam)
         self._frame_task.configure(CAMERA_FRAME, "soft", position_weight, orientation_weight)
-
-        # Optional posture task toward the preferred resting config (elbow 90°).
-        # Off by default (posture_weight=0); see the module-level note.
-        self._posture_task = None
-        if posture_weight > 0.0:
-            self._posture_task = self.solver.add_joints_task()
-            self._posture_task.set_joints(POSTURE_REFERENCE)
-            self._posture_task.configure("posture", "soft", posture_weight)
 
         # Fixed offsets to the camera frame (the solver always tasks the camera),
         # so targets given in other frames can be converted to a camera target.
