@@ -372,6 +372,7 @@ class GrabetteClient:
         task_description: str,
         exclude_fail: bool = False,
         exclude_bad: bool = False,
+        private: bool = False,
     ) -> dict:
         try:
             r = self._http.post(
@@ -383,6 +384,7 @@ class GrabetteClient:
                     "task_description": task_description,
                     "exclude_fail": exclude_fail,
                     "exclude_bad": exclude_bad,
+                    "private": private,
                 },
             )
             r.raise_for_status()

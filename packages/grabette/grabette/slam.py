@@ -34,6 +34,7 @@ class SlamOrchestrator:
         session_manager,
         exclude_fail: bool = False,
         exclude_bad: bool = False,
+        private: bool = False,
     ) -> str:
         """Upload all episodes from task_ids to raw_repo, trigger SLAM, poll, delete raw.
 
@@ -70,7 +71,7 @@ class SlamOrchestrator:
                         self._jm.update_progress(job_id, base + pct * 0.48, msg)
 
                     await asyncio.to_thread(
-                        hf_client.upload_episode, ep_dir, raw_repo, _progress,
+                        hf_client.upload_episode, ep_dir, raw_repo, _progress, private,
                     )
                     self._jm.update_progress(
                         job_id, 2.0 + ((i + 1) / total) * 48.0,
@@ -91,6 +92,7 @@ class SlamOrchestrator:
                             "task": task_description,
                             "exclude_fail": exclude_fail,
                             "exclude_bad": exclude_bad,
+                            "private": private,
                         },
                     )
                     r.raise_for_status()

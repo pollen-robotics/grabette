@@ -75,6 +75,7 @@ class HuggingFaceClient:
         episode_dir: Path,
         repo_id: str,
         progress_callback=None,
+        private: bool = False,
     ) -> str:
         """Upload an episode directory to HuggingFace Hub.
 
@@ -93,7 +94,7 @@ class HuggingFaceClient:
             progress_callback(0.0, "Creating repository...")
 
         # Create repo if it doesn't exist
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
+        api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=private)
 
         if progress_callback:
             progress_callback(10.0, "Uploading files...")

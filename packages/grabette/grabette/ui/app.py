@@ -833,6 +833,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f'{excl_badge}</div>{stats}{issues}</div>'
         )
 
+    def on_task_selection_count(task_ids):
+        if not task_ids:
+            return ""
+        sessions = _get_sessions()
+        session_map = {s["id"]: s for s in sessions}
+        total = sum(
+            len(s.get("episodes", []))
+            for tid in task_ids
+            if (s := session_map.get(tid))
+        )
+        return (
+            f'<div style="color:#94a3b8;font-size:0.85rem;margin-top:0.4rem;">'
+            f'{total} episode(s) selected</div>'
+        )
+
     def _set_quality_filter(kind: str) -> str:
         return kind
 
@@ -865,7 +880,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         remaining = {n for n in selected}
         return [ep for ep in quality if ep["name"] not in remaining], []
 
-    def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad):
+    def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad, private):
         import time
         _reset = ([], "all", [])
         if not task_ids:
@@ -897,6 +912,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             task_description=task_description,
             exclude_fail=bool(exclude_fail),
             exclude_bad=bool(exclude_bad),
+            private=bool(private),
         )
         if "error" in result:
             yield (f"Error: {result['error']}", *_reset)
@@ -1254,6 +1270,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         </div>
         """)
         ds_task_cbg = gr.CheckboxGroup(choices=[], label=None, container=False)
+        ds_episode_count = gr.HTML("")
 
         # ── Step 2 ────────────────────────────────────────────────────
         gr.HTML("""
@@ -1278,6 +1295,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 label="Repository name", placeholder="grabette-data",
                 scale=2,
             )
+        ds_private = gr.Checkbox(
+            label="Private repository (raw upload and LeRobot dataset will be private)",
+            value=False,
+        )
 
         # ── Quality filter options ─────────────────────────────────────
         gr.HTML("""
@@ -1422,9 +1443,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     outputs=[ds_quality_state, ds_quality_selected],
                 )
 
+        ds_task_cbg.change(
+            fn=on_task_selection_count,
+            inputs=ds_task_cbg,
+            outputs=ds_episode_count,
+        )
         ds_upload_btn.click(
             fn=on_ds_upload,
-            inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_exclude_fail, ds_exclude_bad],
+            inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_exclude_fail, ds_exclude_bad, ds_private],
             outputs=[ds_upload_msg, ds_quality_state, ds_quality_filter, ds_quality_selected],
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])

@@ -34,6 +34,7 @@ class PushAndProcessRequest(BaseModel):
     task_description: str
     exclude_fail: bool = False
     exclude_bad: bool = False
+    private: bool = False
 
 
 @router.post("/auth")
@@ -147,6 +148,7 @@ async def push_and_process(
         session_manager=sm,
         exclude_fail=req.exclude_fail,
         exclude_bad=req.exclude_bad,
+        private=req.private,
     )
     return {"job_id": job_id, "status": "started"}
 
