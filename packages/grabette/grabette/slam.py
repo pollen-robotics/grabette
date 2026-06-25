@@ -44,6 +44,7 @@ class SlamOrchestrator:
         job_id = job.job_id
 
         async def _run() -> None:
+            quality: list | None = None
             try:
                 # Collect episode dirs for all selected tasks
                 sessions = session_manager.list_sessions()
@@ -116,10 +117,9 @@ class SlamOrchestrator:
                         last_line = next(
                             (l for l in reversed(log_tail) if l.strip()), ""
                         )
+                        quality = status.get("quality")
                         if slam_status == "done":
-                            result_url = status.get("result") or \
-                                f"https://huggingface.co/datasets/{target_repo}"
-                            quality = status.get("quality")
+                            result_url = status.get("result")  # None when no dataset pushed
                             self._jm.update_progress(job_id, 95.0, "Cleaning up…")
                             # Delete raw dataset
                             try:
@@ -145,7 +145,7 @@ class SlamOrchestrator:
 
             except Exception as e:
                 logger.exception("push-and-process job %s failed: %s", job_id, e)
-                self._jm.fail_job(job_id, str(e))
+                self._jm.fail_job(job_id, str(e), quality=quality)
 
         asyncio.create_task(_run())
         return job_id

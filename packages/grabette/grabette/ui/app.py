@@ -939,7 +939,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 yield (done_msg, quality, "all", [])
                 return
             elif status == "failed":
-                yield (f"❌ Failed: {msg}", *_reset)
+                quality = job.get("quality") or []
+                yield (f"❌ Failed: {msg}", quality, "all", [])
                 return
             else:
                 yield (f"[{pct:.0f}%] {msg}", gr.skip(), gr.skip(), gr.skip())
