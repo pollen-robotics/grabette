@@ -26,18 +26,18 @@ from pathlib import Path
 import torch
 import torchvision.transforms as T
 
-# Back DataLoader-worker tensors with /tmp files instead of /dev/shm, so a
-# small /dev/shm (common on servers/containers) doesn't cause
-# "RuntimeError: unable to allocate shared memory" at higher --num_workers /
-# --prefetch_factor. Must run before any worker is spawned.
-torch.multiprocessing.set_sharing_strategy("file_system")
-
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import make_pre_post_processors
 from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.datasets.feature_utils import dataset_to_policy_features
+
+# Back DataLoader-worker tensors with /tmp files instead of /dev/shm, so a small
+# /dev/shm (common on servers/containers) doesn't cause "RuntimeError: unable to
+# allocate shared memory" at higher --num_workers / --prefetch_factor. Must run
+# before any DataLoader worker spawns (well before the training loop).
+torch.multiprocessing.set_sharing_strategy("file_system")
 
 
 def save_train_state(ckpt_dir: Path, *, optimizer, step: int, best_val_loss: float):
