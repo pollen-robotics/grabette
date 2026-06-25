@@ -26,6 +26,12 @@ from pathlib import Path
 import torch
 import torchvision.transforms as T
 
+# Back DataLoader-worker tensors with /tmp files instead of /dev/shm, so a
+# small /dev/shm (common on servers/containers) doesn't cause
+# "RuntimeError: unable to allocate shared memory" at higher --num_workers /
+# --prefetch_factor. Must run before any worker is spawned.
+torch.multiprocessing.set_sharing_strategy("file_system")
+
 from lerobot.configs.types import FeatureType, NormalizationMode
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
 from lerobot.policies.factory import make_pre_post_processors

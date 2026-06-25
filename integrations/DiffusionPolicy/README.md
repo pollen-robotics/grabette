@@ -94,6 +94,68 @@ SpatialSoftmax, resize 236 / random-crop 0.95, DDIM 50/16, down_dims
 
 ---
 
+## `train.py` parameters
+
+| Flag | Default | Notes |
+|---|---|---|
+| `--dataset_repo_id` | *(required-ish)* | Converted dataset repo id (`…_cartesian`). |
+| `--dataset_root` | `None` | Local dataset dir; pair with `HF_HUB_OFFLINE=1` for a local-converted dataset. |
+| `--output_dir` | `outputs/gripette/diffusion` | Checkpoints: `best/`, `checkpoint_<step>/`, and final at the root. |
+| `--device` | `cuda` | Compute device. |
+| `--batch_size` | `64` | Certified value. |
+| `--training_steps` | `200000` | **Use `50000`** for the certified recipe. |
+| `--n_action_steps` | `8` | Actions executed per re-plan (inference horizon). 8 = committed grasp; lower = more reactive but can hesitate on the trigger. |
+| `--bf16` | off | bfloat16 autocast — ~1.5–2× on Ampere+/Blackwell, no GradScaler. **Use on 5090.** |
+| `--compile` | off | `torch.compile` (experimental for diffusion; 1–5 min warmup). |
+| `--num_workers` | `8` | DataLoader workers. `train.py` sets the file-system sharing strategy, so `/dev/shm` size won't cap this. |
+| `--prefetch_factor` | `4` | Batches prefetched per worker. |
+| `--color_jitter` | off | UMI color jitter. **On** for the certified recipe. |
+| `--no_random_crop` | off | Disable random crop (ablation). Default = random crop **ON** (UMI); eval always center-crops. |
+| `--state_noise_std` | `0.0` | Gaussian noise on the 2D gripper state. **`0.01`** for the certified recipe. |
+| `--eval_freq` | `200` | Val-loss eval every N steps; updates `best/`. |
+| `--save_freq` | `10000` | Periodic checkpoint every N steps. |
+| `--val_ratio` | `0.1` | Fraction of episodes held out for validation (last N, deterministic). |
+| `--exclude_episodes` | `None` | Episode indices to drop before the split. |
+| `--cameras` | `observation.images.cam0` | Camera feature keys to use (others excluded). |
+| `--push_to_hub` | `None` | Push final + `<repo>-best` to the Hub. ⚠️ conflicts with `HF_HUB_OFFLINE=1`. |
+| `--hub_private` | off | Make the Hub repo private. |
+| `--wandb_project` / `--wandb_run_name` | `None` | wandb logging (needs `uv sync --extra wandb`). |
+| `--resume_from` | `None` | Resume model + optimizer + step + best-val + rng from a checkpoint dir. |
+| `--wandb_resume_id` | `None` | Resume into an existing wandb run. |
+
+Everything else (resnet18, resize 236 / crop 0.95, DDIM 50/16, down_dims, lr 3e-4,
+betas, warmup 2000) is **baked into the `DiffusionConfig`** in `train.py` and not
+exposed — that's the certified recipe.
+
+## Example: RTX 5090 (validated)
+
+Full 50k-step certified run on a single RTX 5090 (32 GB), on a local-converted
+dataset:
+
+```bash
+HF_HUB_OFFLINE=1 uv run python train.py \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --dataset_root ~/.cache/huggingface/lerobot/local-converted/<repo--id> \
+    --output_dir outputs/diffusion \
+    --training_steps 50000 --batch_size 64 --bf16 \
+    --num_workers 8 --prefetch_factor 4 \
+    --color_jitter --state_noise_std 0.01 \
+    --eval_freq 500 --save_freq 5000 \
+    --wandb_project gripette --wandb_run_name diffusion_5090
+```
+
+- **`--bf16`** — Blackwell runs bf16 natively (~1.5–2× vs fp32). Keep it on.
+- **batch 64 / ~76 M params** uses only ~25 % of the 5090's 32 GB. You *can* raise
+  `--batch_size` (128/256) for better GPU utilisation, but that deviates from the
+  certified recipe — scale `lr` if you do.
+- **`--num_workers 8`** is safe here because `train.py` uses the file-system
+  sharing strategy. On a box with a tiny `/dev/shm` running an *older* copy of
+  `train.py`, drop to `--num_workers 4 --prefetch_factor 2`.
+- **Dataset must be h264, ≈960×720, 30 fps** — AV1 starves the dataloader (lerobot
+  decodes video on CPU only), turning a ~few-hour run into a ~day.
+- **Sanity check the first ~50 steps:** loss decreasing + steady step/s ⇒ let it
+  run. Best-by-val-loss model lands in `outputs/diffusion/best`.
+
 ## Alternative: stock `lerobot-train` CLI
 
 You can train with upstream's official CLI instead of `train.py`:
@@ -132,9 +194,11 @@ for a quick official baseline.
 - **Codec / resolution:** record & convert as **h264, ≈960×720, 30 fps** (match
   the real rig). AV1 software-decodes ~5–10× slower and training crawls —
   lerobot decodes video on **CPU only** (no GPU/NVDEC), so codec is the lever.
-- **Dataloader:** `--num_workers 8 --prefetch_factor 4`. If you hit
-  `RuntimeError: unable to allocate shared memory`, lower `--num_workers` (4) or
-  raise `/dev/shm`.
+- **Dataloader / shared memory:** `train.py` sets the file-system sharing
+  strategy at startup, so `--num_workers 8 --prefetch_factor 4` works even on a
+  small `/dev/shm`. If you still hit `RuntimeError: unable to allocate shared
+  memory` (old `train.py` copy, or a tiny `/tmp`), drop to `--num_workers 4
+  --prefetch_factor 2` or raise `/dev/shm`.
 - **Local dataset:** lerobot mirrors the Hub even when fully cached — for a
   local-converted dataset pass `--dataset_root <path>` and prepend
   `HF_HUB_OFFLINE=1`, or `--push_to_hub` it during conversion.
