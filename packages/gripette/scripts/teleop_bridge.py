@@ -19,6 +19,7 @@ import time
 import urllib.request
 
 from gripette.client import GripperClient
+from gripette.config import settings
 
 LOOP_HZ = 20  # bridge rate
 
@@ -34,17 +35,18 @@ def read_grabette_angles(url: str) -> tuple[float, float]:
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--grabette", required=True,
-                        help="Grabette REST host (HOST or HOST:PORT, default port 8000)")
+                        help="Grabette REST host as HOST or HOST:PORT (port defaults to 8000)")
     parser.add_argument("--gripper", required=True,
-                        help="Gripette gRPC endpoint as HOST:PORT (e.g. 192.168.1.36:50051)")
+                        help=f"Gripette gRPC endpoint as HOST or HOST:PORT (port defaults to {settings.port})")
     parser.add_argument("--dry-run", action="store_true", help="Print only, don't move motors")
     args = parser.parse_args()
 
     grabette_host = args.grabette if ":" in args.grabette else f"{args.grabette}:8000"
     grabette_url = f"http://{grabette_host}/api/state"
+    gripper_target = args.gripper if ":" in args.gripper else f"{args.gripper}:{settings.port}"
     dt = 1.0 / LOOP_HZ
 
-    with GripperClient(args.gripper) as g:
+    with GripperClient(gripper_target) as g:
         print(f"Gripper connected: {g.ping()}")
 
         if not args.dry_run:

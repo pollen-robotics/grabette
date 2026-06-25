@@ -24,6 +24,7 @@ import math
 import time
 
 from gripette.client import GripperClient
+from gripette.config import settings
 
 # Sinus parameters
 FREQ = 1.0         # Hz
@@ -42,14 +43,17 @@ OUTPUT = "sinus_test.csv"
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("target", help="Gripette gRPC endpoint as host:port (e.g. 192.168.1.36:50051)")
+    parser.add_argument("target",
+                        help=f"Gripette endpoint as HOST or HOST:PORT (port defaults to {settings.port})")
     args = parser.parse_args()
+
+    target = args.target if ":" in args.target else f"{args.target}:{settings.port}"
 
     rows = []
     dt = 1.0 / LOOP_HZ
 
-    with GripperClient(args.target) as g:
-        print(f"Connected to {args.target}")
+    with GripperClient(target) as g:
+        print(f"Connected to {target}")
         g.torque_on()
         print(f"Torque on — sinus test: {FREQ}Hz, {DURATION}s, loop at {LOOP_HZ}Hz")
 

@@ -123,7 +123,7 @@ uv run python scripts/scan_motors.py                 # full sweep, IDs 1..253
 uv run python scripts/scan_motors.py --start 1 --end 10
 ```
 
-All the gRPC-based scripts below take the gripette endpoint as an explicit argument — there's no default IP. Replace `192.168.1.36:50051` with the address of your gripette in the examples.
+All the gRPC-based scripts below take the gripette endpoint as an explicit argument — there's no default IP. The port defaults to `50051` (gripette's default), so `192.168.1.36` is equivalent to `192.168.1.36:50051`. Replace with the address of your gripette in the examples.
 
 ### Teleoperation bridge
 

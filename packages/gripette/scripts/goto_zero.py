@@ -12,15 +12,19 @@ import argparse
 import time
 
 from gripette.client import GripperClient
+from gripette.config import settings
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("target", help="Gripette gRPC endpoint as host:port (e.g. 192.168.1.36:50051)")
+    parser.add_argument("target",
+                        help=f"Gripette endpoint as HOST or HOST:PORT (port defaults to {settings.port})")
     args = parser.parse_args()
 
-    with GripperClient(args.target) as g:
-        print(f"Connected to {args.target}")
+    target = args.target if ":" in args.target else f"{args.target}:{settings.port}"
+
+    with GripperClient(target) as g:
+        print(f"Connected to {target}")
         g.torque_on()
 
         g.move(0.0, 0.0)
