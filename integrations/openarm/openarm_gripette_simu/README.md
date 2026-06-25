@@ -203,6 +203,17 @@ must check the arm explicitly):
 `scenes/grabette_grasp.xml` (the free-floating grasp scene) is regenerated from the
 model by `scenes/gen_grabette_grasp.py` after a model re-export.
 
+**Verify a collected dataset** with `examples/replay_dataset.py` (needs a display):
+
+```bash
+# Free-floating gripper + the recorded cam0 frames (check the data itself)
+uv run python examples/replay_dataset.py --repo_id user/sim_grabette_grasp
+
+# Replay the recorded oak_l poses on the FULL ARM (IK + physics) and report grasp
+# success — confirms the saved episodes are arm-executable
+uv run python examples/replay_dataset.py --repo_id user/sim_grabette_grasp --arm
+```
+
 ## Evaluate a trained policy
 
 `examples/evaluate.py` loads a trained policy (Diffusion / ACT / Pi0…, the type
