@@ -822,6 +822,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
             for w in ep.get("warnings", [])
         )
+        task_name = ep.get("task_name", "")
+        task_chip = (
+            f'<span style="color:#64748b;font-size:0.75rem;margin-left:auto;">{task_name}</span>'
+            if task_name else ""
+        )
         return (
             f'<div style="border-left:3px solid {color};padding:0.5rem 0.75rem;'
             f'background:#1e293b;border-radius:4px;">'
@@ -830,7 +835,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f'<span style="background:{color};color:#fff;font-size:0.7rem;'
             f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
             f'<span style="color:#94a3b8;font-size:0.75rem;">{kind_label}</span>'
-            f'{excl_badge}</div>{stats}{issues}</div>'
+            f'{excl_badge}{task_chip}</div>{stats}{issues}</div>'
         )
 
     def on_task_selection_count(task_ids):
@@ -893,7 +898,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         target_repo = f"{namespace}{name}"
         raw_repo = f"{namespace}{name}-raw"
 
-        # Build task description from all selected tasks
+        # Build task description and episode→task mapping from all selected tasks
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
         descriptions = [
@@ -902,6 +907,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if (s := session_map.get(tid)) and s.get("description")
         ]
         task_description = ", ".join(descriptions) if descriptions else name
+        ep_to_task = {
+            ep_info["episode_id"]: s["name"]
+            for tid in task_ids
+            if (s := session_map.get(tid))
+            for ep_info in s.get("episodes", [])
+        }
 
         yield (f"Starting… uploading to {raw_repo}, then processing to {target_repo}", *_reset)
 
@@ -932,6 +943,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if status == "completed":
                 link = job.get("result")
                 quality = job.get("quality") or []
+                for q in quality:
+                    q.setdefault("task_name", ep_to_task.get(q.get("name", ""), ""))
                 if link:
                     done_msg = f"✅ Done! Dataset: {link}"
                 else:
@@ -940,6 +953,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return
             elif status == "failed":
                 quality = job.get("quality") or []
+                for q in quality:
+                    q.setdefault("task_name", ep_to_task.get(q.get("name", ""), ""))
                 yield (f"❌ Failed: {msg}", quality, "all", [])
                 return
             else:
@@ -1368,7 +1383,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         '✅ All episodes passed.</div>')
                 return
 
-            # Filter buttons — only show kinds that are present
+            # Filter dropdown + Select all / Deselect all on one row
             present_kinds = list(dict.fromkeys(
                 ep.get("kind", "trajectory") for ep in problematic
             ))
@@ -1377,20 +1392,26 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 "slam": "SLAM failure",
                 "trajectory": "Trajectory",
             }
+            filter_choices = [("All", "all")] + [
+                (kind_labels.get(k, k), k) for k in present_kinds
+            ]
+            sel_names = {ep["name"] for ep in problematic}
+            n_sel = len([n for n in selected if n in sel_names])
             with gr.Row():
-                for k in ["all"] + present_kinds:
-                    lbl = "All" if k == "all" else kind_labels.get(k, k)
-                    active = (flt == k)
-                    kbtn = gr.Button(
-                        lbl, size="sm",
-                        variant="primary" if active else "secondary",
-                        min_width=80,
-                    )
-                    kbtn.click(
-                        fn=_set_quality_filter,
-                        inputs=gr.State(k),
-                        outputs=ds_quality_filter,
-                    )
+                filter_dd = gr.Dropdown(
+                    choices=filter_choices, value=flt,
+                    label=None, container=False,
+                    scale=1, min_width=160, interactive=True,
+                )
+                sel_all_btn = gr.Button("Select all", size="sm", scale=0, min_width=90)
+                desel_all_btn = gr.Button("Deselect all", size="sm", scale=0, min_width=90)
+            filter_dd.change(fn=_set_quality_filter, inputs=filter_dd, outputs=ds_quality_filter)
+            sel_all_btn.click(
+                fn=_select_all_quality_filtered,
+                inputs=[ds_quality_state, ds_quality_filter],
+                outputs=ds_quality_selected,
+            )
+            desel_all_btn.click(fn=lambda sel: [], inputs=ds_quality_selected, outputs=ds_quality_selected)
 
             # Apply filter
             filtered = [
@@ -1402,37 +1423,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         'No episodes match this filter.</div>')
                 return
 
-            # Bulk action row
-            sel_names = {ep["name"] for ep in filtered}
-            n_sel = len([n for n in selected if n in sel_names])
-            with gr.Row():
-                sel_all_btn = gr.Button("Select all", size="sm", min_width=90)
-                desel_all_btn = gr.Button("Deselect all", size="sm", min_width=90)
-                del_sel_btn = gr.Button(
-                    f"🗑 Delete {n_sel} selected",
-                    variant="stop", size="sm", min_width=130,
-                    interactive=n_sel > 0,
-                )
-            sel_all_btn.click(
-                fn=_select_all_quality_filtered,
-                inputs=[ds_quality_state, ds_quality_filter],
-                outputs=ds_quality_selected,
-            )
-            desel_all_btn.click(fn=lambda sel: [], inputs=ds_quality_selected, outputs=ds_quality_selected)
-            del_sel_btn.click(
-                fn=_delete_selected_quality,
-                inputs=[ds_quality_selected, ds_quality_state],
-                outputs=[ds_quality_state, ds_quality_selected],
-            )
-
             # Per-episode rows
             for ep in filtered:
                 name = ep["name"]
                 is_checked = name in selected
                 with gr.Row(equal_height=True):
                     cb = gr.Checkbox(
-                        label="", value=is_checked,
-                        container=False, scale=0, min_width=32,
+                        label=None, value=is_checked,
+                        container=False, show_label=False,
+                        scale=0, min_width=32,
                     )
                     gr.HTML(_render_quality_card(ep), scale=5)
                     ep_del_btn = gr.Button("🗑", size="sm", scale=0, min_width=40)
@@ -1447,6 +1446,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     inputs=[name_st, ds_quality_state, ds_quality_selected],
                     outputs=[ds_quality_state, ds_quality_selected],
                 )
+
+            # Delete selected — below the episode list
+            del_sel_btn = gr.Button(
+                f"🗑 Delete {n_sel} selected from local storage",
+                variant="stop", size="sm",
+                interactive=n_sel > 0,
+            )
+            del_sel_btn.click(
+                fn=_delete_selected_quality,
+                inputs=[ds_quality_selected, ds_quality_state],
+                outputs=[ds_quality_state, ds_quality_selected],
+            )
 
         ds_task_cbg.change(
             fn=on_task_selection_count,
