@@ -23,6 +23,7 @@ reachy_mini scheme, with crypto done in-process here rather than in a daemon.
 import base64
 import json
 import logging
+import os
 import socket
 import subprocess
 import threading
@@ -703,7 +704,11 @@ class BluetoothWifiService:
         # reset auth and re-assert advertising when a central drops (including
         # ungraceful drops like an app crash) so the device stays reconnectable.
         self._hci_index = None
+        self._adapter_iface = None
         self._connected_device_path = None
+        # Serializes advertise attempts so a disconnect-triggered re-advertise
+        # can't overlap an in-progress (retrying) attempt.
+        self._adv_lock = threading.Lock()
         # Ephemeral X25519 key for sealing the WiFi password. Regenerated on
         # each WIFI_KEYEX; only one central connects at a time and KEYEX is
         # immediately followed by CONNECT_ENC, so a single current key is
@@ -879,6 +884,8 @@ class BluetoothWifiService:
             raise RuntimeError("No Bluetooth adapter found")
 
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
+        # Kept for RemoveDevice() on disconnect (see _remove_bond).
+        self._adapter_iface = dbus.Interface(adapter, "org.bluez.Adapter1")
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
         # Adapter alias = advertised name (e.g. "Grabette (grabette-01)") so the
         # device chooser shows the hostname and several robots are distinguishable.
@@ -918,7 +925,7 @@ class BluetoothWifiService:
         # why we bypass bluetoothd's RegisterAdvertisement). No service UUID is
         # advertised: the web client filters by name prefix and reaches the
         # services via optionalServices after connecting.
-        self._mgmt_advertise()
+        self._start_advertising()
 
         # Watch central connect/disconnect. BlueZ emits PropertiesChanged on
         # org.bluez.Device1 with Connected=true/false; we use the false edge to
@@ -953,14 +960,49 @@ class BluetoothWifiService:
             # can't clobber a client that just reconnected.
             if self._connected_device_path in (None, path):
                 self._connected_device_path = None
-                self._on_central_disconnected()
+                self._on_central_disconnected(path)
 
-    def _on_central_disconnected(self):
-        """Reset auth and re-assert advertising after a central drops."""
+    def _on_central_disconnected(self, device_path):
+        """Reset auth, drop the bond, and re-assert advertising after a drop."""
         self.authenticated = False
-        # A connectable advertisement stops once a central connects, so it must
-        # be re-added to stay reconnectable — including after ungraceful drops.
-        self._mgmt_advertise()
+        # Forget the central's bond so the next session pairs fresh (see
+        # _remove_bond), then re-advertise: a connectable advertisement stops
+        # once a central connects, so it must be re-added to stay reconnectable
+        # — including after ungraceful drops.
+        self._remove_bond(device_path)
+        self._start_advertising()
+
+    def _remove_bond(self, device_path):
+        """Remove the disconnected central's pairing/bond via Adapter1.RemoveDevice.
+
+        Web Bluetooth clients are unreliable about persisting LE bonds: when the
+        client forgets its key but we keep ours, the next connection re-pairs
+        from scratch and the stale bond on our side makes SC pairing fail
+        ("numeric comparison failed"), dropping the link in a connect→disconnect
+        loop. We don't rely on the bond for security — the GATT characteristics
+        are unencrypted and WiFi-password secrecy comes from the in-app
+        PIN+X25519 sealing, not the BLE link — so clearing it after every
+        session is safe and keeps reconnection robust across reboots and
+        key-forgetting clients. Centrals that insist on bonding simply re-bond
+        (silent Just Works) next time.
+        """
+        if self._adapter_iface is None or device_path is None:
+            return
+        try:
+            self._adapter_iface.RemoveDevice(device_path)
+            logger.info("Removed bond for %s", device_path)
+        except dbus.exceptions.DBusException as e:
+            logger.warning("RemoveDevice failed (non-fatal): %s", e)
+
+    def _start_advertising(self):
+        """Kick off (re-)advertising on a daemon thread.
+
+        Never run btmgmt on the calling thread: at startup that thread is the
+        one about to enter the GLib mainloop, and btmgmt can block for a long
+        time (see _mgmt_advertise), which would stop the mainloop from ever
+        running — leaving GATT unregistered and DBus unserviced.
+        """
+        threading.Thread(target=self._mgmt_advertise, daemon=True).start()
 
     def _mgmt_advertise(self):
         """(Re-)register a connectable LE advertisement via the legacy MGMT path.
@@ -975,30 +1017,48 @@ class BluetoothWifiService:
         unaffected); a central connecting to this connectable advert reaches it
         normally.
 
-        Called for the initial registration and again on every central
-        disconnect. Each call first removes any prior instance (a
-        connected-then-dropped instance can linger), then re-adds it.
+        Runs on a daemon thread (see _start_advertising); the lock keeps a
+        disconnect-triggered re-advertise from overlapping the initial one.
         """
-        idx = str(self._hci_index)
-        # -c connectable, -g general-discoverable. The name rides in the scan
-        # response (-s) because the legacy MGMT path does not read the adapter
-        # alias; instance id is fixed at 1 (only one advert is ever used).
-        subprocess.run(
-            ["btmgmt", "--index", idx, "rm-adv", "1"],
-            capture_output=True, text=True,
-        )
-        result = subprocess.run(
-            ["btmgmt", "--index", idx, "add-adv", "-c", "-g",
-             "-s", self._advertised_scan_rsp_hex(), "1"],
-            capture_output=True, text=True,
-        )
-        if "Instance added" in result.stdout:
-            logger.info("BLE advertisement registered via MGMT (legacy path)")
-        else:
-            logger.error(
-                "Failed to register advertisement via MGMT: %s",
-                (result.stderr or result.stdout).strip(),
+        if not self._adv_lock.acquire(blocking=False):
+            return  # an advertise attempt is already running
+        try:
+            # Clear any prior/lingering instance, then add ours: -c connectable,
+            # -g general-discoverable, with the name in the scan response (-s)
+            # because the legacy MGMT path doesn't read the adapter alias.
+            self._btmgmt("rm-adv", "1")
+            out = self._btmgmt(
+                "add-adv", "-c", "-g", "-s", self._advertised_scan_rsp_hex(), "1"
             )
+            if out and "Instance added" in out:
+                logger.info("BLE advertisement registered via MGMT (legacy path)")
+            else:
+                logger.error("Failed to register advertisement via MGMT")
+        finally:
+            self._adv_lock.release()
+
+    def _btmgmt(self, *args):
+        """Run a btmgmt subcommand; return stdout (or None on timeout).
+
+        btmgmt is built on bt_shell, which HANGS when its stdin is /dev/null —
+        exactly what systemd gives a service. We hand it the read end of a pipe
+        whose write end we keep open: stdin never reaches EOF, so bt_shell runs
+        the one-shot command and exits instead of stalling. The timeout is a
+        belt-and-braces guard so a wedged btmgmt can never block the caller.
+        """
+        r_fd, w_fd = os.pipe()
+        try:
+            result = subprocess.run(
+                ["btmgmt", "--index", str(self._hci_index), *args],
+                capture_output=True, text=True, timeout=5, stdin=r_fd,
+            )
+            return result.stdout
+        except subprocess.TimeoutExpired:
+            logger.warning("btmgmt %s timed out", " ".join(args))
+            return None
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
 
     def _advertised_scan_rsp_hex(self):
         """Scan-response payload as hex: a single Complete Local Name (0x09) AD.

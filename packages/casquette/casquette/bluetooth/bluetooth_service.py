@@ -23,6 +23,7 @@ reachy_mini scheme, with crypto done in-process here rather than in a daemon.
 import base64
 import json
 import logging
+import os
 import socket
 import subprocess
 import threading
@@ -65,7 +66,6 @@ GATT_SERVICE_IFACE = "org.bluez.GattService1"
 GATT_CHRC_IFACE = "org.bluez.GattCharacteristic1"
 GATT_DESC_IFACE = "org.bluez.GattDescriptor1"
 LE_ADVERTISING_MANAGER_IFACE = "org.bluez.LEAdvertisingManager1"
-LE_ADVERTISEMENT_IFACE = "org.bluez.LEAdvertisement1"
 AGENT_PATH = "/org/bluez/agent"
 
 # Descriptor UUIDs
@@ -148,51 +148,6 @@ class NoInputAgent(dbus.service.Object):
     @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
     def Cancel(self):
         logger.info("Agent request canceled")
-
-
-# =====================================================================
-# BLE Advertisement
-# =====================================================================
-
-class Advertisement(dbus.service.Object):
-    """BLE peripheral advertisement."""
-
-    PATH_BASE = "/org/bluez/advertisement"
-
-    def __init__(self, bus, index, advertising_type, local_name):
-        self.path = self.PATH_BASE + str(index)
-        self.bus = bus
-        self.ad_type = advertising_type
-        self.local_name = local_name
-        self.service_uuids = None
-        dbus.service.Object.__init__(self, bus, self.path)
-
-    def get_properties(self):
-        props = {"Type": self.ad_type}
-        if self.local_name:
-            props["LocalName"] = dbus.String(self.local_name)
-        if self.service_uuids:
-            props["ServiceUUIDs"] = dbus.Array(self.service_uuids, signature="s")
-        props["Appearance"] = dbus.UInt16(0x0000)
-        props["Duration"] = dbus.UInt16(0)
-        props["Timeout"] = dbus.UInt16(0)
-        return {LE_ADVERTISEMENT_IFACE: props}
-
-    def get_path(self):
-        return dbus.ObjectPath(self.path)
-
-    @dbus.service.method(DBUS_PROP_IFACE, in_signature="s", out_signature="a{sv}")
-    def GetAll(self, interface):
-        if interface != LE_ADVERTISEMENT_IFACE:
-            raise dbus.exceptions.DBusException(
-                "org.freedesktop.DBus.Error.InvalidArgs",
-                "Unknown interface " + interface,
-            )
-        return self.get_properties()[LE_ADVERTISEMENT_IFACE]
-
-    @dbus.service.method(LE_ADVERTISEMENT_IFACE, in_signature="", out_signature="")
-    def Release(self):
-        logger.info("Advertisement released")
 
 
 # =====================================================================
@@ -743,14 +698,17 @@ class BluetoothWifiService:
         self._pin_lockout_until = 0.0
         self.bus = None
         self.app = None
-        self.adv = None
         self.mainloop = None
-        # Advertising manager + the object path of the currently-connected
-        # central. Used to reset auth and re-assert advertising when a central
-        # drops (including ungraceful drops like an app crash) so the device
-        # stays reconnectable.
-        self._ad_manager = None
+        # Adapter (hciN) index used for the MGMT advertising commands, and the
+        # object path of the currently-connected central. The latter is used to
+        # reset auth and re-assert advertising when a central drops (including
+        # ungraceful drops like an app crash) so the device stays reconnectable.
+        self._hci_index = None
+        self._adapter_iface = None
         self._connected_device_path = None
+        # Serializes advertise attempts so a disconnect-triggered re-advertise
+        # can't overlap an in-progress (retrying) attempt.
+        self._adv_lock = threading.Lock()
         # Ephemeral X25519 key for sealing the WiFi password. Regenerated on
         # each WIFI_KEYEX; only one central connects at a time and KEYEX is
         # immediately followed by CONNECT_ENC, so a single current key is
@@ -926,6 +884,8 @@ class BluetoothWifiService:
             raise RuntimeError("No Bluetooth adapter found")
 
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
+        # Kept for RemoveDevice() on disconnect (see _remove_bond).
+        self._adapter_iface = dbus.Interface(adapter, "org.bluez.Adapter1")
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
         # Adapter alias = advertised name (e.g. "Grabette (grabette-01)") so the
         # device chooser shows the hostname and several robots are distinguishable.
@@ -961,22 +921,11 @@ class BluetoothWifiService:
             error_handler=lambda e: logger.error("Failed to register GATT app: %s", e),
         )
 
-        # Register BLE advertisement
-        ad_manager = dbus.Interface(adapter, LE_ADVERTISING_MANAGER_IFACE)
-        self._ad_manager = ad_manager
-        self.adv = Advertisement(self.bus, 0, "peripheral", self.advertised_name)
-        # No service UUID in the advert: a 128-bit UUID eats ~18 of the 31 adv
-        # bytes, which would truncate the (longer) hostname-bearing LocalName.
-        # The web client filters by name prefix, not service, and reaches the
-        # services via optionalServices after connecting — so this is safe.
-        ad_manager.RegisterAdvertisement(
-            self.adv.get_path(),
-            {},
-            reply_handler=lambda: logger.info("BLE advertisement registered"),
-            error_handler=lambda e: logger.error(
-                "Failed to register advertisement: %s", e
-            ),
-        )
+        # Start advertising via the legacy MGMT path (see _mgmt_advertise for
+        # why we bypass bluetoothd's RegisterAdvertisement). No service UUID is
+        # advertised: the web client filters by name prefix and reaches the
+        # services via optionalServices after connecting.
+        self._start_advertising()
 
         # Watch central connect/disconnect. BlueZ emits PropertiesChanged on
         # org.bluez.Device1 with Connected=true/false; we use the false edge to
@@ -1011,40 +960,115 @@ class BluetoothWifiService:
             # can't clobber a client that just reconnected.
             if self._connected_device_path in (None, path):
                 self._connected_device_path = None
-                self._on_central_disconnected()
+                self._on_central_disconnected(path)
 
-    def _on_central_disconnected(self):
-        """Reset auth and re-assert advertising after a central drops."""
+    def _on_central_disconnected(self, device_path):
+        """Reset auth, drop the bond, and re-assert advertising after a drop."""
         self.authenticated = False
-        self._reassert_advertising()
+        # Forget the central's bond so the next session pairs fresh (see
+        # _remove_bond), then re-advertise: a connectable advertisement stops
+        # once a central connects, so it must be re-added to stay reconnectable
+        # — including after ungraceful drops.
+        self._remove_bond(device_path)
+        self._start_advertising()
 
-    def _reassert_advertising(self):
-        """Re-register the advertisement so the device stays discoverable.
+    def _remove_bond(self, device_path):
+        """Remove the disconnected central's pairing/bond via Adapter1.RemoveDevice.
 
-        BlueZ usually resumes a registered connectable advert after a link
-        drops, but that is version-dependent. Unregister (best-effort) then
-        register again; both errors are non-fatal (an AlreadyExists on register
-        just means it was still active).
+        Web Bluetooth clients are unreliable about persisting LE bonds: when the
+        client forgets its key but we keep ours, the next connection re-pairs
+        from scratch and the stale bond on our side makes SC pairing fail
+        ("numeric comparison failed"), dropping the link in a connect→disconnect
+        loop. We don't rely on the bond for security — the GATT characteristics
+        are unencrypted and WiFi-password secrecy comes from the in-app
+        PIN+X25519 sealing, not the BLE link — so clearing it after every
+        session is safe and keeps reconnection robust across reboots and
+        key-forgetting clients. Centrals that insist on bonding simply re-bond
+        (silent Just Works) next time.
         """
-        if self._ad_manager is None or self.adv is None:
+        if self._adapter_iface is None or device_path is None:
             return
         try:
-            self._ad_manager.UnregisterAdvertisement(self.adv.get_path())
-        except dbus.exceptions.DBusException:
-            pass  # not currently registered — fine
-        try:
-            self._ad_manager.RegisterAdvertisement(
-                self.adv.get_path(),
-                {},
-                reply_handler=lambda: logger.info(
-                    "Advertisement re-asserted after disconnect"
-                ),
-                error_handler=lambda e: logger.warning(
-                    "Re-assert advertisement failed (non-fatal): %s", e
-                ),
-            )
+            self._adapter_iface.RemoveDevice(device_path)
+            logger.info("Removed bond for %s", device_path)
         except dbus.exceptions.DBusException as e:
-            logger.warning("Re-assert advertisement raised (non-fatal): %s", e)
+            logger.warning("RemoveDevice failed (non-fatal): %s", e)
+
+    def _start_advertising(self):
+        """Kick off (re-)advertising on a daemon thread.
+
+        Never run btmgmt on the calling thread: at startup that thread is the
+        one about to enter the GLib mainloop, and btmgmt can block for a long
+        time (see _mgmt_advertise), which would stop the mainloop from ever
+        running — leaving GATT unregistered and DBus unserviced.
+        """
+        threading.Thread(target=self._mgmt_advertise, daemon=True).start()
+
+    def _mgmt_advertise(self):
+        """(Re-)register a connectable LE advertisement via the legacy MGMT path.
+
+        Works around a kernel-6.18 regression: bluetoothd's
+        LEAdvertisingManager1.RegisterAdvertisement drives the controller through
+        the *extended* advertising MGMT commands (Add Ext Adv Params/Data), which
+        this controller (BCM4345C0 — no HCI extended advertising) rejects with
+        "Invalid Parameters". The *legacy* MGMT "Add Advertising" command still
+        works, so we drive it directly via btmgmt. The GATT server stays
+        registered through bluetoothd (GattManager1.RegisterApplication is
+        unaffected); a central connecting to this connectable advert reaches it
+        normally.
+
+        Runs on a daemon thread (see _start_advertising); the lock keeps a
+        disconnect-triggered re-advertise from overlapping the initial one.
+        """
+        if not self._adv_lock.acquire(blocking=False):
+            return  # an advertise attempt is already running
+        try:
+            # Clear any prior/lingering instance, then add ours: -c connectable,
+            # -g general-discoverable, with the name in the scan response (-s)
+            # because the legacy MGMT path doesn't read the adapter alias.
+            self._btmgmt("rm-adv", "1")
+            out = self._btmgmt(
+                "add-adv", "-c", "-g", "-s", self._advertised_scan_rsp_hex(), "1"
+            )
+            if out and "Instance added" in out:
+                logger.info("BLE advertisement registered via MGMT (legacy path)")
+            else:
+                logger.error("Failed to register advertisement via MGMT")
+        finally:
+            self._adv_lock.release()
+
+    def _btmgmt(self, *args):
+        """Run a btmgmt subcommand; return stdout (or None on timeout).
+
+        btmgmt is built on bt_shell, which HANGS when its stdin is /dev/null —
+        exactly what systemd gives a service. We hand it the read end of a pipe
+        whose write end we keep open: stdin never reaches EOF, so bt_shell runs
+        the one-shot command and exits instead of stalling. The timeout is a
+        belt-and-braces guard so a wedged btmgmt can never block the caller.
+        """
+        r_fd, w_fd = os.pipe()
+        try:
+            result = subprocess.run(
+                ["btmgmt", "--index", str(self._hci_index), *args],
+                capture_output=True, text=True, timeout=5, stdin=r_fd,
+            )
+            return result.stdout
+        except subprocess.TimeoutExpired:
+            logger.warning("btmgmt %s timed out", " ".join(args))
+            return None
+        finally:
+            os.close(r_fd)
+            os.close(w_fd)
+
+    def _advertised_scan_rsp_hex(self):
+        """Scan-response payload as hex: a single Complete Local Name (0x09) AD.
+
+        Truncated so the whole AD structure fits a 31-byte scan response
+        (1 length byte + 1 type byte + <=29 name bytes). The web client filters
+        by name prefix, so the leading "{device_name}" is preserved.
+        """
+        name = self.advertised_name.encode("utf-8")[:29]
+        return f"{len(name) + 1:02x}09{name.hex()}"
 
     def _find_adapter(self):
         """Find the first BlueZ adapter that supports GATT + LE advertising."""
@@ -1054,6 +1078,9 @@ class BluetoothWifiService:
         objects = remote_om.GetManagedObjects()
         for path, props in objects.items():
             if GATT_MANAGER_IFACE in props and LE_ADVERTISING_MANAGER_IFACE in props:
+                # Remember the controller index (…/hciN) for the MGMT advertising
+                # commands issued via btmgmt in _mgmt_advertise.
+                self._hci_index = int(path.rsplit("/hci", 1)[1])
                 return self.bus.get_object(BLUEZ_SERVICE_NAME, path)
         return None
 
