@@ -15,6 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 MODAL_CSS = """
+.quality-ep-cb {
+    flex: 0 0 44px !important;
+    min-width: 44px !important;
+    max-width: 44px !important;
+    padding: 0 !important;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 #hf-auth-modal {
     position: fixed !important;
     inset: 0 !important;
@@ -1423,7 +1432,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         'No episodes match this filter.</div>')
                 return
 
-            # Per-episode rows
+            # Per-episode rows — use closures (n=name) to capture name per iteration;
+            # do NOT pass cb or per-iteration gr.State as inputs: component references
+            # from inside @gr.render are stale after re-render.
             for ep in filtered:
                 name = ep["name"]
                 is_checked = name in selected
@@ -1431,19 +1442,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     cb = gr.Checkbox(
                         label=None, value=is_checked,
                         container=False, show_label=False,
-                        scale=0, min_width=32,
+                        scale=0, min_width=44,
+                        elem_classes=["quality-ep-cb"],
                     )
                     gr.HTML(_render_quality_card(ep), scale=5)
                     ep_del_btn = gr.Button("🗑", size="sm", scale=0, min_width=40)
-                name_st = gr.State(name)
                 cb.change(
-                    fn=_toggle_quality_sel,
-                    inputs=[cb, name_st, ds_quality_selected],
+                    fn=lambda sel, n=name: (
+                        [s for s in sel if s != n] if n in sel else sel + [n]
+                    ),
+                    inputs=[ds_quality_selected],
                     outputs=ds_quality_selected,
                 )
                 ep_del_btn.click(
-                    fn=_delete_quality_ep,
-                    inputs=[name_st, ds_quality_state, ds_quality_selected],
+                    fn=lambda q, sel, n=name: _delete_quality_ep(n, q, sel),
+                    inputs=[ds_quality_state, ds_quality_selected],
                     outputs=[ds_quality_state, ds_quality_selected],
                 )
 
