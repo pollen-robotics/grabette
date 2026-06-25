@@ -92,44 +92,39 @@ def check_motors():
         return False
 
 
-def check_bluetooth():
-    section("Bluetooth Service")
+def _service_status(unit: str) -> str:
+    """Return 'active', 'inactive', or 'not-installed'.
+
+    'systemctl is-active' returns 'inactive' for both "stopped" and "doesn't
+    exist", so we first probe with 'systemctl cat' which fails cleanly for
+    units that aren't on disk.
+    """
+    import subprocess
+    cat = subprocess.run(["systemctl", "cat", unit],
+                         capture_output=True, text=True)
+    if cat.returncode != 0:
+        return "not-installed"
+    active = subprocess.run(["systemctl", "is-active", unit],
+                            capture_output=True, text=True)
+    return "active" if active.stdout.strip() == "active" else "inactive"
+
+
+def check_service(unit: str, label: str):
+    """Returns True (active), False (installed but down), or None (not installed)."""
+    section(label)
     try:
-        import subprocess
-        result = subprocess.run(
-            ["systemctl", "is-active", "gripette-bluetooth"],
-            capture_output=True, text=True,
-        )
-        status = result.stdout.strip()
-        if status == "active":
-            ok("gripette-bluetooth.service is running")
-            return True
-        else:
-            warn(f"gripette-bluetooth.service is {status}")
-            return False
+        status = _service_status(unit)
     except Exception as e:
         fail(str(e))
         return False
-
-
-def check_grpc_service():
-    section("gRPC Service")
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["systemctl", "is-active", "gripette"],
-            capture_output=True, text=True,
-        )
-        status = result.stdout.strip()
-        if status == "active":
-            ok("gripette.service is running")
-            return True
-        else:
-            warn(f"gripette.service is {status}")
-            return False
-    except Exception as e:
-        fail(str(e))
-        return False
+    if status == "active":
+        ok(f"{unit}.service is running")
+        return True
+    if status == "not-installed":
+        warn(f"{unit}.service not installed yet — run 'make install-systemd' for boot-time start")
+        return None
+    fail(f"{unit}.service is installed but {status}")
+    return False
 
 
 def main():
@@ -139,23 +134,30 @@ def main():
     results = {}
     results["Camera"] = check_camera()
     results["Motors"] = check_motors()
-    results["Bluetooth"] = check_bluetooth()
-    results["gRPC Service"] = check_grpc_service()
+    results["Bluetooth"] = check_service("gripette-bluetooth", "Bluetooth Service")
+    results["gRPC Service"] = check_service("gripette", "gRPC Service")
 
     section("Summary")
-    all_ok = True
+    hardware_ok = True
     for name, passed in results.items():
-        status = "[OK]  " if passed else "[FAIL]"
-        print(f"  {status} {name}")
-        if not passed:
-            all_ok = False
+        if passed is True:
+            label = "[OK]  "
+        elif passed is None:
+            label = "[SKIP]"
+        else:
+            label = "[FAIL]"
+            hardware_ok = False
+        print(f"  {label} {name}")
 
     print()
-    if all_ok:
-        print("All checks passed.")
-    else:
+    if not hardware_ok:
         print("Some checks failed — see details above.")
         sys.exit(1)
+    if any(v is None for v in results.values()):
+        print("Hardware OK. Services not installed yet — run 'make install-systemd' if "
+              "you want boot-time start.")
+    else:
+        print("All checks passed.")
 
 
 if __name__ == "__main__":

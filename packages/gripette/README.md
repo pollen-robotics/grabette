@@ -29,15 +29,18 @@ Prerequisites: a Pi Zero 2W running Raspberry Pi OS (Bookworm or Trixie), with [
 sudo usermod -aG dialout $USER   # serial bus access — log out + back in for it to take effect
 make install-rpi                  # one-shot: apt deps + UART config + venv + sync + verify
 sudo reboot                       # required if the UART config was changed
-make check                        # post-reboot hardware diagnostic
+make check                        # post-reboot hardware diagnostic (camera + motors)
 ```
+
+`make check` validates the camera and the motor bus. It also probes the two systemd services and reports them as `[SKIP]` if they aren't installed yet — that's the expected state right after `install-rpi`.
 
 Then start the service manually or install at boot:
 
 ```bash
-uv run --package gripette python -m gripette   # foreground
+uv run --package gripette python -m gripette   # foreground (Ctrl-C to stop)
 # — or —
 make install-systemd                            # boot-time start (main + bluetooth)
+make check                                      # services should now report [OK]
 ```
 
 `make install-rpi` is idempotent — re-running it is safe. Under the hood it:
