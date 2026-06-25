@@ -1,76 +1,143 @@
-"""SLAM job orchestration — upload session, trigger processing, poll results."""
+"""SLAM job orchestration — upload raw dataset, trigger Space, poll, delete raw."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import time
 from pathlib import Path
+
+import httpx
 
 from grabette.jobs import get_job_manager
 
 logger = logging.getLogger(__name__)
 
+_SLAM_SPACE_URL = os.environ.get(
+    "GRABETTE_SLAM_SPACE_URL",
+    "https://pollen-robotics-grabette-slam.hf.space",
+).rstrip("/")
+
 
 class SlamOrchestrator:
-    """Orchestrate SLAM processing: upload -> trigger -> poll -> results."""
-
     def __init__(self) -> None:
         self._jm = get_job_manager()
 
-    async def run_slam(
+    async def push_and_process(
         self,
-        episode_id: str,
-        episode_dir: Path,
-        repo_id: str,
+        task_ids: list[str],
+        raw_repo: str,
+        target_repo: str,
+        task_description: str,
         hf_client,
+        session_manager,
     ) -> str:
-        """Start a SLAM job. Returns the job ID for tracking.
+        """Upload all episodes from task_ids to raw_repo, trigger SLAM, poll, delete raw.
 
-        Args:
-            episode_id: Capture episode identifier.
-            episode_dir: Local path to episode data.
-            repo_id: HuggingFace dataset repo (e.g. "user/grabette-data").
-            hf_client: Authenticated HuggingFaceClient instance.
+        Returns the job_id for tracking via /api/hf/jobs/{job_id}.
         """
-        job = self._jm.create_job(f"slam:{episode_id}")
+        job = self._jm.create_job(f"push:{target_repo}")
         job_id = job.job_id
 
-        async def _run():
+        async def _run() -> None:
             try:
-                # Step 1: Upload episode to HF
-                self._jm.update_progress(job_id, 5.0, "Uploading episode...")
+                # Collect episode dirs for all selected tasks
+                sessions = session_manager.list_sessions()
+                session_map = {s.id: s for s in sessions}
+                episode_dirs: list[Path] = []
+                for tid in task_ids:
+                    s = session_map.get(tid)
+                    if not s:
+                        continue
+                    for ep in s.episodes:
+                        ep_dir = session_manager.episode_dir(ep.episode_id)
+                        episode_dirs.append(ep_dir)
 
-                def progress_cb(pct: float, msg: str):
-                    mapped = 5.0 + pct * 0.45  # 5% -> 50%
-                    self._jm.update_progress(job_id, mapped, msg)
+                if not episode_dirs:
+                    raise ValueError("No episodes found for the selected tasks")
 
-                url = await asyncio.to_thread(
-                    hf_client.upload_episode, episode_dir, repo_id, progress_cb,
-                )
+                total = len(episode_dirs)
+                self._jm.update_progress(job_id, 2.0, f"Uploading {total} episode(s)…")
 
-                # Step 2: Trigger SLAM processing (placeholder)
-                self._jm.update_progress(
-                    job_id, 55.0, "Triggering SLAM processing...",
-                )
+                # Upload episodes one by one to the raw repo
+                for i, ep_dir in enumerate(episode_dirs):
+                    pct_base = 2.0 + (i / total) * 48.0
 
-                # TODO: Replace with actual SLAM trigger once compute is set up.
-                # Options:
-                #   - HF Inference Endpoint running ORB-SLAM3 Docker
-                #   - Dedicated HF Space with SLAM processing
-                #   - External API call to SLAM service
-                logger.warning(
-                    "SLAM compute not yet configured. "
-                    "Episode uploaded to: %s", url,
-                )
+                    def _progress(pct: float, msg: str, base: float = pct_base) -> None:
+                        self._jm.update_progress(job_id, base + pct * 0.48, msg)
 
-                self._jm.update_progress(
-                    job_id, 90.0,
-                    "Episode uploaded; SLAM compute not yet configured",
-                )
-                self._jm.complete_job(job_id, url)
+                    await asyncio.to_thread(
+                        hf_client.upload_episode, ep_dir, raw_repo, _progress,
+                    )
+                    self._jm.update_progress(
+                        job_id, 2.0 + ((i + 1) / total) * 48.0,
+                        f"Uploaded {i + 1}/{total}",
+                    )
+
+                # Trigger SLAM Space
+                self._jm.update_progress(job_id, 52.0, "Triggering SLAM pipeline…")
+                from huggingface_hub import get_token
+                token = get_token() or ""
+                _headers = {"Authorization": f"Bearer {token}"} if token else {}
+                async with httpx.AsyncClient(timeout=30, headers=_headers) as http:
+                    r = await http.post(
+                        f"{_SLAM_SPACE_URL}/api/process",
+                        json={
+                            "source_repo": raw_repo,
+                            "target_repo": target_repo,
+                            "task": task_description,
+                        },
+                    )
+                    r.raise_for_status()
+                    slam_job_id = r.json()["job_id"]
+
+                # Poll Space status
+                self._jm.update_progress(job_id, 55.0, "SLAM processing…")
+                async with httpx.AsyncClient(timeout=10, headers=_headers) as http:
+                    while True:
+                        await asyncio.sleep(5)
+                        try:
+                            r = await http.get(
+                                f"{_SLAM_SPACE_URL}/api/status/{slam_job_id}"
+                            )
+                            r.raise_for_status()
+                            status = r.json()
+                        except Exception:
+                            continue
+                        slam_status = status.get("status", "running")
+                        log_tail = (status.get("log") or "").split("\n")
+                        last_line = next(
+                            (l for l in reversed(log_tail) if l.strip()), ""
+                        )
+                        if slam_status == "done":
+                            result_url = status.get("result") or \
+                                f"https://huggingface.co/datasets/{target_repo}"
+                            self._jm.update_progress(job_id, 95.0, "Cleaning up…")
+                            # Delete raw dataset
+                            try:
+                                await asyncio.to_thread(
+                                    hf_client.delete_dataset, raw_repo
+                                )
+                            except Exception as e:
+                                logger.warning("Could not delete raw dataset: %s", e)
+                            self._jm.complete_job(job_id, result_url)
+                            return
+                        elif slam_status == "error":
+                            raise RuntimeError(
+                                status.get("error") or "SLAM pipeline failed"
+                            )
+                        elif slam_status == "not_found":
+                            raise RuntimeError("SLAM job not found on Space")
+                        else:
+                            # Map Space progress (0→100) into 55→93 range
+                            if last_line:
+                                self._jm.update_progress(
+                                    job_id, 55.0, f"SLAM: {last_line}"
+                                )
 
             except Exception as e:
-                logger.exception("SLAM job %s failed: %s", job_id, e)
+                logger.exception("push-and-process job %s failed: %s", job_id, e)
                 self._jm.fail_job(job_id, str(e))
 
         asyncio.create_task(_run())

@@ -47,6 +47,15 @@ MODAL_CSS = """
 }
 """
 
+_HF_AUTH_IFRAME = (
+    '<iframe src="/api/hf-auth/widget" scrolling="no"'
+    ' onload="var f=this;(function r(){'
+    'if(!document.contains(f))return;'
+    'try{f.style.height=f.contentDocument.body.scrollHeight+10+\'px\';}catch(e){}'
+    'setTimeout(r,400);})()"'
+    ' style="width:100%;border:none;min-height:160px;"></iframe>'
+)
+
 
 _IMU_IFRAME_HTML = (
     '<iframe src="/charts/imu" '
@@ -742,11 +751,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── HuggingFace ───────────────────────────────────────────────────
 
-    def _hf_status_text(result):
-        if result.get("authenticated"):
-            return f"Authenticated as {result.get('user', {}).get('username', '?')}"
-        return "Not authenticated"
-
     def _ds_upload_btn_update(authenticated: bool):
         if authenticated:
             return gr.update(value="Push to HuggingFace Hub", interactive=True, variant="huggingface")
@@ -756,10 +760,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             variant="secondary",
         )
 
-    def check_hf_auth_on_load():
+    def check_hf_auth_on_load(current_ns: str | None = None):
         result = client.hf_check_auth()
         authenticated = result.get("authenticated", False)
-        return gr.update(visible=not authenticated), _ds_upload_btn_update(authenticated)
+        if authenticated:
+            namespaces = client.hf_get_namespaces()
+            ns_choices = [f"{ns}/" for ns in namespaces]
+            # Preserve the user's selection if it's still valid; only reset on
+            # first load (current_ns is None) or if the value disappeared.
+            if current_ns and current_ns in ns_choices:
+                value = current_ns
+            else:
+                value = ns_choices[0] if ns_choices else None
+            ns_update = gr.update(choices=ns_choices, value=value)
+        else:
+            ns_update = gr.update(choices=[], value=None)
+        return gr.update(visible=not authenticated), _ds_upload_btn_update(authenticated), ns_update
 
     def load_datasets_page():
         sessions = _get_sessions()
@@ -773,41 +789,59 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=task_choices, value=[]), ns_update
 
     def on_ds_upload(task_ids, namespace, repo_name):
+        import time
         if not task_ids:
-            return "Select at least one task"
+            yield "Select at least one task"
+            return
         if not namespace or not repo_name.strip():
-            return "Enter a namespace and a repository name"
-        repo_id = f"{namespace}{repo_name.strip()}"
+            yield "Enter an owner and a repository name"
+            return
+        name = repo_name.strip()
+        target_repo = f"{namespace}{name}"
+        raw_repo = f"{namespace}{name}-raw"
+
+        # Build task description from all selected tasks
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
-        jobs, errors = [], []
-        for tid in task_ids:
-            s = session_map.get(tid)
-            if not s:
-                continue
-            for ep in s.get("episodes", []):
-                result = client.hf_upload_episode(ep["episode_id"], repo_id)
-                if "error" in result:
-                    errors.append(f"{ep['episode_id']}: {result['error']}")
-                else:
-                    jobs.append(result.get("job_id", "?"))
-        if errors:
-            return f"Errors: {'; '.join(errors)}"
-        if not jobs:
-            return "No episodes found in selected tasks"
-        return f"Started {len(jobs)} upload job(s)"
+        descriptions = [
+            s["description"]
+            for tid in task_ids
+            if (s := session_map.get(tid)) and s.get("description")
+        ]
+        task_description = ", ".join(descriptions) if descriptions else name
 
-    def on_modal_auth(token):
-        if not token:
-            return gr.update(visible=True, value="Please enter a token"), gr.update(), gr.update()
-        result = client.hf_set_auth(token)
-        if result.get("authenticated"):
-            return gr.update(visible=False), gr.update(visible=False), _ds_upload_btn_update(True)
-        return (
-            gr.update(visible=True, value=f"Auth failed: {result.get('error', 'unknown')}"),
-            gr.update(),
-            gr.update(),
+        yield f"Starting… uploading to {raw_repo}, then processing to {target_repo}"
+
+        result = client.hf_push_and_process(
+            task_ids=list(task_ids),
+            target_repo=target_repo,
+            raw_repo=raw_repo,
+            task_description=task_description,
         )
+        if "error" in result:
+            yield f"Error: {result['error']}"
+            return
+
+        job_id = result["job_id"]
+        while True:
+            time.sleep(3)
+            job = client.hf_get_job(job_id)
+            if job is None:
+                yield "Error: job lost"
+                return
+            status = job.get("status", "running")
+            error = job.get("error") or ""
+            msg = (error if status == "failed" else None) or job.get("message") or error
+            pct = job.get("progress", 0)
+            if status == "completed":
+                link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
+                yield f"✅ Done! Dataset: {link}"
+                return
+            elif status == "failed":
+                yield f"❌ Failed: {msg}"
+                return
+            else:
+                yield f"[{pct:.0f}%] {msg}"
 
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
@@ -1168,14 +1202,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
             with gr.Group(elem_id="hf-auth-card"):
-                gr.HTML(
-                    "<h2 style='margin:0 0 0.4rem;'>HuggingFace Authentication</h2>"
-                    "<p style='color:#9ca3af;margin:0 0 1.2rem;font-size:0.9rem;'>"
-                    "A HuggingFace token is required to push datasets.</p>"
-                )
-                ds_modal_token = gr.Textbox(label="HF Token", type="password", placeholder="hf_...")
-                ds_modal_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1, visible=False)
-                ds_modal_auth_btn = gr.Button("Authenticate", variant="primary", size="sm")
+                gr.HTML(_HF_AUTH_IFRAME)
 
         # ── Page header ───────────────────────────────────────────────
         gr.HTML("""
@@ -1213,14 +1240,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
           <div>
             <div style="font-weight:600;font-size:1rem;">Name your destination repository</div>
             <div style="color:#94a3b8;font-size:0.85rem;">
-              Choose a namespace and give a name to the dataset.
+              Choose an owner and give a name to the dataset.
             </div>
           </div>
         </div>
         """)
         with gr.Row():
             ds_namespace = gr.Dropdown(
-                label="Namespace", choices=[], interactive=True, scale=1,
+                label="Owner", choices=[], interactive=True, scale=1,
             )
             ds_repo_name = gr.Textbox(
                 label="Repository name", placeholder="grabette-data",
@@ -1236,21 +1263,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         gr.HTML("</div>")
         ds_upload_msg = gr.Textbox(
-            show_label=False, interactive=False, max_lines=2, container=False,
+            show_label=False, interactive=False, max_lines=3, container=False,
         )
         gr.HTML("</div>")
 
-        ds_modal_auth_btn.click(
-            fn=on_modal_auth, inputs=ds_modal_token,
-            outputs=[ds_modal_msg, ds_auth_modal, ds_upload_btn],
-        )
         ds_upload_btn.click(
             fn=on_ds_upload,
             inputs=[ds_task_cbg, ds_namespace, ds_repo_name],
             outputs=ds_upload_msg,
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
-        datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn])
+        datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
+
+        ds_auth_timer = gr.Timer(3.0)
+        ds_auth_timer.tick(fn=check_hf_auth_on_load, inputs=[ds_namespace], outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         batt_popup_ds = gr.HTML(visible=False)
         batt_timer_ds = gr.Timer(60.0)
@@ -1366,19 +1392,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # ── HuggingFace Account ───────────────────────────────────
             with gr.Column(scale=1):
                 gr.Markdown("## HuggingFace Account")
-                gr.Markdown("### Current status")
-                hf_account_status = gr.Textbox(
-                    label=None, container=False, interactive=False,
-                )
-                gr.Markdown("### Update Token")
-                new_token_input = gr.Textbox(
-                    label=None, container=False,
-                    type="password", placeholder="hf_...",
-                )
-                with gr.Row():
-                    update_token_btn = gr.Button("Save token", variant="primary", size="sm")
-                    remove_token_btn = gr.Button("Remove current token", variant="stop", size="sm")
-                account_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+                gr.HTML(_HF_AUTH_IFRAME)
 
             # ── WiFi ─────────────────────────────────────────────────
             with gr.Column(scale=1):
@@ -1386,13 +1400,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 wifi_network_info = gr.Markdown("*Loading…*")
                 gr.HTML(_WIFI_SETTINGS_HTML)
 
-        update_token_btn.click(
-            fn=on_hf_update_token, inputs=new_token_input,
-            outputs=[hf_account_status, new_token_input],
-        )
-        remove_token_btn.click(fn=on_hf_remove_token, outputs=hf_account_status)
-
-        settings_demo.load(fn=check_hf_account, outputs=hf_account_status)
         settings_demo.load(fn=get_wifi_network_info, outputs=wifi_network_info)
 
         batt_popup_st = gr.HTML(visible=False)
