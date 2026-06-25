@@ -123,33 +123,46 @@ uv run python scripts/scan_motors.py                 # full sweep, IDs 1..253
 uv run python scripts/scan_motors.py --start 1 --end 10
 ```
 
+All the gRPC-based scripts below take the gripette endpoint as an explicit argument — there's no default IP. Replace `192.168.1.36:50051` with the address of your gripette in the examples.
+
 ### Teleoperation bridge
 
 Reads angle sensors from the grabette glove (Pi 4) and forwards them as motor commands to the gripper:
 
 ```bash
-uv run python scripts/teleop_bridge.py --dry-run   # preview without moving motors
-uv run python scripts/teleop_bridge.py              # live control
+uv run python scripts/teleop_bridge.py --grabette 192.168.1.35 --gripper 192.168.1.36:50051 --dry-run   # preview
+uv run python scripts/teleop_bridge.py --grabette 192.168.1.35 --gripper 192.168.1.36:50051            # live
 ```
 
-Requires the grabette service running on `192.168.1.35:8000`.
+`--grabette` accepts `HOST` (defaults to port 8000) or explicit `HOST:PORT`. `--gripper` requires `HOST:PORT`.
 
 ### Motor test
 
 Sends a 1Hz sinusoidal command and records feedback positions for delay analysis:
 
 ```bash
-uv run python scripts/sinus_test.py
-# Outputs sinus_test.csv and sinus_test.png
+uv run python scripts/sinus_test.py 192.168.1.36:50051
+# Outputs sinus_test.csv (plot inline — see the docstring)
 ```
+
+For a local equivalent that doesn't go through gRPC, see `scripts/motor_test_local.py`.
 
 ### Camera test
 
 Measures stream framerate and saves a sample frame:
 
 ```bash
-uv run python scripts/camera_test.py
+uv run python scripts/camera_test.py 192.168.1.36:50051
 # Outputs camera_test.jpg
+```
+
+### Reset to zero
+
+Moves both motors to position 0 (fully open):
+
+```bash
+uv run python scripts/goto_zero.py 192.168.1.36:50051   # via gRPC
+uv run python scripts/goto_zero_local.py                # locally on the Pi, no gRPC
 ```
 
 ## systemd services

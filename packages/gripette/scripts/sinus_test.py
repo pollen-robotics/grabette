@@ -4,7 +4,8 @@ Sends commands and reads feedback at LOOP_HZ using the lightweight ReadMotors RP
 (no camera involved). Outputs a CSV for plotting command vs feedback.
 
 Usage:
-    uv run python scripts/sinus_test.py [host:port]
+    uv run python scripts/sinus_test.py <host:port>
+    uv run python scripts/sinus_test.py 192.168.1.36:50051
 
 Plot:
     import pandas as pd, matplotlib.pyplot as plt
@@ -17,9 +18,9 @@ Plot:
     plt.tight_layout(); plt.savefig("sinus_test.png", dpi=150); plt.show()
 """
 
+import argparse
 import csv
 import math
-import sys
 import time
 
 from gripette.client import GripperClient
@@ -37,15 +38,18 @@ M2_CENTER = -1.013
 M2_AMP = 0.3
 
 OUTPUT = "sinus_test.csv"
-TARGET = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.36:50051"
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("target", help="Gripette gRPC endpoint as host:port (e.g. 192.168.1.36:50051)")
+    args = parser.parse_args()
+
     rows = []
     dt = 1.0 / LOOP_HZ
 
-    with GripperClient(TARGET) as g:
-        print(f"Connected to {TARGET}")
+    with GripperClient(args.target) as g:
+        print(f"Connected to {args.target}")
         g.torque_on()
         print(f"Torque on — sinus test: {FREQ}Hz, {DURATION}s, loop at {LOOP_HZ}Hz")
 
