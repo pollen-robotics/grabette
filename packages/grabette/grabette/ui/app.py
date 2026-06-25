@@ -781,188 +781,93 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         return gr.update(choices=task_choices, value=[]), ns_update
 
-    def _render_slam_quality(quality: list) -> str:
-        if not quality:
-            return ""
-        _COLORS = {"GOOD": "#22c55e", "WARN": "#f97316", "BAD": "#dc2626", "FAIL": "#7f1d1d"}
+    _QUALITY_COLORS = {
+        "GOOD": "#22c55e", "WARN": "#f97316",
+        "BAD": "#dc2626", "FAIL": "#ef4444", "ERROR": "#dc2626",
+    }
+    _QUALITY_KIND_LABELS = {
+        "pre_check": "Recording check",
+        "slam": "SLAM failure",
+        "trajectory": "Trajectory",
+    }
 
-        included = [ep for ep in quality if not ep.get("excluded")]
-        excluded = [ep for ep in quality if ep.get("excluded")]
-
-        counts: dict[str, int] = {}
-        for ep in included:
-            counts[ep.get("verdict", "FAIL")] = counts.get(ep.get("verdict", "FAIL"), 0) + 1
-        summary_incl = " &middot; ".join(
-            f'<span style="color:{_COLORS[v]};font-weight:700;">{n} {v}</span>'
-            for v in ("GOOD", "WARN", "BAD", "FAIL") if (n := counts.get(v))
-        ) or '<span style="color:#94a3b8;">none</span>'
-
-        html = (
-            '<div style="margin-top:1rem;padding:1rem;background:#0f172a;'
-            'border-radius:8px;border:1px solid #1e293b;">'
-            '<div style="margin-bottom:0.75rem;font-weight:600;">SLAM quality recap</div>'
-            f'<div style="margin-bottom:0.5rem;font-size:0.85rem;color:#94a3b8;">'
-            f'In dataset ({len(included)} episode(s)) &mdash; {summary_incl}</div>'
+    def _render_quality_card(ep: dict) -> str:
+        """HTML card for one episode in the quality recap panel."""
+        verdict = ep.get("verdict", "FAIL")
+        kind = ep.get("kind", "trajectory")
+        color = _QUALITY_COLORS.get(verdict, "#dc2626")
+        name = ep.get("name", "?")
+        excluded = ep.get("excluded", True)
+        kind_label = _QUALITY_KIND_LABELS.get(kind, kind)
+        excl_badge = (
+            '<span style="background:#475569;color:#e2e8f0;font-size:0.7rem;'
+            'padding:1px 6px;border-radius:3px;margin-left:4px;">excluded</span>'
+            if excluded else
+            '<span style="background:#14532d;color:#bbf7d0;font-size:0.7rem;'
+            'padding:1px 6px;border-radius:3px;margin-left:4px;">included</span>'
         )
-
-        non_good_incl = [ep for ep in included if ep.get("verdict") != "GOOD"]
-        if not non_good_incl:
-            if included:
-                html += '<div style="color:#22c55e;font-size:0.85rem;margin-bottom:0.75rem;">✅ All included episodes passed quality checks.</div>'
-        else:
-            for ep in non_good_incl:
-                verdict = ep.get("verdict", "FAIL")
-                color = _COLORS.get(verdict, "#dc2626")
-                name = ep.get("name", "?")
-                tracking = ep.get("tracking_pct", 0)
-                n_jumps = ep.get("n_jumps", 0)
-                dist = ep.get("total_distance_m", 0)
-                issues = "".join(
-                    f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
-                    for e in ep.get("errors", [])
-                ) + "".join(
-                    f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
-                    for w in ep.get("warnings", [])
-                )
-                html += (
-                    f'<div style="border-left:3px solid {color};padding:0.5rem 0.75rem;'
-                    f'margin-bottom:0.5rem;background:#1e293b;border-radius:4px;">'
-                    f'<div style="display:flex;align-items:center;gap:0.5rem;">'
-                    f'<span style="font-weight:600;font-family:monospace;">{name}</span>'
-                    f'<span style="background:{color};color:#fff;font-size:0.7rem;'
-                    f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
-                    f'</div>'
-                    f'<div style="color:#94a3b8;font-size:0.82rem;margin-top:2px;">'
-                    f'tracking {tracking:.1f}% &middot; {n_jumps} jumps '
-                    f'&middot; dist {dist:.2f} m</div>'
-                    f'{issues}</div>'
-                )
-
-        if excluded:
-            html += (
-                f'<div style="margin-top:0.75rem;margin-bottom:0.5rem;'
-                f'font-size:0.85rem;color:#94a3b8;">'
-                f'Excluded from dataset ({len(excluded)} episode(s))</div>'
+        stats = ""
+        if kind == "trajectory":
+            tracking = ep.get("tracking_pct", 0)
+            n_jumps = ep.get("n_jumps", 0)
+            dist = ep.get("total_distance_m", 0)
+            stats = (
+                f'<div style="color:#94a3b8;font-size:0.8rem;margin-top:3px;">'
+                f'tracking {tracking:.1f}% · {n_jumps} jumps · dist {dist:.2f} m</div>'
             )
-            for ep in excluded:
-                verdict = ep.get("verdict", "FAIL")
-                color = _COLORS.get(verdict, "#dc2626")
-                name = ep.get("name", "?")
-                issues = "".join(
-                    f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
-                    for e in ep.get("errors", [])
-                )
-                html += (
-                    f'<div style="border-left:3px solid #475569;padding:0.5rem 0.75rem;'
-                    f'margin-bottom:0.5rem;background:#1e293b;border-radius:4px;opacity:0.7;">'
-                    f'<div style="display:flex;align-items:center;gap:0.5rem;">'
-                    f'<span style="font-weight:600;font-family:monospace;color:#94a3b8;">{name}</span>'
-                    f'<span style="background:{color};color:#fff;font-size:0.7rem;'
-                    f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
-                    f'<span style="background:#475569;color:#e2e8f0;font-size:0.7rem;'
-                    f'padding:1px 6px;border-radius:3px;">excluded</span>'
-                    f'</div>{issues}</div>'
-                )
-
-        html += '</div>'
-        return html
-
-    def _render_pre_check(results: list) -> str:
-        if not results:
-            return ""
-        _COLORS = {"OK": "#22c55e", "WARN": "#f97316", "ERROR": "#dc2626"}
-        counts: dict[str, int] = {}
-        for r in results:
-            v = r.get("verdict", "ERROR")
-            counts[v] = counts.get(v, 0) + 1
-        summary = " &middot; ".join(
-            f'<span style="color:{_COLORS[v]};font-weight:700;">{n} {v}</span>'
-            for v in ("OK", "WARN", "ERROR") if (n := counts.get(v, 0))
+        issues = "".join(
+            f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
+            for e in ep.get("errors", [])
+        ) + "".join(
+            f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
+            for w in ep.get("warnings", [])
         )
-        html = (
-            '<div style="margin-top:0.75rem;padding:1rem;background:#0f172a;'
-            'border-radius:8px;border:1px solid #1e293b;">'
-            f'<div style="margin-bottom:0.75rem;font-weight:600;">'
-            f'Recording check &mdash; {summary}</div>'
-        )
-        flagged = [r for r in results if r.get("verdict") != "OK"]
-        if not flagged:
-            html += '<div style="color:#22c55e;">✅ All recordings look complete.</div>'
-        else:
-            for r in flagged:
-                verdict = r.get("verdict", "ERROR")
-                color = _COLORS.get(verdict, "#dc2626")
-                name = r.get("episode_id", "?")
-                issues = "".join(
-                    f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
-                    for e in r.get("errors", [])
-                ) + "".join(
-                    f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
-                    for w in r.get("warnings", [])
-                )
-                html += (
-                    f'<div style="border-left:3px solid {color};padding:0.5rem 0.75rem;'
-                    f'margin-bottom:0.5rem;background:#1e293b;border-radius:4px;">'
-                    f'<div style="display:flex;align-items:center;gap:0.5rem;">'
-                    f'<span style="font-weight:600;font-family:monospace;">{name}</span>'
-                    f'<span style="background:{color};color:#fff;font-size:0.7rem;'
-                    f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
-                    f'</div>{issues}</div>'
-                )
-        html += '</div>'
-        return html
-
-    def on_check_recordings(task_ids):
-        if not task_ids:
-            return gr.update(visible=False, value=""), gr.update(visible=False), []
-        sessions = _get_sessions()
-        session_map = {s["id"]: s for s in sessions}
-        episode_ids: list[str] = []
-        for tid in task_ids:
-            s = session_map.get(tid)
-            if s:
-                # Use "episodes" (exists on disk) not "episode_ids" (may include stale refs)
-                episode_ids.extend(
-                    ep["episode_id"]
-                    for ep in s.get("episodes", [])
-                    if ep.get("episode_id")
-                )
-        if not episode_ids:
-            return (
-                gr.update(visible=True, value="<p style='color:#94a3b8;padding:0.5rem;'>No episodes in selected tasks.</p>"),
-                gr.update(visible=False),
-                [],
-            )
-        results = client.check_episodes(episode_ids)
-        html = _render_pre_check(results)
-        n_error = sum(1 for r in results if r.get("verdict") == "ERROR")
-        btn_update = gr.update(
-            visible=n_error > 0,
-            value=f"🗑 Delete {n_error} ERROR episode(s) locally",
-        )
-        return gr.update(visible=True, value=html), btn_update, results
-
-    def on_delete_pre_check_errors(check_results):
-        if not check_results:
-            return "No check results available.", gr.update(visible=False)
-        error_ids = [r["episode_id"] for r in check_results if r.get("verdict") == "ERROR"]
-        if not error_ids:
-            return "No ERROR episodes to delete.", gr.update(visible=False)
-        failed = []
-        for eid in error_ids:
-            result = client.delete_episode(eid)
-            if "error" in result:
-                failed.append(f"{eid}: {result['error']}")
-        if failed:
-            return f"Some deletions failed: {'; '.join(failed)}", gr.update(visible=False)
         return (
-            f"Deleted {len(error_ids)} ERROR episode(s) locally: {', '.join(error_ids)}",
-            gr.update(visible=False),
+            f'<div style="border-left:3px solid {color};padding:0.5rem 0.75rem;'
+            f'background:#1e293b;border-radius:4px;">'
+            f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">'
+            f'<span style="font-weight:600;font-family:monospace;color:#e2e8f0;">{name}</span>'
+            f'<span style="background:{color};color:#fff;font-size:0.7rem;'
+            f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
+            f'<span style="color:#94a3b8;font-size:0.75rem;">{kind_label}</span>'
+            f'{excl_badge}</div>{stats}{issues}</div>'
         )
+
+    def _set_quality_filter(kind: str) -> str:
+        return kind
+
+    def _toggle_quality_sel(checked: bool, name: str, selected: list) -> list:
+        sel = list(selected)
+        if checked and name not in sel:
+            sel.append(name)
+        elif not checked and name in sel:
+            sel.remove(name)
+        return sel
+
+    def _select_all_quality_filtered(quality: list, flt: str) -> list:
+        return [
+            ep["name"]
+            for ep in quality
+            if (flt == "all" or ep.get("kind") == flt)
+            and (ep.get("verdict") != "GOOD" or ep.get("excluded"))
+        ]
+
+    def _delete_quality_ep(name: str, quality: list, selected: list):
+        client.delete_episode(name)
+        return (
+            [ep for ep in quality if ep["name"] != name],
+            [n for n in selected if n != name],
+        )
+
+    def _delete_selected_quality(selected: list, quality: list):
+        for name in selected:
+            client.delete_episode(name)
+        remaining = {n for n in selected}
+        return [ep for ep in quality if ep["name"] not in remaining], []
 
     def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad):
         import time
-        _reset = (gr.update(visible=False, value=""), gr.update(visible=False), [])
+        _reset = ([], "all", [])
         if not task_ids:
             yield ("Select at least one task", *_reset)
             return
@@ -1011,38 +916,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if status == "completed":
                 link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
                 quality = job.get("quality") or []
-                quality_html = _render_slam_quality(quality)
-                n_bad = sum(1 for ep in quality if ep.get("verdict") in ("BAD", "WARN", "FAIL"))
-                html_up = gr.update(visible=bool(quality), value=quality_html)
-                btn_up = gr.update(
-                    visible=n_bad > 0,
-                    value=f"🗑 Delete {n_bad} BAD/WARN/FAIL episode(s) from local storage",
-                )
-                yield (f"✅ Done! Dataset: {link}", html_up, btn_up, quality)
+                yield (f"✅ Done! Dataset: {link}", quality, "all", [])
                 return
             elif status == "failed":
                 yield (f"❌ Failed: {msg}", *_reset)
                 return
             else:
-                yield (f"[{pct:.0f}%] {msg}", gr.update(), gr.update(), gr.update())
-
-    def on_delete_bad_episodes(quality_data):
-        if not quality_data:
-            return "No quality data available.", gr.update(visible=False)
-        bad_ids = [ep["name"] for ep in quality_data if ep.get("verdict") in ("BAD", "WARN", "FAIL")]
-        if not bad_ids:
-            return "No BAD/FAIL episodes to delete.", gr.update(visible=False)
-        errors = []
-        for eid in bad_ids:
-            result = client.delete_episode(eid)
-            if "error" in result:
-                errors.append(f"{eid}: {result['error']}")
-        if errors:
-            return f"Some deletions failed: {'; '.join(errors)}", gr.update(visible=False)
-        return (
-            f"Deleted {len(bad_ids)} episode(s) locally: {', '.join(bad_ids)}",
-            gr.update(visible=False),
-        )
+                yield (f"[{pct:.0f}%] {msg}", gr.skip(), gr.skip(), gr.skip())
 
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
@@ -1375,19 +1255,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """)
         ds_task_cbg = gr.CheckboxGroup(choices=[], label=None, container=False)
 
-        # ── Pre-SLAM recording check ───────────────────────────────────
-        gr.HTML("<div style='margin-top:1rem;'>")
-        ds_check_btn = gr.Button("🔍 Check recordings", size="sm", variant="secondary")
-        ds_check_html = gr.HTML("", visible=False)
-        ds_check_state = gr.State([])
-        ds_delete_errors_btn = gr.Button(
-            "🗑 Delete ERROR episodes locally",
-            variant="stop",
-            visible=False,
-            size="sm",
-        )
-        gr.HTML("</div>")
-
         # ── Step 2 ────────────────────────────────────────────────────
         gr.HTML("""
         <div style="display:flex;align-items:center;gap:0.75rem;
@@ -1441,35 +1308,124 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_upload_msg = gr.Textbox(
             show_label=False, interactive=False, max_lines=3, container=False,
         )
-        ds_quality_html = gr.HTML("", visible=False)
         ds_quality_state = gr.State([])
-        ds_delete_bad_btn = gr.Button(
-            "🗑 Delete BAD/WARN/FAIL episodes from local storage",
-            variant="stop",
-            visible=False,
-            size="sm",
-        )
-        gr.HTML("</div>")
+        ds_quality_filter = gr.State("all")
+        ds_quality_selected = gr.State([])
 
-        ds_check_btn.click(
-            fn=on_check_recordings,
-            inputs=[ds_task_cbg],
-            outputs=[ds_check_html, ds_delete_errors_btn, ds_check_state],
-        )
-        ds_delete_errors_btn.click(
-            fn=on_delete_pre_check_errors,
-            inputs=[ds_check_state],
-            outputs=[ds_upload_msg, ds_delete_errors_btn],
-        )
+        @gr.render(inputs=[ds_quality_state, ds_quality_filter, ds_quality_selected])
+        def _render_quality_panel(quality, flt, selected):
+            if not quality:
+                return
+
+            # Count summary
+            n_total = len(quality)
+            problematic = [
+                ep for ep in quality
+                if ep.get("verdict") != "GOOD" or ep.get("excluded")
+            ]
+            n_prob = len(problematic)
+            n_good = n_total - n_prob
+
+            gr.HTML(
+                f'<div style="margin-top:1rem;padding:0.75rem 1rem;background:#0f172a;'
+                f'border-radius:8px;border:1px solid #1e293b;">'
+                f'<div style="font-weight:600;color:#e2e8f0;margin-bottom:0.4rem;">'
+                f'Quality recap</div>'
+                f'<div style="font-size:0.85rem;color:#94a3b8;">'
+                f'{n_good} episode(s) OK'
+                f'{f" · <span style=\'color:#f97316;\'>⚠ {n_prob} with issues</span>" if n_prob else ""}'
+                f'</div></div>'
+            )
+
+            if not problematic:
+                gr.HTML('<div style="color:#22c55e;font-size:0.85rem;margin-top:0.5rem;">'
+                        '✅ All episodes passed.</div>')
+                return
+
+            # Filter buttons — only show kinds that are present
+            present_kinds = list(dict.fromkeys(
+                ep.get("kind", "trajectory") for ep in problematic
+            ))
+            kind_labels = {
+                "pre_check": "Recording check",
+                "slam": "SLAM failure",
+                "trajectory": "Trajectory",
+            }
+            with gr.Row():
+                for k in ["all"] + present_kinds:
+                    lbl = "All" if k == "all" else kind_labels.get(k, k)
+                    active = (flt == k)
+                    kbtn = gr.Button(
+                        lbl, size="sm",
+                        variant="primary" if active else "secondary",
+                        min_width=80,
+                    )
+                    kbtn.click(
+                        fn=_set_quality_filter,
+                        inputs=gr.State(k),
+                        outputs=ds_quality_filter,
+                    )
+
+            # Apply filter
+            filtered = [
+                ep for ep in problematic
+                if flt == "all" or ep.get("kind") == flt
+            ]
+            if not filtered:
+                gr.HTML('<div style="color:#94a3b8;font-size:0.85rem;margin-top:0.5rem;">'
+                        'No episodes match this filter.</div>')
+                return
+
+            # Bulk action row
+            sel_names = {ep["name"] for ep in filtered}
+            n_sel = len([n for n in selected if n in sel_names])
+            with gr.Row():
+                sel_all_btn = gr.Button("Select all", size="sm", min_width=90)
+                desel_all_btn = gr.Button("Deselect all", size="sm", min_width=90)
+                del_sel_btn = gr.Button(
+                    f"🗑 Delete {n_sel} selected",
+                    variant="stop", size="sm", min_width=130,
+                    interactive=n_sel > 0,
+                )
+            sel_all_btn.click(
+                fn=_select_all_quality_filtered,
+                inputs=[ds_quality_state, ds_quality_filter],
+                outputs=ds_quality_selected,
+            )
+            desel_all_btn.click(fn=lambda sel: [], inputs=ds_quality_selected, outputs=ds_quality_selected)
+            del_sel_btn.click(
+                fn=_delete_selected_quality,
+                inputs=[ds_quality_selected, ds_quality_state],
+                outputs=[ds_quality_state, ds_quality_selected],
+            )
+
+            # Per-episode rows
+            for ep in filtered:
+                name = ep["name"]
+                is_checked = name in selected
+                with gr.Row(equal_height=True):
+                    cb = gr.Checkbox(
+                        label="", value=is_checked,
+                        container=False, scale=0, min_width=32,
+                    )
+                    gr.HTML(_render_quality_card(ep), scale=5)
+                    ep_del_btn = gr.Button("🗑", size="sm", scale=0, min_width=40)
+                name_st = gr.State(name)
+                cb.change(
+                    fn=_toggle_quality_sel,
+                    inputs=[cb, name_st, ds_quality_selected],
+                    outputs=ds_quality_selected,
+                )
+                ep_del_btn.click(
+                    fn=_delete_quality_ep,
+                    inputs=[name_st, ds_quality_state, ds_quality_selected],
+                    outputs=[ds_quality_state, ds_quality_selected],
+                )
+
         ds_upload_btn.click(
             fn=on_ds_upload,
             inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_exclude_fail, ds_exclude_bad],
-            outputs=[ds_upload_msg, ds_quality_html, ds_delete_bad_btn, ds_quality_state],
-        )
-        ds_delete_bad_btn.click(
-            fn=on_delete_bad_episodes,
-            inputs=[ds_quality_state],
-            outputs=[ds_upload_msg, ds_delete_bad_btn],
+            outputs=[ds_upload_msg, ds_quality_state, ds_quality_filter, ds_quality_selected],
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
