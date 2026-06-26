@@ -38,6 +38,10 @@ MODAL_CSS = """
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid #374151 !important;
 }
+.quality-icon-btn button {
+    font-size: 1.3rem !important;
+    min-width: 2.75rem !important;
+}
 """
 
 _HF_AUTH_IFRAME = (
@@ -811,20 +815,45 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         stats = ""
         if "trajectory" in kinds:
-            tracking = ep.get("tracking_pct", 0)
-            n_jumps = ep.get("n_jumps", 0)
-            dist = ep.get("total_distance_m", 0)
+            ibk = ep.get("issues_by_kind", {})
+            traj = ibk.get("trajectory") or {}
+            tracking = traj.get("tracking_pct", ep.get("tracking_pct", 0))
+            n_jumps = traj.get("n_jumps", ep.get("n_jumps", 0))
+            dist = traj.get("total_distance_m", ep.get("total_distance_m", 0))
             stats = (
                 f'<div style="color:#94a3b8;font-size:0.8rem;margin-top:3px;">'
                 f'tracking {tracking:.1f}% · {n_jumps} jumps · dist {dist:.2f} m</div>'
             )
-        issues = "".join(
-            f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
-            for e in ep.get("errors", [])
-        ) + "".join(
-            f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
-            for w in ep.get("warnings", [])
-        )
+        ibk = ep.get("issues_by_kind", {})
+        if len(ibk) > 1:
+            issues = ""
+            for k, kdata in ibk.items():
+                k_errors = kdata.get("errors", [])
+                k_warnings = kdata.get("warnings", [])
+                if k_errors or k_warnings:
+                    kind_label = _QUALITY_KIND_LABELS.get(k, k)
+                    issues += (
+                        f'<div style="color:#64748b;font-size:0.75rem;margin-top:4px;'
+                        f'font-weight:600;">{kind_label}:</div>'
+                    )
+                    issues += "".join(
+                        f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;'
+                        f'margin-left:8px;">• {e}</div>'
+                        for e in k_errors
+                    )
+                    issues += "".join(
+                        f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;'
+                        f'margin-left:8px;">• {w}</div>'
+                        for w in k_warnings
+                    )
+        else:
+            issues = "".join(
+                f'<div style="color:#fca5a5;font-size:0.8rem;margin-top:2px;">• {e}</div>'
+                for e in ep.get("errors", [])
+            ) + "".join(
+                f'<div style="color:#fdba74;font-size:0.8rem;margin-top:2px;">• {w}</div>'
+                for w in ep.get("warnings", [])
+            )
         task_name = ep.get("task_name", "")
         task_chip = (
             f'<span style="color:#64748b;font-size:0.75rem;margin-left:auto;">{task_name}</span>'
@@ -870,7 +899,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return [
             ep["name"]
             for ep in quality
-            if (flt == "all" or ep.get("kind") == flt)
+            if (flt == "all" or flt in ep.get("kinds", [ep.get("kind", "trajectory")]))
             and (ep.get("verdict") != "GOOD" or ep.get("excluded"))
         ]
 
@@ -888,37 +917,69 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return [ep for ep in quality if ep["name"] not in remaining], []
 
     def _merge_quality(quality: list) -> list:
-        """Merge entries with the same episode name into one, keeping the worst verdict."""
+        """Merge entries with the same episode name into one, keeping the worst verdict.
+
+        Only problematic entries (verdict != GOOD or excluded) contribute to `kinds`
+        and `issues_by_kind`, so the filter and card only reflect actual issues.
+        """
         verdict_rank = {"GOOD": 0, "WARN": 1, "FAIL": 2}
         merged: dict = {}
         for ep in quality:
             n = ep["name"]
             kind = ep.get("kind", "trajectory")
+            ep_problematic = ep.get("verdict") != "GOOD" or ep.get("excluded", False)
+            ep_errors = list(ep.get("errors", []))
+            ep_warnings = list(ep.get("warnings", []))
+            ep_ibk: dict = {"errors": ep_errors[:], "warnings": ep_warnings[:]}
+            if kind == "trajectory":
+                ep_ibk.update({
+                    "tracking_pct": ep.get("tracking_pct", 0),
+                    "n_jumps": ep.get("n_jumps", 0),
+                    "total_distance_m": ep.get("total_distance_m", 0),
+                })
+
             if n not in merged:
                 merged[n] = {
                     **ep,
-                    "errors": list(ep.get("errors", [])),
-                    "warnings": list(ep.get("warnings", [])),
-                    "kinds": [kind],
+                    "errors": ep_errors,
+                    "warnings": ep_warnings,
+                    "kinds": [kind] if ep_problematic else [],
+                    "issues_by_kind": {kind: ep_ibk} if ep_problematic else {},
                 }
             else:
                 m = merged[n]
-                if kind not in m["kinds"]:
-                    m["kinds"].append(kind)
-                worse = verdict_rank.get(ep.get("verdict", "FAIL"), 2) > verdict_rank.get(m.get("verdict", "GOOD"), 0)
+                worse = (
+                    verdict_rank.get(ep.get("verdict", "FAIL"), 2)
+                    > verdict_rank.get(m.get("verdict", "GOOD"), 0)
+                )
                 if worse:
                     prev_excluded = m.get("excluded", False)
-                    prev_kinds = m["kinds"]
-                    errors = m["errors"] + [e for e in ep.get("errors", []) if e not in m["errors"]]
-                    warnings = m["warnings"] + [w for w in ep.get("warnings", []) if w not in m["warnings"]]
-                    merged[n] = {**ep, "errors": errors, "warnings": warnings, "kinds": prev_kinds}
+                    prev_kinds = list(m.get("kinds", []))
+                    prev_ibk = dict(m.get("issues_by_kind", {}))
+                    errors = m["errors"] + [e for e in ep_errors if e not in m["errors"]]
+                    warnings = m["warnings"] + [w for w in ep_warnings if w not in m["warnings"]]
+                    if ep_problematic and kind not in prev_kinds:
+                        prev_kinds.append(kind)
+                    if ep_problematic:
+                        prev_ibk[kind] = ep_ibk
+                    merged[n] = {
+                        **ep,
+                        "errors": errors,
+                        "warnings": warnings,
+                        "kinds": prev_kinds,
+                        "issues_by_kind": prev_ibk,
+                    }
                     if prev_excluded:
                         merged[n]["excluded"] = True
                 else:
-                    for e in ep.get("errors", []):
+                    if ep_problematic:
+                        if kind not in m.get("kinds", []):
+                            m["kinds"].append(kind)
+                        m.setdefault("issues_by_kind", {})[kind] = ep_ibk
+                    for e in ep_errors:
                         if e not in m["errors"]:
                             m["errors"].append(e)
-                    for w in ep.get("warnings", []):
+                    for w in ep_warnings:
                         if w not in m["warnings"]:
                             m["warnings"].append(w)
                     if ep.get("excluded", False):
@@ -1403,12 +1464,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return
 
             n_total = len(quality)
+            n_included = sum(1 for ep in quality if not ep.get("excluded", True))
             problematic = [
                 ep for ep in quality
                 if ep.get("verdict") != "GOOD" or ep.get("excluded")
             ]
-            n_prob = len(problematic)
-            n_good = n_total - n_prob
 
             gr.HTML(
                 f'<div style="margin-top:1rem;padding:0.75rem 1rem;background:#0f172a;'
@@ -1416,8 +1476,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 f'<div style="font-weight:600;color:#e2e8f0;margin-bottom:0.4rem;">'
                 f'Quality recap</div>'
                 f'<div style="font-size:0.85rem;color:#94a3b8;">'
-                f'{n_good} episode(s) OK'
-                f'{f" · <span style=\'color:#f97316;\'>⚠ {n_prob} with issues</span>" if n_prob else ""}'
+                f'{n_included} episode{"s" if n_included != 1 else ""} included '
+                f'out of {n_total} episode{"s" if n_total != 1 else ""}'
                 f'</div></div>'
             )
 
@@ -1470,11 +1530,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 with gr.Row(equal_height=True):
                     toggle_btn = gr.Button(
                         "☑" if is_checked else "☐",
-                        size="sm", scale=0, min_width=36,
+                        size="lg", scale=0, min_width=48,
                         variant="secondary",
+                        elem_classes=["quality-icon-btn"],
                     )
                     gr.HTML(_render_quality_card(ep), scale=5)
-                    ep_del_btn = gr.Button("🗑", size="sm", scale=0, min_width=40)
+                    ep_del_btn = gr.Button(
+                        "🗑", size="lg", scale=0, min_width=48,
+                        elem_classes=["quality-icon-btn"],
+                    )
                 toggle_btn.click(
                     fn=lambda sel, n=name: (
                         [s for s in sel if s != n] if n in sel else sel + [n]
