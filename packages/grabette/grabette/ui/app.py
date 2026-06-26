@@ -15,17 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 MODAL_CSS = """
-.quality-ep-cb {
-    flex: 0 0 44px !important;
-    width: 44px !important;
-    min-width: 44px !important;
-    max-width: 44px !important;
-    padding: 0 !important;
-    display: flex !important;
-    align-items: center;
-    justify-content: center;
-    overflow: hidden;
-}
 #hf-auth-modal {
     position: fixed !important;
     inset: 0 !important;
@@ -805,11 +794,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def _render_quality_card(ep: dict) -> str:
         """HTML card for one episode in the quality recap panel."""
         verdict = ep.get("verdict", "FAIL")
-        kind = ep.get("kind", "trajectory")
         color = _QUALITY_COLORS.get(verdict, "#dc2626")
         name = ep.get("name", "?")
         excluded = ep.get("excluded", True)
-        kind_label = _QUALITY_KIND_LABELS.get(kind, kind)
+        kinds = ep.get("kinds", [ep.get("kind", "trajectory")])
+        kind_badges = "".join(
+            f'<span style="color:#94a3b8;font-size:0.75rem;">{_QUALITY_KIND_LABELS.get(k, k)}</span>'
+            for k in kinds
+        )
         excl_badge = (
             '<span style="background:#475569;color:#e2e8f0;font-size:0.7rem;'
             'padding:1px 6px;border-radius:3px;margin-left:4px;">excluded</span>'
@@ -818,7 +810,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             'padding:1px 6px;border-radius:3px;margin-left:4px;">included</span>'
         )
         stats = ""
-        if kind == "trajectory":
+        if "trajectory" in kinds:
             tracking = ep.get("tracking_pct", 0)
             n_jumps = ep.get("n_jumps", 0)
             dist = ep.get("total_distance_m", 0)
@@ -845,8 +837,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f'<span style="font-weight:600;font-family:monospace;color:#e2e8f0;">{name}</span>'
             f'<span style="background:{color};color:#fff;font-size:0.7rem;'
             f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
-            f'<span style="color:#94a3b8;font-size:0.75rem;">{kind_label}</span>'
-            f'{excl_badge}{task_chip}</div>{stats}{issues}</div>'
+            f'{kind_badges}{excl_badge}{task_chip}</div>{stats}{issues}</div>'
         )
 
     def on_task_selection_count(task_ids):
@@ -902,15 +893,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         merged: dict = {}
         for ep in quality:
             n = ep["name"]
+            kind = ep.get("kind", "trajectory")
             if n not in merged:
-                merged[n] = {**ep, "errors": list(ep.get("errors", [])), "warnings": list(ep.get("warnings", []))}
+                merged[n] = {
+                    **ep,
+                    "errors": list(ep.get("errors", [])),
+                    "warnings": list(ep.get("warnings", [])),
+                    "kinds": [kind],
+                }
             else:
                 m = merged[n]
+                if kind not in m["kinds"]:
+                    m["kinds"].append(kind)
                 worse = verdict_rank.get(ep.get("verdict", "FAIL"), 2) > verdict_rank.get(m.get("verdict", "GOOD"), 0)
                 if worse:
+                    prev_excluded = m.get("excluded", False)
+                    prev_kinds = m["kinds"]
                     errors = m["errors"] + [e for e in ep.get("errors", []) if e not in m["errors"]]
                     warnings = m["warnings"] + [w for w in ep.get("warnings", []) if w not in m["warnings"]]
-                    merged[n] = {**ep, "errors": errors, "warnings": warnings}
+                    merged[n] = {**ep, "errors": errors, "warnings": warnings, "kinds": prev_kinds}
+                    if prev_excluded:
+                        merged[n]["excluded"] = True
                 else:
                     for e in ep.get("errors", []):
                         if e not in m["errors"]:
@@ -918,6 +921,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     for w in ep.get("warnings", []):
                         if w not in m["warnings"]:
                             m["warnings"].append(w)
+                    if ep.get("excluded", False):
+                        m["excluded"] = True
         return list(merged.values())
 
     def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad, private):
@@ -1390,12 +1395,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_quality_filter = gr.State("all")
         ds_quality_selected = gr.State([])
 
-        @gr.render(inputs=[ds_quality_state, ds_quality_filter, ds_quality_selected])
-        def _render_quality_panel(quality, flt, selected):
+        # Block 1: summary + controls — re-renders only when quality DATA or filter changes,
+        # NOT on selection changes. This prevents sel_all/desel_all handler accumulation.
+        @gr.render(inputs=[ds_quality_state, ds_quality_filter])
+        def _render_quality_controls(quality, flt):
             if not quality:
                 return
 
-            # Count summary
             n_total = len(quality)
             problematic = [
                 ep for ep in quality
@@ -1420,9 +1426,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         '✅ All episodes passed.</div>')
                 return
 
-            # Filter dropdown + Select all / Deselect all on one row
             present_kinds = list(dict.fromkeys(
-                ep.get("kind", "trajectory") for ep in problematic
+                k for ep in problematic for k in ep.get("kinds", [ep.get("kind", "trajectory")])
             ))
             kind_labels = {
                 "pre_check": "Recording check",
@@ -1432,8 +1437,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             filter_choices = [("All", "all")] + [
                 (kind_labels.get(k, k), k) for k in present_kinds
             ]
-            sel_names = {ep["name"] for ep in problematic}
-            n_sel = len([n for n in selected if n in sel_names])
             with gr.Row():
                 filter_dd = gr.Dropdown(
                     choices=filter_choices, value=flt,
@@ -1448,35 +1451,43 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 inputs=[ds_quality_state, ds_quality_filter],
                 outputs=ds_quality_selected,
             )
-            desel_all_btn.click(fn=lambda sel: [], inputs=ds_quality_selected, outputs=ds_quality_selected)
+            desel_all_btn.click(fn=lambda: [], outputs=ds_quality_selected)
 
-            # Apply filter
+        # Block 2: episode rows — re-renders on selection changes; uses gr.Button toggles
+        # instead of gr.Checkbox to avoid spurious .change events on re-render.
+        @gr.render(inputs=[ds_quality_state, ds_quality_filter, ds_quality_selected])
+        def _render_quality_rows(quality, flt, selected):
+            if not quality:
+                return
+
+            problematic = [
+                ep for ep in quality
+                if ep.get("verdict") != "GOOD" or ep.get("excluded")
+            ]
+            if not problematic:
+                return
+
             filtered = [
                 ep for ep in problematic
-                if flt == "all" or ep.get("kind") == flt
+                if flt == "all" or flt in ep.get("kinds", [ep.get("kind", "trajectory")])
             ]
             if not filtered:
                 gr.HTML('<div style="color:#94a3b8;font-size:0.85rem;margin-top:0.5rem;">'
                         'No episodes match this filter.</div>')
                 return
 
-            # Per-episode rows — use closures (n=name) to capture name per iteration;
-            # do NOT pass cb or per-iteration gr.State as inputs: component references
-            # from inside @gr.render are stale after re-render.
             for ep in filtered:
                 name = ep["name"]
                 is_checked = name in selected
                 with gr.Row(equal_height=True):
-                    cb = gr.Checkbox(
-                        label=None, value=is_checked,
-                        container=False, show_label=False,
-                        scale=0, min_width=44,
-                        elem_classes=["quality-ep-cb"],
-                        interactive=True,
+                    toggle_btn = gr.Button(
+                        "☑" if is_checked else "☐",
+                        size="sm", scale=0, min_width=36,
+                        variant="secondary",
                     )
                     gr.HTML(_render_quality_card(ep), scale=5)
                     ep_del_btn = gr.Button("🗑", size="sm", scale=0, min_width=40)
-                cb.change(
+                toggle_btn.click(
                     fn=lambda sel, n=name: (
                         [s for s in sel if s != n] if n in sel else sel + [n]
                     ),
@@ -1489,7 +1500,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     outputs=[ds_quality_state, ds_quality_selected],
                 )
 
-            # Delete selected — below the episode list
+            sel_names = {ep["name"] for ep in problematic}
+            n_sel = len([n for n in selected if n in sel_names])
             del_sel_btn = gr.Button(
                 f"🗑 Delete {n_sel} selected from local storage",
                 variant="stop", size="sm",
