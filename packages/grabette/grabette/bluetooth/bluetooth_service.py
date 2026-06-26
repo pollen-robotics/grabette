@@ -704,7 +704,6 @@ class BluetoothWifiService:
         # reset auth and re-assert advertising when a central drops (including
         # ungraceful drops like an app crash) so the device stays reconnectable.
         self._hci_index = None
-        self._adapter_iface = None
         self._connected_device_path = None
         # Serializes advertise attempts so a disconnect-triggered re-advertise
         # can't overlap an in-progress (retrying) attempt.
@@ -884,8 +883,6 @@ class BluetoothWifiService:
             raise RuntimeError("No Bluetooth adapter found")
 
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
-        # Kept for RemoveDevice() on disconnect (see _remove_bond).
-        self._adapter_iface = dbus.Interface(adapter, "org.bluez.Adapter1")
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
         # Adapter alias = advertised name (e.g. "Grabette (grabette-01)") so the
         # device chooser shows the hostname and several robots are distinguishable.
@@ -960,39 +957,21 @@ class BluetoothWifiService:
             # can't clobber a client that just reconnected.
             if self._connected_device_path in (None, path):
                 self._connected_device_path = None
-                self._on_central_disconnected(path)
+                self._on_central_disconnected()
 
-    def _on_central_disconnected(self, device_path):
-        """Reset auth, drop the bond, and re-assert advertising after a drop."""
-        self.authenticated = False
-        # Forget the central's bond so the next session pairs fresh (see
-        # _remove_bond), then re-advertise: a connectable advertisement stops
-        # once a central connects, so it must be re-added to stay reconnectable
-        # — including after ungraceful drops.
-        self._remove_bond(device_path)
-        self._start_advertising()
+    def _on_central_disconnected(self):
+        """Reset auth and re-assert advertising after a central drops.
 
-    def _remove_bond(self, device_path):
-        """Remove the disconnected central's pairing/bond via Adapter1.RemoveDevice.
-
-        Web Bluetooth clients are unreliable about persisting LE bonds: when the
-        client forgets its key but we keep ours, the next connection re-pairs
-        from scratch and the stale bond on our side makes SC pairing fail
-        ("numeric comparison failed"), dropping the link in a connect→disconnect
-        loop. We don't rely on the bond for security — the GATT characteristics
-        are unencrypted and WiFi-password secrecy comes from the in-app
-        PIN+X25519 sealing, not the BLE link — so clearing it after every
-        session is safe and keeps reconnection robust across reboots and
-        key-forgetting clients. Centrals that insist on bonding simply re-bond
-        (silent Just Works) next time.
+        Bonds are intentionally LEFT in place: a central that bonds will
+        auto-reconnect and re-encrypt with its stored key, so unilaterally
+        deleting our side here desyncs the pair (the central keeps requesting an
+        LTK we no longer have) and the link loops connect→AuthFailure→reconnect
+        every second. Persisting the bond lets reconnection just work.
         """
-        if self._adapter_iface is None or device_path is None:
-            return
-        try:
-            self._adapter_iface.RemoveDevice(device_path)
-            logger.info("Removed bond for %s", device_path)
-        except dbus.exceptions.DBusException as e:
-            logger.warning("RemoveDevice failed (non-fatal): %s", e)
+        self.authenticated = False
+        # A connectable advertisement stops once a central connects, so it must
+        # be re-added to stay reconnectable — including after ungraceful drops.
+        self._start_advertising()
 
     def _start_advertising(self):
         """Kick off (re-)advertising on a daemon thread.
