@@ -54,7 +54,9 @@ def check_auth(hf: HuggingFaceClient = Depends(get_hf_client)):
     if not hf.is_authenticated:
         return {"authenticated": False}
     info = hf.get_user_info()
-    return {"authenticated": True, "user": info or _EMPTY_USER}
+    if info is None:
+        return {"authenticated": False}
+    return {"authenticated": True, "user": info}
 
 
 @router.post("/upload/{episode_id}")
