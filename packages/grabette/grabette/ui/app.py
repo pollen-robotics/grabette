@@ -879,9 +879,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             for tid in task_ids
             if (s := session_map.get(tid))
         )
+        n_tasks = len(task_ids)
         return (
-            f'<div style="color:#94a3b8;font-size:0.85rem;margin-top:0.4rem;">'
-            f'{total} episode(s) selected</div>'
+            f'<div style="color:#cbd5e1;font-size:0.9rem;margin-top:0.5rem;font-weight:500;">'
+            f'{n_tasks} task{"s" if n_tasks != 1 else ""} selected · '
+            f'<span style="color:#e2e8f0;font-weight:600;">{total}</span> '
+            f'episode{"s" if total != 1 else ""} total</div>'
         )
 
     def _set_quality_filter(kind: str) -> str:
@@ -1048,7 +1051,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     q.setdefault("task_name", ep_to_task.get(q.get("name", ""), ""))
                 quality = _merge_quality(quality)
                 if link:
-                    done_msg = f"✅ Done! Dataset: {link}"
+                    done_msg = f"✅ Done! Dataset: [{link}]({link})"
                 else:
                     done_msg = "⚠ Processing complete — no episodes produced a usable trajectory, dataset not pushed."
                 yield (done_msg, quality, "all", [])
@@ -1449,9 +1452,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             interactive=False,
         )
         gr.HTML("</div>")
-        ds_upload_msg = gr.Textbox(
-            show_label=False, interactive=False, max_lines=3, container=False,
-        )
+        ds_upload_msg = gr.Markdown("")
         ds_quality_state = gr.State([])
         ds_quality_filter = gr.State("all")
         ds_quality_selected = gr.State([])
@@ -1465,11 +1466,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             n_total = len(quality)
             n_included = sum(1 for ep in quality if not ep.get("excluded", True))
+            n_included_warn = sum(
+                1 for ep in quality
+                if not ep.get("excluded", True)
+                and (ep.get("warnings") or ep.get("verdict") == "WARN")
+            )
             problematic = [
                 ep for ep in quality
                 if ep.get("verdict") != "GOOD" or ep.get("excluded")
             ]
 
+            warn_suffix = (
+                f' · <span style="color:#f97316;">⚠ {n_included_warn} with warnings</span>'
+                if n_included_warn else ""
+            )
             gr.HTML(
                 f'<div style="margin-top:1rem;padding:0.75rem 1rem;background:#0f172a;'
                 f'border-radius:8px;border:1px solid #1e293b;">'
@@ -1478,6 +1488,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 f'<div style="font-size:0.85rem;color:#94a3b8;">'
                 f'{n_included} episode{"s" if n_included != 1 else ""} included '
                 f'out of {n_total} episode{"s" if n_total != 1 else ""}'
+                f'{warn_suffix}'
                 f'</div></div>'
             )
 
