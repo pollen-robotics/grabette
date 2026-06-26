@@ -881,10 +881,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         n_tasks = len(task_ids)
         return (
-            f'<div style="color:#cbd5e1;font-size:0.9rem;margin-top:0.5rem;font-weight:500;">'
-            f'{n_tasks} task{"s" if n_tasks != 1 else ""} selected · '
-            f'<span style="color:#e2e8f0;font-weight:600;">{total}</span> '
-            f'episode{"s" if total != 1 else ""} total</div>'
+            f'<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;'
+            f'padding:0.4rem 0.75rem;margin-top:0.5rem;display:inline-block;">'
+            f'<span style="color:#93c5fd;font-size:0.85rem;">'
+            f'{n_tasks} task{"s" if n_tasks != 1 else ""} selected</span>'
+            f'<span style="color:#bfdbfe;font-size:0.85rem;margin:0 0.4rem;">·</span>'
+            f'<span style="color:#ffffff;font-size:0.9rem;font-weight:700;">{total}</span>'
+            f'<span style="color:#93c5fd;font-size:0.85rem;"> episode{"s" if total != 1 else ""}</span>'
+            f'</div>'
         )
 
     def _set_quality_filter(kind: str) -> str:
