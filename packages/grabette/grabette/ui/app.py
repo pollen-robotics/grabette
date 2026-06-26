@@ -17,12 +17,14 @@ logger = logging.getLogger(__name__)
 MODAL_CSS = """
 .quality-ep-cb {
     flex: 0 0 44px !important;
+    width: 44px !important;
     min-width: 44px !important;
     max-width: 44px !important;
     padding: 0 !important;
-    display: flex;
+    display: flex !important;
     align-items: center;
     justify-content: center;
+    overflow: hidden;
 }
 #hf-auth-modal {
     position: fixed !important;
@@ -894,6 +896,30 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         remaining = {n for n in selected}
         return [ep for ep in quality if ep["name"] not in remaining], []
 
+    def _merge_quality(quality: list) -> list:
+        """Merge entries with the same episode name into one, keeping the worst verdict."""
+        verdict_rank = {"GOOD": 0, "WARN": 1, "FAIL": 2}
+        merged: dict = {}
+        for ep in quality:
+            n = ep["name"]
+            if n not in merged:
+                merged[n] = {**ep, "errors": list(ep.get("errors", [])), "warnings": list(ep.get("warnings", []))}
+            else:
+                m = merged[n]
+                worse = verdict_rank.get(ep.get("verdict", "FAIL"), 2) > verdict_rank.get(m.get("verdict", "GOOD"), 0)
+                if worse:
+                    errors = m["errors"] + [e for e in ep.get("errors", []) if e not in m["errors"]]
+                    warnings = m["warnings"] + [w for w in ep.get("warnings", []) if w not in m["warnings"]]
+                    merged[n] = {**ep, "errors": errors, "warnings": warnings}
+                else:
+                    for e in ep.get("errors", []):
+                        if e not in m["errors"]:
+                            m["errors"].append(e)
+                    for w in ep.get("warnings", []):
+                        if w not in m["warnings"]:
+                            m["warnings"].append(w)
+        return list(merged.values())
+
     def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad, private):
         import time
         _reset = ([], "all", [])
@@ -954,6 +980,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 quality = job.get("quality") or []
                 for q in quality:
                     q.setdefault("task_name", ep_to_task.get(q.get("name", ""), ""))
+                quality = _merge_quality(quality)
                 if link:
                     done_msg = f"✅ Done! Dataset: {link}"
                 else:
@@ -964,6 +991,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 quality = job.get("quality") or []
                 for q in quality:
                     q.setdefault("task_name", ep_to_task.get(q.get("name", ""), ""))
+                quality = _merge_quality(quality)
                 yield (f"❌ Failed: {msg}", quality, "all", [])
                 return
             else:
@@ -1444,6 +1472,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         container=False, show_label=False,
                         scale=0, min_width=44,
                         elem_classes=["quality-ep-cb"],
+                        interactive=True,
                     )
                     gr.HTML(_render_quality_card(ep), scale=5)
                     ep_del_btn = gr.Button("🗑", size="sm", scale=0, min_width=40)
