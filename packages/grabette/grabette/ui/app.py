@@ -1395,10 +1395,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_quality_filter = gr.State("all")
         ds_quality_selected = gr.State([])
 
-        # Block 1: summary + controls — re-renders only when quality DATA or filter changes,
-        # NOT on selection changes. This prevents sel_all/desel_all handler accumulation.
-        @gr.render(inputs=[ds_quality_state, ds_quality_filter])
-        def _render_quality_controls(quality, flt):
+        # Single render block — gr.Button toggles (☑/☐) instead of gr.Checkbox:
+        # .click never fires spuriously on re-render, unlike .change on Checkbox.
+        @gr.render(inputs=[ds_quality_state, ds_quality_filter, ds_quality_selected])
+        def _render_quality_panel(quality, flt, selected):
             if not quality:
                 return
 
@@ -1437,6 +1437,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             filter_choices = [("All", "all")] + [
                 (kind_labels.get(k, k), k) for k in present_kinds
             ]
+            sel_names = {ep["name"] for ep in problematic}
+            n_sel = len([n for n in selected if n in sel_names])
             with gr.Row():
                 filter_dd = gr.Dropdown(
                     choices=filter_choices, value=flt,
@@ -1452,20 +1454,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 outputs=ds_quality_selected,
             )
             desel_all_btn.click(fn=lambda: [], outputs=ds_quality_selected)
-
-        # Block 2: episode rows — re-renders on selection changes; uses gr.Button toggles
-        # instead of gr.Checkbox to avoid spurious .change events on re-render.
-        @gr.render(inputs=[ds_quality_state, ds_quality_filter, ds_quality_selected])
-        def _render_quality_rows(quality, flt, selected):
-            if not quality:
-                return
-
-            problematic = [
-                ep for ep in quality
-                if ep.get("verdict") != "GOOD" or ep.get("excluded")
-            ]
-            if not problematic:
-                return
 
             filtered = [
                 ep for ep in problematic
@@ -1500,8 +1488,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     outputs=[ds_quality_state, ds_quality_selected],
                 )
 
-            sel_names = {ep["name"] for ep in problematic}
-            n_sel = len([n for n in selected if n in sel_names])
             del_sel_btn = gr.Button(
                 f"🗑 Delete {n_sel} selected from local storage",
                 variant="stop", size="sm",
