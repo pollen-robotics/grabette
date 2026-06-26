@@ -37,13 +37,16 @@ class PushAndProcessRequest(BaseModel):
     private: bool = False
 
 
+_EMPTY_USER = {"username": "", "email": "", "namespaces": []}
+
+
 @router.post("/auth")
 def set_auth(req: AuthRequest, hf: HuggingFaceClient = Depends(get_hf_client)):
     hf.set_token(req.token)
     if not hf.is_authenticated:
         raise HTTPException(status_code=401, detail="Invalid token")
     info = hf.get_user_info()
-    return {"authenticated": True, "user": info}
+    return {"authenticated": True, "user": info or _EMPTY_USER}
 
 
 @router.get("/auth")
@@ -51,7 +54,7 @@ def check_auth(hf: HuggingFaceClient = Depends(get_hf_client)):
     if not hf.is_authenticated:
         return {"authenticated": False}
     info = hf.get_user_info()
-    return {"authenticated": True, "user": info}
+    return {"authenticated": True, "user": info or _EMPTY_USER}
 
 
 @router.post("/upload/{episode_id}")

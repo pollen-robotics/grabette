@@ -321,9 +321,9 @@ class GrabetteClient:
     def hf_get_namespaces(self) -> list[str]:
         """Return available namespaces (username + orgs) for the authenticated user."""
         result = self.hf_check_auth()
-        if not result.get("authenticated"):
+        if not result or not result.get("authenticated"):
             return []
-        return result.get("user", {}).get("namespaces", [])
+        return (result.get("user") or {}).get("namespaces", [])
 
     def hf_set_auth(self, token: str) -> dict:
         try:
