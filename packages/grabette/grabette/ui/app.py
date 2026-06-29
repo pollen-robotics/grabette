@@ -40,7 +40,7 @@ MODAL_CSS = """
 }
 /* "Power Off" is the last navbar entry — push it to the far right and tint it
    red so it reads as separate from the normal pages. Best-effort: relies on the
-   navbar being a flex row (gradio 6.x); the ⏻ label is the guaranteed cue. */
+   navbar being a flex row (gradio 6.x); the 🔴 label is the guaranteed cue. */
 #grabette-nav a:last-child {
     margin-left: auto !important;
     color: #f87171 !important;
@@ -1411,7 +1411,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # Page 5 — Power Off
     # ══════════════════════════════════════════════════════════════════
 
-    with demo.route("⏻ Power Off") as poweroff_demo:
+    with demo.route("🔴 Power Off") as poweroff_demo:
         gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
