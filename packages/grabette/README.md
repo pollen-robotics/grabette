@@ -68,9 +68,10 @@ uv run python main.py
 
 Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. No specific Pi OS version is pinned — the Makefile target uses whatever system Python is at `/usr/bin/python3` (3.11 on Bookworm, 3.13 on Trixie).
 
-Prerequisite: install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once (requires reboot):
+Prerequisite: install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (requires reboot):
 ```bash
 sudo cp config/config.txt /boot/firmware
+make install-netdev
 sudo reboot
 ```
 

@@ -1,4 +1,4 @@
-.PHONY: install-rpi install-udev-oak install-systemd ensure-ble-only help
+.PHONY: install-rpi install-udev-oak install-systemd install-netdev install-poweroff ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -10,6 +10,8 @@ help:
 	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
 	@echo "  install-systemd   Install + enable the grabette + bluetooth systemd services (BLE-only)"
 	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
+	@echo "  install-netdev    Allow 'rasp' user to trigger WiFi scans via nmcli"
+	@echo "  install-poweroff  Allow 'rasp' user to power off the Pi from the web UI"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
@@ -23,7 +25,7 @@ install-rpi: install-udev-oak
 	@# (dbus, gi.repository.GLib); the venv reaches them via --system-site-packages.
 	cd $(WORKSPACE_ROOT) && rm -rf .venv \
 	  && uv venv --python /usr/bin/python3 --system-site-packages \
-	  && uv sync --package grabette --extra rpi --extra ui
+	  && uv sync --package grabette --extra rpi --extra ui --extra hf
 	@echo "--- verifying imports ---"
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
@@ -43,6 +45,37 @@ install-udev-oak:
 	else \
 		echo "OAK-D udev rule already present."; \
 	fi
+
+# nmcli --rescan yes triggers a real radio scan, gated by two things:
+# 1. the 'netdev' group (NM membership check)
+# 2. the polkit action org.freedesktop.NetworkManager.wifi.scan
+# Both are required on Bookworm/Trixie; the group alone is not sufficient.
+POLKIT_RULE := /etc/polkit-1/rules.d/10-grabette-wifi-scan.rules
+install-netdev:
+	sudo usermod -aG netdev rasp
+	@if [ ! -f $(POLKIT_RULE) ]; then \
+		echo "Installing polkit rule for WiFi scan..."; \
+		printf 'polkit.addRule(function(action, subject) {\n    if (action.id === "org.freedesktop.NetworkManager.wifi.scan" &&\n        subject.isInGroup("netdev")) {\n        return polkit.Result.YES;\n    }\n});\n' \
+		  | sudo tee $(POLKIT_RULE) >/dev/null; \
+	else \
+		echo "Polkit WiFi scan rule already present."; \
+	fi
+	@echo "Done. A reboot (or 'sudo systemctl restart grabette polkit') is needed."
+
+# Lets the web UI's "Power Off" button halt the Pi. Grants the service user
+# the right to run exactly `systemctl poweroff` (nothing else) without a
+# password. Validated with `visudo -c` before install so a typo can never lock
+# out sudo. Idempotent.
+install-poweroff:
+	@tmp=$$(mktemp); \
+	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff' > $$tmp; \
+	if sudo visudo -cf $$tmp; then \
+		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/grabette-poweroff; \
+		echo "Installed /etc/sudoers.d/grabette-poweroff"; \
+	else \
+		echo "sudoers syntax check failed, aborting"; rm -f $$tmp; exit 1; \
+	fi; \
+	rm -f $$tmp
 
 # Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
 ensure-ble-only:

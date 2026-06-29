@@ -35,6 +35,7 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
+        self._starting = False
         self._capture_session_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
@@ -124,6 +125,10 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
+
+    @property
+    def is_camera_connected(self) -> bool:
+        return self._camera is not None and self._camera.is_open
 
     # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
 
@@ -335,6 +340,7 @@ class RpiBackend(Backend):
         if self._capturing:
             raise RuntimeError("Already capturing")
 
+        self._starting = True
         import asyncio
         loop = asyncio.get_event_loop()
 
@@ -369,6 +375,7 @@ class RpiBackend(Backend):
         # Set flag BEFORE starting streams so the daemon poll loop
         # (get_state) reads from capture buffers instead of doing
         # direct I2C reads that would contend with the angle capture thread.
+        self._starting = False
         self._capturing = True
 
         # Start synchronized capture — all streams share the same
@@ -386,6 +393,7 @@ class RpiBackend(Backend):
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
+        self._starting = False
         # Keep _capturing = True until ALL streams have stopped, to
         # prevent the daemon poll loop (get_state) from doing direct
         # I2C reads while the angle capture thread is still running.
@@ -514,6 +522,7 @@ class RpiBackend(Backend):
 
         return CaptureStatus(
             is_capturing=self._capturing,
+            is_starting=self._starting,
             session_id=self._capture_session_dir.name if self._capture_session_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,

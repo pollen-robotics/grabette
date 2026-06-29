@@ -42,19 +42,22 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-# Resolve sibling openarm_gripette_simu repo so we can import its proto
+# Resolve the openarm_gripette_simu package so we can import its proto
 # stubs and the rotation conversion (same source of truth as the server).
 # We add the INNER package directory (not the repo root) so `proto` and
 # `rotation` are loaded as top-level — that skips the parent package's
 # __init__.py which would otherwise pull in mujoco/placo etc. The bridge
 # has no business depending on the sim's physics stack.
+#
+# Monorepo layout: this file is at packages/grabette/scripts/teleop_bridge.py,
+# so parents[3] is the monorepo root and the sim lives under integrations/openarm/.
 _THIS = Path(__file__).resolve()
-_SIM_REPO = _THIS.parent.parent.parent / "openarm_gripette_simu"
+_SIM_REPO = _THIS.parents[3] / "integrations" / "openarm" / "openarm_gripette_simu"
 _SIM_PKG = _SIM_REPO / "openarm_gripette_simu"
 if not _SIM_PKG.exists():
     sys.exit(
         f"openarm_gripette_simu not found at {_SIM_REPO}. "
-        "Bridge expects the sim repo as a sibling of grabette/."
+        "Bridge expects the sim package at integrations/openarm/openarm_gripette_simu."
     )
 sys.path.insert(0, str(_SIM_PKG))
 
