@@ -1637,6 +1637,8 @@ dependencies = [
 
 [package.optional-dependencies]
 hf = [
+    { name = "aiohttp" },
+    { name = "httpx" },
     { name = "huggingface-hub" },
 ]
 rpi = [
@@ -1666,12 +1668,14 @@ urdf = [
 [package.metadata]
 requires-dist = [
     { name = "adafruit-extended-bus", marker = "extra == 'rpi'" },
+    { name = "aiohttp", marker = "extra == 'hf'", specifier = ">=3.9" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "depthai", marker = "extra == 'rpi'", specifier = ">=3.6,<4" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "gpiod", marker = "extra == 'rpi'", specifier = ">=2.0.0" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=5.0.0" },
     { name = "grpcio", marker = "extra == 'teleop-bridge'", specifier = ">=1.60" },
+    { name = "httpx", marker = "extra == 'hf'", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'teleop-bridge'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'hf'", specifier = ">=0.20.0" },
     { name = "numpy", marker = "extra == 'teleop-bridge'" },
@@ -3023,7 +3027,9 @@ sdist = { url = "https://files.pythonhosted.org/packages/39/5a/8ba33c034a5031a2c
 name = "openarm-gripette-model"
 version = "0.1.0"
 source = { editable = "integrations/openarm/openarm_gripette_model" }
-dependencies = [
+
+[package.optional-dependencies]
+urdf = [
     { name = "mujoco" },
     { name = "onshape-to-robot" },
     { name = "pybullet" },
@@ -3031,10 +3037,11 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mujoco", specifier = ">=3.6" },
-    { name = "onshape-to-robot", specifier = ">=1.8.1" },
-    { name = "pybullet", specifier = ">=3.2.7" },
+    { name = "mujoco", marker = "extra == 'urdf'", specifier = ">=3.6" },
+    { name = "onshape-to-robot", marker = "extra == 'urdf'", specifier = ">=1.8.1" },
+    { name = "pybullet", marker = "extra == 'urdf'", specifier = ">=3.2.7" },
 ]
+provides-extras = ["urdf"]
 
 [[package]]
 name = "openarm-gripette-simu"
