@@ -1033,6 +1033,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.update(value=opts["exclude_sync_marginal"],  interactive=False),
         )
 
+    def _on_exclude_bad_toggle(v):
+        return gr.update(value=v), gr.update(value=v), gr.update(value=v)
+
+    def _on_exclude_warn_toggle(v):
+        return gr.update(value=v), gr.update(value=v)
+
+    def _on_bad_sub_change(sub_val, parent_val):
+        if not sub_val and parent_val:
+            return gr.update(value=False)
+        return gr.update()
+
+    def _on_warn_sub_change(sub_val, parent_val):
+        if not sub_val and parent_val:
+            return gr.update(value=False)
+        return gr.update()
+
     def on_ds_upload(task_ids, namespace, repo_name,
                      exclude_fail, exclude_bad, exclude_warn,
                      exclude_bad_speed, exclude_bad_drift, exclude_bad_zigzag,
@@ -1523,24 +1539,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             '</thead>'
             '<tbody>'
             '<tr style="border-bottom:1px solid #f1f5f9;">'
-            '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Trajectory FAIL</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
-            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
-            '</tr>'
-            '<tr style="border-bottom:1px solid #f1f5f9;">'
-            '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Trajectory BAD</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
-            '</tr>'
-            '<tr style="border-bottom:1px solid #f1f5f9;">'
-            '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Trajectory WARN</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
-            '</tr>'
-            '<tr style="border-bottom:1px solid #f1f5f9;">'
             '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Recording warnings</td>'
             '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
             '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
@@ -1552,11 +1550,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
             '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
             '</tr>'
-            '<tr>'
+            '<tr style="border-bottom:1px solid #f1f5f9;">'
             '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Sync MARGINAL</td>'
             '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
             '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
             '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
+            '</tr>'
+            '<tr style="border-bottom:1px solid #f1f5f9;">'
+            '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Trajectory FAIL</td>'
+            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
+            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
+            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
+            '</tr>'
+            '<tr style="border-bottom:1px solid #f1f5f9;">'
+            '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Trajectory BAD</td>'
+            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
+            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
+            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
+            '</tr>'
+            '<tr>'
+            '<td style="padding:0.35rem 0.75rem;color:#0f172a;">Trajectory WARN</td>'
+            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
+            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
+            '<td style="text-align:center;color:#dc2626;font-weight:700;">✗</td>'
             '</tr>'
             '</tbody>'
             '</table>'
@@ -1779,6 +1795,41 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      ds_exclude_bad_speed, ds_exclude_bad_drift, ds_exclude_bad_zigzag,
                      ds_exclude_warn_jumps, ds_exclude_warn_tracking,
                      ds_exclude_recording_warn, ds_exclude_sync_bad, ds_exclude_sync_marginal],
+        )
+        ds_exclude_bad.change(
+            fn=_on_exclude_bad_toggle,
+            inputs=ds_exclude_bad,
+            outputs=[ds_exclude_bad_speed, ds_exclude_bad_drift, ds_exclude_bad_zigzag],
+        )
+        ds_exclude_bad_speed.change(
+            fn=_on_bad_sub_change,
+            inputs=[ds_exclude_bad_speed, ds_exclude_bad],
+            outputs=ds_exclude_bad,
+        )
+        ds_exclude_bad_drift.change(
+            fn=_on_bad_sub_change,
+            inputs=[ds_exclude_bad_drift, ds_exclude_bad],
+            outputs=ds_exclude_bad,
+        )
+        ds_exclude_bad_zigzag.change(
+            fn=_on_bad_sub_change,
+            inputs=[ds_exclude_bad_zigzag, ds_exclude_bad],
+            outputs=ds_exclude_bad,
+        )
+        ds_exclude_warn.change(
+            fn=_on_exclude_warn_toggle,
+            inputs=ds_exclude_warn,
+            outputs=[ds_exclude_warn_jumps, ds_exclude_warn_tracking],
+        )
+        ds_exclude_warn_jumps.change(
+            fn=_on_warn_sub_change,
+            inputs=[ds_exclude_warn_jumps, ds_exclude_warn],
+            outputs=ds_exclude_warn,
+        )
+        ds_exclude_warn_tracking.change(
+            fn=_on_warn_sub_change,
+            inputs=[ds_exclude_warn_tracking, ds_exclude_warn],
+            outputs=ds_exclude_warn,
         )
         ds_upload_btn.click(
             fn=on_ds_upload,
