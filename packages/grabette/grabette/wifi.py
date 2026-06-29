@@ -125,13 +125,30 @@ def scan_networks() -> list[dict]:
     return []
 
 
+def _delete_connections_for_ssid(ssid: str) -> None:
+    """Remove any saved NM connection profiles for the given SSID.
+
+    Stale profiles can have an incomplete 802-11-wireless-security section
+    (key-mgmt missing) which causes nmcli device wifi connect to fail even
+    when the credentials are correct.
+    """
+    result = _run(["nmcli", "--escape", "no", "-t", "-g",
+                   "name,802-11-wireless.ssid", "connection", "show"])
+    for line in result.stdout.splitlines():
+        name, _, conn_ssid = line.partition(":")
+        if conn_ssid.strip() == ssid:
+            logger.info("[wifi] deleting stale profile %r for ssid %r", name, ssid)
+            _run(["nmcli", "connection", "delete", name])
+
+
 def wifi_connect(ssid: str, password: str) -> str:
     """Connect to a WiFi network. Returns a status string starting with 'OK:' or 'ERROR:'."""
+    _delete_connections_for_ssid(ssid)
+    cmd = ["nmcli", "device", "wifi", "connect", ssid]
+    if password:
+        cmd += ["password", password]
     try:
-        result = _run(
-            ["nmcli", "device", "wifi", "connect", ssid, "password", password],
-            timeout=60,
-        )
+        result = _run(cmd, timeout=60)
         if result.returncode == 0:
             return f"OK: Connecting to {ssid}"
         error = result.stderr.strip() or result.stdout.strip()
