@@ -324,7 +324,7 @@ class GrabetteClient:
         try:
             r = self._http.get("/api/hf/auth")
             r.raise_for_status()
-            return r.json()
+            return r.json() or {"authenticated": False}
         except Exception:
             return {"authenticated": False}
 
@@ -333,7 +333,7 @@ class GrabetteClient:
         result = self.hf_check_auth()
         if not result.get("authenticated"):
             return []
-        return result.get("user", {}).get("namespaces", [])
+        return (result.get("user") or {}).get("namespaces", [])
 
     def hf_set_auth(self, token: str) -> dict:
         try:
