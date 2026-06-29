@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 HOTSPOT_CONN_NAME = "grabette-hotspot"
 HOTSPOT_IFACE = "wlan0"
+WIFI_CONN_NAME = "grabette-wifi"
 
 
 def _run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -144,14 +145,33 @@ def _delete_connections_for_ssid(ssid: str) -> None:
 def wifi_connect(ssid: str, password: str) -> str:
     """Connect to a WiFi network. Returns a status string starting with 'OK:' or 'ERROR:'."""
     _delete_connections_for_ssid(ssid)
-    cmd = ["nmcli", "device", "wifi", "connect", ssid]
+    _run(["nmcli", "connection", "delete", WIFI_CONN_NAME])
+
+    # Build the profile explicitly so key-mgmt is never ambiguous.
+    # nmcli device wifi connect relies on the NM scan cache to infer key-mgmt;
+    # if the cache is stale or empty it creates an incomplete profile and fails.
+    cmd = [
+        "nmcli", "connection", "add", "type", "wifi",
+        "con-name", WIFI_CONN_NAME,
+        "ssid", ssid,
+        "ifname", HOTSPOT_IFACE,
+    ]
     if password:
-        cmd += ["password", password]
+        cmd += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password]
+
     try:
-        result = _run(cmd, timeout=60)
+        result = _run(cmd, timeout=15)
+        if result.returncode != 0:
+            return f"ERROR: {result.stderr.strip() or result.stdout.strip()}"
+
+        result = _run(
+            ["nmcli", "connection", "up", WIFI_CONN_NAME, "ifname", HOTSPOT_IFACE],
+            timeout=60,
+        )
         if result.returncode == 0:
-            return f"OK: Connecting to {ssid}"
+            return f"OK: Connected to {ssid}"
         error = result.stderr.strip() or result.stdout.strip()
+        _run(["nmcli", "connection", "delete", WIFI_CONN_NAME])
         return f"ERROR: {error}"
     except subprocess.TimeoutExpired:
         return "ERROR: Connection timed out"
