@@ -1487,14 +1487,34 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """)
 
         ds_profile = gr.Radio(
-            choices=[
-                ("Permissive: keep all episodes as-is", "Permissive"),
-                ("Standard: exclude FAIL trajectories (unusable, < 2 tracked frames)", "Standard"),
-                ("Strict: exclude FAIL + BAD/WARN trajectories, recording warnings, BAD sync", "Strict"),
-                ("Custom: configure manually in the sections below", "Custom"),
-            ],
+            choices=["Permissive", "Standard", "Strict", "Custom"],
             value="Standard",
             label="Profile",
+        )
+        gr.HTML(
+            '<div style="margin:0.25rem 0 0.75rem;border-radius:8px;overflow:hidden;'
+            'border:1px solid #1e293b;font-size:0.84rem;">'
+            '<table style="width:100%;border-collapse:collapse;">'
+            '<tr style="border-bottom:1px solid #1e293b;">'
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#e2e8f0;'
+            'white-space:nowrap;width:6.5rem;">Permissive</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#94a3b8;">'
+            'Keep all episodes as-is</td></tr>'
+            '<tr style="border-bottom:1px solid #1e293b;">'
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#e2e8f0;">Standard</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#94a3b8;">'
+            'Exclude <b style="color:#e2e8f0;">FAIL</b> trajectories '
+            '(unusable — SLAM tracked &lt; 2 frames)</td></tr>'
+            '<tr style="border-bottom:1px solid #1e293b;">'
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#e2e8f0;">Strict</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#94a3b8;">'
+            'Exclude <b style="color:#e2e8f0;">FAIL + BAD/WARN</b> trajectories, '
+            'recording warnings, and BAD sync</td></tr>'
+            '<tr>'
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#e2e8f0;">Custom</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#94a3b8;">'
+            'Configure manually in the sections below</td></tr>'
+            '</table></div>'
         )
 
         with gr.Accordion("Recording Quality", open=False):
