@@ -995,15 +995,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     _PROFILE_OPTS = {
         "Permissive": dict(
-            exclude_fail=False, exclude_bad=False,
+            exclude_fail=False, exclude_bad=False, exclude_warn=False,
+            exclude_bad_speed=False, exclude_bad_drift=False, exclude_bad_zigzag=False,
+            exclude_warn_jumps=False, exclude_warn_tracking=False,
             exclude_recording_warn=False, exclude_sync_bad=False, exclude_sync_marginal=False,
         ),
         "Standard": dict(
-            exclude_fail=True, exclude_bad=False,
+            exclude_fail=True, exclude_bad=False, exclude_warn=False,
+            exclude_bad_speed=False, exclude_bad_drift=False, exclude_bad_zigzag=False,
+            exclude_warn_jumps=False, exclude_warn_tracking=False,
             exclude_recording_warn=False, exclude_sync_bad=False, exclude_sync_marginal=False,
         ),
         "Strict": dict(
-            exclude_fail=True, exclude_bad=True,
+            exclude_fail=True, exclude_bad=True, exclude_warn=True,
+            exclude_bad_speed=False, exclude_bad_drift=False, exclude_bad_zigzag=False,
+            exclude_warn_jumps=False, exclude_warn_tracking=False,
             exclude_recording_warn=True, exclude_sync_bad=True, exclude_sync_marginal=False,
         ),
     }
@@ -1011,24 +1017,26 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_profile_change(profile):
         is_custom = profile not in _PROFILE_OPTS
         if is_custom:
-            return (
-                gr.update(interactive=True),
-                gr.update(interactive=True),
-                gr.update(interactive=True),
-                gr.update(interactive=True),
-                gr.update(interactive=True),
-            )
+            return tuple(gr.update(interactive=True) for _ in range(11))
         opts = _PROFILE_OPTS[profile]
         return (
-            gr.update(value=opts["exclude_fail"],            interactive=False),
-            gr.update(value=opts["exclude_bad"],             interactive=False),
-            gr.update(value=opts["exclude_recording_warn"],  interactive=False),
-            gr.update(value=opts["exclude_sync_bad"],        interactive=False),
-            gr.update(value=opts["exclude_sync_marginal"],   interactive=False),
+            gr.update(value=opts["exclude_fail"],           interactive=False),
+            gr.update(value=opts["exclude_bad"],            interactive=False),
+            gr.update(value=opts["exclude_warn"],           interactive=False),
+            gr.update(value=opts["exclude_bad_speed"],      interactive=False),
+            gr.update(value=opts["exclude_bad_drift"],      interactive=False),
+            gr.update(value=opts["exclude_bad_zigzag"],     interactive=False),
+            gr.update(value=opts["exclude_warn_jumps"],     interactive=False),
+            gr.update(value=opts["exclude_warn_tracking"],  interactive=False),
+            gr.update(value=opts["exclude_recording_warn"], interactive=False),
+            gr.update(value=opts["exclude_sync_bad"],       interactive=False),
+            gr.update(value=opts["exclude_sync_marginal"],  interactive=False),
         )
 
     def on_ds_upload(task_ids, namespace, repo_name,
-                     exclude_fail, exclude_bad,
+                     exclude_fail, exclude_bad, exclude_warn,
+                     exclude_bad_speed, exclude_bad_drift, exclude_bad_zigzag,
+                     exclude_warn_jumps, exclude_warn_tracking,
                      exclude_recording_warn, exclude_sync_bad, exclude_sync_marginal,
                      private):
         import time
@@ -1068,6 +1076,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             task_description=task_description,
             exclude_fail=bool(exclude_fail),
             exclude_bad=bool(exclude_bad),
+            exclude_warn=bool(exclude_warn),
+            exclude_bad_speed=bool(exclude_bad_speed),
+            exclude_bad_drift=bool(exclude_bad_drift),
+            exclude_bad_zigzag=bool(exclude_bad_zigzag),
+            exclude_warn_jumps=bool(exclude_warn_jumps),
+            exclude_warn_tracking=bool(exclude_warn_tracking),
             exclude_recording_warn=bool(exclude_recording_warn),
             exclude_sync_bad=bool(exclude_sync_bad),
             exclude_sync_marginal=bool(exclude_sync_marginal),
@@ -1492,57 +1506,28 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             label="Profile",
         )
         gr.HTML(
-            '<div style="margin:0.25rem 0 0.75rem;border-radius:8px;overflow-x:auto;'
-            'border:1px solid #e2e8f0;font-size:0.82rem;">'
+            '<div style="margin:0.25rem 0 0.75rem;border-radius:8px;overflow:hidden;'
+            'border:1px solid #e2e8f0;font-size:0.84rem;">'
             '<table style="width:100%;border-collapse:collapse;">'
-            # Header row
-            '<tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">'
-            '<th style="padding:0.4rem 0.75rem;text-align:left;font-weight:600;'
-            'color:#64748b;white-space:nowrap;min-width:6rem;"></th>'
-            '<th style="padding:0.4rem 0.75rem;text-align:center;font-weight:500;'
-            'color:#475569;white-space:nowrap;">Rec. warnings</th>'
-            '<th style="padding:0.4rem 0.75rem;text-align:center;font-weight:500;'
-            'color:#475569;white-space:nowrap;">BAD sync</th>'
-            '<th style="padding:0.4rem 0.75rem;text-align:center;font-weight:500;'
-            'color:#475569;white-space:nowrap;">MARGINAL sync</th>'
-            '<th style="padding:0.4rem 0.75rem;text-align:center;font-weight:500;'
-            'color:#475569;white-space:nowrap;">Traj. FAIL</th>'
-            '<th style="padding:0.4rem 0.75rem;text-align:center;font-weight:500;'
-            'color:#475569;white-space:nowrap;">Traj. BAD/WARN</th>'
-            '</tr>'
-            # Permissive
             '<tr style="border-bottom:1px solid #e2e8f0;">'
-            '<td style="padding:0.4rem 0.75rem;font-weight:600;color:#0f172a;">Permissive</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '</tr>'
-            # Standard
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#0f172a;'
+            'white-space:nowrap;width:6.5rem;">Permissive</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#475569;">'
+            'Keep all episodes as-is</td></tr>'
             '<tr style="border-bottom:1px solid #e2e8f0;">'
-            '<td style="padding:0.4rem 0.75rem;font-weight:600;color:#0f172a;">Standard</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '</tr>'
-            # Strict
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#0f172a;">Standard</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#475569;">'
+            'Exclude <b style="color:#0f172a;">FAIL</b> trajectories '
+            '(unusable — SLAM tracked &lt; 2 frames)</td></tr>'
             '<tr style="border-bottom:1px solid #e2e8f0;">'
-            '<td style="padding:0.4rem 0.75rem;font-weight:600;color:#0f172a;">Strict</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#94a3b8;">—</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '<td style="text-align:center;color:#16a34a;font-weight:700;">✓</td>'
-            '</tr>'
-            # Custom
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#0f172a;">Strict</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#475569;">'
+            'Exclude <b style="color:#0f172a;">FAIL + BAD/WARN</b> trajectories, '
+            'recording warnings, and BAD sync</td></tr>'
             '<tr>'
-            '<td style="padding:0.4rem 0.75rem;font-weight:600;color:#0f172a;">Custom</td>'
-            '<td colspan="5" style="padding:0.4rem 0.75rem;color:#475569;">'
-            'Configure each option individually in the sections below</td>'
-            '</tr>'
+            '<td style="padding:0.45rem 0.8rem;font-weight:600;color:#0f172a;">Custom</td>'
+            '<td style="padding:0.45rem 0.8rem;color:#475569;">'
+            'Configure manually in the sections below</td></tr>'
             '</table></div>'
         )
 
@@ -1577,7 +1562,37 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 interactive=False,
             )
             ds_exclude_bad = gr.Checkbox(
-                label="Exclude BAD/WARN episodes (unrealistic speed, IMU drift, zigzag, or < 50% tracking)",
+                label="Exclude all BAD episodes",
+                value=False,
+                interactive=False,
+            )
+            ds_exclude_bad_speed = gr.Checkbox(
+                label="⤷ Unrealistic speed only (avg > 2 m/s)",
+                value=False,
+                interactive=False,
+            )
+            ds_exclude_bad_drift = gr.Checkbox(
+                label="⤷ IMU drift only (step > 15 mm and angle < 5°)",
+                value=False,
+                interactive=False,
+            )
+            ds_exclude_bad_zigzag = gr.Checkbox(
+                label="⤷ Zigzag only (> 5 jumps and angle > 90°)",
+                value=False,
+                interactive=False,
+            )
+            ds_exclude_warn = gr.Checkbox(
+                label="Exclude all WARN episodes",
+                value=False,
+                interactive=False,
+            )
+            ds_exclude_warn_jumps = gr.Checkbox(
+                label="⤷ Excessive jumps only (> 10% of tracked frames)",
+                value=False,
+                interactive=False,
+            )
+            ds_exclude_warn_tracking = gr.Checkbox(
+                label="⤷ Low tracking only (< 50% of frames tracked)",
                 value=False,
                 interactive=False,
             )
@@ -1720,13 +1735,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ds_profile.change(
             fn=on_profile_change,
             inputs=ds_profile,
-            outputs=[ds_exclude_fail, ds_exclude_bad, ds_exclude_recording_warn,
-                     ds_exclude_sync_bad, ds_exclude_sync_marginal],
+            outputs=[ds_exclude_fail, ds_exclude_bad, ds_exclude_warn,
+                     ds_exclude_bad_speed, ds_exclude_bad_drift, ds_exclude_bad_zigzag,
+                     ds_exclude_warn_jumps, ds_exclude_warn_tracking,
+                     ds_exclude_recording_warn, ds_exclude_sync_bad, ds_exclude_sync_marginal],
         )
         ds_upload_btn.click(
             fn=on_ds_upload,
             inputs=[ds_task_cbg, ds_namespace, ds_repo_name,
-                    ds_exclude_fail, ds_exclude_bad,
+                    ds_exclude_fail, ds_exclude_bad, ds_exclude_warn,
+                    ds_exclude_bad_speed, ds_exclude_bad_drift, ds_exclude_bad_zigzag,
+                    ds_exclude_warn_jumps, ds_exclude_warn_tracking,
                     ds_exclude_recording_warn, ds_exclude_sync_bad, ds_exclude_sync_marginal,
                     ds_private],
             outputs=[ds_upload_msg, ds_quality_state, ds_quality_filter, ds_quality_selected],
