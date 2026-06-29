@@ -1,4 +1,4 @@
-.PHONY: install-rpi install-udev-oak install-systemd install-netdev install-poweroff help
+.PHONY: install-rpi install-udev-oak install-systemd install-netdev install-poweroff ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -8,7 +8,8 @@ help:
 	@echo "Targets:"
 	@echo "  install-rpi       Install apt deps + udev rule, create venv, sync, verify"
 	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
-	@echo "  install-systemd   Install + enable the grabette systemd service"
+	@echo "  install-systemd   Install + enable the grabette + bluetooth systemd services (BLE-only)"
+	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  install-netdev    Allow 'rasp' user to trigger WiFi scans via nmcli"
 	@echo "  install-poweroff  Allow 'rasp' user to power off the Pi from the web UI"
 
@@ -18,7 +19,10 @@ help:
 install-rpi: install-udev-oak
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
-	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg
+	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
+	  python3-dbus python3-gi
+	@# python3-dbus / python3-gi: system deps the bluetooth WiFi service imports
+	@# (dbus, gi.repository.GLib); the venv reaches them via --system-site-packages.
 	cd $(WORKSPACE_ROOT) && rm -rf .venv \
 	  && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package grabette --extra rpi --extra ui --extra hf
@@ -73,11 +77,27 @@ install-poweroff:
 	fi; \
 	rm -f $$tmp
 
-install-systemd:
-	@# Patch the unit's hardcoded path to this device's actual workspace root
+# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
+ensure-ble-only:
+	@CONF=/etc/bluetooth/main.conf; \
+	sudo grep -q '^\[General\]' "$$CONF" || echo '[General]' | sudo tee -a "$$CONF" >/dev/null; \
+	if sudo grep -qE '^[[:space:]]*#?[[:space:]]*ControllerMode' "$$CONF"; then \
+	  sudo sed -i -E 's|^[[:space:]]*#?[[:space:]]*ControllerMode.*|ControllerMode = le|' "$$CONF"; \
+	else \
+	  sudo sed -i '/^\[General\]/a ControllerMode = le' "$$CONF"; \
+	fi
+	sudo systemctl restart bluetooth
+	@echo "BlueZ set to BLE-only (ControllerMode = le)"
+
+install-systemd: ensure-ble-only
+	@# Patch each unit's placeholder path to this device's actual workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
 	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette.service \
 	  | sudo tee /etc/systemd/system/grabette.service >/dev/null
+	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette-bluetooth.service \
+	  | sudo tee /etc/systemd/system/grabette-bluetooth.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now grabette
+	sudo systemctl enable --now grabette-bluetooth
 	@echo "Logs: journalctl -u grabette -f"
+	@echo "      journalctl -u grabette-bluetooth -f"
