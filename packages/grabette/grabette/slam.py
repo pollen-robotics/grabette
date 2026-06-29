@@ -34,6 +34,9 @@ class SlamOrchestrator:
         session_manager,
         exclude_fail: bool = False,
         exclude_bad: bool = False,
+        exclude_recording_warn: bool = False,
+        exclude_sync_bad: bool = False,
+        exclude_sync_marginal: bool = False,
         private: bool = False,
     ) -> str:
         """Upload all episodes from task_ids to raw_repo, trigger SLAM, poll, delete raw.
@@ -93,6 +96,9 @@ class SlamOrchestrator:
                             "task": task_description,
                             "exclude_fail": exclude_fail,
                             "exclude_bad": exclude_bad,
+                            "exclude_recording_warn": exclude_recording_warn,
+                            "exclude_sync_bad": exclude_sync_bad,
+                            "exclude_sync_marginal": exclude_sync_marginal,
                             "private": private,
                         },
                     )

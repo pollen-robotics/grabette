@@ -34,6 +34,9 @@ class PushAndProcessRequest(BaseModel):
     task_description: str
     exclude_fail: bool = False
     exclude_bad: bool = False
+    exclude_recording_warn: bool = False
+    exclude_sync_bad: bool = False
+    exclude_sync_marginal: bool = False
     private: bool = False
 
 
@@ -153,6 +156,9 @@ async def push_and_process(
         session_manager=sm,
         exclude_fail=req.exclude_fail,
         exclude_bad=req.exclude_bad,
+        exclude_recording_warn=req.exclude_recording_warn,
+        exclude_sync_bad=req.exclude_sync_bad,
+        exclude_sync_marginal=req.exclude_sync_marginal,
         private=req.private,
     )
     return {"job_id": job_id, "status": "started"}

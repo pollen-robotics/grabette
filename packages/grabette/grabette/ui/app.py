@@ -993,7 +993,37 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         m["excluded"] = True
         return list(merged.values())
 
-    def on_ds_upload(task_ids, namespace, repo_name, exclude_fail, exclude_bad, private):
+    _PROFILE_OPTS = {
+        "Permissive": dict(
+            exclude_fail=False, exclude_bad=False,
+            exclude_recording_warn=False, exclude_sync_bad=False, exclude_sync_marginal=False,
+        ),
+        "Standard": dict(
+            exclude_fail=True, exclude_bad=False,
+            exclude_recording_warn=False, exclude_sync_bad=False, exclude_sync_marginal=False,
+        ),
+        "Strict": dict(
+            exclude_fail=True, exclude_bad=True,
+            exclude_recording_warn=True, exclude_sync_bad=True, exclude_sync_marginal=False,
+        ),
+    }
+
+    def on_profile_change(profile):
+        if profile not in _PROFILE_OPTS:
+            return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        opts = _PROFILE_OPTS[profile]
+        return (
+            gr.update(value=opts["exclude_fail"]),
+            gr.update(value=opts["exclude_bad"]),
+            gr.update(value=opts["exclude_recording_warn"]),
+            gr.update(value=opts["exclude_sync_bad"]),
+            gr.update(value=opts["exclude_sync_marginal"]),
+        )
+
+    def on_ds_upload(task_ids, namespace, repo_name,
+                     exclude_fail, exclude_bad,
+                     exclude_recording_warn, exclude_sync_bad, exclude_sync_marginal,
+                     private):
         import time
         _reset = ([], "all", [])
         if not task_ids:
@@ -1031,6 +1061,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             task_description=task_description,
             exclude_fail=bool(exclude_fail),
             exclude_bad=bool(exclude_bad),
+            exclude_recording_warn=bool(exclude_recording_warn),
+            exclude_sync_bad=bool(exclude_sync_bad),
+            exclude_sync_marginal=bool(exclude_sync_marginal),
             private=bool(private),
         )
         if "error" in result:
@@ -1430,23 +1463,59 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             value=False,
         )
 
-        # ── Quality filter options ─────────────────────────────────────
+        # ── Step 3: Processing options ─────────────────────────────────
         gr.HTML("""
-        <div style="margin-top:1.25rem;margin-bottom:0.5rem;font-weight:600;font-size:0.95rem;">
-          Processing options
-        </div>
-        <div style="color:#94a3b8;font-size:0.82rem;margin-bottom:0.5rem;">
-          Episodes excluded below will not appear in the published dataset.
+        <div style="display:flex;align-items:center;gap:0.75rem;
+                    margin-top:1.5rem;margin-bottom:0.75rem;">
+          <span style="background:#f97316;color:#fff;font-weight:700;
+                       border-radius:50%;width:28px;height:28px;display:flex;
+                       align-items:center;justify-content:center;flex-shrink:0;">3</span>
+          <div>
+            <div style="font-weight:600;font-size:1rem;">Processing options</div>
+            <div style="color:#94a3b8;font-size:0.85rem;">
+              Choose a profile to control which episodes are excluded from the published dataset.
+            </div>
+          </div>
         </div>
         """)
-        ds_exclude_fail = gr.Checkbox(
-            label="Exclude FAIL episodes (SLAM produced < 2 tracked frames)",
-            value=False,
+
+        ds_profile = gr.Radio(
+            choices=["Permissive", "Standard", "Strict", "Custom"],
+            value="Standard",
+            label="Profile",
+            info="Standard: exclude only completely failed trajectories · Strict: also exclude poor quality and sync · Permissive: keep everything · Custom: configure manually below",
         )
-        ds_exclude_bad = gr.Checkbox(
-            label="Exclude BAD/WARN episodes (low tracking, speed, drift, or zigzag jumps)",
-            value=False,
-        )
+
+        with gr.Accordion("Recording Quality", open=False):
+            gr.HTML(
+                '<div style="color:#64748b;font-size:0.82rem;padding:0.25rem 0 0.5rem;">'
+                'Episodes with recording errors are always excluded (missing sensors, calibration failure).'
+                '</div>'
+            )
+            ds_exclude_recording_warn = gr.Checkbox(
+                label="Exclude episodes with recording warnings (e.g. missed frames, IMU gaps)",
+                value=False,
+            )
+
+        with gr.Accordion("Synchronisation", open=False):
+            ds_exclude_sync_bad = gr.Checkbox(
+                label="Exclude episodes with BAD sync (OAK-cam ↔ IMU lag > 50 ms or low correlation)",
+                value=False,
+            )
+            ds_exclude_sync_marginal = gr.Checkbox(
+                label="Exclude episodes with MARGINAL sync (lag 20–50 ms)",
+                value=False,
+            )
+
+        with gr.Accordion("Trajectory Quality", open=False):
+            ds_exclude_fail = gr.Checkbox(
+                label="Exclude FAIL episodes (SLAM tracked < 2 frames — unusable trajectory)",
+                value=True,
+            )
+            ds_exclude_bad = gr.Checkbox(
+                label="Exclude BAD/WARN episodes (unrealistic speed, IMU drift, zigzag, or < 50% tracking)",
+                value=False,
+            )
 
         # ── Upload ────────────────────────────────────────────────────
         gr.HTML("<div style='margin-top:1.5rem;max-width:260px;'>")
@@ -1583,9 +1652,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             inputs=ds_task_cbg,
             outputs=ds_episode_count,
         )
+        ds_profile.change(
+            fn=on_profile_change,
+            inputs=ds_profile,
+            outputs=[ds_exclude_fail, ds_exclude_bad, ds_exclude_recording_warn,
+                     ds_exclude_sync_bad, ds_exclude_sync_marginal],
+        )
         ds_upload_btn.click(
             fn=on_ds_upload,
-            inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_exclude_fail, ds_exclude_bad, ds_private],
+            inputs=[ds_task_cbg, ds_namespace, ds_repo_name,
+                    ds_exclude_fail, ds_exclude_bad,
+                    ds_exclude_recording_warn, ds_exclude_sync_bad, ds_exclude_sync_marginal,
+                    ds_private],
             outputs=[ds_upload_msg, ds_quality_state, ds_quality_filter, ds_quality_selected],
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])

@@ -372,6 +372,9 @@ class GrabetteClient:
         task_description: str,
         exclude_fail: bool = False,
         exclude_bad: bool = False,
+        exclude_recording_warn: bool = False,
+        exclude_sync_bad: bool = False,
+        exclude_sync_marginal: bool = False,
         private: bool = False,
     ) -> dict:
         try:
@@ -384,6 +387,9 @@ class GrabetteClient:
                     "task_description": task_description,
                     "exclude_fail": exclude_fail,
                     "exclude_bad": exclude_bad,
+                    "exclude_recording_warn": exclude_recording_warn,
+                    "exclude_sync_bad": exclude_sync_bad,
+                    "exclude_sync_marginal": exclude_sync_marginal,
                     "private": private,
                 },
             )
