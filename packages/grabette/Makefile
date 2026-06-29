@@ -10,7 +10,7 @@ help:
 	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
 	@echo "  install-systemd   Install + enable the grabette + bluetooth systemd services (BLE-only)"
 	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
-	@echo "  install-netdev    Allow 'rasp' user to trigger WiFi scans via nmcli"
+	@echo "  install-netdev    Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
 	@echo "  install-poweroff  Allow 'rasp' user to power off the Pi from the web UI"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
@@ -50,15 +50,27 @@ install-udev-oak:
 # 1. the 'netdev' group (NM membership check)
 # 2. the polkit action org.freedesktop.NetworkManager.wifi.scan
 # Both are required on Bookworm/Trixie; the group alone is not sufficient.
-POLKIT_RULE := /etc/polkit-1/rules.d/10-grabette-wifi-scan.rules
+#
+# nmcli device wifi connect additionally requires:
+# 3. org.freedesktop.NetworkManager.network-control  (activate/deactivate connections)
+# 4. org.freedesktop.NetworkManager.settings.modify.system  (create connection profile)
+POLKIT_SCAN_RULE    := /etc/polkit-1/rules.d/10-grabette-wifi-scan.rules
+POLKIT_CONNECT_RULE := /etc/polkit-1/rules.d/10-grabette-wifi-connect.rules
 install-netdev:
 	sudo usermod -aG netdev rasp
-	@if [ ! -f $(POLKIT_RULE) ]; then \
+	@if [ ! -f $(POLKIT_SCAN_RULE) ]; then \
 		echo "Installing polkit rule for WiFi scan..."; \
 		printf 'polkit.addRule(function(action, subject) {\n    if (action.id === "org.freedesktop.NetworkManager.wifi.scan" &&\n        subject.isInGroup("netdev")) {\n        return polkit.Result.YES;\n    }\n});\n' \
-		  | sudo tee $(POLKIT_RULE) >/dev/null; \
+		  | sudo tee $(POLKIT_SCAN_RULE) >/dev/null; \
 	else \
 		echo "Polkit WiFi scan rule already present."; \
+	fi
+	@if [ ! -f $(POLKIT_CONNECT_RULE) ]; then \
+		echo "Installing polkit rule for WiFi connect..."; \
+		printf 'polkit.addRule(function(action, subject) {\n    if ((action.id === "org.freedesktop.NetworkManager.network-control" ||\n         action.id === "org.freedesktop.NetworkManager.settings.modify.system") &&\n        subject.isInGroup("netdev")) {\n        return polkit.Result.YES;\n    }\n});\n' \
+		  | sudo tee $(POLKIT_CONNECT_RULE) >/dev/null; \
+	else \
+		echo "Polkit WiFi connect rule already present."; \
 	fi
 	@echo "Done. A reboot (or 'sudo systemctl restart grabette polkit') is needed."
 
