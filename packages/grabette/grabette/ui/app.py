@@ -1339,16 +1339,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 angle_box = gr.Markdown("*—*")
                 angle_iframe = gr.HTML(value=_ANGLE_IFRAME_HTML)
 
-        gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
-
-        # ── Teleop ────────────────────────────────────────────────────
-        gr.Markdown("### Teleop")
-        with gr.Row():
-            teleop_btn = gr.Button("Enter Teleop Mode", variant="secondary", scale=1)
-            teleop_msg = gr.Textbox(
-                show_label=False, interactive=False, max_lines=1, scale=3,
-            )
-
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
@@ -1358,20 +1348,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         sensor_timer = gr.Timer(0.5)
         sensor_timer.tick(fn=get_sensor_state, outputs=[gyro_box, accel_box, angle_box])
 
-        teleop_timer = gr.Timer(1.0)
-        teleop_timer.tick(fn=get_teleop_display, outputs=teleop_msg)
-
         oakd_timer = gr.Timer(3.0)
         oakd_timer.tick(fn=poll_oakd, outputs=oakd_btn)
         oakd_btn.click(fn=on_toggle_oakd, outputs=oakd_btn)
         live_demo.load(fn=poll_oakd, outputs=oakd_btn)
-
-        teleop_btn.click(
-            fn=on_toggle_teleop,
-            outputs=[teleop_msg, teleop_btn,
-                     camera_timer, depth_timer, sensor_timer, teleop_timer,
-                     imu_iframe, angle_iframe],
-        )
 
         batt_popup_lv = gr.HTML(visible=False)
 
