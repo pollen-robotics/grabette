@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grabette Bluetooth Tool</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #4fc3f7;
+            margin-bottom: 24px;
+            font-size: 1.5em;
+        }
+        .container {
+            max-width: 420px;
+            margin: 0 auto;
+        }
+        .card {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 16px;
+            border: 1px solid #2a3a5c;
+        }
+        .card h2 {
+            font-size: 0.9em;
+            color: #90caf9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        button {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            margin-bottom: 8px;
+        }
+        button:hover { opacity: 0.85; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        button:last-child { margin-bottom: 0; }
+        .btn-primary { background: #4fc3f7; color: #1a1a2e; }
+        .btn-success { background: #66bb6a; color: #1a1a2e; }
+        .btn-danger  { background: #ef5350; color: #fff; }
+        .btn-secondary { background: #546e7a; color: #fff; }
+        #networkList { max-height: 220px; overflow-y: auto; }
+        #networkList:not(:empty) { margin-bottom: 8px; }
+        #networkList button { background: #37474f; color: #fff; font-weight: 400; text-align: left; }
+        select, input {
+            display: block;
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #2a3a5c;
+            border-radius: 8px;
+            background: #0f1629;
+            color: #e0e0e0;
+            font-size: 1em;
+            margin-bottom: 8px;
+        }
+        select { cursor: pointer; }
+        input::placeholder { color: #546e7a; }
+        input:focus, select:focus { outline: none; border-color: #4fc3f7; }
+        #log {
+            background: #0f1629;
+            border: 1px solid #2a3a5c;
+            border-radius: 8px;
+            padding: 12px;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: 0.85em;
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        .log-info { color: #90caf9; }
+        .log-ok   { color: #66bb6a; }
+        .log-err  { color: #ef5350; }
+        .log-cmd  { color: #ffd54f; }
+        .status-dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+        .status-connected { background: #66bb6a; }
+        .status-disconnected { background: #ef5350; }
+        #connection-status {
+            text-align: center;
+            margin-bottom: 16px;
+            font-size: 0.9em;
+        }
+
+        /* Collapsible "available networks" disclosure */
+        details#networkDetails { margin-bottom: 8px; }
+        summary {
+            cursor: pointer;
+            list-style: none;
+            padding: 6px 0;
+            color: #90caf9;
+            font-size: 0.9em;
+            user-select: none;
+        }
+        summary::-webkit-details-marker { display: none; }
+        summary::before {
+            content: '▸';
+            display: inline-block;
+            margin-right: 8px;
+            transition: transform 0.15s;
+        }
+        details[open] summary::before { transform: rotate(90deg); }
+
+        /* Desktop: two columns. The grid row height is driven by the controls
+           column, and the log card stretches to match it (align-items: stretch),
+           so the log ends level with the bottom of the Status card. */
+        @media (min-width: 760px) {
+            .container { max-width: 960px; }
+            .layout { display: grid; grid-template-columns: 360px 380px; gap: 16px; align-items: stretch; justify-content: center; }
+            .controls .card:last-child { margin-bottom: 0; }
+            .log-card { margin-bottom: 0; display: flex; flex-direction: column; }
+            .log-card #log { flex: 1; max-height: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Grabette BT Tool</h1>
+
+        <div id="connection-status">
+            <span class="status-dot status-disconnected" id="statusDot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+
+        <div class="layout">
+        <div class="controls">
+
+        <!-- Connection -->
+        <div class="card">
+            <h2>Connection</h2>
+            <select id="deviceSelect">
+                <option value="Grabette">Grabette (glove / Pi 4)</option>
+                <option value="Gripette">Gripette (gripper / Pi Zero 2W)</option>
+                <option value="Casquette">Casquette (POV camera / Pi Zero 2W)</option>
+            </select>
+            <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
+                Connect
+            </button>
+            <button class="btn-secondary" id="btnDisconnect" onclick="disconnectDevice()" disabled>
+                Disconnect
+            </button>
+        </div>
+
+        <!-- Authentication -->
+        <div class="card">
+            <h2>Authentication</h2>
+            <input type="text" id="pinInput" placeholder="PIN (default: 00000)" value="00000">
+            <button class="btn-primary" id="btnPin" onclick="sendPin()" disabled>
+                Authenticate
+            </button>
+        </div>
+
+        <!-- WiFi Configuration -->
+        <div class="card">
+            <h2>WiFi Configuration</h2>
+            <button class="btn-secondary" id="btnScan" onclick="scanWifi()" disabled>
+                Scan networks
+            </button>
+            <details id="networkDetails" hidden>
+                <summary id="networkSummary">Available networks</summary>
+                <div id="networkList"></div>
+            </details>
+            <input type="text" id="ssidInput" placeholder="WiFi SSID">
+            <input type="password" id="passwordInput" placeholder="WiFi Password">
+            <button class="btn-success" id="btnWifi" onclick="sendWifi()" disabled>
+                Connect WiFi
+            </button>
+            <button class="btn-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled>
+                Reset All WiFi
+            </button>
+        </div>
+
+        <!-- Status -->
+        <div class="card">
+            <h2>Status</h2>
+            <button class="btn-secondary" id="btnPing" onclick="sendPing()" disabled>
+                Ping
+            </button>
+            <button class="btn-secondary" id="btnNetStatus" onclick="readNetworkStatus()" disabled>
+                Read Network Status
+            </button>
+        </div>
+
+        </div><!-- /.controls -->
+
+        <!-- Log -->
+        <div class="card log-card">
+            <h2>Log</h2>
+            <div id="log"></div>
+        </div>
+
+        </div><!-- /.layout -->
+    </div>
+
+<script>
+    // BLE UUIDs — shared across all robot types (Grabette/Gripette/Casquette)
+    const SERVICE_UUID        = '12345678-1234-5678-1234-56789abcdef0';
+    const COMMAND_CHAR_UUID   = '12345678-1234-5678-1234-56789abcdef1';
+    const RESPONSE_CHAR_UUID  = '12345678-1234-5678-1234-56789abcdef2';
+    const STATUS_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef3';
+    const NETWORK_STATUS_UUID = '12345678-1234-5678-1234-56789abcdef4';
+
+    // HKDF context string — must match HKDF_INFO in bluetooth_service.py exactly.
+    const HKDF_INFO = 'grabette-wifi-psk-v1';
+
+    let device = null;
+    let server = null;
+    let commandChar = null;
+    let responseChar = null;
+    let networkStatusChar = null;
+
+    const logEl = document.getElementById('log');
+
+    function log(msg, cls = 'log-info') {
+        const ts = new Date().toLocaleTimeString();
+        logEl.innerHTML += `<span class="${cls}">[${ts}] ${msg}</span>\n`;
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setConnected(connected, deviceName) {
+        const dot = document.getElementById('statusDot');
+        const text = document.getElementById('statusText');
+        dot.className = 'status-dot ' + (connected ? 'status-connected' : 'status-disconnected');
+        text.textContent = connected ? 'Connected to ' + (deviceName || '?') : 'Disconnected';
+
+        document.getElementById('btnConnect').disabled = connected;
+        document.getElementById('deviceSelect').disabled = connected;
+        document.getElementById('btnDisconnect').disabled = !connected;
+        document.getElementById('btnPin').disabled = !connected;
+        document.getElementById('btnScan').disabled = !connected;
+        document.getElementById('btnWifi').disabled = !connected;
+        document.getElementById('btnWifiReset').disabled = !connected;
+        document.getElementById('btnPing').disabled = !connected;
+        document.getElementById('btnNetStatus').disabled = !connected;
+    }
+
+    async function connectDevice() {
+        const targetName = document.getElementById('deviceSelect').value;
+        try {
+            log('Scanning for ' + targetName + '...');
+            // Match by name PREFIX: the device advertises "Grabette (hostname)"
+            // so the chooser shows the hostname and several robots of the same
+            // type are distinguishable, while still being scoped by product.
+            device = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: targetName }],
+                optionalServices: [SERVICE_UUID, STATUS_SERVICE_UUID],
+            });
+
+            device.addEventListener('gattserverdisconnected', () => {
+                log('Device disconnected', 'log-err');
+                setConnected(false);
+            });
+
+            // GATT can connect then drop immediately (common on Linux/BlueZ),
+            // so retry the connect + service discovery a few times.
+            let cmdService;
+            const maxAttempts = 5;
+            for (let attempt = 1; ; attempt++) {
+                try {
+                    log('Connecting GATT (attempt ' + attempt + '/' + maxAttempts + ')...');
+                    server = await device.gatt.connect();
+                    cmdService = await server.getPrimaryService(SERVICE_UUID);
+                    break;
+                } catch (e) {
+                    if (attempt >= maxAttempts) throw e;
+                    log('GATT unstable, retrying: ' + e.message, 'log-err');
+                    if (device.gatt.connected) device.gatt.disconnect();
+                    await new Promise(r => setTimeout(r, 500));
+                }
+            }
+
+            // Command service
+            commandChar = await cmdService.getCharacteristic(COMMAND_CHAR_UUID);
+            responseChar = await cmdService.getCharacteristic(RESPONSE_CHAR_UUID);
+            await responseChar.startNotifications();
+
+            // Status service
+            try {
+                const statusService = await server.getPrimaryService(STATUS_SERVICE_UUID);
+                networkStatusChar = await statusService.getCharacteristic(NETWORK_STATUS_UUID);
+            } catch (e) {
+                log('Status service not available', 'log-err');
+                networkStatusChar = null;
+            }
+
+            // device.name is the chosen device's advertised name, e.g.
+            // "Grabette (grabette-01)" — show the hostname, not just the type.
+            const shownName = device.name || targetName;
+            setConnected(true, shownName);
+            log('Connected to ' + shownName, 'log-ok');
+        } catch (e) {
+            log('Connection failed: ' + e.message, 'log-err');
+        }
+    }
+
+    function disconnectDevice() {
+        if (device && device.gatt.connected) {
+            device.gatt.disconnect();
+        }
+        setConnected(false);
+        log('Disconnected');
+    }
+
+    // quiet=true suppresses the raw >/< echo (for plumbing like WIFI_KEYEX or
+    // long blobs/lists); the caller logs its own friendly line. Only "ERROR…"
+    // responses are red — everything else is a success.
+    async function sendCommand(cmd, quiet = false) {
+        if (!commandChar || !responseChar) {
+            log('Not connected', 'log-err');
+            return null;
+        }
+        try {
+            if (!quiet) log('> ' + cmd, 'log-cmd');
+            const encoder = new TextEncoder();
+            // Wait for notification before writing, to avoid race conditions.
+            const responsePromise = new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => reject(new Error('Response timeout')), 35000);
+                responseChar.addEventListener('characteristicvaluechanged', (event) => {
+                    clearTimeout(timeout);
+                    resolve(new TextDecoder().decode(event.target.value));
+                }, { once: true });
+            });
+            await commandChar.writeValue(encoder.encode(cmd));
+            const response = await responsePromise;
+            if (!quiet) log('< ' + response, response.startsWith('ERROR') ? 'log-err' : 'log-ok');
+            return response;
+        } catch (e) {
+            log('Command failed: ' + e.message, 'log-err');
+            return null;
+        }
+    }
+
+    async function sendPing() {
+        await sendCommand('PING');
+    }
+
+    async function sendPin() {
+        const pin = document.getElementById('pinInput').value.trim();
+        if (!pin) { log('Enter a PIN', 'log-err'); return; }
+        await sendCommand('PIN_' + pin);
+    }
+
+    // ---- WiFi password sealing (mirrors bluetooth_service.py) ----
+
+    function b64encode(bytes) {
+        let bin = '';
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin);
+    }
+
+    function b64decode(str) {
+        const bin = atob(str);
+        const out = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
+
+    // X25519 + HKDF-SHA256(salt=PIN) + AES-256-GCM(AAD=ssid). Returns the JSON
+    // blob to send after "WIFI_CONNECT_ENC ". Uses Web Crypto, which exposes
+    // X25519 on the same Chrome/Edge that Web Bluetooth requires.
+    async function sealWifiPassword(ssid, password, pin, robotPkB64, kid) {
+        const enc = new TextEncoder();
+
+        const myKeys = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
+        const robotKey = await crypto.subtle.importKey('raw', b64decode(robotPkB64), { name: 'X25519' }, false, []);
+        const shared = await crypto.subtle.deriveBits({ name: 'X25519', public: robotKey }, myKeys.privateKey, 256);
+
+        const hkdfKey = await crypto.subtle.importKey('raw', shared, 'HKDF', false, ['deriveBits']);
+        const keyBits = await crypto.subtle.deriveBits(
+            { name: 'HKDF', hash: 'SHA-256', salt: enc.encode(pin), info: enc.encode(HKDF_INFO) },
+            hkdfKey, 256);
+        const aesKey = await crypto.subtle.importKey('raw', keyBits, { name: 'AES-GCM' }, false, ['encrypt']);
+
+        const nonce = crypto.getRandomValues(new Uint8Array(12));
+        const ct = new Uint8Array(await crypto.subtle.encrypt(
+            { name: 'AES-GCM', iv: nonce, additionalData: enc.encode(ssid), tagLength: 128 },
+            aesKey, enc.encode(password)));  // Web Crypto appends the 16-byte tag → ct||tag
+
+        const myPub = new Uint8Array(await crypto.subtle.exportKey('raw', myKeys.publicKey));
+        return JSON.stringify({
+            ssid, kid,
+            epk: b64encode(myPub),
+            nonce: b64encode(nonce),
+            ct: b64encode(ct),
+        });
+    }
+
+    async function sendWifi() {
+        const ssid = document.getElementById('ssidInput').value.trim();
+        const password = document.getElementById('passwordInput').value;
+        const pin = document.getElementById('pinInput').value.trim();
+        if (!ssid) { log('Enter an SSID', 'log-err'); return; }
+        if (!password) { log('Enter a password', 'log-err'); return; }
+        if (!pin) { log('Enter the PIN (used to encrypt the password)', 'log-err'); return; }
+
+        log('Sending WiFi credentials for "' + ssid + '"…', 'log-cmd');
+
+        // 1. Fetch the robot's ephemeral public key (plumbing — kept quiet).
+        const keyexRaw = await sendCommand('WIFI_KEYEX', true);
+        if (!keyexRaw) return;
+        let kex;
+        try { kex = JSON.parse(keyexRaw); }
+        catch (e) { log('Bad key-exchange response', 'log-err'); return; }
+
+        // 2. Seal the password and send it (the blob is long — kept quiet).
+        let payload;
+        try { payload = await sealWifiPassword(ssid, password, pin, kex.pk, kex.kid); }
+        catch (e) { log('Encryption failed: ' + e.message, 'log-err'); return; }
+
+        const resp = await sendCommand('WIFI_CONNECT_ENC ' + payload, true);
+        if (resp === null) return;
+        log(resp, resp.startsWith('ERROR') ? 'log-err' : 'log-ok');
+    }
+
+    async function sendWifiReset() {
+        if (!confirm('Delete ALL saved WiFi networks?')) return;
+        await sendCommand('WIFI_RESET');
+    }
+
+    async function scanWifi() {
+        const details = document.getElementById('networkDetails');
+        const summary = document.getElementById('networkSummary');
+        const listEl = document.getElementById('networkList');
+        log('Scanning for networks…', 'log-cmd');
+        // Quiet: the SSID list is shown in the collapsible panel, not the log.
+        const response = await sendCommand('WIFI_SCAN', true);
+        if (response === null) return;
+        if (response.startsWith('ERROR')) { log(response, 'log-err'); details.hidden = true; return; }
+
+        let ssids;
+        try {
+            ssids = JSON.parse(response);
+        } catch (e) {
+            log('Could not parse scan result', 'log-err');
+            details.hidden = true;
+            return;
+        }
+        if (!ssids.length) {
+            log('No networks found', 'log-ok');
+            details.hidden = true;
+            return;
+        }
+        log(ssids.length + ' network(s) found', 'log-ok');
+
+        // Render each SSID as a button that fills the SSID field, then collapses
+        // the panel so the list isn't permanently taking up space.
+        listEl.innerHTML = '';
+        for (const ssid of ssids) {
+            const btn = document.createElement('button');
+            btn.className = 'btn-secondary';
+            btn.textContent = ssid;
+            btn.onclick = () => {
+                document.getElementById('ssidInput').value = ssid;
+                document.getElementById('passwordInput').focus();
+                details.open = false;
+            };
+            listEl.appendChild(btn);
+        }
+        summary.textContent = 'Available networks (' + ssids.length + ')';
+        details.hidden = false;
+        details.open = true;
+    }
+
+    async function readNetworkStatus() {
+        if (!networkStatusChar) {
+            log('Network status characteristic not available', 'log-err');
+            return;
+        }
+        try {
+            const value = await networkStatusChar.readValue();
+            const decoder = new TextDecoder();
+            const status = decoder.decode(value);
+            const bad = status === 'OFFLINE' || status === 'ERROR';
+            log('Network: ' + status, bad ? 'log-err' : 'log-ok');
+        } catch (e) {
+            log('Read failed: ' + e.message, 'log-err');
+        }
+    }
+</script>
+</body>
+</html>
