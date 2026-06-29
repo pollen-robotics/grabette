@@ -1009,15 +1009,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     }
 
     def on_profile_change(profile):
-        if profile not in _PROFILE_OPTS:
-            return gr.skip(), gr.skip(), gr.skip(), gr.skip(), gr.skip()
+        is_custom = profile not in _PROFILE_OPTS
+        if is_custom:
+            return (
+                gr.update(interactive=True),
+                gr.update(interactive=True),
+                gr.update(interactive=True),
+                gr.update(interactive=True),
+                gr.update(interactive=True),
+            )
         opts = _PROFILE_OPTS[profile]
         return (
-            gr.update(value=opts["exclude_fail"]),
-            gr.update(value=opts["exclude_bad"]),
-            gr.update(value=opts["exclude_recording_warn"]),
-            gr.update(value=opts["exclude_sync_bad"]),
-            gr.update(value=opts["exclude_sync_marginal"]),
+            gr.update(value=opts["exclude_fail"],            interactive=False),
+            gr.update(value=opts["exclude_bad"],             interactive=False),
+            gr.update(value=opts["exclude_recording_warn"],  interactive=False),
+            gr.update(value=opts["exclude_sync_bad"],        interactive=False),
+            gr.update(value=opts["exclude_sync_marginal"],   interactive=False),
         )
 
     def on_ds_upload(task_ids, namespace, repo_name,
@@ -1480,10 +1487,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """)
 
         ds_profile = gr.Radio(
-            choices=["Permissive", "Standard", "Strict", "Custom"],
+            choices=[
+                ("Permissive: keep all episodes as-is", "Permissive"),
+                ("Standard: exclude FAIL trajectories (unusable, < 2 tracked frames)", "Standard"),
+                ("Strict: exclude FAIL + BAD/WARN trajectories, recording warnings, BAD sync", "Strict"),
+                ("Custom: configure manually in the sections below", "Custom"),
+            ],
             value="Standard",
             label="Profile",
-            info="Standard: exclude only completely failed trajectories · Strict: also exclude poor quality and sync · Permissive: keep everything · Custom: configure manually below",
         )
 
         with gr.Accordion("Recording Quality", open=False):
@@ -1495,26 +1506,31 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             ds_exclude_recording_warn = gr.Checkbox(
                 label="Exclude episodes with recording warnings (e.g. missed frames, IMU gaps)",
                 value=False,
+                interactive=False,
             )
 
         with gr.Accordion("Synchronisation", open=False):
             ds_exclude_sync_bad = gr.Checkbox(
                 label="Exclude episodes with BAD sync (OAK-cam ↔ IMU lag > 50 ms or low correlation)",
                 value=False,
+                interactive=False,
             )
             ds_exclude_sync_marginal = gr.Checkbox(
                 label="Exclude episodes with MARGINAL sync (lag 20–50 ms)",
                 value=False,
+                interactive=False,
             )
 
         with gr.Accordion("Trajectory Quality", open=False):
             ds_exclude_fail = gr.Checkbox(
                 label="Exclude FAIL episodes (SLAM tracked < 2 frames — unusable trajectory)",
                 value=True,
+                interactive=False,
             )
             ds_exclude_bad = gr.Checkbox(
                 label="Exclude BAD/WARN episodes (unrealistic speed, IMU drift, zigzag, or < 50% tracking)",
                 value=False,
+                interactive=False,
             )
 
         # ── Upload ────────────────────────────────────────────────────
