@@ -286,7 +286,15 @@ function setJoint(name, angle) {
   const pivot = jointPivots[name];
   if (!pivot) return;
   const lim = pivot.userData.limit;          // enforce URDF joint limits
-  if (lim) angle = Math.max(lim.lower, Math.min(lim.upper, angle));
+  if (lim) {
+    // Map robot-frame angles (0 = open, positive = closing) to URDF frame.
+    // The URDF's closing direction is whichever side of zero its limit
+    // extends to — joints whose range is negative-dominant need a sign
+    // flip. This makes the logic symmetric across hands without hardcoding
+    // per-joint flips in the call sites.
+    if (Math.abs(lim.lower) > Math.abs(lim.upper)) angle = -angle;
+    angle = Math.max(lim.lower, Math.min(lim.upper, angle));
+  }
   pivot.quaternion.setFromAxisAngle(pivot.userData.axis, angle);
   if (rebaseModel) rebaseModel();            // keep gripper_base fixed at origin
 }
@@ -298,8 +306,9 @@ let gotPostMessage = false;
 window.addEventListener('message', e => {
   if (!e.data || typeof e.data !== 'object') return;
   const { proximal, distal } = e.data;
+  // Per-joint sign is handled inside setJoint() via URDF limits.
   if (proximal !== undefined) setJoint('proximal', proximal);
-  if (distal   !== undefined) setJoint('distal',   -distal);
+  if (distal   !== undefined) setJoint('distal',   distal);
   updateStatus(proximal, distal);
   gotPostMessage = true;
 });
@@ -316,8 +325,9 @@ function startPolling() {
       if (data.cursor) cur = data.cursor;
       if (data.angle && data.angle.length) {
         const latest = data.angle[data.angle.length - 1];
+        // Per-joint sign is handled inside setJoint() via URDF limits.
         setJoint('proximal', latest.p);
-        setJoint('distal',   -latest.d);
+        setJoint('distal',   latest.d);
         updateStatus(latest.p, latest.d);
       }
     } catch (_) {}
