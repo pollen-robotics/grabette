@@ -1,8 +1,14 @@
 """Calibrate AS5600 angle sensor offsets.
 
-Place both fingers at the zero/rest position, then run this script.
-It reads the raw angles and saves them as offsets so that the zero
-position reads 0 rad after calibration.
+Place both fingers at the FULLY OPEN position (the convention's zero), then
+run this script. It reads the raw angles and saves them as offsets so that
+this pose reads 0 rad after calibration. The runtime then applies the per-
+sensor sign (derived from settings.hand) to produce the robot-frame output
+convention: 0 = fully open, positive = closing.
+
+Sign flipping is independent of this calibration — it happens downstream in
+hardware/angle.py at sample time. Recalibrating after changing `hand` is NOT
+required.
 
 Must run on the Pi (needs I2C access).
 
