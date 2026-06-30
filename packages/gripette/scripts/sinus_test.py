@@ -31,11 +31,13 @@ FREQ = 1.0         # Hz
 DURATION = 5.0     # seconds
 LOOP_HZ = 100      # command + feedback rate
 
-# Motor 1: center of range [-1.484, 0] → -0.742, amplitude 0.3 rad
-M1_CENTER = -0.742
+# Robot frame: 0 = open, positive = closing. Center the sinus in the
+# middle of each motor's range.
+# Motor 1: center of range [0, +1.484] → +0.742, amplitude 0.3 rad
+M1_CENTER = +0.742
 M1_AMP = 0.3
-# Motor 2: center of range [-2.025, 0] → -1.013, amplitude 0.3 rad
-M2_CENTER = -1.013
+# Motor 2: center of range [0, +2.025] → +1.013, amplitude 0.3 rad
+M2_CENTER = +1.013
 M2_AMP = 0.3
 
 OUTPUT = "sinus_test.csv"

@@ -1,4 +1,4 @@
-.PHONY: install-rpi enable-uart harden-rpi install-systemd ensure-ble-only check help
+.PHONY: install-rpi check-hand write-env enable-uart harden-rpi install-systemd ensure-ble-only check help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -6,17 +6,21 @@ WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
 
 help:
 	@echo "Targets:"
-	@echo "  install-rpi       One-shot bring-up: apt deps + UART + harden + venv + sync + verify"
-	@echo "  enable-uart       Disable serial console + enable hardware UART (/dev/serial0)"
-	@echo "  harden-rpi        Persistent journal + fsck.mode=force (for hard-shutdown environments)"
-	@echo "  install-systemd   Install + enable gripette.service and gripette-bluetooth.service"
-	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
-	@echo "  check             Run scripts/check_hardware.py against current install"
+	@echo "  install-rpi HAND=L|R   One-shot bring-up. HAND={left,right} REQUIRED — see notes."
+	@echo "  enable-uart            Disable serial console + enable hardware UART (/dev/serial0)"
+	@echo "  harden-rpi             Persistent journal + fsck.mode=force (hard-shutdown safety)"
+	@echo "  install-systemd        Install + enable gripette.service and gripette-bluetooth.service"
+	@echo "  ensure-ble-only        Force BlueZ into BLE-only mode (ControllerMode = le)"
+	@echo "  check                  Run scripts/check_hardware.py against current install"
 	@echo ""
 	@echo "Prereqs before 'install-rpi':"
 	@echo "  - uv installed (https://docs.astral.sh/uv/)"
 	@echo "  - the grabette monorepo cloned on this device (any path; install-systemd"
 	@echo "    patches the unit to this device's workspace root automatically)"
+	@echo ""
+	@echo "HAND must be 'left' or 'right' — this gripette's hand. Determines the default"
+	@echo "encoder-sign mapping and is written to /etc/gripette/env as GRIPPER_HAND."
+	@echo "Example:  make install-rpi HAND=right"
 
 # One-shot bring-up for a fresh Raspberry Pi Zero 2W (Bookworm or Trixie).
 # Mirrors casquette/Makefile's install-rpi but for gripette's stack
@@ -25,7 +29,7 @@ help:
 # --no-install-package numpy: with --system-site-packages, apt's picamera2
 # already provides numpy. Skipping the wheel avoids a slow source build on
 # the Zero 2W. (See note in pyproject.toml.)
-install-rpi: enable-uart harden-rpi
+install-rpi: check-hand enable-uart harden-rpi
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev
@@ -37,9 +41,40 @@ install-rpi: enable-uart harden-rpi
 	@echo "--- pyvenv.cfg ---"
 	@grep -E "home|version_info|system-site" $(WORKSPACE_ROOT)/.venv/pyvenv.cfg
 	@echo
+	@$(MAKE) --no-print-directory write-env HAND=$(HAND)
+	@echo
 	@echo "Done. Run 'make check' to verify the camera + motors, then"
 	@echo "'uv run --package gripette python -m gripette' to start the service,"
 	@echo "or 'make install-systemd' for boot-time start."
+	@echo "Run 'uv run python scripts/calibrate_zero_local.py' once the gripper"
+	@echo "is assembled, to capture the zero-position offsets."
+
+# Fail fast if HAND wasn't provided. Listing this as a prerequisite of
+# install-rpi means the rest of the recipe never runs without a valid hand.
+check-hand:
+	@if [ "$(HAND)" != "left" ] && [ "$(HAND)" != "right" ]; then \
+		echo "ERROR: HAND must be 'left' or 'right'."; \
+		echo "Usage:  make install-rpi HAND=right"; \
+		exit 1; \
+	fi
+
+# Write /etc/gripette/env with GRIPPER_HAND=$(HAND), PRESERVING any existing
+# GRIPPER_MOTOR*_OFFSET lines so a re-run of install-rpi doesn't wipe a
+# calibration that was already captured by scripts/calibrate_zero_local.py.
+# Other lines (custom signs, comments) are preserved too.
+write-env: check-hand
+	@sudo mkdir -p /etc/gripette
+	@sudo touch /etc/gripette/env
+	@{ \
+	  echo "# /etc/gripette/env — per-device persistent config."; \
+	  echo "# Written by 'make install-rpi' and scripts/calibrate_zero_local.py."; \
+	  echo "# Sourced by gripette.service via EnvironmentFile=-/etc/gripette/env."; \
+	  echo "GRIPPER_HAND=$(HAND)"; \
+	  sudo grep -E '^GRIPPER_(MOTOR[12]_(OFFSET|SIGN))=' /etc/gripette/env 2>/dev/null || true; \
+	} | sudo tee /etc/gripette/env.new >/dev/null
+	@sudo mv /etc/gripette/env.new /etc/gripette/env
+	@echo "Wrote /etc/gripette/env:"
+	@sudo cat /etc/gripette/env | sed 's/^/  /'
 
 # Free /dev/serial0 for motor traffic. Two independent boot-config edits:
 #

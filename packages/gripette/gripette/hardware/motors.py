@@ -73,14 +73,25 @@ class MotorController:
         id_2: int = 2,
         timeout: float = DEFAULT_SERIAL_TIMEOUT,
         limits: tuple[tuple[float, float], tuple[float, float]] | None = None,
+        signs: tuple[int, int] = (1, 1),
+        offsets: tuple[float, float] = (0.0, 0.0),
         bus_hz: float = DEFAULT_BUS_HZ,
     ):
         self.port = port
         self.baudrate = baudrate
         self.ids = [id_1, id_2]
         self.timeout = timeout
-        # limits: ((m1_min, m1_max), (m2_min, m2_max)) in radians
+        # limits: ((m1_min, m1_max), (m2_min, m2_max)) in radians, ROBOT FRAME
+        # (0 = open, positive = closing).
         self.limits = limits
+        # Robot frame <-> encoder frame mapping (per motor):
+        #   read:  robot = (encoder - offset) * sign
+        #   write: encoder = robot * sign + offset
+        # signs are ±1 (hardware mounting); offsets are the encoder reading
+        # observed at robot-frame zero (calibration). Cached/limit-checked
+        # values are therefore always in robot frame (positive = closing).
+        self.signs = signs
+        self.offsets = offsets
         self._bus_period = 1.0 / bus_hz
         self._controller = None
         self._mock = not _HAS_RUSTYPOT
@@ -133,14 +144,19 @@ class MotorController:
             )
             try:
                 pos = self._controller.sync_read_present_position(self.ids)
-                # Seed the cache so clients don't see (0, 0) before the first tick.
+                # Encoder -> robot frame: subtract offset, then apply sign.
+                # Seed the cache so clients don't see (0, 0) before the
+                # first bus-loop tick.
+                robot = (
+                    (pos[0] - self.offsets[0]) * self.signs[0],
+                    (pos[1] - self.offsets[1]) * self.signs[1],
+                )
                 with self._pos_lock:
-                    self._cached_positions = (pos[0], pos[1])
+                    self._cached_positions = robot
                 logger.info(
-                    "Motors started on %s: ids=%s, positions=%s",
-                    self.port,
-                    self.ids,
-                    pos,
+                    "Motors started on %s: ids=%s, encoder=%s, robot=%s, "
+                    "signs=%s, offsets=%s",
+                    self.port, self.ids, pos, robot, self.signs, self.offsets,
                 )
                 break  # success
             except RuntimeError as e:
@@ -173,7 +189,8 @@ class MotorController:
         logger.info("Motor bus thread started at %.1f Hz", 1.0 / self._bus_period)
 
     def read_positions(self) -> tuple[float, float]:
-        """Return the most recent cached positions in radians. Non-blocking."""
+        """Return the most recent cached positions in radians (ROBOT FRAME:
+        0 = open, positive = closing). Non-blocking."""
         if self._mock:
             return (self._mock_positions[0], self._mock_positions[1])
         with self._pos_lock:
@@ -196,15 +213,26 @@ class MotorController:
     def write_goal_positions(self, pos1: float, pos2: float) -> None:
         """Queue a goal write for the bus thread. Non-blocking. Validates limits.
 
+        Arguments are in ROBOT FRAME (0 = open, positive = closing). Limits
+        are checked in robot frame, then the goal is converted to the encoder
+        frame via `encoder = robot * sign + offset` before being queued for
+        the bus thread.
+
         Last-wins: if a previous goal hasn't been applied yet, it's overwritten.
         """
         self._check_limits(pos1, pos2)
         if self._mock:
+            # Mock keeps robot-frame state to match read_positions() semantics.
             self._mock_positions = [pos1, pos2]
             logger.debug("Mock motors → goals: (%.3f, %.3f)", pos1, pos2)
             return
+        # Robot frame -> encoder frame just before crossing the bus boundary.
+        encoder_goal = (
+            pos1 * self.signs[0] + self.offsets[0],
+            pos2 * self.signs[1] + self.offsets[1],
+        )
         with self._slot_lock:
-            self._pending_goal = (pos1, pos2)
+            self._pending_goal = encoder_goal
 
     def set_torque(self, enable: bool) -> None:
         """Queue a torque-enable write for the bus thread. Non-blocking.
@@ -222,11 +250,15 @@ class MotorController:
         while self._running:
             tick = time.monotonic()
 
-            # 1. Read positions → update cache.
+            # 1. Read positions → convert encoder -> robot frame → update cache.
+            #    robot = (encoder - offset) * sign
             try:
                 pos = self._controller.sync_read_present_position(self.ids)
                 with self._pos_lock:
-                    self._cached_positions = (pos[0], pos[1])
+                    self._cached_positions = (
+                        (pos[0] - self.offsets[0]) * self.signs[0],
+                        (pos[1] - self.offsets[1]) * self.signs[1],
+                    )
                 # Reset fail counter on success to reduce log noise.
                 self._read_fail_count = 0
             except Exception as e:
