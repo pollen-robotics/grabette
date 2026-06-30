@@ -10,6 +10,10 @@ ExecStart=/home/rasp/Project/Repo/gripette/.venv/bin/python -m gripette
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Don't write .pyc into the venv. Matches gripette-bluetooth.service so
+# whichever order the services hit a module first, neither leaves bytecode
+# caches behind that might conflict if their owners differ.
+Environment=PYTHONDONTWRITEBYTECODE=1
 # Per-gripette persistent config (GRIPPER_HAND, GRIPPER_MOTOR*_OFFSET, …).
 # Written by 'make install-rpi HAND=...' and scripts/calibrate_zero_local.py.
 # Leading '-' makes it optional so a fresh dev install (no file yet) still boots.
