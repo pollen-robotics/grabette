@@ -25,12 +25,16 @@ uv run python main.py
 
 Prerequisites: a Pi Zero 2W running Raspberry Pi OS (Bookworm or Trixie), with [uv](https://docs.astral.sh/uv/) installed.
 
+A gripette is built as either a **left** or **right** hand — the motors are mounted mirrored, so the runtime needs to know which one this device is. Pick at install time:
+
 ```bash
 sudo usermod -aG dialout $USER   # serial bus access — log out + back in for it to take effect
-make install-rpi                  # one-shot: apt deps + UART config + venv + sync + verify
-sudo reboot                       # required if the UART config was changed
+make install-rpi HAND=right       # or HAND=left
+sudo reboot                       # required if UART/cmdline were changed
 make check                        # post-reboot hardware diagnostic (camera + motors)
 ```
+
+`HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/gripette/env` as `GRIPPER_HAND=<value>` and persists across reboots.
 
 `make check` validates the camera and the motor bus. It also probes the two systemd services and reports them as `[SKIP]` if they aren't installed yet — that's the expected state right after `install-rpi`.
 
@@ -43,12 +47,14 @@ make install-systemd                            # boot-time start (main + blueto
 make check                                      # services should now report [OK]
 ```
 
-`make install-rpi` is idempotent — re-running it is safe. Under the hood it:
+`make install-rpi` is idempotent — re-running it is safe (and preserves any captured calibration offsets in `/etc/gripette/env`). Under the hood it:
 
 - installs `python3-libcamera`, `python3-picamera2`, `libcap-dev` via apt;
 - runs `make enable-uart` to disable the serial console (`cmdline.txt`) and add `dtoverlay=miniuart-bt` to `config.txt` so the reliable PL011 (`ttyAMA0`) ends up on the GPIO header instead of the mini UART (clock-dependent, unreliable at 1Mbaud);
+- runs `make harden-rpi` for crash safety (persistent journal capped at 5 boots / 50MB, and `fsck.mode=force` so a hard shutdown self-heals on next boot — gripettes mounted on a robot get power-cut at random);
 - creates a `--system-site-packages` venv at the workspace root so apt's `picamera2` satisfies the dependency tree (otherwise `uv` tries to build `python-prctl` from PyPI);
-- runs `uv sync --package gripette --extra rpi --no-install-package numpy` and verifies that `picamera2`, `serial`, and `rustypot` all import.
+- runs `uv sync --package gripette --extra rpi --no-install-package numpy` and verifies that `picamera2`, `serial`, and `rustypot` all import;
+- writes `GRIPPER_HAND` into `/etc/gripette/env`, preserving any existing `GRIPPER_MOTOR*_OFFSET` lines from a previous calibration.
 
 `make help` lists every target. The cmdline.txt edit captures the `root=PARTUUID=...` token before editing and rolls back from a `.gripette.bak` backup if it changes — boot is safe.
 
@@ -59,10 +65,23 @@ If `make install-rpi` fails (e.g. unusual OS), the equivalent manual steps are:
 1. **UART**: edit `/boot/firmware/config.txt` to include `dtoverlay=miniuart-bt` and `enable_uart=1`. Edit `/boot/firmware/cmdline.txt` to remove `console=serial0,115200` — keep the file as a single line. Reboot.
 2. **Deps**: `sudo apt install libcap-dev python3-libcamera python3-picamera2`.
 3. **Venv**: from the workspace root, `uv venv --python /usr/bin/python3 --system-site-packages && uv sync --package gripette --extra rpi --no-install-package numpy`.
+4. **Hand config**: `sudo mkdir -p /etc/gripette && echo "GRIPPER_HAND=right" | sudo tee /etc/gripette/env` (or `=left`).
 
 ## Configuration
 
-All settings via environment variables with `GRIPPER_` prefix:
+### Robot-frame convention
+
+All motor positions in the API (gRPC, client, scripts, limits) are in **robot frame**:
+
+- `0 rad` — gripper fully **open**
+- positive — **closing**
+- limits: motor 1 ∈ `[0, +1.484]` (~85°), motor 2 ∈ `[0, +2.025]` (~116°)
+
+Commands outside these bounds are rejected with `ValueError` before reaching the bus. `MotorController` bridges robot frame ↔ encoder frame via per-motor `sign` (from `hand`) and `offset` (from calibration); callers never deal with the encoder values directly.
+
+### Environment variables
+
+All settings via environment variables with `GRIPPER_` prefix. Persistent per-device config lives in `/etc/gripette/env`, sourced by `gripette.service`.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -72,6 +91,11 @@ All settings via environment variables with `GRIPPER_` prefix:
 | `GRIPPER_MOTOR_BAUDRATE` | `1000000` | Serial baudrate |
 | `GRIPPER_MOTOR_ID_1` | `1` | First servo ID |
 | `GRIPPER_MOTOR_ID_2` | `2` | Second servo ID |
+| `GRIPPER_HAND` | `right` | `left` or `right` — determines default `motor*_sign`. Written by `make install-rpi HAND=…` |
+| `GRIPPER_MOTOR1_OFFSET` | `0.0` | Encoder reading (rad) at robot-frame zero. Written by `scripts/calibrate_zero_local.py` |
+| `GRIPPER_MOTOR2_OFFSET` | `0.0` | Same, motor 2 |
+| `GRIPPER_MOTOR1_SIGN` | (from `hand`) | Override the hand-derived sign for motor 1. Use only if a hardware revision is asymmetric. ±1 |
+| `GRIPPER_MOTOR2_SIGN` | (from `hand`) | Same, motor 2 |
 | `GRIPPER_JPEG_QUALITY` | `70` | JPEG compression quality |
 | `GRIPPER_LOG_LEVEL` | `INFO` | Logging level |
 
@@ -86,7 +110,7 @@ with GripperClient("192.168.1.36:50051") as g:
     print(g.ping())
 
     g.torque_on()
-    g.move(-0.5, -1.0)          # goal positions in radians
+    g.move(0.5, 1.0)            # goal positions in radians (0 = open, positive = closing)
 
     for frame in g.stream():    # 10Hz camera + motor state
         print(f"Frame {frame.sequence}: {len(frame.jpeg_data)}B, "
@@ -122,6 +146,40 @@ If a motor was previously configured and you don't know its ID, scan the bus:
 uv run python scripts/scan_motors.py                 # full sweep, IDs 1..253
 uv run python scripts/scan_motors.py --start 1 --end 10
 ```
+
+### Calibration (zero offset)
+
+A fresh gripette ships with `GRIPPER_MOTOR*_OFFSET=0`, so the encoder's mechanical zero is treated as robot-frame zero. That's usually a few degrees off the gripper's actual "fully open" pose. Calibrate once after assembly to align them.
+
+**On the Pi** (recommended for first-time setup; writes `/etc/gripette/env` directly):
+
+```bash
+sudo systemctl stop gripette                          # free /dev/serial0
+uv run python scripts/calibrate_zero_local.py         # torque off, prompt, write offsets
+sudo systemctl start gripette
+```
+
+Workflow: torque drops, you physically move the gripper to fully open, press ENTER, the script averages 10 encoder samples and merges `GRIPPER_MOTOR1_OFFSET=…` / `GRIPPER_MOTOR2_OFFSET=…` into `/etc/gripette/env` (preserving `GRIPPER_HAND`). Use `--dry-run` to preview without writing.
+
+**Remote, over gRPC** (no service restart needed; prints values for you to paste):
+
+```bash
+uv run python scripts/calibrate_zero.py 192.168.1.36 --hand right
+```
+
+Service stays up. The script reads `g.read_motors()` at the user-defined zero pose and prints the **delta** to add to `GRIPPER_MOTOR*_OFFSET` in `/etc/gripette/env`. The delta arithmetic is correct whether this is a first calibration or a re-cal (just add to existing).
+
+### Diagnostics
+
+```bash
+uv run python scripts/read_motors.py 192.168.1.36 --torque-off   # live positions, gripper back-drivable
+uv run python scripts/scan_motors.py                              # which IDs respond on the bus (run on Pi)
+uv run python scripts/configure_motor.py                          # set a brand-new motor's ID (run on Pi)
+```
+
+`read_motors.py` is useful for sanity-checking the current calibration: at fully-open the readings should be ~0; at fully-closed they should approach the `motor*_max` limits. See `make check` for the full hardware diagnostic.
+
+---
 
 All the gRPC-based scripts below take the gripette endpoint as an explicit argument — there's no default IP. The port defaults to `50051` (gripette's default), so `192.168.1.36` is equivalent to `192.168.1.36:50051`. Replace with the address of your gripette in the examples.
 
