@@ -8,12 +8,10 @@ Autonomous Raspberry Pi service for robotic manipulation data collection. Captur
 | Component | Spec |
 |---|---|
 | **Board** | Raspberry Pi 4 |
-| **Camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
-| **IMU** | Bosch BMI088, 200Hz, 6-axis (accel + gyro) via I2C |
-| **Angle sensors** | 2x AS5600 rotary encoders (proximal + distal joints), I2C buses 4 & 5 |
+| **Primary camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
+| **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides depth + IMU stream for SLAM; replaces the legacy BMI088. Toggled on demand (default off to save battery). |
+| **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
-
-Camera and IMU are mounted back-to-back, centers aligned along z-axis, 11.15mm apart.
 
 ## Architecture
 
@@ -50,8 +48,9 @@ Camera and IMU are mounted back-to-back, centers aligned along z-axis, 11.15mm a
                         │
           ┌─────────────┼─────────────┐
           ▼             ▼             ▼
-     VideoCapture  BMI088Capture  AngleCapture
-     (picamera2)   (I2C, 200Hz)  (AS5600, I2C)
+     VideoCapture   OakdCapture   AngleCapture
+     (picamera2)    (RGB-D + IMU,  (AS5600L, I2C)
+                     toggleable)
 ```
 
 ## Quick Start
@@ -83,32 +82,36 @@ uv run python -m grabette
 
 `HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/grabette/env` as `GRABETTE_HAND=<value>` and persists across reboots (sourced by `grabette.service`).
 
-`make install-rpi` does the following — automating the steps that are easy to get subtly wrong by hand:
-- `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg`
-- Installs the OAK-D / Movidius USB udev rule (`/etc/udev/rules.d/80-movidius.rules`)
+`make install-rpi HAND=...` does the following — automating the steps that are easy to get subtly wrong by hand:
+- `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg python3-dbus python3-gi` (the dbus/gi packages are system deps for the BLE WiFi service).
+- Installs the OAK-D / Movidius USB udev rule (`/etc/udev/rules.d/80-movidius.rules`).
 - Creates the venv with `uv venv --python /usr/bin/python3 --system-site-packages` — **both flags matter**:
   - `--python /usr/bin/python3` ensures uv uses the apt-managed Python (which owns `python3-libcamera`/`python3-picamera2`), not uv's own managed Python under `~/.local/share/uv/python/...`.
   - `--system-site-packages` makes the apt-installed `libcamera` and `numpy` visible to the venv.
-- Runs `uv sync --extra rpi --extra ui` and verifies all imports succeed.
+- Runs `uv sync --package grabette --extra rpi --extra ui --extra hf` and verifies all imports succeed.
+- Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
+
+Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
 
 If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the venv setup didn't take — `make install-rpi` will fix it on a re-run.
 
 ### systemd (auto-start on boot)
 
+`make install-systemd` installs **both** services (`grabette.service` and `grabette-bluetooth.service`), runs `ensure-ble-only` to set BlueZ to `ControllerMode = le`, then `enable --now`s them so they're up immediately and across reboots.
+
 ```bash
 make install-systemd
-journalctl -u grabette -f   # logs
+journalctl -u grabette -f               # daemon logs
+journalctl -u grabette-bluetooth -f     # BLE WiFi-setup service logs
 ```
+
+If you re-run `install-systemd` while the services are already up, `enable --now` does NOT restart them — issue `sudo systemctl restart grabette grabette-bluetooth` to pick up updated unit files.
 
 ### Bluetooth WiFi configuration
 
-A standalone BLE GATT service allows configuring WiFi credentials without SSH or a screen. To make it operational : 
+A standalone BLE GATT service (`grabette-bluetooth.service`) lets you configure WiFi credentials without SSH or a screen. It's installed + started by `make install-systemd` (above). Once running:
 
-```bash
-make install-rpi
-```
-
-Then, connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge and follow those steps : 
+Connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge and follow those steps : 
 1. Select Grabette and click on Connect
 2. Select your Grabette on the pop-up, then Pair
 3. Authenticate with the PIN
@@ -128,9 +131,9 @@ PIN is configurable via the `GRABETTE_BT_PIN` env var (default: `00000`); set it
 | `WIFI_RESET` | `OK: WiFi connections cleared` |
 
 
-No pairing is required: the characteristics are unencrypted and the adapter advertises with `Pairable = False`, so clients connect "connection-only" — no pairing dialog, no terminal needed.
+The adapter advertises with `Pairable = True` and uses the `NoInputNoOutput` agent for silent Just Works pairing — required because some centrals (notably Windows and some Linux/BlueZ stacks) refuse GATT operations until they've bonded. macOS clients can still connect "connection-only" without bonding; both modes work.
 
-> **If a client still tries to pair** (e.g. a stale bond from an earlier version): clear it on both ends — `bluetoothctl remove <mac.address.of.Grabette>` on the Pi and the client, plus Forget the device in `chrome://bluetooth-internals`. As a last resort, run an auto-accept agent on the client: in a terminal, `bluetoothctl` → `agent NoInputNoOutput` → `default-agent` (leave it open).
+> **If a client gets stuck pairing** (e.g. a stale bond from an earlier version that used `Pairable = False`): clear it on both ends — `bluetoothctl remove <mac.address.of.Grabette>` on the Pi and the client, plus Forget the device in `chrome://bluetooth-internals`.
 
 ## Configuration
 
@@ -175,8 +178,8 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
 └── episodes/
     └── 20260310_143052/             # One episode
         ├── raw_video.mp4            # H.264 encoded (1296x972 @ 46fps)
-        ├── imu_data.json            # BMI088 accel + gyro (200Hz)
-        ├── angle_data.json          # AS5600 joint angles (if available)
+        ├── imu_data.json            # OAK-D IMU: accel + gyro (200Hz)
+        ├── angle_data.json          # AS5600L joint angles (if available)
         └── metadata.json            # Duration, counts, hand, angle_convention, device_id
 ```
 
@@ -202,15 +205,15 @@ Units: accel in m/s² (includes gravity), gyro in rad/s. Timestamps in milliseco
 All sensor streams share a common `SyncManager` clock based on `time.monotonic()`:
 
 - **Camera**: SensorTimestamp from picamera2 (same SoC hardware clock — no drift)
-- **IMU**: BMI088 SENSORTIME register (internal oscillator, ~1% drift) — corrected via two-point linear rescaling at capture stop
+- **IMU**: depthai timestamps from the OAK-D pipeline, mapped onto the SyncManager clock at sample arrival
 - **Contention prevention**: `_capturing` flag blocks daemon I2C reads during recording
-- **Stop order**: IMU first, then camera (camera stop includes ffmpeg muxing)
+- **Stop order**: IMU/depth first, then camera (camera stop includes ffmpeg muxing)
 - **IMU brackets video**: IMU starts before first frame, stops before last — required by the downstream SLAM/VIO pipeline
 
 ## Data Pipeline
 
 ```
-RPi (camera + BMI088 + AS5600)
+RPi (camera + OAK-D + AS5600L)
   → Grabette service (capture, manage sessions)
   → HuggingFace dataset repo (upload episodes)
   → Cloud SLAM/VIO processing

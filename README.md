@@ -46,6 +46,34 @@ pyproject.toml                  uv workspace root
 uv.lock                         single lock for the whole workspace
 ```
 
+## Cloning
+
+The repo uses **Git LFS** for mesh assets (`*.stl`, see `.gitattributes`). Install LFS once per workstation, then clone normally:
+
+```bash
+sudo apt install git-lfs             # Debian / Ubuntu / Pi OS — install the binary first
+                                     # (macOS: brew install git-lfs; see git-lfs.com for others)
+git lfs install                      # one-time per user — configures git filters
+git clone git@github.com:pollen-robotics/grabette.git
+```
+
+If you cloned **before** `git lfs install`, the `.stl` files are 130-byte pointer text files. Fetch the real binaries:
+```bash
+cd grabette
+git lfs pull
+```
+
+Verify:
+```bash
+file packages/grabette/urdf/grabette_right/assets/*.stl | head -3
+# expected: "Binary"   |   bad: "ASCII text" (pointer file → run `git lfs pull`)
+```
+
+For on-device installs where you don't need the meshes (Pi services don't load them), skip LFS to save disk + bandwidth:
+```bash
+GIT_LFS_SKIP_SMUDGE=1 git clone git@github.com:pollen-robotics/grabette.git
+```
+
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/). Python ≥ 3.11.
@@ -81,18 +109,19 @@ The on-device services (`grabette`, `casquette`, `gripette`) install through a
 root, with the device's apt-provided `picamera2`/`libcamera`:
 
 ```bash
-# clone skipping the OpenArm meshes (not needed on-device)
+# clone skipping the meshes (on-device services don't load them)
 GIT_LFS_SKIP_SMUDGE=1 git clone git@github.com:pollen-robotics/grabette.git
 cd grabette/packages/grabette
 
-make install-rpi                               # apt deps + venv + sync + verify imports
+make install-rpi HAND=right                    # or HAND=left — grabette is built mirrored per side
 uv run --package grabette python -m grabette   # run the service (auto-detects hardware)
-make install-systemd                           # optional: enable boot-time autostart
+make install-systemd                           # installs BOTH grabette.service AND grabette-bluetooth.service
 ```
 
 On success the log shows `RPi hardware detected, using RpiBackend` (not
-`MockBackend`). `casquette` follows the same pattern from `packages/casquette`;
-run `make help` in either package for the available targets.
+`MockBackend`). `casquette` follows the same pattern from `packages/casquette` (no `HAND=`,
+it's hand-agnostic); `gripette` likewise needs `HAND=` from `packages/gripette`. Run `make help`
+in any package for the available targets.
 
 ## License
 
