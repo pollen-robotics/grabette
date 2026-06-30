@@ -20,6 +20,7 @@ IMU_HZ = 200
 
 class MockBackend(Backend):
     def __init__(self) -> None:
+        super().__init__()
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
