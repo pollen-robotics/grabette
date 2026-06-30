@@ -497,6 +497,15 @@ class RpiBackend(Backend):
                 "angle_sample_count": status.angle_sample_count,
                 "fps": actual_fps,
                 "backend": "rpi",
+                # Identity + convention tags — let downstream readers know which
+                # device + handedness recorded this episode and which sign
+                # convention the angle samples follow. Legacy episodes without
+                # these fields predate the positive-closing flip; readers should
+                # treat absent `angle_convention` as the legacy negative-closing
+                # convention.
+                "hand": settings.hand,
+                "angle_convention": "positive_closing",
+                "device_id": settings.device_id,
             }
             if oakd_stats:
                 meta["oakd"] = oakd_stats
