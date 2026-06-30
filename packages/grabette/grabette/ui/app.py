@@ -548,14 +548,23 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             '</div>'
         )
 
-    def refresh_tasks():
+    def refresh_tasks(stored_id: str = ""):
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         valid_ids = {c[1] for c in choices}
-        active = client.get_active_session()
-        value = active if active in valid_ids else (choices[0][1] if choices else None)
-        if value:
-            client.set_active_session(value)
+        # Pick which task to land on at (re)load time:
+        #   1. during a capture session, always the session's task;
+        #   2. otherwise the task this browser had selected (persisted
+        #      client-side via BrowserState), so a refresh stays put;
+        #   3. otherwise fall back to the first task.
+        cap_session = client.get_capture_session_status()
+        cap_task = cap_session.get("task_id") if cap_session.get("active") else None
+        if cap_task in valid_ids:
+            value = cap_task
+        elif stored_id in valid_ids:
+            value = stored_id
+        else:
+            value = choices[0][1] if choices else None
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
@@ -1040,6 +1049,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column(scale=1, min_width=200, elem_id="tasks-col"):
                 gr.Markdown("## Tasks")
                 task_list = gr.Radio(choices=[], label=None, container=False)
+                # Remembers, per browser, which task was selected so a page
+                # refresh stays on it instead of snapping back to the first
+                # task. Independent of the (server-side) capture session.
+                selected_task_state = gr.BrowserState(
+                    "", storage_key="grabette_selected_task",
+                )
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
                 with gr.Group(visible=False) as new_task_form:
                     new_task_name = gr.Textbox(label="Name", placeholder="e.g. Kitchen Pick & Place")
@@ -1164,6 +1179,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_task_select, inputs=task_list,
             outputs=[task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd],
         )
+        # Persist the current selection in the browser so a refresh keeps it.
+        task_list.change(fn=lambda v: v, inputs=task_list, outputs=selected_task_state)
 
         # Edit Task
         edit_task_btn.click(
@@ -1303,7 +1320,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         status_bar_timer = gr.Timer(3.0)
         status_bar_timer.tick(fn=get_episode_status_bar, outputs=episode_status_bar)
 
-        demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
+        demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
         demo.load(fn=check_battery_warning, outputs=batt_popup_ep)
         demo.load(fn=get_episode_status_bar, outputs=episode_status_bar)
 
