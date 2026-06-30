@@ -10,6 +10,10 @@ ExecStart=/home/rasp/Project/Repo/gripette/.venv/bin/python -m gripette
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Per-gripette persistent config (GRIPPER_HAND, GRIPPER_MOTOR*_OFFSET, …).
+# Written by 'make install-rpi HAND=...' and scripts/calibrate_zero_local.py.
+# Leading '-' makes it optional so a fresh dev install (no file yet) still boots.
+EnvironmentFile=-/etc/gripette/env
 
 [Install]
 WantedBy=multi-user.target
