@@ -42,7 +42,13 @@ class ReplayEngine:
         }
 
     def load(self, episode_dir: str, episode_id: str) -> None:
-        """Load imu_data.json + metadata.json from an episode directory."""
+        """Load sensor data + metadata from an episode directory.
+
+        Supports three data layouts:
+        - imu_data.json   : legacy casquette format (ACCL/GYRO/ANGL streams)
+        - oakd_imu.json   : OAK-D format (interleaved kind/accel/gyro samples)
+        - angle_data.json : grabette angle sensor ({"cts", "value": [distal, proximal]})
+        """
         path = Path(episode_dir)
 
         # Load duration from metadata
@@ -53,44 +59,58 @@ class ReplayEngine:
         else:
             self._duration_ms = 0
 
-        # Load IMU data
-        imu_path = path / "imu_data.json"
-        if not imu_path.exists():
-            raise FileNotFoundError(f"No imu_data.json in {episode_dir}")
-
-        with open(imu_path) as f:
-            data = json.load(f)
-
-        streams = data.get("1", {}).get("streams", {})
-
-        accl_samples = streams.get("ACCL", {}).get("samples", [])
-        gyro_samples = streams.get("GYRO", {}).get("samples", [])
-        angl_samples = streams.get("ANGL", {}).get("samples", [])
-
-        # Zip ACCL + GYRO by index into unified IMU samples
         self._imu_samples = []
-        n_imu = min(len(accl_samples), len(gyro_samples))
-        for i in range(n_imu):
-            a = accl_samples[i]
-            g = gyro_samples[i]
-            self._imu_samples.append({
-                "t": a["cts"],
-                "a": a["value"],
-                "g": g["value"],
-            })
-        self._imu_times = [s["t"] for s in self._imu_samples]
-
-        # Parse angle samples — indices swapped to match live convention
-        # (in imu_data.json value=[sensor1, sensor2], but live maps
-        #  proximal=value[1], distal=value[0])
         self._angle_samples = []
-        for s in angl_samples:
-            v = s["value"]
-            self._angle_samples.append({
-                "t": s["cts"],
-                "p": v[1],
-                "d": v[0],
-            })
+
+        # Legacy casquette format: imu_data.json with ACCL/GYRO/ANGL streams
+        imu_path = path / "imu_data.json"
+        if imu_path.exists():
+            with open(imu_path) as f:
+                data = json.load(f)
+            streams = data.get("1", {}).get("streams", {})
+            accl_samples = streams.get("ACCL", {}).get("samples", [])
+            gyro_samples = streams.get("GYRO", {}).get("samples", [])
+            angl_samples = streams.get("ANGL", {}).get("samples", [])
+
+            n_imu = min(len(accl_samples), len(gyro_samples))
+            for i in range(n_imu):
+                a = accl_samples[i]
+                g = gyro_samples[i]
+                self._imu_samples.append({"t": a["cts"], "a": a["value"], "g": g["value"]})
+
+            # value=[sensor1, sensor2]: sensor1=distal(v[0]), sensor2=proximal(v[1])
+            for s in angl_samples:
+                v = s["value"]
+                self._angle_samples.append({"t": s["cts"], "p": v[1], "d": v[0]})
+
+        # OAK-D format: oakd_imu.json with interleaved accel/gyro/rotation packets
+        if not self._imu_samples:
+            oakd_imu_path = path / "oakd_imu.json"
+            if oakd_imu_path.exists():
+                with open(oakd_imu_path) as f:
+                    data = json.load(f)
+                samples = data.get("samples", [])
+                accels = [(s["host_ms"], s["value"]) for s in samples if s.get("kind") == "accel"]
+                gyros  = [(s["host_ms"], s["value"]) for s in samples if s.get("kind") == "gyro"]
+                n = min(len(accels), len(gyros))
+                for i in range(n):
+                    self._imu_samples.append({
+                        "t": accels[i][0],
+                        "a": accels[i][1],
+                        "g": gyros[i][1],
+                    })
+
+        # Grabette angle sensor: angle_data.json with {"cts", "value": [distal, proximal]}
+        if not self._angle_samples:
+            angle_path = path / "angle_data.json"
+            if angle_path.exists():
+                with open(angle_path) as f:
+                    data = json.load(f)
+                for s in data.get("samples", []):
+                    v = s["value"]
+                    self._angle_samples.append({"t": s["cts"], "p": v[1], "d": v[0]})
+
+        self._imu_times = [s["t"] for s in self._imu_samples]
         self._angle_times = [s["t"] for s in self._angle_samples]
 
         # Fall back to data duration if metadata missing

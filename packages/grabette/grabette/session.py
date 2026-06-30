@@ -58,6 +58,11 @@ class SessionManager:
         self.episodes_dir = self.data_dir / "episodes"
         self._registry_path = self.data_dir / "sessions.json"
         self._sessions: list[dict] = []
+        self.active_session_id: str = UNASSIGNED_ID
+        # Runtime capture session (not persisted)
+        self._capture_session_active: bool = False
+        self._capture_session_task_id: str | None = None
+        self._capture_session_count: int = 0
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -143,16 +148,56 @@ class SessionManager:
     def episode_dir(self, episode_id: str) -> Path:
         return self.episodes_dir / episode_id
 
-    def create_episode(self) -> str:
-        """Create a new episode directory and add it to Unassigned."""
+    def create_episode(self, session_id: str | None = None) -> str:
+        """Create a new episode directory and add it to the given session.
+
+        When a capture session is active, its task overrides any passed session_id.
+        Falls back to active_session_id, then Unassigned.
+        """
         episode_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         ep_dir = self.episode_dir(episode_id)
         ep_dir.mkdir(parents=True, exist_ok=True)
 
-        unassigned = self._find_session(UNASSIGNED_ID)
-        unassigned["episode_ids"].append(episode_id)
+        if self._capture_session_active and self._capture_session_task_id:
+            target_id = self._capture_session_task_id
+        else:
+            target_id = session_id or self.active_session_id
+        target = self._find_session(target_id) or self._find_session(UNASSIGNED_ID)
+        target["episode_ids"].append(episode_id)
+        self.active_session_id = target["id"]
+        if self._capture_session_active:
+            self._capture_session_count += 1
         self._save()
         return episode_id
+
+    # ── Capture session (runtime lock) ────────────────────────────────
+
+    def start_capture_session(self, task_id: str) -> None:
+        target = self._find_session(task_id)
+        if target is None:
+            raise FileNotFoundError(f"Session {task_id} not found")
+        self._capture_session_active = True
+        self._capture_session_task_id = task_id
+        self._capture_session_count = 0
+        self.active_session_id = task_id
+
+    def stop_capture_session(self) -> None:
+        self._capture_session_active = False
+        self._capture_session_task_id = None
+        self._capture_session_count = 0
+
+    def get_capture_session_status(self) -> dict:
+        task_name = None
+        if self._capture_session_task_id:
+            s = self._find_session(self._capture_session_task_id)
+            if s:
+                task_name = s.get("name")
+        return {
+            "active": self._capture_session_active,
+            "task_id": self._capture_session_task_id,
+            "task_name": task_name,
+            "count": self._capture_session_count,
+        }
 
     def get_episode(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)

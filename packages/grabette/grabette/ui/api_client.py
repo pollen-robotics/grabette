@@ -41,6 +41,14 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def get_camera_status(self) -> dict | None:
+        try:
+            r = self._http.get("/api/camera/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     # -- Sensor state --
 
     def get_state(self) -> dict | None:
@@ -112,9 +120,10 @@ class GrabetteClient:
 
     # -- Capture --
 
-    def start_capture(self) -> dict:
+    def start_capture(self, session_id: str | None = None) -> dict:
         try:
-            r = self._http.post("/api/episodes/start")
+            body = {"session_id": session_id} if session_id else {}
+            r = self._http.post("/api/episodes/start", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
@@ -131,6 +140,51 @@ class GrabetteClient:
         except httpx.HTTPStatusError as e:
             detail = e.response.json().get("detail", str(e))
             return {"error": detail}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_capture_session_status(self) -> dict:
+        try:
+            r = self._http.get("/api/capture-session/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {"active": False, "task_id": None, "task_name": None, "count": 0}
+
+    def start_capture_session(self, task_id: str | None = None) -> dict:
+        try:
+            body = {"task_id": task_id} if task_id else {}
+            r = self._http.post("/api/capture-session/start", json=body)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def stop_capture_session(self) -> dict:
+        try:
+            r = self._http.post("/api/capture-session/stop")
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            return {"error": str(e)}
+
+    def get_active_session(self) -> str | None:
+        try:
+            r = self._http.get("/api/sessions/active")
+            r.raise_for_status()
+            return r.json().get("session_id")
+        except Exception:
+            return None
+
+    def set_active_session(self, session_id: str) -> dict:
+        try:
+            r = self._http.put("/api/sessions/active", json={"session_id": session_id})
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
         except Exception as e:
             return {"error": str(e)}
 
@@ -254,15 +308,32 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def shutdown(self) -> dict:
+        try:
+            r = self._http.post("/api/system/shutdown")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": e.response.json().get("detail", str(e))}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- HuggingFace --
 
     def hf_check_auth(self) -> dict:
         try:
             r = self._http.get("/api/hf/auth")
             r.raise_for_status()
-            return r.json()
+            return r.json() or {"authenticated": False}
         except Exception:
             return {"authenticated": False}
+
+    def hf_get_namespaces(self) -> list[str]:
+        """Return available namespaces (username + orgs) for the authenticated user."""
+        result = self.hf_check_auth()
+        if not result.get("authenticated"):
+            return []
+        return (result.get("user") or {}).get("namespaces", [])
 
     def hf_set_auth(self, token: str) -> dict:
         try:
@@ -289,13 +360,42 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def hf_push_and_process(
+        self,
+        task_ids: list[str],
+        target_repo: str,
+        raw_repo: str,
+        task_description: str,
+    ) -> dict:
+        try:
+            r = self._http.post(
+                "/api/hf/push",
+                json={
+                    "task_ids": task_ids,
+                    "target_repo": target_repo,
+                    "raw_repo": raw_repo,
+                    "task_description": task_description,
+                },
+            )
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            detail = e.response.json().get("detail", str(e))
+            return {"error": detail}
+        except Exception as e:
+            return {"error": str(e)}
+
     def hf_get_job(self, job_id: str) -> dict | None:
         try:
             r = self._http.get(f"/api/hf/jobs/{job_id}")
             r.raise_for_status()
             return r.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            return {"status": "running", "message": "poll error, retrying…", "progress": 0}
         except Exception:
-            return None
+            return {"status": "running", "message": "poll error, retrying…", "progress": 0}
 
     def hf_list_jobs(self) -> list[dict]:
         try:
@@ -357,6 +457,16 @@ class GrabetteClient:
             return r.json()
         except Exception:
             return {"active": False, "episode_id": None, "time_ms": 0, "duration_ms": 0, "playing": False}
+
+    # -- WiFi --
+
+    def wifi_status(self) -> dict:
+        try:
+            r = self._http.get("/api/wifi/status", timeout=3.0)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {"mode": "offline", "ssid": None, "ip": None}
 
     # -- SLAM --
 

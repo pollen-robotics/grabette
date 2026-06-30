@@ -1,0 +1,18 @@
+[project]
+name = "grabette-diffusion-policy"
+version = "0.1.0"
+description = "Diffusion Policy training & data-prep for Grabette demonstrations, on stock upstream lerobot."
+requires-python = ">=3.12"
+# Pin lerobot to the exact version you validate against (recipe validated on 0.5.x).
+dependencies = [
+    "lerobot>=0.5.1",
+    "scipy>=1.10",
+    # numpy / torch / pyarrow come transitively with lerobot.
+]
+
+[project.optional-dependencies]
+wandb = ["wandb"]  # only needed if you pass --wandb_project to train.py
+
+[tool.uv]
+# Scripts-only project: manage the dependency env, don't build/install this dir.
+package = false

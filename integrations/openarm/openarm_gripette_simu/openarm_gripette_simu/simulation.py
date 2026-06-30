@@ -166,6 +166,12 @@ class Simulation:
         """Read current arm joint positions (7 values)."""
         return self.get_joint_positions(ARM_JOINT_NAMES)
 
+    def get_actuator_ctrl(self, joint_names: list[str] | None = None) -> np.ndarray:
+        """Read the current actuator position COMMANDS (data.ctrl, not qpos)."""
+        if joint_names is None:
+            joint_names = ACTUATOR_NAMES
+        return np.array([self.data.ctrl[self._actuator_ids[name]] for name in joint_names])
+
     def render_camera(self, out_size: tuple[int, int] | None = None) -> np.ndarray:
         """Render an image from the Gripette camera with fisheye distortion.
 
