@@ -15,8 +15,18 @@ from .proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-STREAM_HZ = 50  # matches real data FPS
+STREAM_HZ = 30  # matches the real Grabette stream / training data FPS
 STREAM_INTERVAL = 1.0 / STREAM_HZ
+
+# TEMPORARY eval fix: the `proximal` joint convention is INVERTED between the
+# dataset (free-floating grabette_right, closes NEGATIVE) and the arm scene this
+# server drives (openarm_right, closes POSITIVE [0, +pi/2]). The policy emits —
+# and consumes as state — the dataset (negative) convention, so we negate the
+# proximal motor command on the way in and the reported proximal position on the
+# way out. `distal` matches in both, so it is NOT flipped. Set back to +1.0 once
+# the two grabette_right exports are unified to the real hardware convention.
+# See memory: openarm-proximal-sign-cross-model.
+PROXIMAL_CMD_SIGN = -1.0
 
 
 class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
@@ -28,9 +38,16 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         self._start_time = start_time
 
     def _get_motor_positions(self):
-        """Read proximal/distal joint positions (rad)."""
+        """Report the proximal/distal gripper actual POSITION (qpos, rad), in the
+        dataset convention (proximal negated — see PROXIMAL_CMD_SIGN).
+
+        Matches training, which records the realized joint position
+        (mocap_state_8d -> observation.state). With the compliant over-close,
+        command and actual diverge by ~0.09 rad; we feed the actual position so
+        eval observations match the recorded data. (If we switch the dataset back
+        to recording the command, switch this to get_actuator_ctrl.)"""
         pos = self._sim.get_joint_positions(["proximal", "distal"])
-        return float(pos[0]), float(pos[1])
+        return float(PROXIMAL_CMD_SIGN * pos[0]), float(pos[1])
 
     def StreamState(self, request, context):
         logger.info("StreamState: client connected")
@@ -85,7 +102,8 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
                 return gripper_pb2.MotorCommandResponse(success=True)
             with self._lock:
                 self._sim.set_joint_commands(
-                    np.array([request.motor1_goal, request.motor2_goal]),
+                    np.array([PROXIMAL_CMD_SIGN * request.motor1_goal,
+                              request.motor2_goal]),
                     ["proximal", "distal"],
                 )
             return gripper_pb2.MotorCommandResponse(success=True)

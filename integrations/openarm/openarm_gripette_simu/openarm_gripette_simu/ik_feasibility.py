@@ -69,6 +69,7 @@ class PoseFeasibility:
     joints: np.ndarray         # IK output (best-effort, even when infeasible)
     pos_err_m: float
     rot_err_deg: float
+    collides: bool = False     # reachable but rejected by the collision_check
 
 
 @dataclass
@@ -122,7 +123,7 @@ class IKFeasibilityChecker:
         transform and `inverse(target_T, current_joint_positions=...,
         n_iter=..., frame=...)` returning a joint vector.
     frame : str
-        Frame name passed through to the kinematics solver (e.g. "gripper").
+        Frame name passed through to the kinematics solver (e.g. "gripper_center").
     seed_joints : np.ndarray
         Default starting configuration for the IK warm-start. Picking a
         sensible seed matters because the IK is non-convex; in practice the
@@ -145,6 +146,7 @@ class IKFeasibilityChecker:
         pos_tol_m: float = 0.015,
         rot_tol_deg: float = 5.0,
         n_iter: int = 200,
+        collision_check: Callable[[np.ndarray], bool] | None = None,
     ):
         self.kinematics = kinematics
         self.frame = frame
@@ -152,6 +154,10 @@ class IKFeasibilityChecker:
         self.pos_tol_m = float(pos_tol_m)
         self.rot_tol_rad = float(np.deg2rad(rot_tol_deg))
         self.n_iter = int(n_iter)
+        # Optional callable(joints)->bool: True if the (reachable) config collides
+        # with the environment (e.g. pedestal). A reachable-but-colliding pose is
+        # marked infeasible. Robot/scene-specific; the checker stays agnostic.
+        self.collision_check = collision_check
 
     # ----- per-pose -----
 
@@ -178,12 +184,17 @@ class IKFeasibilityChecker:
         T_actual = self.kinematics.forward(joints, frame=self.frame)
         pos_err = float(np.linalg.norm(T_actual[:3, 3] - target_T[:3, 3]))
         rot_err_rad = _rotation_angle_between(T_actual[:3, :3], target_T[:3, :3])
-        feasible = (pos_err <= self.pos_tol_m) and (rot_err_rad <= self.rot_tol_rad)
+        reach_ok = (pos_err <= self.pos_tol_m) and (rot_err_rad <= self.rot_tol_rad)
+        # Collision is only meaningful for a reachable config; short-circuit so we
+        # don't query it on best-effort (unreachable) joint solutions.
+        collides = bool(reach_ok and self.collision_check is not None
+                        and self.collision_check(joints))
         return PoseFeasibility(
-            feasible=feasible,
+            feasible=reach_ok and not collides,
             joints=joints,
             pos_err_m=pos_err,
             rot_err_deg=float(np.degrees(rot_err_rad)),
+            collides=collides,
         )
 
     # ----- per-trajectory -----

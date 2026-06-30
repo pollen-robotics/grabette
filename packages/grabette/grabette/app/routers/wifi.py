@@ -176,6 +176,12 @@ let selectedSsid = null;
 let checkAttempts = 0;
 const MAX_CHECKS = 30; // 30 × 3 s = 90 s max
 
+function fetchWithTimeout(url, timeout = 5000) {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), timeout);
+  return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(id));
+}
+
 async function scan() {
   setStatus('Scanning…');
   hideError();
@@ -254,8 +260,8 @@ async function checkStatus() {
   checkAttempts++;
   try {
     const [wifiRes, connRes] = await Promise.all([
-      fetch('/api/wifi/status'),
-      fetch('/api/wifi/connect-result')
+      fetchWithTimeout('/api/wifi/status'),
+      fetchWithTimeout('/api/wifi/connect-result')
     ]);
     const wifi = await wifiRes.json();
     const conn = await connRes.json();

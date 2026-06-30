@@ -98,9 +98,9 @@ int main(int argc, char** argv) {
     // standard ROS conventions we assumed — this matrix encodes the specific
     // rotation needed to land on OpenCV optical.
     const rtabmap::Transform R_camera_fix(
-        0, 1, 0, 0,
+        0, -1, 0, 0,
         0, 0, -1, 0,
-        -1, 0, 0, 0);
+        1, 0, 0, 0);
 
     rtabmap::StereoCameraModel model(
         "oak", fx, fy, cx, cy, baseline, localTransform, cv::Size(width, height));

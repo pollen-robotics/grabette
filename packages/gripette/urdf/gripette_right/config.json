@@ -1,14 +1,6 @@
 {
-    // Document URL, MuJoCo output
-
-    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/70d590d987c43934e5d14436/e/85669cf219241d3a19aa8f5a",
-    "output_format": "mujoco",
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/25c822efb72989a8d89a69ff/e/85669cf219241d3a19aa8f5a",
+    "robot_name": "gripette_right",
     "output_format": "urdf",
-    #"package_name": "gripette_right_mj",
-
-    // Disable the freejoint to fix the robot
-    "freejoint": false,
-
-
-
+    "simplify_stls": true
 }

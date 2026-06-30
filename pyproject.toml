@@ -1,2 +1,21 @@
+[tool.uv]
+# placo 0.9.16 (openarm sim kinematics) is linked against urdfdom 4.x and
+# tinyxml2 10.x (liburdfdom_sensor.so.4.0 / libtinyxml2.so.10). Left unconstrained,
+# the workspace resolves cmeel-urdfdom 6.x / cmeel-tinyxml2 11.x, which ship
+# .so.6 / .so.11 and break `import placo`. Pin to the versions placo expects.
+constraint-dependencies = [
+    "cmeel-urdfdom==4.0.1",
+    "cmeel-tinyxml2==10.0.0",
+]
+
 [tool.uv.workspace]
 members = ["packages/*", "integrations/openarm/*"]
+
+# python-prctl (casquette[rpi] → picamera2 → python-prctl) ships sdist only and
+# its setup.py requires the libcap dev headers just to report metadata. Declaring
+# the metadata here lets uv resolve/lock without building it, so CI (x86, no Pi
+# libs) needs no libcap-dev. It is a leaf with no runtime deps.
+[[tool.uv.dependency-metadata]]
+name = "python-prctl"
+version = "1.8.1"
+requires-dist = []
