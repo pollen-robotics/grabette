@@ -25,9 +25,12 @@ install-rpi: check-hand install-udev-oak
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
-	  python3-dbus python3-gi
+	  python3-dbus python3-gi git-lfs
 	@# python3-dbus / python3-gi: system deps the bluetooth WiFi service imports
 	@# (dbus, gi.repository.GLib); the venv reaches them via --system-site-packages.
+	@# git-lfs: mesh assets in the repo are LFS-tracked. Having the binary
+	@# avoids smudge-filter warnings on later `git pull`; on-device clones
+	@# typically use GIT_LFS_SKIP_SMUDGE=1 so meshes still aren't fetched.
 	sudo rm -rf $(WORKSPACE_ROOT)/.venv
 	cd $(WORKSPACE_ROOT) && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package grabette --extra rpi --extra ui --extra hf
