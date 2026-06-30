@@ -1,4 +1,4 @@
-.PHONY: install-rpi enable-uart install-systemd ensure-ble-only check help
+.PHONY: install-rpi enable-uart harden-rpi install-systemd ensure-ble-only check help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -6,8 +6,9 @@ WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
 
 help:
 	@echo "Targets:"
-	@echo "  install-rpi       One-shot bring-up: apt deps + UART enable + venv + sync + verify"
+	@echo "  install-rpi       One-shot bring-up: apt deps + UART + harden + venv + sync + verify"
 	@echo "  enable-uart       Disable serial console + enable hardware UART (/dev/serial0)"
+	@echo "  harden-rpi        Persistent journal + fsck.mode=force (for hard-shutdown environments)"
 	@echo "  install-systemd   Install + enable gripette.service and gripette-bluetooth.service"
 	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  check             Run scripts/check_hardware.py against current install"
@@ -24,7 +25,7 @@ help:
 # --no-install-package numpy: with --system-site-packages, apt's picamera2
 # already provides numpy. Skipping the wheel avoids a slow source build on
 # the Zero 2W. (See note in pyproject.toml.)
-install-rpi: enable-uart
+install-rpi: enable-uart harden-rpi
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev
@@ -119,6 +120,71 @@ enable-uart:
 	@echo ""
 	@echo "If either step above reported a change, *** REBOOT REQUIRED *** before /dev/serial0"
 	@echo "will be free for motor traffic at reliable 1Mbaud."
+
+# Hard-shutdown resilience: a gripette mounted on a robot is power-cut at any
+# moment (no clean shutdown path). Two independent fixes:
+#
+#   A. Persistent systemd journal via a drop-in conf. Without it, every reboot
+#      wipes the journal and post-mortem debugging of the previous boot is
+#      impossible. Capped (SystemMaxFiles=5, SystemMaxUse=50M) so SD card
+#      wear and disk usage stay bounded. The first 'flush' moves any in-RAM
+#      runtime journal into the new persistent location.
+#
+#   B. fsck.mode=force appended to cmdline.txt. ext4's journal handles most
+#      crash recovery on its own (orphan inode cleanup at mount), but a forced
+#      structural pass on every boot catches accumulating corruption that the
+#      journal can miss. Combined with the existing 'fsck.repair=yes' on stock
+#      Pi OS, this means every boot self-heals. Adds ~5-15s to boot time.
+#
+# Both steps are idempotent — safe to re-run. (B) uses the same paranoid
+# backup-and-verify-root pattern as enable-uart so a botched cmdline edit
+# never bricks boot.
+harden-rpi:
+	@# --- A. persistent journal (drop-in conf) -------------------------
+	@sudo mkdir -p /etc/systemd/journald.conf.d
+	@printf '%s\n' \
+	  '# Installed by gripette: persistent journal so hard-shutdown events' \
+	  '# leave a trail. Capped so SD wear and disk usage stay bounded.' \
+	  '[Journal]' \
+	  'Storage=persistent' \
+	  'SystemMaxFiles=5' \
+	  'SystemMaxUse=50M' \
+	  | sudo tee /etc/systemd/journald.conf.d/persistent.conf >/dev/null
+	@sudo mkdir -p /var/log/journal
+	@sudo systemctl restart systemd-journald
+	@sudo journalctl --flush
+	@echo "[journald] persistent storage on (cap: 5 files / 50MB total)"
+	@# --- B. fsck.mode=force in cmdline.txt ----------------------------
+	@if [ -z "$(CMDLINE)" ]; then \
+		echo "[cmdline.txt] not found — skipping fsck-on-boot setup."; \
+		exit 0; \
+	fi
+	@if grep -qE '(^| )fsck\.mode=force( |$$)' $(CMDLINE); then \
+		echo "[cmdline.txt] fsck.mode=force already present."; \
+	else \
+		ROOT_BEFORE=$$(grep -oE 'root=[^ ]+' $(CMDLINE)); \
+		if [ -z "$$ROOT_BEFORE" ]; then \
+			echo "ERROR: no 'root=' found in $(CMDLINE) — refusing to edit (file looks malformed)."; \
+			exit 1; \
+		fi; \
+		echo "[cmdline.txt] Adding fsck.mode=force (fsck on every boot)..."; \
+		echo "  root= will be preserved as: $$ROOT_BEFORE"; \
+		echo "  backing up $(CMDLINE) -> $(CMDLINE).gripette-fsck.bak"; \
+		sudo cp $(CMDLINE) $(CMDLINE).gripette-fsck.bak; \
+		sudo sed -i '1 s/[[:space:]]*$$/ fsck.mode=force/' $(CMDLINE); \
+		ROOT_AFTER=$$(grep -oE 'root=[^ ]+' $(CMDLINE)); \
+		if [ "$$ROOT_BEFORE" != "$$ROOT_AFTER" ]; then \
+			echo ""; \
+			echo "*** ABORT: root= changed during edit ***"; \
+			echo "  before: $$ROOT_BEFORE"; \
+			echo "  after:  $$ROOT_AFTER"; \
+			echo "Rolling back from $(CMDLINE).gripette-fsck.bak — boot is safe."; \
+			sudo cp $(CMDLINE).gripette-fsck.bak $(CMDLINE); \
+			exit 1; \
+		fi; \
+		echo "  verified: root= unchanged."; \
+		echo "  reboot required for fsck-on-boot to take effect."; \
+	fi
 
 # Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
 ensure-ble-only:
