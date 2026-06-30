@@ -157,11 +157,13 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     else:
         batt_badge = _badge("Battery", "N/A", GRAY)
 
-    # RGB camera (2-state: connected / disconnected; N/A if call failed)
+    # RGB camera (3-state: connected / reinitializing / disconnected; N/A if call failed)
     if cam_status is None:
         rgb_badge = _badge("RGB Camera", "N/A", GRAY)
     elif cam_status.get("connected"):
         rgb_badge = _badge("RGB Camera", "Connected", GREEN)
+    elif cam_status.get("reinitializing"):
+        rgb_badge = _badge("RGB Camera", "Unavailable", ORANGE)
     else:
         rgb_badge = _badge("RGB Camera", "Disconnected", RED)
 
