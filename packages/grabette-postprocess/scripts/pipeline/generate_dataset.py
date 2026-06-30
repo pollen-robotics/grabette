@@ -5,6 +5,7 @@ import click
 from pathlib import Path
 
 from grabette_postprocess.dataset import build_dataset
+from grabette_postprocess.episode_manager import find_processed_episodes
 
 
 @click.command()
@@ -23,12 +24,10 @@ from grabette_postprocess.dataset import build_dataset
 def main(input_dir, repo_id, task, fps, image_height, image_width, root):
     input_dir = Path(input_dir).expanduser().absolute()
 
-    # Find all episode directories that have a trajectory CSV
-    episode_dirs = sorted([
-        p.parent for p in input_dir.glob("*/raw_video.mp4")
-        if (p.parent / "camera_trajectory.csv").is_file()
-        or (p.parent / "mapping_camera_trajectory.csv").is_file()
-    ])
+    # Episode dirs that already carry a trajectory CSV (SLAM has run) and the
+    # Arducam video build_dataset needs.
+    episode_dirs = [ep for ep in find_processed_episodes(input_dir)
+                    if (ep / "raw_video.mp4").is_file()]
     print(f"Found {len(episode_dirs)} episodes with trajectories")
 
     if not episode_dirs:

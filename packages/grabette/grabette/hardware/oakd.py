@@ -55,6 +55,19 @@ def _device_us(ts) -> int:
     return int(ts.total_seconds() * 1_000_000)
 
 
+def _capture_host_ms(sync, msg) -> float:
+    """Capture instant of a depthai message on the SyncManager host timeline.
+
+    Uses getTimestamp() — the device timestamp mapped to the host CLOCK_MONOTONIC
+    by depthai's clock sync — i.e. when the frame/sample was *captured*, not when
+    it drained from the host queue. Stamping at delivery (sync.get_timestamp_ms()
+    in the writer loop) made host_ms ~100ms late vs the Arducam's sensor-capture
+    timeline; this keeps both cameras on the same capture-time host clock so the
+    SLAM trajectory, the observation frames and the angles line up downstream.
+    """
+    return sync.monotonic_s_to_ms(msg.getTimestamp().total_seconds())
+
+
 class OakdCapture:
     """Captures stereo mono (H.264) + depth + IMU from OAK-D SR over USB3.
 
@@ -510,7 +523,7 @@ class OakdCapture:
                     logger.info("oakd %s: skipped %d pre-keyframe packet(s) at record start",
                                 name, skipped)
 
-            host_ms = self.sync.get_timestamp_ms()
+            host_ms = _capture_host_ms(self.sync, pkt)
             seq = pkt.getSequenceNum()
             device_us = _device_us(pkt.getTimestampDevice())
 
@@ -570,7 +583,7 @@ class OakdCapture:
             if not self._recording:
                 continue
 
-            host_ms = self.sync.get_timestamp_ms()
+            host_ms = _capture_host_ms(self.sync, frame)
             seq = frame.getSequenceNum()
             device_us = _device_us(frame.getTimestampDevice())
 
@@ -613,14 +626,13 @@ class OakdCapture:
                 if not self._recording:
                     continue
 
-                host_ms = self.sync.get_timestamp_ms()
                 for packet in msg.packets:
                     if hasattr(packet, "acceleroMeter") and packet.acceleroMeter:
                         a = packet.acceleroMeter
                         self._imu_samples.append({
                             "kind": "accel",
                             "device_us": _device_us(a.getTimestampDevice()),
-                            "host_ms": host_ms,
+                            "host_ms": _capture_host_ms(self.sync, a),
                             "value": [a.x, a.y, a.z],
                         })
                         n_acc += 1
@@ -629,7 +641,7 @@ class OakdCapture:
                         self._imu_samples.append({
                             "kind": "gyro",
                             "device_us": _device_us(g.getTimestampDevice()),
-                            "host_ms": host_ms,
+                            "host_ms": _capture_host_ms(self.sync, g),
                             "value": [g.x, g.y, g.z],
                         })
                         n_gyr += 1
@@ -638,7 +650,7 @@ class OakdCapture:
                         self._imu_samples.append({
                             "kind": "rotation",
                             "device_us": _device_us(r.getTimestampDevice()),
-                            "host_ms": host_ms,
+                            "host_ms": _capture_host_ms(self.sync, r),
                             "value": [r.i, r.j, r.k, r.real],
                             "accuracy": getattr(r, "rotationVectorAccuracy", None),
                         })

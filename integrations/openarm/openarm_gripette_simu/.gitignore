@@ -1,2 +1,8 @@
 __pycache__/
 *.py[cod]
+
+# Scratch / debug scripts (leading-underscore convention) and runtime logs.
+# Promote a script by de-underscoring it (e.g. scenes/gen_grabette_grasp.py).
+examples/_*.py
+scenes/_*.py
+*_LOG.TXT

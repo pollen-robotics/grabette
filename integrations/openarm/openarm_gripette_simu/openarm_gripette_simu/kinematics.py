@@ -33,6 +33,13 @@ OAKL_FRAME = "oak_l"   # SLAM / control frame the grasp trajectory commands
 # recording + IK targets to apply the oak_l->camera transform.
 CONTROL_FRAME = OAKL_FRAME
 
+# Note on the arm-eval "singularity explosion": solver-level mitigations (extra dq
+# damping, a posture task, velocity limits) were investigated and did NOT cleanly
+# help — the explosion is an IK branch-flip when the integrator target marches past
+# the reachable workspace, which solver-cost tuning can't fix at acceptable
+# accuracy. It's handled target-side by the eval gate's singularity guard
+# (arm_servicer), not in the solver.
+
 
 class Kinematics:
     """Placo wrapper for FK/IK on the OpenArm right arm."""
@@ -43,11 +50,10 @@ class Kinematics:
         Args:
             model_dir: URDF dir (defaults to OPENARM_RIGHT_DIR).
             position_weight, orientation_weight: Placo frame-task weights
-                (default 100:1). Higher orientation_weight (e.g. 10) locks
-                rotation more strictly at the cost of position accuracy —
-                useful on real hardware where the kinematic chain is close
-                to a wrist-roll singularity at the typical home pose and
-                position-only priority leaks rotation into the wrist joints.
+                (default 100:1). The eval server uses orientation_weight=10 to
+                lock rotation more strictly near the home wrist-roll singularity:
+                the ~16cm oak_l→finger lever amplifies oak_l rotation error into a
+                grasp-point miss. The default 1 keeps position-only priority.
         """
         model_dir = str(model_dir) if model_dir else str(OPENARM_RIGHT_DIR)
         self.robot = placo.RobotWrapper(model_dir)
@@ -63,7 +69,7 @@ class Kinematics:
         self.solver.mask_dof("distal")
         self.solver.mask_dof("r_wrist_roll_mimic")
 
-        # Regularization for solver stability
+        # Small regularization keeps the QP full-rank (min-velocity solution).
         self.solver.add_regularization_task(1e-4)
 
         # Frame task on camera, with position weighted 100x higher than

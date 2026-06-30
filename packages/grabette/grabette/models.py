@@ -17,6 +17,7 @@ class AngleSample(BaseModel):
 
 class CaptureStatus(BaseModel):
     is_capturing: bool = False
+    is_starting: bool = False
     session_id: str | None = None
     duration_seconds: float = 0.0
     frame_count: int = 0

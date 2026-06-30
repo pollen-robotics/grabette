@@ -11,6 +11,10 @@ Restart=on-failure
 RestartSec=5
 User=root
 Environment=PYTHONUNBUFFERED=1
+# Runs as root: don't let it write root-owned .pyc caches (now including
+# cryptography's, pulled in for BLE WiFi sealing) into the rasp-owned .venv,
+# or `rm -rf .venv` in `make install-rpi` fails with EPERM.
+Environment=PYTHONDONTWRITEBYTECODE=1
 
 [Install]
 WantedBy=multi-user.target
