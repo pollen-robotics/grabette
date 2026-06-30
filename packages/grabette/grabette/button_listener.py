@@ -16,6 +16,8 @@ import logging
 import threading
 from pathlib import Path
 
+from grabette.session import UNASSIGNED_ID
+
 logger = logging.getLogger(__name__)
 
 
@@ -121,7 +123,7 @@ class ButtonListener:
         # warming up the OAK-D before the recording clock starts. Go solid only
         # when start_capture returns, i.e. recording is genuinely live.
         self._button.led_blink()
-        episode_id = self._session_manager.create_episode()
+        episode_id = self._session_manager.create_episode(session_id=UNASSIGNED_ID)
         episode_dir = self._session_manager.episode_dir(episode_id)
 
         future = asyncio.run_coroutine_threadsafe(

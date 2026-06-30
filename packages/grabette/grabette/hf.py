@@ -12,16 +12,32 @@ class HuggingFaceClient:
     """Client for interacting with HuggingFace Hub."""
 
     def __init__(self) -> None:
-        self._token: str | None = None
         self._api = None
+        self._cached_token: str | None = None
 
     def set_token(self, token: str) -> None:
-        self._token = token
-        self._api = None  # Reset API client
+        """Persist token to the standard HF token file (or clear it)."""
+        self._api = None
+        self._cached_token = None
+        if token:
+            from huggingface_hub.constants import HF_TOKEN_PATH
+
+            token_path = Path(HF_TOKEN_PATH)
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text(token)
+        else:
+            try:
+                from huggingface_hub import logout
+
+                logout()
+            except Exception:  # noqa: BLE001
+                pass
 
     @property
     def is_authenticated(self) -> bool:
-        if not self._token:
+        from huggingface_hub import get_token
+
+        if not get_token():
             return False
         try:
             self._get_api()
@@ -30,10 +46,16 @@ class HuggingFaceClient:
             return False
 
     def _get_api(self):
+        from huggingface_hub import HfApi, get_token
+
+        token = get_token()
+        if token != self._cached_token:
+            self._api = None
+            self._cached_token = token
         if self._api is None:
-            from huggingface_hub import HfApi
-            self._api = HfApi(token=self._token)
-            # Verify token by calling whoami
+            if not token:
+                raise ValueError("No token available")
+            self._api = HfApi(token=token)
             self._api.whoami()
         return self._api
 
@@ -41,7 +63,10 @@ class HuggingFaceClient:
         try:
             api = self._get_api()
             info = api.whoami()
-            return {"username": info.get("name", ""), "email": info.get("email", "")}
+            username = info.get("name", "")
+            orgs = [o["name"] for o in info.get("orgs", []) if o.get("name")]
+            namespaces = [username] + orgs if username else orgs
+            return {"username": username, "email": info.get("email", ""), "namespaces": namespaces}
         except Exception:
             return None
 
@@ -78,12 +103,17 @@ class HuggingFaceClient:
             folder_path=str(episode_dir),
             repo_id=repo_id,
             repo_type="dataset",
-            path_in_repo=f"episodes/{episode_id}",
+            path_in_repo=episode_id,
         )
 
         if progress_callback:
             progress_callback(100.0, "Upload complete")
 
-        url = f"https://huggingface.co/datasets/{repo_id}/tree/main/episodes/{episode_id}"
+        url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{episode_id}"
         logger.info("Episode %s uploaded to %s", episode_id, url)
         return url
+
+    def delete_dataset(self, repo_id: str) -> None:
+        api = self._get_api()
+        api.delete_repo(repo_id, repo_type="dataset")
+        logger.info("Deleted dataset %s", repo_id)

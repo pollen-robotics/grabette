@@ -179,3 +179,8 @@ class VideoCapture:
     @property
     def frame_count(self) -> int:
         return self._frame_count
+
+    @property
+    def is_open(self) -> bool:
+        """True while the picamera2 device is initialized (not yet closed)."""
+        return self._picam2 is not None

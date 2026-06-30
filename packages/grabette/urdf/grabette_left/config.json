@@ -1,0 +1,7 @@
+{
+    "url": "https://cad.onshape.com/documents/8728c7fdb0e0b3c78180e1fb/w/25c822efb72989a8d89a69ff/e/724e65bc9d4ec97a8392b3b0",
+    "robot_name": "grabette_left",
+    "output_format": "urdf",
+    "simplify_stls": true,
+    "merge_stls": false
+}
