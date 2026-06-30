@@ -33,8 +33,13 @@ install-rpi: check-hand enable-uart harden-rpi
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev
-	cd $(WORKSPACE_ROOT) && rm -rf .venv \
-	  && uv venv --python /usr/bin/python3 --system-site-packages \
+	@# sudo rm: if any service ran as root and left root-owned .pyc files in
+	@# the venv (we fixed this with PYTHONDONTWRITEBYTECODE=1 in the unit
+	@# files, but existing installs may still have leftover root-owned
+	@# bytecode), a plain `rm -rf` as the user fails with EPERM. The recipe
+	@# stays idempotent: nothing to remove, nothing to fail.
+	sudo rm -rf $(WORKSPACE_ROOT)/.venv
+	cd $(WORKSPACE_ROOT) && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package gripette --extra rpi --no-install-package numpy
 	@echo "--- verifying imports ---"
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, serial, rustypot; print('all imports OK')"
