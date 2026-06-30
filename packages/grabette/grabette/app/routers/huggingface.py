@@ -34,15 +34,6 @@ class PushAndProcessRequest(BaseModel):
     task_description: str
     exclude_fail: bool = False
     exclude_bad: bool = False
-    exclude_warn: bool = False
-    exclude_bad_speed: bool = False
-    exclude_bad_drift: bool = False
-    exclude_bad_zigzag: bool = False
-    exclude_warn_jumps: bool = False
-    exclude_warn_tracking: bool = False
-    exclude_recording_warn: bool = False
-    exclude_sync_bad: bool = False
-    exclude_sync_marginal: bool = False
     private: bool = False
 
 
@@ -162,15 +153,6 @@ async def push_and_process(
         session_manager=sm,
         exclude_fail=req.exclude_fail,
         exclude_bad=req.exclude_bad,
-        exclude_warn=req.exclude_warn,
-        exclude_bad_speed=req.exclude_bad_speed,
-        exclude_bad_drift=req.exclude_bad_drift,
-        exclude_bad_zigzag=req.exclude_bad_zigzag,
-        exclude_warn_jumps=req.exclude_warn_jumps,
-        exclude_warn_tracking=req.exclude_warn_tracking,
-        exclude_recording_warn=req.exclude_recording_warn,
-        exclude_sync_bad=req.exclude_sync_bad,
-        exclude_sync_marginal=req.exclude_sync_marginal,
         private=req.private,
     )
     return {"job_id": job_id, "status": "started"}
