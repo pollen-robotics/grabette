@@ -115,6 +115,15 @@ _TITLE_HTML = (
 )
 
 
+def _section_label(text: str) -> str:
+    """Small uppercase gray column header used across the Live View page."""
+    return (
+        "<div style='font-size:0.72rem;text-transform:uppercase;"
+        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
+        f"{text}</div>"
+    )
+
+
 def _status_bar_html(sys_info, oakd_status, cam_status):
     """Build the Episodes status strip (battery + RGB + OAK-D) from already-fetched dicts.
 
@@ -249,6 +258,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Sensor state (Live Streaming page) ────────────────────────────
 
+    def _mono(inner: str) -> str:
+        """Wrap colour-labelled sensor text in a monospace, pre-spaced span.
+
+        ``white-space:pre`` keeps the numeric column alignment that markdown
+        ``<code>`` would otherwise collapse.
+        """
+        return (
+            "<span style='font-family:monospace;white-space:pre;"
+            "font-size:0.95em'>" + inner + "</span>"
+        )
+
     def get_sensor_state():
         """Returns (gyro_text, accel_text, angle_text)."""
         state = client.get_state()
@@ -259,8 +279,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if imu:
             a = imu["accel"]
             g = imu["gyro"]
-            gyro_text = f"`X: {g[0]:+8.4f}  Y: {g[1]:+8.4f}  Z: {g[2]:+8.4f}  rad/s`"
-            accel_text = f"`X: {a[0]:+8.3f}  Y: {a[1]:+8.3f}  Z: {a[2]:+8.3f}  m/s²`"
+            # Label colours match the uPlot curve strokes in charts.py so the
+            # readout doubles as the chart legend: X=#e55, Y=#5b5, Z=#55e.
+            gyro_text = _mono(
+                f"<span style='color:#e55'>X:</span>{g[0]:+8.4f}  "
+                f"<span style='color:#5b5'>Y:</span>{g[1]:+8.4f}  "
+                f"<span style='color:#55e'>Z:</span>{g[2]:+8.4f}  rad/s"
+            )
+            accel_text = _mono(
+                f"<span style='color:#e55'>X:</span>{a[0]:+8.3f}  "
+                f"<span style='color:#5b5'>Y:</span>{a[1]:+8.3f}  "
+                f"<span style='color:#55e'>Z:</span>{a[2]:+8.3f}  m/s²"
+            )
         else:
             gyro_text = "*No IMU data*"
             accel_text = "*No IMU data*"
@@ -269,9 +299,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if angle:
             p_deg = math.degrees(angle["proximal"])
             d_deg = math.degrees(angle["distal"])
-            angle_text = (
-                f"`Proximal: {p_deg:+7.2f}°  ({angle['proximal']:+.4f} rad)`\n\n"
-                f"`Distal:   {d_deg:+7.2f}°  ({angle['distal']:+.4f} rad)`"
+            # Proximal=#4488cc, Distal=#cc8844 match the angle chart strokes.
+            angle_text = _mono(
+                f"<span style='color:#4488cc'>Proximal:</span> "
+                f"{p_deg:+7.2f}°  ({angle['proximal']:+.4f} rad)\n"
+                f"<span style='color:#cc8844'>Distal:  </span> "
+                f"{d_deg:+7.2f}°  ({angle['distal']:+.4f} rad)"
             )
         else:
             angle_text = "*No data*"
@@ -1379,22 +1412,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # ── Camera | Angle sensors | 3D viewer ─────────────────────────
         with gr.Row(equal_height=True):
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "Camera</div>")
+                gr.HTML(_section_label("Camera"))
                 camera_img = gr.Image(
                     label=None, show_label=False, height="28vh", container=False,
                 )
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "Angle Sensors</div>")
+                gr.HTML(_section_label("Angle Sensors"))
                 angle_box = gr.Markdown("*—*")
                 angle_iframe = gr.HTML(value=_ANGLE_IFRAME_HTML)
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "3D Model</div>")
+                gr.HTML(_section_label("3D Model"))
                 gr.HTML(
                     '<iframe id="urdf-viewer" src="/viewer" '
                     'style="width:100%;height:28vh;border:none;'
@@ -1410,18 +1437,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         oakd_btn = gr.Button("OAK-D: OFF  — click to enable", size="sm")
         with gr.Row(visible=False, equal_height=True) as oak_row:
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "Depth (OAK-D)</div>")
+                gr.HTML(_section_label("Depth (OAK-D)"))
                 depth_img = gr.Image(
                     label=None, show_label=False, height="28vh", container=False,
                 )
             with gr.Column(scale=1):
-                gr.Markdown("### Gyroscope")
+                gr.HTML(_section_label("Gyroscope"))
                 gyro_box = gr.Markdown("*—*")
                 gyro_iframe = gr.HTML(value=_GYRO_IFRAME_HTML)
             with gr.Column(scale=1):
-                gr.Markdown("### Accelerometer")
+                gr.HTML(_section_label("Accelerometer"))
                 accel_box = gr.Markdown("*—*")
                 accel_iframe = gr.HTML(value=_ACCEL_IFRAME_HTML)
 
