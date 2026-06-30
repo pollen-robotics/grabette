@@ -440,6 +440,7 @@ class RpiBackend(Backend):
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         frame_timestamps = self._camera.stop()
+        self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
@@ -505,7 +506,6 @@ class RpiBackend(Backend):
         # this coroutine returns (LED already off). It still completes during
         # idle — keeping the RPi live preview alive for framing the next shot —
         # and blocks the loop no longer than the old in-stop re-init did.
-        self._needs_reinit = True
         loop.call_soon(self._reinit_hardware)
 
         self._capture_session_dir = None
