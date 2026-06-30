@@ -3,10 +3,13 @@
 Runs in a daemon thread, polls the Grove LED Button, and triggers
 capture start/stop through the same code path as the REST API.
 
-LED feedback:
-  - Blink: daemon starting / sensors initializing
-  - Off:   idle, ready for capture
+The LED hardware is owned here but registered with the backend
+(set_led_controller), which drives the capture-state feedback so every
+trigger source — button, dashboard, fleet relay — behaves identically:
+  - Blink: warming up / saving
   - Solid: recording in progress
+  - Off:   idle, ready for capture
+This listener only drives the LED directly for the teleop send toggle.
 """
 
 from __future__ import annotations
@@ -41,6 +44,13 @@ class ButtonListener:
         except Exception as e:
             logger.info("Button not available: %s", e)
             return
+
+        # Hand the LED to the backend so it drives recording feedback on the
+        # shared capture path — a capture started from the dashboard (or fleet
+        # relay) then lights the LED exactly like a button press. We still own
+        # the hardware (lifecycle + cleanup) and keep driving the LED for the
+        # teleop send toggle, which is button-only.
+        self._backend.set_led_controller(self._button)
 
         self._stop_event.clear()
         self._thread = threading.Thread(
@@ -119,10 +129,8 @@ class ButtonListener:
     # -- Capture actions (scheduled on the async event loop) --
 
     def _do_start_capture(self) -> None:
-        # Blink while the start coroutine runs — it may spend several seconds
-        # warming up the OAK-D before the recording clock starts. Go solid only
-        # when start_capture returns, i.e. recording is genuinely live.
-        self._button.led_blink()
+        # LED feedback (blink during warmup → solid when live → off on error) is
+        # driven by backend.start_capture so every trigger source behaves alike.
         episode_id = self._session_manager.create_episode(session_id=UNASSIGNED_ID)
         episode_dir = self._session_manager.episode_dir(episode_id)
 
@@ -131,23 +139,18 @@ class ButtonListener:
         )
         try:
             future.result(timeout=20.0)
-            self._button.led_on()
             logger.info("Button capture started: %s", episode_id)
         except Exception:
             logger.exception("Button start_capture failed")
             self._session_manager.discard_pending_episode()
-            self._button.led_off()
 
     def _do_stop_capture(self) -> None:
         if not self._backend.is_capturing:
             logger.warning("Button stop ignored — not capturing")
             return
 
-        # Acknowledge the press immediately: capture stops at once, but
-        # stop_capture then spends a few seconds muxing the mp4s. Blink to
-        # show "saving" instead of leaving the LED solid (looks like it's
-        # still recording), then go off when the save completes.
-        self._button.led_blink()
+        # LED feedback (blink while muxing → off when saved/on error) is driven
+        # by backend.stop_capture so every trigger source behaves alike.
         future = asyncio.run_coroutine_threadsafe(
             self._backend.stop_capture(), self._loop,
         )
@@ -156,11 +159,9 @@ class ButtonListener:
             self._session_manager.register_episode(
                 getattr(status, "session_id", None)
             )
-            self._button.led_off()
             logger.info(
                 "Button capture stopped: %.1fs, %d frames",
                 status.duration_seconds, status.frame_count,
             )
         except Exception:
             logger.exception("Button stop_capture failed")
-            self._button.led_off()
