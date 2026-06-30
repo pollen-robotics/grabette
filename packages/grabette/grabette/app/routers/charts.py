@@ -102,7 +102,7 @@ var aT=[],pr=[],di=[],t0=null;
   var w=document.body.clientWidth||400;
   var h=window.innerHeight||120;
   var nC=new uPlot({{
-    width:w,height:h,title:'Angle Sensors',
+    width:w,height:h,
     cursor:{{show:false}},legend:{{show:true,live:false}},
     scales:{{x:{{time:false}}}},
     series:[{{}},
@@ -143,11 +143,13 @@ var aT=[],pr=[],di=[],t0=null;
 </body></html>"""
 
 
-def _imu_single_chart_html(div_id: str, title: str, ylabel: str, field: str) -> str:
+def _imu_single_chart_html(div_id: str, ylabel: str, field: str) -> str:
     """Build a full-height uPlot page for one IMU sub-sensor.
 
-    ``field`` is the per-sample key in /api/state/history imu entries:
-    ``"a"`` for accelerometer, ``"g"`` for gyroscope.
+    The chart carries no title — the column label in the Live View page
+    already names it. ``field`` is the per-sample key in
+    /api/state/history imu entries: ``"a"`` for accelerometer, ``"g"`` for
+    gyroscope.
     """
     return f"""\
 <!DOCTYPE html>
@@ -163,7 +165,7 @@ var iT=[],sx=[],sy=[],sz=[],t0=null;
 (function init(){{
   var w=document.body.clientWidth||400;
   var h=window.innerHeight||240;
-  var C=new uPlot({{width:w,height:h,title:'{title}',
+  var C=new uPlot({{width:w,height:h,
     cursor:{{show:false}},legend:{{show:true,live:false}},
     scales:{{x:{{time:false}}}},
     series:[{{}},
@@ -205,8 +207,8 @@ var iT=[],sx=[],sy=[],sz=[],t0=null;
 </body></html>"""
 
 
-ACCEL_CHART_HTML = _imu_single_chart_html("accel", "Accelerometer", "m/s\\u00b2", "a")
-GYRO_CHART_HTML = _imu_single_chart_html("gyro", "Gyroscope", "rad/s", "g")
+ACCEL_CHART_HTML = _imu_single_chart_html("accel", "m/s\\u00b2", "a")
+GYRO_CHART_HTML = _imu_single_chart_html("gyro", "rad/s", "g")
 
 
 @router.get("/charts/imu")
