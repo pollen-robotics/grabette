@@ -177,7 +177,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         ├── raw_video.mp4            # H.264 encoded (1296x972 @ 46fps)
         ├── imu_data.json            # BMI088 accel + gyro (200Hz)
         ├── angle_data.json          # AS5600 joint angles (if available)
-        └── metadata.json            # Duration, frame count, sample counts
+        └── metadata.json            # Duration, counts, hand, angle_convention, device_id
 ```
 
 ### IMU format
