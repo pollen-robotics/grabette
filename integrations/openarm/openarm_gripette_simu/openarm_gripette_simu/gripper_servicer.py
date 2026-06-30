@@ -38,8 +38,14 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         self._start_time = start_time
 
     def _get_motor_positions(self):
-        """Read proximal/distal joint positions (rad), reported in the dataset
-        convention (proximal negated — see PROXIMAL_CMD_SIGN)."""
+        """Report the proximal/distal gripper actual POSITION (qpos, rad), in the
+        dataset convention (proximal negated — see PROXIMAL_CMD_SIGN).
+
+        Matches training, which records the realized joint position
+        (mocap_state_8d -> observation.state). With the compliant over-close,
+        command and actual diverge by ~0.09 rad; we feed the actual position so
+        eval observations match the recorded data. (If we switch the dataset back
+        to recording the command, switch this to get_actuator_ctrl.)"""
         pos = self._sim.get_joint_positions(["proximal", "distal"])
         return float(PROXIMAL_CMD_SIGN * pos[0]), float(pos[1])
 

@@ -162,13 +162,109 @@ Dataset features match the Grabette training pipeline:
 
 All rates aligned at **50fps** to match real Grabette data (20ms per frame).
 
+## Grasp data collection
+
+`examples/collect_grasp_dataset.py` generates scripted grasp-and-lift demos of the
+arm picking a cylinder ("can") off the table, in LeRobot format, for training a
+visuomotor grasp policy. The gripper is driven free-floating (welded mocap) along
+an approach → descend → close → hold → lift trajectory; only successful episodes
+(cube lifted ≥ 5 cm) are saved.
+
+```bash
+uv run python examples/collect_grasp_dataset.py \
+    --episodes 200 --repo_id user/sim_grabette_grasp --push_to_hub --private
+```
+
+Dataset format (matches the real Grabette recordings):
+- `observation.images.cam0`: **h264** video, **960×720** fisheye (distorted at the
+  calibration resolution then downscaled), **30 fps**.
+- `action`: `[8]` float32 — `[x, y, z, ax, ay, az, proximal, distal]`: the absolute
+  `oak_l` (SLAM/control) pose + gripper joint **position** at the next step.
+  `DiffusionPolicy/convert_dataset.py` turns these into the camera-local deltas the
+  policy trains on.
+
+Grasp-pose sampling (tunables in `examples/grabette_trajectory.py`):
+- `GRASP_TILT_RANGE_DEG = (65, 75)` — tilt off vertical (0 = top-down). Diagonal
+  grasps; top-down is both hardest to reach and near the wrist-roll singularity.
+- `GRASP_AZIMUTH_RANGE_DEG = (10, 30)` — grasp yaw. Positive is the right arm's
+  natural side; negative wraps the elbow into the pedestal.
+- `GRASP_OFFSET_BODY` z (0.090) — how deep the can sits in the V (smaller = deeper).
+
+Episode-type mix (CLI fractions): `--release_fraction` (start closed→open),
+`--recover_fraction` (deliberate near-miss → reposition → re-grasp); the remainder
+are normal grasps.
+
+Two prefilters keep only **arm-executable** demos (data-gen is free-floating, so it
+must check the arm explicitly):
+- `--ik_filter` (default on) — rejects per-frame poses the OpenArm can't reach.
+- `--pedestal_filter` (default on) — rejects configs that collide with the mounting
+  column (shared `pedestal.py` clearance query — the same one the eval gate uses).
+
+`scenes/grabette_grasp.xml` (the free-floating grasp scene) is regenerated from the
+model by `scenes/gen_grabette_grasp.py` after a model re-export.
+
+**Verify a collected dataset** with `examples/replay_dataset.py` (needs a display):
+
+```bash
+# Free-floating gripper + the recorded cam0 frames (check the data itself)
+uv run python examples/replay_dataset.py --repo_id user/sim_grabette_grasp
+
+# Replay the recorded oak_l poses on the FULL ARM (IK + physics) and report grasp
+# success — confirms the saved episodes are arm-executable
+uv run python examples/replay_dataset.py --repo_id user/sim_grabette_grasp --arm
+```
+
+## Evaluate a trained policy
+
+`examples/evaluate.py` loads a trained policy (Diffusion / ACT / Pi0…, the type
+is auto-detected from its `config.json`) and drives the arm over gRPC for N
+episodes, reporting grasp success. The policy must have been trained on the
+camera-local delta format produced by the `DiffusionPolicy` integration's
+`convert_dataset.py` (2D gripper state, 11D delta action).
+
+```bash
+uv sync --extra eval          # adds lerobot + scipy
+
+# Terminal 1 — arm grasp scene, headless
+uv run python -m openarm_gripette_simu --scene scenes/table_grasp.xml --headless
+
+# Terminal 2 — run the policy
+uv run python examples/evaluate.py \
+    --checkpoint <user>/<model>-best \
+    --num_episodes 30 --n_action_steps 8
+```
+
+- `--checkpoint` — local path or HF repo id.
+- `--n_action_steps 8` — committed grasp (lower = more reactive approach, but can hesitate on the trigger).
+- `--debug` — show the camera feed; `--log_gripper` — print the gripper command vs observed state each step.
+- `--clamp_pos_mm` / `--clamp_rot_deg` — cap per-step Cartesian deltas (stability test).
+
+### Eval safety gates (`arm_servicer`)
+
+`SendCartesianDelta` validates each IK solution before applying it (holding the
+last-good command + rolling back the integrator target if it fails):
+- **Pedestal gate** — rejects a config that moves a guarded link within 2 cm of the
+  mounting column. Moves that *increase* clearance are always allowed, so the arm
+  can never deadlock inside the margin.
+- **Singularity guard** — rejects an IK solution that jumps more than
+  `JOINT_JUMP_LIMIT` (0.5 rad) from the last command — the signature of a
+  near-singular "explosion" (it also stops the arm flailing into the column).
+
+Both use the shared `pedestal.py` clearance query against the `pedestal_box` proxy
+geom in `scenes/table_grasp.xml` (the same query the data-gen `--pedestal_filter`
+uses, so demos and eval enforce the identical constraint). Per-episode the servicer
+logs `[grasp-diag]` (commanded-vs-actual grasp gap) and `[grasp-orient]` (grasp
+tilt/azimuth) at `GetSuccessStatus`, for diagnosing systematic misses.
+
 ## Scenes
 
 Scene XML files live in `scenes/`. They include the robot model and add environment elements.
 
 | Scene | Description |
 |-------|-------------|
-| `scenes/table_red_cube.xml` | Wooden table with a movable red cube (used for reach task) |
+| `scenes/table_red_cube.xml` | Wooden table with a movable red cube (reach task) |
+| `scenes/table_grasp.xml` | Arm + table + grasp cylinder + `pedestal_box` proxy (grasp eval / replay) |
+| `scenes/grabette_grasp.xml` | Free-floating gripper + cylinder (grasp data generation); regenerated by `scenes/gen_grabette_grasp.py` |
 
 To create a new scene, copy an existing one as a template. The robot is included via `<include file="...robot.xml"/>`. The `Simulation` class injects the correct `meshdir` so scenes can live anywhere.
 

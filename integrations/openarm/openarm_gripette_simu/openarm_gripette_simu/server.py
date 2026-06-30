@@ -56,7 +56,7 @@ class SimulationServer:
     def __init__(self, scene_xml: str | Path | None = None, initial_arm_joints=None,
                  gripper_hold_open_duration: float = 0.0):
         self._sim = Simulation(scene_xml)
-        self._kin = Kinematics()
+        self._kin = Kinematics(orientation_weight=10.0)
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
         # rng for the reset shortcuts
