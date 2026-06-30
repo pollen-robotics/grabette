@@ -143,10 +143,88 @@ var aT=[],pr=[],di=[],t0=null;
 </body></html>"""
 
 
+def _imu_single_chart_html(div_id: str, title: str, ylabel: str, field: str) -> str:
+    """Build a full-height uPlot page for one IMU sub-sensor.
+
+    ``field`` is the per-sample key in /api/state/history imu entries:
+    ``"a"`` for accelerometer, ``"g"`` for gyroscope.
+    """
+    return f"""\
+<!DOCTYPE html>
+<html><head>
+{_UPLOT_HEAD}
+</head><body>
+<div id="{div_id}"></div>
+<script>
+var MAXLEN=750,cur=0,gen=-1;
+function clip(a){{while(a.length>MAXLEN)a.shift();}}
+var iT=[],sx=[],sy=[],sz=[],t0=null;
+
+(function init(){{
+  var w=document.body.clientWidth||400;
+  var h=window.innerHeight||240;
+  var C=new uPlot({{width:w,height:h,title:'{title}',
+    cursor:{{show:false}},legend:{{show:true,live:false}},
+    scales:{{x:{{time:false}}}},
+    series:[{{}},
+      {{label:'X',stroke:'#e55',width:1}},
+      {{label:'Y',stroke:'#5b5',width:1}},
+      {{label:'Z',stroke:'#55e',width:1}}],
+    axes:[{{stroke:'#888',grid:{{stroke:'#333'}},size:30}},
+          {{stroke:'#888',grid:{{stroke:'#333'}},label:'{ylabel}',size:50}}]
+  }},[[],[],[],[]],document.getElementById('{div_id}'));
+
+  new ResizeObserver(function(){{
+    C.setSize({{width:document.body.clientWidth,height:window.innerHeight}});
+  }}).observe(document.body);
+
+  setInterval(function(){{
+    fetch('/api/state/history?cursor='+cur).then(function(r){{return r.ok?r.json():null;}})
+    .then(function(d){{
+      if(!d)return;
+      if(d.gen!==undefined&&d.gen!==gen){{
+        gen=d.gen;cur=0;t0=null;
+        iT=[];sx=[];sy=[];sz=[];
+        C.setData([[],[],[],[]]);
+        return;
+      }}
+      if(d.cursor)cur=d.cursor;
+      if(!d.imu||!d.imu.length)return;
+      for(var i=0;i<d.imu.length;i++){{
+        var s=d.imu[i];
+        if(t0===null)t0=s.t;
+        var t=(s.t-t0)/1000;
+        iT.push(t);sx.push(s.{field}[0]);sy.push(s.{field}[1]);sz.push(s.{field}[2]);
+      }}
+      clip(iT);clip(sx);clip(sy);clip(sz);
+      C.setData([iT.slice(),sx.slice(),sy.slice(),sz.slice()]);
+    }}).catch(function(){{}});
+  }},1000);
+}})();
+</script>
+</body></html>"""
+
+
+ACCEL_CHART_HTML = _imu_single_chart_html("accel", "Accelerometer", "m/s\\u00b2", "a")
+GYRO_CHART_HTML = _imu_single_chart_html("gyro", "Gyroscope", "rad/s", "g")
+
+
 @router.get("/charts/imu")
 async def imu_chart():
-    """Serve the IMU chart page (accelerometer + gyroscope)."""
+    """Serve the combined IMU chart page (accelerometer + gyroscope)."""
     return HTMLResponse(content=IMU_CHART_HTML)
+
+
+@router.get("/charts/accel")
+async def accel_chart():
+    """Serve the accelerometer-only chart page."""
+    return HTMLResponse(content=ACCEL_CHART_HTML)
+
+
+@router.get("/charts/gyro")
+async def gyro_chart():
+    """Serve the gyroscope-only chart page."""
+    return HTMLResponse(content=GYRO_CHART_HTML)
 
 
 @router.get("/charts/angle")
