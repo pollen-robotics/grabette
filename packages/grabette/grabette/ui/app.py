@@ -798,9 +798,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def _render_quality_card(ep: dict) -> str:
         """HTML card for one episode in the quality recap panel."""
         verdict = ep.get("verdict", "FAIL")
-        color = _QUALITY_COLORS.get(verdict, "#dc2626")
         name = ep.get("name", "?")
         excluded = ep.get("excluded", True)
+        display_verdict = "BAD" if (verdict == "WARN" and excluded) else verdict
+        color = _QUALITY_COLORS.get(display_verdict, "#dc2626")
         kinds = ep.get("kinds", [ep.get("kind", "trajectory")])
         kind_badges = "".join(
             f'<span style="color:#94a3b8;font-size:0.75rem;">{_QUALITY_KIND_LABELS.get(k, k)}</span>'
@@ -865,7 +866,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f'<div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">'
             f'<span style="font-weight:600;font-family:monospace;color:#e2e8f0;">{name}</span>'
             f'<span style="background:{color};color:#fff;font-size:0.7rem;'
-            f'font-weight:700;padding:1px 6px;border-radius:3px;">{verdict}</span>'
+            f'font-weight:700;padding:1px 6px;border-radius:3px;">{display_verdict}</span>'
             f'{kind_badges}{excl_badge}{task_chip}</div>{stats}{issues}</div>'
         )
 
@@ -1452,10 +1453,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             n_total = len(quality)
             n_included = sum(1 for ep in quality if not ep.get("excluded", True))
-            n_included_warn = sum(
+            n_total_warn = sum(
                 1 for ep in quality
-                if not ep.get("excluded", True)
-                and (ep.get("warnings") or ep.get("verdict") == "WARN")
+                if ep.get("warnings") or ep.get("verdict") == "WARN"
             )
             problematic = [
                 ep for ep in quality
@@ -1463,8 +1463,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             ]
 
             warn_suffix = (
-                f' · <span style="color:#f97316;">⚠ {n_included_warn} with warnings</span>'
-                if n_included_warn else ""
+                f' · <span style="color:#f97316;">⚠ {n_total_warn} with warnings</span>'
+                if n_total_warn else ""
             )
             gr.HTML(
                 f'<div style="margin-top:1rem;padding:0.75rem 1rem;background:#0f172a;'
