@@ -18,15 +18,18 @@ logger = logging.getLogger(__name__)
 STREAM_HZ = 30  # matches the real Grabette stream / training data FPS
 STREAM_INTERVAL = 1.0 / STREAM_HZ
 
-# TEMPORARY eval fix: the `proximal` joint convention is INVERTED between the
-# dataset (free-floating grabette_right, closes NEGATIVE) and the arm scene this
-# server drives (openarm_right, closes POSITIVE [0, +pi/2]). The policy emits —
-# and consumes as state — the dataset (negative) convention, so we negate the
-# proximal motor command on the way in and the reported proximal position on the
-# way out. `distal` matches in both, so it is NOT flipped. Set back to +1.0 once
-# the two grabette_right exports are unified to the real hardware convention.
-# See memory: openarm-proximal-sign-cross-model.
-PROXIMAL_CMD_SIGN = -1.0
+# Bridges the proximal-joint convention between the dataset and the arm
+# scene. Both are now in the POSITIVE-closing convention (real gripette
+# and grabette runtimes were flipped to `0 = open, positive = closing`),
+# so this is a no-op (+1.0) by default and may eventually be removed.
+#
+# LEGACY-DATASET WARNING: datasets recorded BEFORE the convention flip
+# captured `proximal` as NEGATIVE-on-close. A policy trained on those
+# emits negative proximal goals and consumes negative proximal states,
+# so when evaluating against legacy data, set PROXIMAL_CMD_SIGN = -1.0
+# (or whatever env-driven override we land on when the dataset
+# compatibility story is sorted). See memory: openarm-proximal-sign-cross-model.
+PROXIMAL_CMD_SIGN = +1.0
 
 
 class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
@@ -38,8 +41,10 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         self._start_time = start_time
 
     def _get_motor_positions(self):
-        """Report the proximal/distal gripper actual POSITION (qpos, rad), in the
-        dataset convention (proximal negated — see PROXIMAL_CMD_SIGN).
+        """Report the proximal/distal gripper actual POSITION (qpos, rad), in
+        the robot-frame convention (0 = open, positive = closing), with the
+        PROXIMAL_CMD_SIGN bridge applied so legacy-dataset eval flips can be
+        toggled without touching call sites.
 
         Matches training, which records the realized joint position
         (mocap_state_8d -> observation.state). With the compliant over-close,

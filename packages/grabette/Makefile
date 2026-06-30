@@ -1,4 +1,4 @@
-.PHONY: install-rpi install-udev-oak install-systemd install-netdev install-poweroff ensure-ble-only help
+.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -6,33 +6,66 @@ WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
 
 help:
 	@echo "Targets:"
-	@echo "  install-rpi       Install apt deps + udev rule, create venv, sync, verify"
-	@echo "  install-udev-oak  Install only the OAK-D / Movidius udev rule"
-	@echo "  install-systemd   Install + enable the grabette + bluetooth systemd services (BLE-only)"
-	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
-	@echo "  install-netdev    Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
-	@echo "  install-poweroff  Allow 'rasp' user to power off the Pi from the web UI"
+	@echo "  install-rpi HAND=L|R  Install apt deps + udev rule, create venv, sync, verify."
+	@echo "                        HAND={left,right} REQUIRED — determines proximal/distal sign."
+	@echo "  install-udev-oak      Install only the OAK-D / Movidius udev rule"
+	@echo "  install-systemd       Install + enable the grabette + bluetooth systemd services (BLE-only)"
+	@echo "  ensure-ble-only       Force BlueZ into BLE-only mode (ControllerMode = le)"
+	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
+	@echo "  install-poweroff      Allow 'rasp' user to power off the Pi from the web UI"
+	@echo ""
+	@echo "HAND must be 'left' or 'right' — this grabette's hand. Determines the per-sensor"
+	@echo "sign mapping in grabette/hardware/angle.py, written to /etc/grabette/env as"
+	@echo "GRABETTE_HAND. Example:  make install-rpi HAND=right"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: install-udev-oak
+install-rpi: check-hand install-udev-oak
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
 	  python3-dbus python3-gi
 	@# python3-dbus / python3-gi: system deps the bluetooth WiFi service imports
 	@# (dbus, gi.repository.GLib); the venv reaches them via --system-site-packages.
-	cd $(WORKSPACE_ROOT) && rm -rf .venv \
-	  && uv venv --python /usr/bin/python3 --system-site-packages \
+	sudo rm -rf $(WORKSPACE_ROOT)/.venv
+	cd $(WORKSPACE_ROOT) && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package grabette --extra rpi --extra ui --extra hf
 	@echo "--- verifying imports ---"
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
 	@grep -E "home|version_info|system-site" $(WORKSPACE_ROOT)/.venv/pyvenv.cfg
 	@echo
+	@$(MAKE) --no-print-directory write-env HAND=$(HAND)
+	@echo
 	@echo "Done. Run 'uv run --package grabette python -m grabette' to start the daemon."
 	@echo "Watch journalctl for 'RPi hardware detected, using RpiBackend' (NOT MockBackend)."
+
+# Fail fast if HAND wasn't provided. Listed as a prerequisite of install-rpi
+# so the rest of the recipe never runs without a valid hand.
+check-hand:
+	@if [ "$(HAND)" != "left" ] && [ "$(HAND)" != "right" ]; then \
+		echo "ERROR: HAND must be 'left' or 'right'."; \
+		echo "Usage:  make install-rpi HAND=right"; \
+		exit 1; \
+	fi
+
+# Write /etc/grabette/env with GRABETTE_HAND=$(HAND), PRESERVING any existing
+# GRABETTE_*_SIGN lines (operator may have overridden one for an asymmetric
+# build) so a re-run of install-rpi doesn't wipe them.
+write-env: check-hand
+	@sudo mkdir -p /etc/grabette
+	@sudo touch /etc/grabette/env
+	@{ \
+	  echo "# /etc/grabette/env — per-device persistent config."; \
+	  echo "# Written by 'make install-rpi HAND=...'."; \
+	  echo "# Sourced by grabette.service via EnvironmentFile=-/etc/grabette/env."; \
+	  echo "GRABETTE_HAND=$(HAND)"; \
+	  sudo grep -E '^GRABETTE_(PROXIMAL|DISTAL)_SIGN=' /etc/grabette/env 2>/dev/null || true; \
+	} | sudo tee /etc/grabette/env.new >/dev/null
+	@sudo mv /etc/grabette/env.new /etc/grabette/env
+	@echo "Wrote /etc/grabette/env:"
+	@sudo cat /etc/grabette/env | sed 's/^/  /'
 
 # Movidius / OAK-D USB access rule. Without this, depthai needs sudo to talk
 # to the device. Idempotent.

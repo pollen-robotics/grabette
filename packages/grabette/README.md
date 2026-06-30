@@ -75,11 +75,13 @@ make install-netdev
 sudo reboot
 ```
 
-Then one-shot bring-up:
+Then one-shot bring-up. A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
 ```bash
-make install-rpi
+make install-rpi HAND=right    # or HAND=left
 uv run python -m grabette
 ```
+
+`HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/grabette/env` as `GRABETTE_HAND=<value>` and persists across reboots (sourced by `grabette.service`).
 
 `make install-rpi` does the following — automating the steps that are easy to get subtly wrong by hand:
 - `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg`
@@ -132,7 +134,18 @@ No pairing is required: the characteristics are unencrypted and the adapter adve
 
 ## Configuration
 
-All settings via environment variables with `GRABETTE_` prefix:
+### Robot-frame convention
+
+Finger angles published in `AngleSample.proximal` / `AngleSample.distal` (and in the data this daemon writes) are in **robot frame**, matching the gripette runtime:
+
+- `0 rad` — fingers fully **open**
+- positive — **closing**
+
+The two AS5600L magnets rotate in opposite directions when the fingers close, and a right-hand grabette is the mirror of a left-hand one — so the per-sensor sign that bridges raw rotation → robot frame depends on the `hand` setting. Defaults: `right → distal=+1, proximal=-1`; `left → distal=-1, proximal=+1`. Override individual signs via `GRABETTE_DISTAL_SIGN` / `GRABETTE_PROXIMAL_SIGN` only for an asymmetric hardware revision.
+
+### Environment variables
+
+All settings via environment variables with `GRABETTE_` prefix. Persistent per-device config lives in `/etc/grabette/env`, sourced by `grabette.service`.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -143,6 +156,9 @@ All settings via environment variables with `GRABETTE_` prefix:
 | `GRABETTE_CAMERA_FPS` | `46` | Camera frame rate |
 | `GRABETTE_IMU_HZ` | `200` | IMU sample rate |
 | `GRABETTE_ANGLE_SENSORS` | `true` | Enable AS5600 angle sensors |
+| `GRABETTE_HAND` | `right` | `left` or `right` — determines default `*_sign`. Written by `make install-rpi HAND=…` |
+| `GRABETTE_DISTAL_SIGN` | (from `hand`) | Override the hand-derived distal sensor sign. ±1 |
+| `GRABETTE_PROXIMAL_SIGN` | (from `hand`) | Override the hand-derived proximal sensor sign. ±1 |
 | `GRABETTE_UI_ENABLED` | `true` | Enable Gradio dashboard |
 | `GRABETTE_BUTTON_ENABLED` | `true` | Enable hardware button |
 | `GRABETTE_LOG_LEVEL` | `INFO` | Logging level |
