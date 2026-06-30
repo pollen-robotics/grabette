@@ -127,16 +127,31 @@ SENTRY_OFFSET = 0.10      # 10 cm back along approach axis
 # for ~5 cm minimum horizontal offset + 10 cm minimum above-table — enough
 # that every training episode shows a clear approach motion in the
 # recorded video, while keeping IK-filter acceptance usable.
-HOME_X_OFFSET_RANGE = (-0.20, -0.05)     # 5-20 cm behind the cube in -X
+HOME_X_OFFSET_RANGE = (0.05, 0.20)     # 5-20 cm behind the cube in -X
 HOME_Y_OFFSET_RANGE = (-0.25, -0.05)     # 5-25 cm in -Y from the cube
-HOME_Z_ABOVE_TABLE_RANGE = (0.30, 0.40)  # 0.65-0.75 m world Z. Stage-5g: dropped the 0.40-0.45 upper slice — at home_z ≥ 0.42 the arm operates near joint limits and the policy's residual orientation error during descend is large enough to miss grasps. v4 eval failures clustered there. Visible diversity loss is small; stability gain matters.
+# Raised from (0.08,0.18): with the camera ~13 cm above the fingertips, the old
+# range put thumb_tip/finger_tip at ~table level (mean +28 mm, 24% of starts
+# dipping a tip below the table top — looked like it started on the table).
+# (0.12,0.22) lifts the lower tip to ~+7 cm mean while keeping ~10 cm of height
+# variation. Watch the IK yield: higher home_z pushes the arm toward joint
+# limits (an old note saw grasp failures cluster above ~home_z 0.42 ≈ 0.20 here).
+HOME_Z_ABOVE_TABLE_RANGE = (0.12, 0.22)
 
 # Orientation: gripper finger axis tilted forward-down at this pitch below
 # horizontal. Pitch=90 deg -> straight down. Steep angles only.
-HOME_PITCH_RANGE_DEG = (40.0, 80.0)
-# Yaw is asymmetric — the camera site convention only reaches positive-yaw
-# orientations within the arm's workspace.
-HOME_YAW_RANGE_DEG = (0.0, +25.0)
+HOME_PITCH_RANGE_DEG = (0.0, 65.0)
+# Home YAW is no longer a fixed range — it is COMPUTED per episode so the
+# gripette camera actually frames the cube. A fixed range can't: the cube-
+# centering yaw spans ~+10..+74 deg across the home-position box (position and
+# orientation are sampled independently). Instead we aim the camera at the cube:
+#   yaw_deg = atan2(-dy, -dx) + HOME_CAM_YAW_OFFSET_DEG + jitter
+# where (dx, dy) is the home offset from the cube and the offset is the camera's
+# fixed mounting heading (calibrated: -91.6 +/- 0.9 deg over position+pitch, so
+# the term is nearly constant). Jitter adds variability while keeping the cube
+# framed (the 130-deg FOV tolerates it). This centers the cube HORIZONTALLY;
+# vertical framing still varies with HOME_PITCH (intended).
+HOME_CAM_YAW_OFFSET_DEG = -92.0
+HOME_YAW_JITTER_DEG = 27.0               # +/- jitter around the aim direction
 HOME_ROLL_RANGE_DEG = (0.0, 0.0)        # roll disabled per spec
 
 # Pre-grasp pose: fingers fully down (pitch=90, yaw=0, roll=0)
@@ -152,35 +167,65 @@ PRE_GRASP_ROLL_DEG = 0.0
 #    0 deg -> tilt towards world +X (toward the cube from the home side).
 #    The home is sampled on the cube's -X side, so positive +X tilt means
 #    the gripper "leans toward" the cube as a human reaching forward would.
-# Diagonal grasp tilt range (off-vertical). Original spec was 30-60 deg, but
-# the V-pocket grasp geometry can't sustain >25 deg under gravity during the
-# close-and-hold phase — cube slides out the open end. 10-25 deg is the
-# pragmatic compromise: visibly diagonal motion vs the prior pure top-down,
-# but geometrically close enough to vertical that the V-pocket still holds.
-GRASP_TILT_RANGE_DEG = (15.0, 30.0)
-# Camera-frame convention: the arm-feasible azimuth half is positive (+15 to
-# +40°), opposite of the body/site-frame number we had in Stage 5b. Symmetric
-# ±60° sampling collapses to a tight strip on the +y side under IK filter,
-# so the sampler is restricted to that strip directly.
-GRASP_AZIMUTH_RANGE_DEG = (+15.0, +40.0)
+# Diagonal grasp tilt range (degrees OFF VERTICAL: 0 = top/straight-down grasp,
+# 90 = horizontal side approach). The old (10,35) range was near-vertical for two
+# now-stale reasons: a >25deg "cube slides out of the V under gravity" limit (the
+# CUBE era — the current CYLINDER + compliant over-close grip holds 100% up to
+# >=80deg, tested), and avoiding the top-down pose. In fact top-down is the WORST:
+# IK reachability is ~12% at 0deg and a ~30% valley through 10-35deg, but JUMPS to
+# ~68-72% at 40-70deg (away from the top-down wrist-roll singularity). So (65,75)
+# = a tight diagonal band at the most-reachable, grasp-stable, least-vertical
+# sweet spot. (See the feasibility/grasp-vs-tilt sweeps.)
+GRASP_TILT_RANGE_DEG = (65.0, 75.0)
+# Final grasp yaw (azimuth about world +Z). The object is a CYLINDER (can,
+# rotationally symmetric), so any heading is a valid GRASP — but for the RIGHT arm
+# only the POSITIVE-azimuth side is "natural": negative azimuth wraps the elbow
+# into the pedestal column (measured arm->pedestal clearance: -15deg => -8mm
+# PENETRATING / 85% collide; 0deg => 41% collide; +15 => 8%; +25-30 => 0%).
+# Data-gen's IK filter only checks REACHABILITY, not arm-pedestal collision, so it
+# won't prune these — hence the range itself must stay on the natural side.
+# (10,30) = positive/natural, reachable, low residual collision. NOTE: a small
+# fraction still clip at some cube positions even here — add the data-gen pedestal
+# filter (mirrors arm_servicer's gate) to eliminate them entirely.
+GRASP_AZIMUTH_RANGE_DEG = (10.0, 30.0)
+
+# Per-episode grasp-pose noise — sim-only diversity in place of visual DR
+# (the pipeline is tested in sim, so we vary the grasp itself, not the visuals).
+GRASP_POS_NOISE_M = 0.005     # +/- 5 mm on the final grasp position
+GRASP_ROT_NOISE_DEG = 3.0     # +/- a few degrees on the final grasp orientation
 
 
 # --- Body-frame offset from grabette_root to the cube center when grasping ---
 # (cube sits in the open V-pocket between the open proximal/distal fingers)
-GRASP_OFFSET_BODY = np.array([0.0, 0.20, 0.023])
+# grabette_right (oak_l body frame): cube center expressed in the oak_l/mocap
+# frame at grasp. The z-component is the DEPTH along the fingers: gripper_center
+# (palm) ~0.059, finger_tip ~0.121. The original 0.11582 placed the cube right at
+# the tips (grasped "barely, at the very tip"); reduced to 0.090 so the cube sits
+# mid-V (settles ~0.075 after the close-slide) for a more secure grasp. Grasp
+# success stayed 10/10 across 0.075-0.116 in testing.
+# NOTE: arm_servicer.GRASP_OFFSET_OAKL (the grasp-diag probe) MUST mirror this.
+GRASP_OFFSET_BODY = np.array([0.0027, 0.05123, 0.090])
 
 
-# --- Gripper joint commands (rad) ---
+# --- Gripper joint commands (rad), grabette_right ranges proximal/distal [0, pi/2] ---
+# OPEN = fingers extended; CLOSED = the grasp pose validated in the viewer.
 PROXIMAL_OPEN = 0.0
-PROXIMAL_CLOSED = -np.pi / 2
+PROXIMAL_CLOSED = -0.448
 DISTAL_OPEN = 0.0
-DISTAL_CLOSED = -2.0 * np.pi / 3
+DISTAL_CLOSED = 0.966
 
 
 # --- Canonical "fingers fully down" mocap quaternion (MuJoCo w,x,y,z).
-# A -90 deg rotation around world +X: local +Y -> world -Z (fingers down),
-# local +Z -> world +Y (V-pocket points along world +Y), local +X -> +X.
-GRIPPER_DOWN_QUAT = np.array([np.sqrt(0.5), -np.sqrt(0.5), 0.0, 0.0])
+# grabette_right is welded at oak_l; 180 deg about world +X points the gripper
+# straight down (matches the scene's default mocap orientation).
+GRIPPER_DOWN_QUAT = np.array([0.0, 1.0, 0.0, 0.0])
+
+# Goal-frame yaw correction. The free-floating trajectory is authored in a frame
+# yawed ~90deg from the OpenArm's control frame (oak_l) — see _goal_yaw_search.py,
+# which shows 0deg -> ~0% IK-feasible and -90deg -> peak. Rotate the whole episode
+# by this much about the cube's vertical axis so the goal oak_l poses land in the
+# arm's reachable workspace (the scene/pedestal are correct and unchanged).
+GOAL_YAW_CORRECTION_DEG = -90.0
 
 
 # --- Success threshold ---
@@ -263,8 +308,10 @@ def grip_quat(pitch_rad: float, yaw_rad: float, roll_rad: float = 0.0) -> np.nda
                   [yaw   ] * [pitch correction ] * [GRIPPER_DOWN]
         Optional roll is applied as a final rotation around the finger axis.
     """
-    base = GRIPPER_DOWN_QUAT  # R_x(-90 deg)
-    pitch_corr = quat_axis_angle(np.array([0.0, 1.0, 0.0]), pitch_rad - np.pi / 2)
+    base = GRIPPER_DOWN_QUAT
+    # grabette_right: jaw axis (thumb->finger) is ~world -X when pointing down,
+    # so pitch (tilt off vertical) is about world -X (sign vs old model's +Y).
+    pitch_corr = quat_axis_angle(np.array([-1.0, 0.0, 0.0]), pitch_rad - np.pi / 2)
     yaw_rot = quat_axis_angle(np.array([0.0, 0.0, 1.0]), yaw_rad)
 
     q = quat_mul(yaw_rot, quat_mul(pitch_corr, base))
@@ -310,12 +357,19 @@ def sample_home_pose(rng: np.random.Generator, cube_x: float, cube_y: float):
         home_quat: (4,) MuJoCo (w, x, y, z) quaternion (forward-down tilt)
         debug:    dict with the sampled scalar params (for logging)
     """
-    home_x = cube_x + rng.uniform(*HOME_X_OFFSET_RANGE)
-    home_y = cube_y + rng.uniform(*HOME_Y_OFFSET_RANGE)
+    dx = rng.uniform(*HOME_X_OFFSET_RANGE)
+    dy = rng.uniform(*HOME_Y_OFFSET_RANGE)
+    home_x = cube_x + dx
+    home_y = cube_y + dy
     home_z = TABLE_TOP_Z + rng.uniform(*HOME_Z_ABOVE_TABLE_RANGE)
 
     pitch_deg = rng.uniform(*HOME_PITCH_RANGE_DEG)
-    yaw_deg = rng.uniform(*HOME_YAW_RANGE_DEG)
+    # Aim the gripette camera at the cube: heading from home toward the cube
+    # (-dx, -dy) plus the camera's fixed mounting offset, then jitter. This is
+    # invariant under the later GOAL_YAW_CORRECTION (a rigid rotation about the
+    # cube), so computing it here in the pre-correction frame is correct.
+    aim_yaw_deg = np.degrees(np.arctan2(-dy, -dx)) + HOME_CAM_YAW_OFFSET_DEG
+    yaw_deg = aim_yaw_deg + rng.uniform(-HOME_YAW_JITTER_DEG, HOME_YAW_JITTER_DEG)
     if HOME_ROLL_RANGE_DEG[0] == HOME_ROLL_RANGE_DEG[1]:
         roll_deg = HOME_ROLL_RANGE_DEG[0]
     else:
@@ -384,20 +438,21 @@ def sentry_pose(grasp_xyz: np.ndarray, grasp_quat: np.ndarray,
                 offset: float = SENTRY_OFFSET) -> tuple[np.ndarray, np.ndarray]:
     """Pre-grasp "sentry" waypoint sitting BACK along the gripper's approach axis.
 
-    The gripper's "engagement" / approach axis in body frame is +Y (the V-pocket
-    opens toward body +Y; cf. GRASP_OFFSET_BODY = (0, 0.20, 0.023)). To stand
-    back from the cube along this axis we offset the sentry by body -Y, then
-    rotate that offset into world frame via grasp_quat.
+    The gripper's approach axis in body frame is the direction toward the grasp
+    pocket, i.e. the normalized GRASP_OFFSET_BODY (the cube sits along it). We
+    offset the sentry back along the opposite of that axis, rotated into world
+    via grasp_quat.
 
-    For a vertical grasp this collapses to "directly above the grasp by `offset`
-    metres" — same intuition as the Stage-3 sentry. For a tilted grasp it sits
-    up-and-behind so the final segment (sentry -> grasp) is a clean linear
-    motion along the gripper's approach direction.
+    For grabette_right (pocket along body +Z, gripper pointing down) this puts
+    the sentry directly above the grasp, so the final segment (sentry -> grasp)
+    is a clean straight push down the pocket axis. For a tilted grasp it sits
+    up-and-behind, still a clean linear motion along the approach direction.
 
     Sentry orientation matches grasp_quat (no further rotation in the final
     segment).
     """
-    back_body = np.array([0.0, -offset, 0.0])
+    approach_body = GRASP_OFFSET_BODY / np.linalg.norm(GRASP_OFFSET_BODY)
+    back_body = -offset * approach_body
     sentry_xyz = grasp_xyz + quat_apply(grasp_quat, back_body)
     return sentry_xyz, grasp_quat.copy()
 
@@ -446,15 +501,13 @@ def pose_T(xyz: np.ndarray, quat: np.ndarray) -> np.ndarray:
     return T
 
 
-# --- Body (mocap) → "camera" site offset.
-# The whole pipeline (real Grabette → dataset → training → deployment) uses
-# the camera site as the reference frame. The Grabette mocap drives
-# `grabette_root` (= gripper_base body), but every recorded pose, every IK
-# target and every action delta is expressed in CAMERA-frame coordinates.
-# Source: robot.xml site name="camera" pos="0.0689844 0.0662 0.0278102"
-# quat="0.5 -0.5 0.5 0.5", relative to gripper_base.
-BODY_TO_CAMERA_POS = np.array([0.0689844, 0.0662, 0.0278102])
-BODY_TO_CAMERA_QUAT = np.array([0.5, -0.5, 0.5, 0.5])  # MuJoCo (w, x, y, z)
+# --- Body (mocap) → reference-frame offset.
+# grabette_right is now welded at the oak_l SLAM frame, so the mocap pose IS
+# the reference pose used end-to-end (real SLAM runs on the OAK camera). No
+# conversion needed -> identity. (Kept as a transform hook in case we later
+# want to record in a different frame; it's only ever a fixed offset away.)
+BODY_TO_CAMERA_POS = np.array([0.0, 0.0, 0.0])
+BODY_TO_CAMERA_QUAT = np.array([1.0, 0.0, 0.0, 0.0])  # MuJoCo (w, x, y, z) = identity
 
 
 def body_pose_to_camera_pose(body_xyz: np.ndarray, body_quat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -539,12 +592,31 @@ def sample_episode_waypoints(
         rng, tilt_range_deg=tilt_range_deg, azimuth_range_deg=azimuth_range_deg,
     )
     grasp_xyz = grasp_pos_for_cube(cube_xyz, grasp_quat)
+    # Per-episode grasp-pose noise (sim diversity, replaces visual DR).
+    grasp_xyz = grasp_xyz + rng.uniform(-GRASP_POS_NOISE_M, GRASP_POS_NOISE_M, size=3)
+    if GRASP_ROT_NOISE_DEG > 0.0:
+        ax = rng.normal(size=3); ax /= np.linalg.norm(ax) + 1e-9
+        ang = np.deg2rad(rng.uniform(-GRASP_ROT_NOISE_DEG, GRASP_ROT_NOISE_DEG))
+        grasp_quat = quat_mul(quat_axis_angle(ax, ang), grasp_quat)
+        grasp_quat = grasp_quat / np.linalg.norm(grasp_quat)
     sentry_xyz, sentry_quat = sentry_pose(grasp_xyz, grasp_quat, sentry_offset)
     mid_xyz, mid_quat = mid_approach_pose(
         home_xyz, home_quat, sentry_xyz, grasp_quat, arc_lift=arc_lift,
     )
     lift_xyz = grasp_xyz + np.array([0.0, 0.0, lift_height])
     lift_quat = grasp_quat.copy()
+
+    # Goal-frame yaw correction: rotate the whole episode about the cube's
+    # vertical axis so the oak_l goals match the arm's control frame.
+    if GOAL_YAW_CORRECTION_DEG != 0.0:
+        _rz = quat_axis_angle(np.array([0.0, 0.0, 1.0]), np.deg2rad(GOAL_YAW_CORRECTION_DEG))
+        def _corr(xyz, quat):
+            return cube_xyz + quat_apply(_rz, xyz - cube_xyz), quat_mul(_rz, quat)
+        home_xyz, home_quat = _corr(home_xyz, home_quat)
+        mid_xyz, mid_quat = _corr(mid_xyz, mid_quat)
+        sentry_xyz, sentry_quat = _corr(sentry_xyz, sentry_quat)
+        grasp_xyz, grasp_quat = _corr(grasp_xyz, grasp_quat)
+        lift_xyz, lift_quat = _corr(lift_xyz, lift_quat)
 
     return EpisodeWaypoints(
         cube_xyz=cube_xyz,

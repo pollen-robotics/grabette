@@ -7,6 +7,7 @@ Joint behavior (gains, damping, friction) is tuned in the MuJoCo XML model.
 from pathlib import Path
 import re
 import tempfile
+import cv2
 import numpy as np
 import mujoco
 import mujoco.viewer
@@ -22,28 +23,64 @@ GRIPETTE_CAM = "gripette_cam"
 
 
 def _load_model(scene_xml: Path) -> mujoco.MjModel:
-    """Load a MuJoCo model, injecting meshdir when the scene is outside the model dir.
+    """Load a MuJoCo model, resolving the robot include's mesh paths.
 
-    MuJoCo resolves mesh paths relative to the main XML file. When a scene
-    in a different directory includes robot.xml, the mesh paths break.
-    This injects an absolute meshdir so meshes are always found.
+    MuJoCo ignores `meshdir` from <include>d files and resolves their bare
+    mesh filenames relative to the included file's own directory — missing
+    the `assets/` subdir the export uses (robot.xml has meshdir="assets").
+    So we inline the robot file in place of the <include>, with its meshdir
+    rewritten to an absolute path. Derived from the robot file itself, this
+    works for both the `assets/` layout and the older flat layout.
     """
     xml = scene_xml.read_text()
+    inc = re.search(r'<include\s+file="([^"]*)"\s*/>', xml)
+    if inc is None:
+        return mujoco.MjModel.from_xml_path(str(scene_xml))
 
-    # Only inject meshdir if not already set in the scene
-    if 'meshdir=' not in xml.split('<include')[0]:
-        meshdir_tag = f'<compiler meshdir="{OPENARM_RIGHT_DIR}"/>'
-        xml = re.sub(r'(<include\s)', meshdir_tag + r'\n    \1', xml, count=1)
-        # Write temp file next to the scene so relative includes still resolve
-        with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.xml', dir=scene_xml.parent, delete=False
-        ) as f:
-            f.write(xml)
-            tmp_path = Path(f.name)
-        try:
-            return mujoco.MjModel.from_xml_path(str(tmp_path))
-        finally:
-            tmp_path.unlink()
+    robot_path = (scene_xml.parent / inc.group(1)).resolve()
+    robot_xml = robot_path.read_text()
+
+    # Make the robot's meshdir absolute (it is relative to the robot file dir).
+    md = re.search(r'meshdir="([^"]*)"', robot_xml)
+    abs_meshdir = (robot_path.parent / (md.group(1) if md else ".")).resolve()
+    if md:
+        robot_xml = robot_xml.replace(md.group(0), f'meshdir="{abs_meshdir}"')
+
+    # Inline the robot file's body where the <include> was.
+    inner = re.search(r'<mujoco[^>]*>(.*)</mujoco>', robot_xml, re.S).group(1)
+    xml = xml.replace(inc.group(0), inner)
+
+    # The export gives the gripper a "camera" SITE (the calibrated frame) but no
+    # MuJoCo <camera>, so render_camera() would fall back to the free camera.
+    # Inject a gripette_cam at that site unless the scene already defines one
+    # (the free-floating scene generates its own). MuJoCo cameras look along -z
+    # while the site's optical axis is +z, so rotate 180° about x — matching the
+    # free-floating scene generator's convention.
+    if 'name="gripette_cam"' not in xml:
+        site_m = re.search(r'<site\b[^>]*\bname="camera"[^>]*/>', xml)
+        if site_m:
+            site_el = site_m.group(0)
+            pos_m = re.search(r'pos="([^"]*)"', site_el)
+            quat_m = re.search(r'quat="([^"]*)"', site_el)
+            pos = pos_m.group(1) if pos_m else "0 0 0"
+            sq = (np.array([float(v) for v in quat_m.group(1).split()])
+                  if quat_m else np.array([1.0, 0.0, 0.0, 0.0]))
+            cq = np.zeros(4)
+            mujoco.mju_mulQuat(cq, sq, np.array([0.0, 1.0, 0.0, 0.0]))
+            cam_el = (f'<camera name="gripette_cam" pos="{pos}" '
+                      f'quat="{cq[0]:.7g} {cq[1]:.7g} {cq[2]:.7g} {cq[3]:.7g}" '
+                      f'fovy="130"/>')
+            xml = xml.replace(site_el, site_el + cam_el)
+
+    with tempfile.NamedTemporaryFile(
+        mode='w', suffix='.xml', dir=scene_xml.parent, delete=False
+    ) as f:
+        f.write(xml)
+        tmp_path = Path(f.name)
+    try:
+        return mujoco.MjModel.from_xml_path(str(tmp_path))
+    finally:
+        tmp_path.unlink()
 
     return mujoco.MjModel.from_xml_path(str(scene_xml))
 
@@ -64,6 +101,12 @@ class Simulation:
         # Fisheye camera model (precomputes remap tables)
         self._fisheye = FisheyeCamera()
         self._cam_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, GRIPETTE_CAM)
+
+        # Render option for the camera: hide ALL site groups so reference frames
+        # (thumb_tip / finger_tip / gripper_center) never appear in the recorded
+        # images. Sites are frames-only, never part of the policy observation.
+        self._cam_opt = mujoco.MjvOption()
+        self._cam_opt.sitegroup[:] = 0
 
         # Create the offscreen renderer eagerly so its GL context is
         # initialized before the viewer (avoids GLX threading conflicts)
@@ -123,14 +166,32 @@ class Simulation:
         """Read current arm joint positions (7 values)."""
         return self.get_joint_positions(ARM_JOINT_NAMES)
 
-    def render_camera(self) -> np.ndarray:
+    def get_actuator_ctrl(self, joint_names: list[str] | None = None) -> np.ndarray:
+        """Read the current actuator position COMMANDS (data.ctrl, not qpos)."""
+        if joint_names is None:
+            joint_names = ACTUATOR_NAMES
+        return np.array([self.data.ctrl[self._actuator_ids[name]] for name in joint_names])
+
+    def render_camera(self, out_size: tuple[int, int] | None = None) -> np.ndarray:
         """Render an image from the Gripette camera with fisheye distortion.
 
+        Args:
+            out_size: optional (width, height) to downscale the distorted image
+                to (INTER_AREA). The fisheye distortion is always applied at the
+                calibration resolution (1296x972) first; this only shrinks the
+                result — used to match the real Grabette stream (960x720). The
+                resolutions are all 4:3, so the uniform downscale keeps the KB8
+                calibration valid. Default None returns native 972x1296.
+
         Returns:
-            RGB uint8 array of shape (972, 1296, 3).
+            RGB uint8 array of shape (out_h, out_w, 3), or (972, 1296, 3).
         """
-        self._renderer.update_scene(self.data, camera=self._cam_id)
-        return self._fisheye.distort(self._renderer.render())
+        self._renderer.update_scene(self.data, camera=self._cam_id,
+                                    scene_option=self._cam_opt)
+        img = self._fisheye.distort(self._renderer.render())
+        if out_size is not None and (img.shape[1], img.shape[0]) != out_size:
+            img = cv2.resize(img, out_size, interpolation=cv2.INTER_AREA)
+        return img
 
     def launch_viewer(self):
         """Launch the interactive MuJoCo viewer (blocking)."""

@@ -39,6 +39,13 @@ MODAL_CSS = """
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid #374151 !important;
 }
+/* "Power Off" is the last navbar entry — push it to the far right and tint it
+   red so it reads as separate from the normal pages. Best-effort: relies on the
+   navbar being a flex row (gradio 6.x); the 🔴 label is the guaranteed cue. */
+#grabette-nav a:last-child {
+    margin-left: auto !important;
+    color: #f87171 !important;
+}
 """
 
 _HF_AUTH_IFRAME = (
@@ -867,66 +874,52 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if not namespace or not repo_name.strip():
             yield "Enter an owner and a repository name"
             return
-        repo_id = f"{namespace}{repo_name.strip()}"
+        name = repo_name.strip()
+        target_repo = f"{namespace}{name}"
+        raw_repo = f"{namespace}{name}-raw"
 
+        # Build task description from all selected tasks
         sessions = _get_sessions()
         session_map = {s["id"]: s for s in sessions}
-        episode_ids: list[str] = []
-        for tid in task_ids:
-            s = session_map.get(tid)
-            if not s:
-                continue
-            for ep in s.get("episodes", []):
-                episode_ids.append(ep["episode_id"])
-        if not episode_ids:
-            yield "No episodes found in selected tasks"
+        descriptions = [
+            s["description"]
+            for tid in task_ids
+            if (s := session_map.get(tid)) and s.get("description")
+        ]
+        task_description = ", ".join(descriptions) if descriptions else name
+
+        yield f"Starting… uploading to {raw_repo}, then processing to {target_repo}"
+
+        result = client.hf_push_and_process(
+            task_ids=list(task_ids),
+            target_repo=target_repo,
+            raw_repo=raw_repo,
+            task_description=task_description,
+        )
+        if "error" in result:
+            yield f"Error: {result['error']}"
             return
 
-        # Kick off all uploads (they run as background jobs on the daemon).
-        # job_id keyed by episode so we can track each independently.
-        jobs: dict[str, str] = {}
-        rows: list[dict] = []
-        for eid in episode_ids:
-            result = client.hf_upload_episode(eid, repo_id)
-            if "error" in result:
-                rows.append({"episode_id": eid, "status": "failed",
-                             "progress": 0.0, "message": result["error"]})
+        job_id = result["job_id"]
+        while True:
+            time.sleep(3)
+            job = client.hf_get_job(job_id)
+            if job is None:
+                yield "Error: job lost"
+                return
+            status = job.get("status", "running")
+            error = job.get("error") or ""
+            msg = (error if status == "failed" else None) or job.get("message") or error
+            pct = job.get("progress", 0)
+            if status == "completed":
+                link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
+                yield f"✅ Done! Dataset: {link}"
+                return
+            elif status == "failed":
+                yield f"❌ Failed: {msg}"
+                return
             else:
-                jobs[eid] = result.get("job_id", "")
-                rows.append({"episode_id": eid, "status": "pending",
-                             "progress": 0.0, "message": "Queued…"})
-        yield _upload_progress_md(repo_id, rows, finished=False)
-
-        # Poll the job manager until every started job reaches a terminal state.
-        # Cap the wait so an unreachable daemon can't loop forever (uploads of
-        # large videos can legitimately take many minutes, hence the high bound).
-        polls = 0
-        max_polls = 3600  # ~1h at 1s/poll
-        while jobs and polls < max_polls:
-            polls += 1
-            time.sleep(1.0)
-            all_jobs = {j["job_id"]: j for j in client.hf_list_jobs()}
-            pending = False
-            for r in rows:
-                jid = jobs.get(r["episode_id"])
-                if jid is None:
-                    continue  # failed to start — already terminal
-                jd = all_jobs.get(jid)
-                if jd is None:
-                    pending = True
-                    continue
-                r["status"] = jd.get("status", "running")
-                r["progress"] = jd.get("progress", 0.0)
-                r["message"] = jd.get("message", "")
-                if jd.get("error"):
-                    r["message"] = jd["error"]
-                if r["status"] not in ("completed", "failed"):
-                    pending = True
-            yield _upload_progress_md(repo_id, rows, finished=False)
-            if not pending:
-                break
-
-        yield _upload_progress_md(repo_id, rows, finished=True)
+                yield f"[{pct:.0f}%] {msg}"
 
     def on_hf_upload(table_data, repo_id):
         episode_ids = _get_selected_ids(table_data)
@@ -940,12 +933,68 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return f"Error: {result['error']}"
         return f"Upload started (job: {result.get('job_id', '?')})"
 
+    def check_hf_account():
+        return _hf_status_text(client.hf_check_auth())
+
+    def on_hf_update_token(token):
+        if not token:
+            return "No token provided", gr.update()
+        result = client.hf_set_auth(token)
+        return _hf_status_text(result), gr.update(value="")
+
+    def on_hf_remove_token():
+        client.hf_set_auth("")
+        return "Not authenticated"
+
+    # ── Power off ─────────────────────────────────────────────────────
+
+    def _poweroff_notice(text: str, color: str = "#f97316") -> str:
+        return (
+            f"<div style='max-width:520px;margin-top:0.75rem;padding:0.85rem 1.1rem;"
+            f"background:#1e293b;border-left:4px solid {color};border-radius:8px;"
+            f"color:#e2e8f0;font-size:0.92rem;'>{text}</div>"
+        )
+
+    def load_poweroff_page():
+        """Arm the button when idle; disable + warn while a recording is active."""
+        cap = (client.get_state() or {}).get("capture", {})
+        if cap.get("is_capturing") or cap.get("is_starting"):
+            return (
+                gr.update(
+                    value=_poweroff_notice(
+                        "A recording is in progress — stop the capture before powering off."
+                    ),
+                    visible=True,
+                ),
+                gr.update(interactive=False, variant="secondary"),
+            )
+        return gr.update(value="", visible=False), gr.update(interactive=True, variant="stop")
+
+    def on_poweroff():
+        result = client.shutdown()
+        if "error" in result:
+            return (
+                gr.update(value=_poweroff_notice(f"⚠ {result['error']}", "#ef4444"), visible=True),
+                gr.update(),
+            )
+        return (
+            gr.update(
+                value=_poweroff_notice(
+                    "Device is shutting down. This page will stop responding shortly — "
+                    "wait ~20 s, then it is safe to unplug.",
+                    "#22c55e",
+                ),
+                visible=True,
+            ),
+            gr.update(interactive=False, variant="secondary"),
+        )
+
     # ══════════════════════════════════════════════════════════════════
     # Page 1 — Episodes
     # ══════════════════════════════════════════════════════════════════
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
         episode_status_bar = gr.HTML("")
 
@@ -1228,7 +1277,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Datasets") as datasets_demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
 
         # HF Auth popup
         with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
@@ -1293,7 +1342,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             interactive=False,
         )
         gr.HTML("</div>")
-        ds_upload_msg = gr.Markdown(container=False)
+        ds_upload_msg = gr.Textbox(
+            show_label=False, interactive=False, max_lines=3, container=False,
+        )
         gr.HTML("</div>")
 
         ds_upload_btn.click(
@@ -1317,7 +1368,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
@@ -1374,16 +1425,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 accel_box = gr.Markdown("*—*")
                 accel_iframe = gr.HTML(value=_ACCEL_IFRAME_HTML)
 
-        gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
-
-        # ── Teleop ────────────────────────────────────────────────────
-        gr.Markdown("### Teleop")
-        with gr.Row():
-            teleop_btn = gr.Button("Enter Teleop Mode", variant="secondary", scale=1)
-            teleop_msg = gr.Textbox(
-                show_label=False, interactive=False, max_lines=1, scale=3,
-            )
-
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
@@ -1393,20 +1434,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         sensor_timer = gr.Timer(0.5)
         sensor_timer.tick(fn=get_sensor_state, outputs=[gyro_box, accel_box, angle_box])
 
-        teleop_timer = gr.Timer(1.0)
-        teleop_timer.tick(fn=get_teleop_display, outputs=teleop_msg)
-
         oakd_timer = gr.Timer(3.0)
         oakd_timer.tick(fn=poll_oakd, outputs=[oakd_btn, oak_row])
         oakd_btn.click(fn=on_toggle_oakd, outputs=[oakd_btn, oak_row])
         live_demo.load(fn=poll_oakd, outputs=[oakd_btn, oak_row])
-
-        teleop_btn.click(
-            fn=on_toggle_teleop,
-            outputs=[teleop_msg, teleop_btn,
-                     camera_timer, depth_timer, sensor_timer, teleop_timer,
-                     gyro_iframe, accel_iframe, angle_iframe],
-        )
 
         batt_popup_lv = gr.HTML(visible=False)
 
@@ -1419,7 +1450,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Settings") as settings_demo:
-        gr.Navbar(main_page_name="Episodes")
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         with gr.Row(equal_height=False):
@@ -1441,5 +1472,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_timer_st = gr.Timer(60.0)
         batt_timer_st.tick(fn=check_battery_warning, outputs=batt_popup_st)
         settings_demo.load(fn=check_battery_warning, outputs=batt_popup_st)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Page 5 — Power Off
+    # ══════════════════════════════════════════════════════════════════
+
+    with demo.route("🔴 Power Off") as poweroff_demo:
+        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
+        gr.HTML(_TITLE_HTML)
+
+        gr.HTML(
+            "<div style='max-width:520px;margin-top:1rem;padding:1.5rem;"
+            "background:#1c1310;border:1px solid #991b1b;border-radius:12px;'>"
+            "<h2 style='margin:0 0 0.5rem;color:#f87171;'>Power off the device</h2>"
+            "<p style='color:#e2e8f0;margin:0;font-size:0.95rem;'>"
+            "This performs a clean shutdown of the Raspberry Pi. Once it has halted "
+            "you can safely disconnect power.</p></div>"
+        )
+
+        poweroff_msg = gr.HTML(value="", visible=False)
+        with gr.Row():
+            poweroff_btn = gr.Button("Power off now", variant="stop", scale=0)
+
+        poweroff_btn.click(fn=on_poweroff, outputs=[poweroff_msg, poweroff_btn])
+        poweroff_demo.load(fn=load_poweroff_page, outputs=[poweroff_msg, poweroff_btn])
 
     return demo

@@ -23,11 +23,24 @@
             mark="random" markrgb="0.60 0.40 0.22" width="256" height="256" />
         <material name="wood" texture="wood" texrepeat="3 3" shininess="0.1" specular="0.1" />
         <material name="red_cube" rgba="0.85 0.15 0.1 1" shininess="0.3" specular="0.5" />
+        <material name="silver" rgba="0.6 0.6 0.63 1" shininess="0.6" specular="0.5" reflectance="0.2" />
     </asset>
 
     <worldbody>
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+
+        <!-- Pedestal collision proxy: the 60x60mm hfsb6_6060 aluminium extrusion,
+             for IK collision avoidance. Extrusion base verts measure x,y in
+             [-0.030,0.030] => column centred on the world origin, full 750mm
+             height. The shoulder-pitch motor + brackets at the top (the other
+             hfsb6 convex meshes, y~-0.04..-0.09 at z>0.69) are EXCLUDED — they
+             can't be touched, and including them fattened the box. NON-physical
+             (contype/conaffinity=0): a real colliding box would jam the shoulder
+             at the column top — avoidance is analytic against these bounds.
+             Translucent + group 3 to validate fit. -->
+        <geom name="pedestal_box" type="box" pos="0 0 0.375" size="0.03 0.03 0.375"
+              contype="0" conaffinity="0" group="3" rgba="0.1 0.9 0.2 0.35" />
 
         <!-- Table: top surface at z=0.35, well below all arm parts (min z=0.47) -->
         <body name="table" pos="0.44 -0.142 0">
@@ -43,13 +56,23 @@
                 material="wood" mass="1" />
         </body>
 
-        <!-- Red block: 4x4x12cm standing upright on the table -->
+        <!-- Coke-can-like object: red cylinder (Ø40mm x 120mm) with silver end
+             caps, standing upright. Single curved collision surface (no flat
+             faces) so it self-centers in the gripper instead of tumbling.
+             Silver caps are visual-only (contype=0, mass=0). -->
         <body name="red_cube" pos="0.44 -0.142 0.41">
             <freejoint name="red_cube_joint" />
-            <geom name="red_cube" type="box" size="0.02 0.02 0.06"
+            <geom name="red_cube" type="cylinder" size="0.025 0.06"
                 material="red_cube" mass="0.1"
                 friction="1.0 0.1 0.005" condim="6"
                 solref="0.005 1" solimp="0.99 0.99 0.001" />
+            <!-- Thin (~2mm) silver end rims, radius 0.021 and centered ON the red
+                 ends (z=±0.06) so they straddle/enclose the red faces — nothing
+                 coplanar with the red body, so no z-fighting. -->
+            <geom type="cylinder" size="0.026 0.001" pos="0 0 0.06"
+                material="silver" contype="0" conaffinity="0" mass="0" />
+            <geom type="cylinder" size="0.026 0.001" pos="0 0 -0.06"
+                material="silver" contype="0" conaffinity="0" mass="0" />
         </body>
     </worldbody>
 </mujoco>

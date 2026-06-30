@@ -19,7 +19,7 @@ import mujoco.viewer
 import numpy as np
 
 from .simulation import Simulation
-from .kinematics import Kinematics, CAMERA_FRAME
+from .kinematics import Kinematics, CONTROL_FRAME
 from .gripper_servicer import GripperServicer
 from .arm_servicer import ArmServicer
 from .proto import gripper_pb2_grpc, arm_pb2_grpc
@@ -43,7 +43,11 @@ logger = logging.getLogger(__name__)
 GRIPPER_PORT = 50051
 ARM_PORT = 50052
 VIEWER_FPS = 60
-CAMERA_FPS = 50  # camera rendering rate, matches real data (50fps)
+CAMERA_FPS = 30  # camera rendering rate, matches the real Grabette stream (30 fps)
+# Camera output size streamed to the policy — must match the training dataset
+# (real Grabette stream). render_camera distorts at calibration res then
+# downscales to this. See collect_grasp_dataset.IMG_WIDTH/IMG_HEIGHT.
+CAMERA_OUT_SIZE = (960, 720)  # (width, height)
 
 
 class SimulationServer:
@@ -52,7 +56,7 @@ class SimulationServer:
     def __init__(self, scene_xml: str | Path | None = None, initial_arm_joints=None,
                  gripper_hold_open_duration: float = 0.0):
         self._sim = Simulation(scene_xml)
-        self._kin = Kinematics()
+        self._kin = Kinematics(orientation_weight=10.0)
         self._lock = threading.Lock()
         self._start_time = time.monotonic()
         # rng for the reset shortcuts
@@ -73,7 +77,7 @@ class SimulationServer:
         )
 
         # Cached camera frame — rendered in the main thread, read by gRPC
-        self._camera_frame = self._sim.render_camera()
+        self._camera_frame = self._sim.render_camera(out_size=CAMERA_OUT_SIZE)
 
         if initial_arm_joints is not None:
             self._sim.reset_arm(np.asarray(initial_arm_joints, dtype=float))
@@ -127,21 +131,59 @@ class SimulationServer:
         Returns None if no feasible home is found within a few attempts.
         """
         from grabette_trajectory import (  # noqa: E402
-            sample_home_pose, body_pose_to_camera_pose, pose_T,
+            sample_home_pose, pose_T,
+            quat_axis_angle, quat_apply, quat_mul, GOAL_YAW_CORRECTION_DEG,
         )
         cx, cy = cube_xy
+        # Match the training start distribution: the dataset's home poses are
+        # yaw-corrected by GOAL_YAW_CORRECTION_DEG about the cube's vertical axis
+        # (see sample_episode_waypoints). Apply the same rotation here so eval
+        # resets the arm to an in-distribution start instead of a 90°-rotated one.
+        cube = np.array([cx, cy, 0.0])   # z is irrelevant: rotation is about +Z
+        _rz = quat_axis_angle(np.array([0.0, 0.0, 1.0]),
+                              np.deg2rad(GOAL_YAW_CORRECTION_DEG))
+        cube_bid = mujoco.mj_name2id(self._sim.model, mujoco.mjtObj.mjOBJ_BODY,
+                                     "red_cube")
         for _ in range(50):
             home_xyz, home_quat, _ = sample_home_pose(self._rng, cx, cy)
-            cam_xyz, cam_quat = body_pose_to_camera_pose(home_xyz, home_quat)
-            T_target = pose_T(cam_xyz, cam_quat)
+            if GOAL_YAW_CORRECTION_DEG != 0.0:
+                home_xyz = cube + quat_apply(_rz, home_xyz - cube)
+                home_quat = quat_mul(_rz, home_quat)
+            # home_xyz/quat is the CONTROL_FRAME (oak_l) pose, same as the
+            # recorded data; IK the arm's control frame straight to it.
+            T_target = pose_T(home_xyz, home_quat)
             joints = self._kin.inverse(
                 T_target, current_joint_positions=self._initial_arm_joints.copy(),
-                n_iter=300, frame=CAMERA_FRAME,
+                n_iter=300, frame=CONTROL_FRAME,
             )
-            T_actual = self._kin.forward(joints, frame=CAMERA_FRAME)
-            if np.linalg.norm(T_actual[:3, 3] - cam_xyz) < 0.02:
+            T_actual = self._kin.forward(joints, frame=CONTROL_FRAME)
+            if np.linalg.norm(T_actual[:3, 3] - home_xyz) >= 0.02:
+                continue   # IK did not converge to the target pose
+            # Placo IK ignores collisions, so a "feasible" home can drive the arm
+            # through the table. Snap the arm there and reject any config that
+            # starts in collision, otherwise eval begins from a broken pose.
+            if not self._arm_config_collides(joints, cube_bid):
                 return joints
         return None
+
+    def _arm_config_collides(self, arm_joints: np.ndarray, cube_bid: int) -> bool:
+        """True if `arm_joints` puts the arm/gripper in penetrating contact with
+        the environment. Arm-vs-arm contacts are disabled by the model's
+        collision classes, so any penetration here is the robot hitting the
+        table/floor. The cube-on-table resting contact (body `cube_bid`) is
+        ignored."""
+        m, d = self._sim.model, self._sim.data
+        self._sim.reset_arm(arm_joints)
+        mujoco.mj_forward(m, d)
+        for c in range(d.ncon):
+            if d.contact[c].dist >= -1e-3:
+                continue
+            b1 = m.geom(d.contact[c].geom1).bodyid[0]
+            b2 = m.geom(d.contact[c].geom2).bodyid[0]
+            if b1 == cube_bid or b2 == cube_bid:
+                continue
+            return True
+        return False
 
     def _sample_cube_xy(self) -> tuple[float, float]:
         from grabette_trajectory import CUBE_X_RANGE, CUBE_Y_RANGE  # noqa: E402
@@ -314,7 +356,7 @@ class SimulationServer:
 
                     # Render camera in the main thread at CAMERA_FPS
                     if step % camera_interval == 0:
-                        self._camera_frame = self._sim.render_camera()
+                        self._camera_frame = self._sim.render_camera(out_size=CAMERA_OUT_SIZE)
 
                 step += 1
 
