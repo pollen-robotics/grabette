@@ -134,6 +134,10 @@ class RpiBackend(Backend):
     def is_camera_connected(self) -> bool:
         return self._camera is not None and self._camera.is_open
 
+    @property
+    def is_camera_reinitializing(self) -> bool:
+        return self._needs_reinit
+
     # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
 
     @property
