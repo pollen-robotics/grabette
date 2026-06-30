@@ -196,7 +196,7 @@ Runs as root (required by BlueZ DBus GATT registration). PIN is configurable via
 
 Network status is also readable from a dedicated BLE characteristic (auto-updates every 10s).
 
-**Web Bluetooth client**: open the [Gripette BT Tool](https://pollen-robotics.github.io/gripette/) in Chrome/Edge on a phone or laptop (requires HTTPS — served via GitHub Pages from `docs/index.html`).
+**Web Bluetooth client**: open the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge on a phone or laptop, then pick **Gripette** in the device chooser (requires HTTPS — it's the single shared page, served via GitHub Pages from `docs/index.html`, and provisions any robot).
 
 See [docs/bluetooth_setup.md](docs/bluetooth_setup.md) for the full setup guide (BlueZ configuration, troubleshooting, etc.).
 

@@ -45,6 +45,28 @@ def check_camera():
         ok(f"1296x972, exposure={exposure}us, gain={gain:.1f}")
         if sensor_ts:
             ok(f"SensorTimestamp available ({sensor_ts})")
+            # The capture path (camera.py / SyncManager.boottime_ns_to_ms)
+            # assumes SensorTimestamp is CLOCK_BOOTTIME ns. Validate it: the
+            # stamp is from a just-captured frame, so it must sit a hair BELOW
+            # "now" on CLOCK_BOOTTIME (within ~1s). If it instead matches
+            # CLOCK_MONOTONIC, the timeline conversion would be silently wrong.
+            now_boot = time.clock_gettime(getattr(time, "CLOCK_BOOTTIME", 7))
+            now_mono = time.clock_gettime(time.CLOCK_MONOTONIC)
+            d_boot = now_boot - sensor_ts / 1e9
+            d_mono = now_mono - sensor_ts / 1e9
+            if 0 <= d_boot < 1.0:
+                ok(f"SensorTimestamp is CLOCK_BOOTTIME (delta {d_boot * 1e3:.1f} ms)")
+            elif 0 <= d_mono < 1.0:
+                fail(
+                    f"SensorTimestamp looks like CLOCK_MONOTONIC, not BOOTTIME "
+                    f"(boottime delta {d_boot * 1e3:.1f} ms). "
+                    f"SyncManager.boottime_ns_to_ms would be wrong — fix the clock domain."
+                )
+            else:
+                warn(
+                    f"SensorTimestamp matches neither clock within 1s "
+                    f"(boottime delta {d_boot:.3f}s, monotonic delta {d_mono:.3f}s)"
+                )
         else:
             warn("SensorTimestamp not available")
         return True

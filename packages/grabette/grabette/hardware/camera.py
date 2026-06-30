@@ -46,8 +46,6 @@ class VideoCapture:
         self._h264_path: Path | None = None
         self._frame_timestamps: list[float] = []
         self._recording = False
-        self._first_sensor_ts: int | None = None
-        self._sync_offset_ms: float = 0.0
         self._frame_count: int = 0
 
     def init_camera(self) -> None:
@@ -90,10 +88,7 @@ class VideoCapture:
             sensor_ts_ns = metadata.get("SensorTimestamp")
 
             if sensor_ts_ns is not None:
-                if self._first_sensor_ts is None:
-                    self._first_sensor_ts = sensor_ts_ns
-                    self._sync_offset_ms = self.sync.get_timestamp_ms()
-                ts = (sensor_ts_ns - self._first_sensor_ts) / 1_000_000.0 + self._sync_offset_ms
+                ts = self.sync.boottime_ns_to_ms(sensor_ts_ns)
             else:
                 ts = self.sync.get_timestamp_ms()
 
@@ -110,8 +105,6 @@ class VideoCapture:
         self._output_path = Path(output_path)
         self._h264_path = self._output_path.with_suffix(".h264")
         self._frame_timestamps = []
-        self._first_sensor_ts = None
-        self._sync_offset_ms = 0.0
         self._frame_count = 0
         self._picam2.pre_callback = self._on_frame
 
@@ -186,3 +179,8 @@ class VideoCapture:
     @property
     def frame_count(self) -> int:
         return self._frame_count
+
+    @property
+    def is_open(self) -> bool:
+        """True while the picamera2 device is initialized (not yet closed)."""
+        return self._picam2 is not None
