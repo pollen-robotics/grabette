@@ -167,18 +167,27 @@ PRE_GRASP_ROLL_DEG = 0.0
 #    0 deg -> tilt towards world +X (toward the cube from the home side).
 #    The home is sampled on the cube's -X side, so positive +X tilt means
 #    the gripper "leans toward" the cube as a human reaching forward would.
-# Diagonal grasp tilt range (off-vertical). Original spec was 30-60 deg, but
-# the V-pocket grasp geometry can't sustain >25 deg under gravity during the
-# close-and-hold phase — cube slides out the open end. 10-25 deg is the
-# pragmatic compromise: visibly diagonal motion vs the prior pure top-down,
-# but geometrically close enough to vertical that the V-pocket still holds.
-GRASP_TILT_RANGE_DEG = (10.0, 35.0)   # widened off-vertical diversity (grabette_right tips hold)
-# Final grasp yaw (azimuth about world +Z). The object is now a CYLINDER (can),
-# which is rotationally symmetric — so unlike the cube (which needed the gripper
-# roughly face-aligned) ANY arm-reachable heading is a valid grasp. Widened from
-# (10,40) to (0,45) for more final-yaw variation; the IK filter prunes whatever
-# the arm can't reach (the feasible band sits on the +y side).
-GRASP_AZIMUTH_RANGE_DEG = (0.0, 45.0)
+# Diagonal grasp tilt range (degrees OFF VERTICAL: 0 = top/straight-down grasp,
+# 90 = horizontal side approach). The old (10,35) range was near-vertical for two
+# now-stale reasons: a >25deg "cube slides out of the V under gravity" limit (the
+# CUBE era — the current CYLINDER + compliant over-close grip holds 100% up to
+# >=80deg, tested), and avoiding the top-down pose. In fact top-down is the WORST:
+# IK reachability is ~12% at 0deg and a ~30% valley through 10-35deg, but JUMPS to
+# ~68-72% at 40-70deg (away from the top-down wrist-roll singularity). So (65,75)
+# = a tight diagonal band at the most-reachable, grasp-stable, least-vertical
+# sweet spot. (See the feasibility/grasp-vs-tilt sweeps.)
+GRASP_TILT_RANGE_DEG = (65.0, 75.0)
+# Final grasp yaw (azimuth about world +Z). The object is a CYLINDER (can,
+# rotationally symmetric), so any heading is a valid GRASP — but for the RIGHT arm
+# only the POSITIVE-azimuth side is "natural": negative azimuth wraps the elbow
+# into the pedestal column (measured arm->pedestal clearance: -15deg => -8mm
+# PENETRATING / 85% collide; 0deg => 41% collide; +15 => 8%; +25-30 => 0%).
+# Data-gen's IK filter only checks REACHABILITY, not arm-pedestal collision, so it
+# won't prune these — hence the range itself must stay on the natural side.
+# (10,30) = positive/natural, reachable, low residual collision. NOTE: a small
+# fraction still clip at some cube positions even here — add the data-gen pedestal
+# filter (mirrors arm_servicer's gate) to eliminate them entirely.
+GRASP_AZIMUTH_RANGE_DEG = (10.0, 30.0)
 
 # Per-episode grasp-pose noise — sim-only diversity in place of visual DR
 # (the pipeline is tested in sim, so we vary the grasp itself, not the visuals).
@@ -189,9 +198,13 @@ GRASP_ROT_NOISE_DEG = 3.0     # +/- a few degrees on the final grasp orientation
 # --- Body-frame offset from grabette_root to the cube center when grasping ---
 # (cube sits in the open V-pocket between the open proximal/distal fingers)
 # grabette_right (oak_l body frame): cube center expressed in the oak_l/mocap
-# frame at grasp. Measured from a hand-tuned grasp in the viewer
-# (gripper qpos[7:14] vs cube qpos[0:3], transformed by R(quat)^T).
-GRASP_OFFSET_BODY = np.array([0.0027, 0.05123, 0.11582])
+# frame at grasp. The z-component is the DEPTH along the fingers: gripper_center
+# (palm) ~0.059, finger_tip ~0.121. The original 0.11582 placed the cube right at
+# the tips (grasped "barely, at the very tip"); reduced to 0.090 so the cube sits
+# mid-V (settles ~0.075 after the close-slide) for a more secure grasp. Grasp
+# success stayed 10/10 across 0.075-0.116 in testing.
+# NOTE: arm_servicer.GRASP_OFFSET_OAKL (the grasp-diag probe) MUST mirror this.
+GRASP_OFFSET_BODY = np.array([0.0027, 0.05123, 0.090])
 
 
 # --- Gripper joint commands (rad), grabette_right ranges proximal/distal [0, pi/2] ---

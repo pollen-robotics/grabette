@@ -17,6 +17,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.60"]
 dataset = ["lerobot>=0.5 ; python_version >= '3.12'"]
+# Policy evaluation client (examples/evaluate.py): loads a trained policy and
+# drives the sim over gRPC. lerobot for the policy, scipy for rotation math.
+eval = [
+    "lerobot>=0.5.1 ; python_version >= '3.12'",
+    "scipy>=1.10",
+]
 
 [build-system]
 requires = ["hatchling"]
