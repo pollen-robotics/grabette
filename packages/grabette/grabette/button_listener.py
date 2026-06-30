@@ -65,6 +65,10 @@ class ButtonListener:
             self._thread.join(timeout=2.0)
             self._thread = None
         if self._button is not None:
+            # Unregister before cleanup: the backend must not drive the LED
+            # (e.g. a stop_capture during daemon shutdown) once its gpiod lines
+            # are released below.
+            self._backend.set_led_controller(None)
             self._button.led_off()
             self._button.cleanup()
             self._button = None
