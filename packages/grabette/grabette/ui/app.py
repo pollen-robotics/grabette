@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import time
 
 import gradio as gr
 from PIL import Image
@@ -57,28 +58,38 @@ _HF_AUTH_IFRAME = (
 )
 
 
-_IMU_IFRAME_HTML = (
-    '<iframe src="/charts/imu" '
-    'style="width:100%;height:38vh;border:none;'
+_GYRO_IFRAME_HTML = (
+    '<iframe src="/charts/gyro" '
+    'style="width:100%;height:28vh;border:none;'
+    'border-radius:8px;background:transparent;"></iframe>'
+)
+_ACCEL_IFRAME_HTML = (
+    '<iframe src="/charts/accel" '
+    'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
 _ANGLE_IFRAME_HTML = (
     '<iframe src="/charts/angle" '
-    'style="width:100%;height:18vh;border:none;'
+    'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
 # Replacement HTML used while teleop is active. gr.update(value="") doesn't
 # seem to force a DOM swap (Gradio may treat empty as no-op), so we use an
 # explicit non-empty placeholder. Same height as the real iframes to avoid
 # layout shift; src=about:blank guarantees no /api/state/history polling.
-_IMU_IFRAME_PAUSED = (
+_GYRO_IFRAME_PAUSED = (
     '<iframe src="about:blank" '
-    'style="width:100%;height:38vh;border:none;'
+    'style="width:100%;height:28vh;border:none;'
+    'border-radius:8px;background:#1a1a1a;"></iframe>'
+)
+_ACCEL_IFRAME_PAUSED = (
+    '<iframe src="about:blank" '
+    'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:#1a1a1a;"></iframe>'
 )
 _ANGLE_IFRAME_PAUSED = (
     '<iframe src="about:blank" '
-    'style="width:100%;height:18vh;border:none;'
+    'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:#1a1a1a;"></iframe>'
 )
 
@@ -102,6 +113,15 @@ _TITLE_HTML = (
     "font-size:var(--text-xxl,2rem);color:var(--body-text-color);"
     "margin:var(--spacing-xxl) 0 var(--spacing-lg);\">GRABETTE</h1>"
 )
+
+
+def _section_label(text: str) -> str:
+    """Small uppercase gray column header used across the Live View page."""
+    return (
+        "<div style='font-size:0.72rem;text-transform:uppercase;"
+        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
+        f"{text}</div>"
+    )
 
 
 def _status_bar_html(sys_info, oakd_status, cam_status):
@@ -137,19 +157,23 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     else:
         batt_badge = _badge("Battery", "N/A", GRAY)
 
-    # RGB camera (2-state: connected / disconnected; N/A if call failed)
+    # RGB camera (3-state: connected / reinitializing / disconnected; N/A if call failed)
     if cam_status is None:
         rgb_badge = _badge("RGB Camera", "N/A", GRAY)
     elif cam_status.get("connected"):
         rgb_badge = _badge("RGB Camera", "Connected", GREEN)
+    elif cam_status.get("reinitializing"):
+        rgb_badge = _badge("RGB Camera", "Unavailable", ORANGE)
     else:
         rgb_badge = _badge("RGB Camera", "Disconnected", RED)
 
-    # OAK-D (3-state: connected / off / error; N/A when unsupported)
+    # OAK-D (4-state: connected / starting / off / error; N/A when unsupported)
     if not oakd_status or not oakd_status.get("supported"):
         oakd_badge = _badge("OAK-D", "N/A", GRAY)
     elif oakd_status.get("initialized"):
         oakd_badge = _badge("OAK-D", "Connected", GREEN)
+    elif oakd_status.get("initializing"):
+        oakd_badge = _badge("OAK-D", "Starting…", ORANGE)
     elif oakd_status.get("enabled"):
         oakd_badge = _badge("OAK-D", "Error", RED)
     else:
@@ -161,6 +185,54 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
         + batt_badge + rgb_badge + oakd_badge
         + "</div>"
     )
+
+
+def _text_bar(pct: float, width: int = 22) -> str:
+    """Render a fixed-width text progress bar like ██████░░░░ for markdown."""
+    pct = max(0.0, min(100.0, pct))
+    filled = int(round(pct / 100.0 * width))
+    return "`" + "█" * filled + "░" * (width - filled) + f"` {pct:.0f}%"
+
+
+def _upload_progress_md(repo_id: str, rows: list[dict], finished: bool) -> str:
+    """Build the markdown shown while/after pushing episodes to HF Hub.
+
+    rows: list of {episode_id, status, progress, message}. A pure function so
+    it's easy to reason about — the polling loop just feeds it fresh job state.
+    """
+    total = len(rows)
+    done = sum(1 for r in rows if r["status"] in ("completed", "failed"))
+    ok = sum(1 for r in rows if r["status"] == "completed")
+    # Overall %: finished jobs count as 100, in-flight contribute their own %.
+    overall = (
+        sum(100.0 if r["status"] in ("completed", "failed") else r.get("progress", 0.0)
+            for r in rows) / total
+        if total else 0.0
+    )
+
+    icon = {"completed": "✅", "failed": "❌", "running": "⏳", "pending": "⏳"}
+    lines: list[str] = []
+    if finished:
+        lines.append(f"### {'✅' if ok == total else '⚠️'} Pushed {ok}/{total} episode(s) to HuggingFace")
+        if ok:
+            lines.append(
+                f"\n**[Open dataset → {repo_id}](https://huggingface.co/datasets/{repo_id})**\n"
+            )
+    else:
+        lines.append(f"### Pushing {total} episode(s) to `{repo_id}` …")
+        lines.append(f"\n{_text_bar(overall)} — {done}/{total} done\n")
+
+    for r in rows:
+        mark = icon.get(r["status"], "⏳")
+        eid = r["episode_id"]
+        if r["status"] == "failed":
+            detail = r.get("message") or r.get("error") or "failed"
+        elif r["status"] == "completed":
+            detail = "uploaded"
+        else:
+            detail = f"{r.get('message', '')} ({r.get('progress', 0):.0f}%)"
+        lines.append(f"- {mark} `{eid}` — {detail}")
+    return "\n".join(lines)
 
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
@@ -188,6 +260,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Sensor state (Live Streaming page) ────────────────────────────
 
+    def _mono(inner: str) -> str:
+        """Wrap colour-labelled sensor text in a monospace, pre-spaced span.
+
+        ``white-space:pre`` keeps the numeric column alignment that markdown
+        ``<code>`` would otherwise collapse.
+        """
+        return (
+            "<span style='font-family:monospace;white-space:pre;"
+            "font-size:0.95em'>" + inner + "</span>"
+        )
+
     def get_sensor_state():
         """Returns (gyro_text, accel_text, angle_text)."""
         state = client.get_state()
@@ -198,8 +281,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if imu:
             a = imu["accel"]
             g = imu["gyro"]
-            gyro_text = f"`X: {g[0]:+8.4f}  Y: {g[1]:+8.4f}  Z: {g[2]:+8.4f}  rad/s`"
-            accel_text = f"`X: {a[0]:+8.3f}  Y: {a[1]:+8.3f}  Z: {a[2]:+8.3f}  m/s²`"
+            # Label colours match the uPlot curve strokes in charts.py so the
+            # readout doubles as the chart legend: X=#e55, Y=#5b5, Z=#55e.
+            gyro_text = _mono(
+                f"<span style='color:#e55'>X:</span>{g[0]:+8.4f}  "
+                f"<span style='color:#5b5'>Y:</span>{g[1]:+8.4f}  "
+                f"<span style='color:#55e'>Z:</span>{g[2]:+8.4f}  rad/s"
+            )
+            accel_text = _mono(
+                f"<span style='color:#e55'>X:</span>{a[0]:+8.3f}  "
+                f"<span style='color:#5b5'>Y:</span>{a[1]:+8.3f}  "
+                f"<span style='color:#55e'>Z:</span>{a[2]:+8.3f}  m/s²"
+            )
         else:
             gyro_text = "*No IMU data*"
             accel_text = "*No IMU data*"
@@ -208,9 +301,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if angle:
             p_deg = math.degrees(angle["proximal"])
             d_deg = math.degrees(angle["distal"])
-            angle_text = (
-                f"`Proximal: {p_deg:+7.2f}°  ({angle['proximal']:+.4f} rad)`\n\n"
-                f"`Distal:   {d_deg:+7.2f}°  ({angle['distal']:+.4f} rad)`"
+            # Proximal=#4488cc, Distal=#cc8844 match the angle chart strokes.
+            angle_text = _mono(
+                f"<span style='color:#4488cc'>Proximal:</span> "
+                f"{p_deg:+7.2f}°  ({angle['proximal']:+.4f} rad)\n"
+                f"<span style='color:#cc8844'>Distal:  </span> "
+                f"{d_deg:+7.2f}°  ({angle['distal']:+.4f} rad)"
             )
         else:
             angle_text = "*No data*"
@@ -240,11 +336,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         capturing = state.get("capture", {}).get("is_capturing", False) if state else False
         if capturing:
             client.stop_capture()
-            rows, move_dd, *_ = _refresh_episode_table(session_id)
-            return gr.update(value="Start Capture", variant="primary"), rows, move_dd
+            rows, move_dd, _task_header, desc, *_ = _refresh_episode_table(session_id)
+            return gr.update(value="Start Capture", variant="primary"), rows, move_dd, desc
         else:
             client.start_capture(session_id=session_id or None)
-            return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update()
+            return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update(), gr.update()
 
     def on_start_stop_session(current_task):
         cap_session = client.get_capture_session_status()
@@ -285,13 +381,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return f"● TELEOP ON   sending: {sending}   VIO: {hz:.1f} Hz   {n} poses"
 
     def _oakd_button_update():
-        """Compute the OAK-D toggle button's appearance from current state."""
+        """Compute the OAK-D toggle button's appearance + OAK data row visibility.
+
+        Returns (button_update, oak_row_visibility) so callers can keep the
+        depth/IMU/accelerometer row hidden until the camera is enabled.
+        """
         s = client.get_oakd_status() or {}
         if not s.get("supported"):
-            return gr.update(
-                value="OAK-D not available",
-                variant="secondary",
-                interactive=False,
+            return (
+                gr.update(
+                    value="OAK-D not available",
+                    variant="secondary",
+                    interactive=False,
+                ),
+                gr.update(visible=False),
             )
         enabled = bool(s.get("enabled"))
         # Greyed out while capture or teleop holds the OAK — toggling is
@@ -308,7 +411,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         else:
             label = "OAK-D: OFF" + ("  (busy)" if busy else "  — click to enable")
             variant = "secondary"
-        return gr.update(value=label, variant=variant, interactive=not busy)
+        return (
+            gr.update(value=label, variant=variant, interactive=not busy),
+            gr.update(visible=enabled),
+        )
 
     def on_toggle_oakd():
         s = client.get_oakd_status() or {}
@@ -329,11 +435,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
           - Gradio Timers (camera, depth, sensor, teleop) → interval set to
             a huge value (Gradio's active=False propagation is unreliable for
             gr.Timer at runtime; bumping the interval is a deterministic kill)
-          - IMU/angle chart iframes → swapped to about:blank placeholders
-            so their JS stops polling /api/state/history
+          - gyro/accel/angle chart iframes → swapped to about:blank
+            placeholders so their JS stops polling /api/state/history
 
         Returns: (teleop_msg, teleop_btn, camera_timer, depth_timer,
-        sensor_timer, teleop_timer, imu_iframe, angle_iframe).
+        sensor_timer, teleop_timer, gyro_iframe, accel_iframe, angle_iframe).
         """
         status = client.get_teleop_status() or {}
         active = bool(status.get("active"))
@@ -342,7 +448,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return ("Teleop not available (mock backend)",
                     gr.update(value="Enter Teleop Mode", variant="secondary", interactive=False),
                     gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(), gr.update())
+                    gr.update(), gr.update(), gr.update())
         if active:
             result = client.stop_teleop()
             if "error" in result:
@@ -357,7 +463,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     gr.update(value=0.2),    # depth_timer
                     gr.update(value=0.5),    # sensor_timer
                     gr.update(value=1.0),    # teleop_timer
-                    gr.update(value=_IMU_IFRAME_HTML),
+                    gr.update(value=_GYRO_IFRAME_HTML),
+                    gr.update(value=_ACCEL_IFRAME_HTML),
                     gr.update(value=_ANGLE_IFRAME_HTML))
         else:
             result = client.start_teleop()
@@ -373,7 +480,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     gr.update(value=86400),  # depth_timer
                     gr.update(value=86400),  # sensor_timer
                     gr.update(value=86400),  # teleop_timer
-                    gr.update(value=_IMU_IFRAME_PAUSED),
+                    gr.update(value=_GYRO_IFRAME_PAUSED),
+                    gr.update(value=_ACCEL_IFRAME_PAUSED),
                     gr.update(value=_ANGLE_IFRAME_PAUSED))
 
     # ── Task (Session) helpers ────────────────────────────────────────
@@ -440,12 +548,23 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             '</div>'
         )
 
-    def refresh_tasks():
+    def refresh_tasks(stored_id: str = ""):
         sessions = _get_sessions()
         choices = _task_choices(sessions)
-        value = choices[0][1] if choices else None
-        if value:
-            client.set_active_session(value)
+        valid_ids = {c[1] for c in choices}
+        # Pick which task to land on at (re)load time:
+        #   1. during a capture session, always the session's task;
+        #   2. otherwise the task this browser had selected (persisted
+        #      client-side via BrowserState), so a refresh stays put;
+        #   3. otherwise fall back to the first task.
+        cap_session = client.get_capture_session_status()
+        cap_task = cap_session.get("task_id") if cap_session.get("active") else None
+        if cap_task in valid_ids:
+            value = cap_task
+        elif stored_id in valid_ids:
+            value = stored_id
+        else:
+            value = choices[0][1] if choices else None
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
@@ -789,7 +908,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=task_choices, value=[]), ns_update
 
     def on_ds_upload(task_ids, namespace, repo_name):
-        import time
+        """Start one upload job per episode, then poll until all finish,
+        streaming progress + per-episode status, and end on a dataset link.
+
+        A generator: each yield updates the status markdown live."""
         if not task_ids:
             yield "Select at least one task"
             return
@@ -927,6 +1049,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column(scale=1, min_width=200, elem_id="tasks-col"):
                 gr.Markdown("## Tasks")
                 task_list = gr.Radio(choices=[], label=None, container=False)
+                # Remembers, per browser, which task was selected so a page
+                # refresh stays on it instead of snapping back to the first
+                # task. Independent of the (server-side) capture session.
+                selected_task_state = gr.BrowserState(
+                    "", storage_key="grabette_selected_task",
+                )
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
                 with gr.Group(visible=False) as new_task_form:
                     new_task_name = gr.Textbox(label="Name", placeholder="e.g. Kitchen Pick & Place")
@@ -1051,6 +1179,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_task_select, inputs=task_list,
             outputs=[task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd],
         )
+        # Persist the current selection in the browser so a refresh keeps it.
+        task_list.change(fn=lambda v: v, inputs=task_list, outputs=selected_task_state)
 
         # Edit Task
         edit_task_btn.click(
@@ -1086,7 +1216,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         toggle_btn.click(
             fn=on_toggle_capture,
             inputs=[task_list],
-            outputs=[toggle_btn, episodes_table, move_target_dd],
+            outputs=[toggle_btn, episodes_table, move_target_dd, task_desc_md],
         )
 
         dl_btn.click(fn=on_download_episodes, inputs=episodes_table, outputs=dl_file)
@@ -1129,12 +1259,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             just_stopped = _capture_state["was_active"] and not currently_active
             _capture_state["was_active"] = currently_active
             if just_stopped and current_task:
-                rows, move_dd_upd, *_ = _refresh_episode_table(current_task)
+                rows, move_dd_upd, _task_header, desc, *_ = _refresh_episode_table(current_task)
                 table_update = rows
                 move_dd_update = move_dd_upd
+                desc_update = desc
             else:
                 table_update = gr.skip()
                 move_dd_update = gr.skip()
+                desc_update = gr.skip()
 
             # Build status text and toggle button state
             if is_starting:
@@ -1157,9 +1289,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # Session button + capture title + banner sync
             if cap_session.get("active"):
                 task_name = cap_session.get("task_name", "")
-                count = cap_session.get("count", 0)
-                # Don't count the episode currently in progress
-                display_count = max(0, count - 1) if is_recording else count
+                # The count already excludes any in-progress capture — episodes
+                # are registered only once recording stops.
+                display_count = cap_session.get("count", 0)
                 sess_btn = gr.update(value="■ Stop Session", variant="stop")
                 cap_title = gr.update(value=f"### Capture a new episode for *{task_name}*")
                 banner = gr.update(value=_session_banner_html(task_name, display_count))
@@ -1171,14 +1303,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 banner = gr.update(value="")
                 task_update = gr.skip() if (active is None or active == current_task) else gr.update(value=active)
 
-            return status, task_update, sess_btn, cap_title, banner, toggle_btn_update, table_update, move_dd_update
+            return status, task_update, sess_btn, cap_title, banner, toggle_btn_update, table_update, move_dd_update, desc_update
 
         capture_timer = gr.Timer(0.5)
         capture_timer.tick(
             fn=get_capture_status_and_active_task,
             inputs=[task_list],
             outputs=[capture_box, task_list, session_btn, capture_title, session_banner, toggle_btn,
-                     episodes_table, move_target_dd],
+                     episodes_table, move_target_dd, task_desc_md],
         )
 
         batt_popup_ep = gr.HTML(visible=False)
@@ -1188,7 +1320,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         status_bar_timer = gr.Timer(3.0)
         status_bar_timer.tick(fn=get_episode_status_bar, outputs=episode_status_bar)
 
-        demo.load(fn=refresh_tasks, outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
+        demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
         demo.load(fn=check_battery_warning, outputs=batt_popup_ep)
         demo.load(fn=get_episode_status_bar, outputs=episode_status_bar)
 
@@ -1296,27 +1428,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
 
-        # ── Camera | Depth | 3D viewer ────────────────────────────────
+        # ── Camera | Angle sensors | 3D viewer ─────────────────────────
         with gr.Row(equal_height=True):
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "Camera</div>")
+                gr.HTML(_section_label("Camera"))
                 camera_img = gr.Image(
                     label=None, show_label=False, height="28vh", container=False,
                 )
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "Depth (OAK-D)</div>")
-                depth_img = gr.Image(
-                    label=None, show_label=False, height="28vh", container=False,
-                )
-                oakd_btn = gr.Button("OAK-D: OFF  — click to enable", size="sm")
+                gr.HTML(_section_label("Angle Sensors"))
+                angle_box = gr.Markdown("*—*")
+                angle_iframe = gr.HTML(value=_ANGLE_IFRAME_HTML)
             with gr.Column(scale=1):
-                gr.HTML("<div style='font-size:0.72rem;text-transform:uppercase;"
-                        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
-                        "3D Model</div>")
+                gr.HTML(_section_label("3D Model"))
                 gr.HTML(
                     '<iframe id="urdf-viewer" src="/viewer" '
                     'style="width:100%;height:28vh;border:none;'
@@ -1325,19 +1449,25 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
 
-        # ── IMU (gyro) | Accelerometer | Angle sensors ────────────────
-        with gr.Row():
+        # ── OAK-D data: Depth | IMU (gyro) | Accelerometer ─────────────
+        # The whole row is hidden until the OAK-D is enabled (its depth, IMU
+        # and accelerometer streams only exist while the camera is running).
+        # The toggle button stays outside the row so it's always reachable.
+        oakd_btn = gr.Button("OAK-D: OFF  — click to enable", size="sm")
+        with gr.Row(visible=False, equal_height=True) as oak_row:
             with gr.Column(scale=1):
-                gr.Markdown("### IMU")
+                gr.HTML(_section_label("Depth (OAK-D)"))
+                depth_img = gr.Image(
+                    label=None, show_label=False, height="28vh", container=False,
+                )
+            with gr.Column(scale=1):
+                gr.HTML(_section_label("Gyroscope"))
                 gyro_box = gr.Markdown("*—*")
-                imu_iframe = gr.HTML(value=_IMU_IFRAME_HTML)
+                gyro_iframe = gr.HTML(value=_GYRO_IFRAME_HTML)
             with gr.Column(scale=1):
-                gr.Markdown("### Accelerometer")
+                gr.HTML(_section_label("Accelerometer"))
                 accel_box = gr.Markdown("*—*")
-            with gr.Column(scale=1):
-                gr.Markdown("### Angle Sensors")
-                angle_box = gr.Markdown("*—*")
-                angle_iframe = gr.HTML(value=_ANGLE_IFRAME_HTML)
+                accel_iframe = gr.HTML(value=_ACCEL_IFRAME_HTML)
 
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
@@ -1349,9 +1479,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         sensor_timer.tick(fn=get_sensor_state, outputs=[gyro_box, accel_box, angle_box])
 
         oakd_timer = gr.Timer(3.0)
-        oakd_timer.tick(fn=poll_oakd, outputs=oakd_btn)
-        oakd_btn.click(fn=on_toggle_oakd, outputs=oakd_btn)
-        live_demo.load(fn=poll_oakd, outputs=oakd_btn)
+        oakd_timer.tick(fn=poll_oakd, outputs=[oakd_btn, oak_row])
+        oakd_btn.click(fn=on_toggle_oakd, outputs=[oakd_btn, oak_row])
+        live_demo.load(fn=poll_oakd, outputs=[oakd_btn, oak_row])
 
         batt_popup_lv = gr.HTML(visible=False)
 

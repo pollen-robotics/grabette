@@ -14,7 +14,10 @@ router = APIRouter(prefix="/api/camera", tags=["camera"])
 @router.get("/status")
 def camera_status(backend: Backend = Depends(get_backend)):
     """Lightweight RGB camera connection check (stays True during capture)."""
-    return {"connected": bool(getattr(backend, "is_camera_connected", False))}
+    return {
+        "connected": bool(getattr(backend, "is_camera_connected", False)),
+        "reinitializing": bool(getattr(backend, "is_camera_reinitializing", False)),
+    }
 
 
 @router.get("/snapshot")
