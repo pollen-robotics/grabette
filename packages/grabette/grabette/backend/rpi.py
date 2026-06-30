@@ -36,6 +36,10 @@ class RpiBackend(Backend):
         self._start_time: float | None = None
         self._capturing = False
         self._starting = False
+        # True while the OAK-D device is being brought up (init in progress).
+        # Distinguishes the normal warm-up window from a genuine init failure
+        # so the UI can show "Starting…" instead of "Error".
+        self._oakd_initializing = False
         self._capture_session_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
@@ -130,6 +134,10 @@ class RpiBackend(Backend):
     def is_camera_connected(self) -> bool:
         return self._camera is not None and self._camera.is_open
 
+    @property
+    def is_camera_reinitializing(self) -> bool:
+        return self._needs_reinit
+
     # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
 
     @property
@@ -139,6 +147,10 @@ class RpiBackend(Backend):
     @property
     def is_oakd_initialized(self) -> bool:
         return self._oakd is not None and self._oakd.is_initialized
+
+    @property
+    def is_oakd_initializing(self) -> bool:
+        return self._oakd_initializing
 
     async def set_oakd_enabled(self, on: bool) -> None:
         if self._capturing:
@@ -162,7 +174,11 @@ class RpiBackend(Backend):
 
         if on:
             self._enable_oakd = True
-            await loop.run_in_executor(None, self._init_oakd)
+            self._oakd_initializing = True
+            try:
+                await loop.run_in_executor(None, self._init_oakd)
+            finally:
+                self._oakd_initializing = False
             logger.info("OAK-D enabled via UI")
         else:
             self._enable_oakd = False
@@ -424,6 +440,7 @@ class RpiBackend(Backend):
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         frame_timestamps = self._camera.stop()
+        self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
@@ -489,7 +506,6 @@ class RpiBackend(Backend):
         # this coroutine returns (LED already off). It still completes during
         # idle — keeping the RPi live preview alive for framing the next shot —
         # and blocks the loop no longer than the old in-stop re-init did.
-        self._needs_reinit = True
         loop.call_soon(self._reinit_hardware)
 
         self._capture_session_dir = None

@@ -135,6 +135,7 @@ class ButtonListener:
             logger.info("Button capture started: %s", episode_id)
         except Exception:
             logger.exception("Button start_capture failed")
+            self._session_manager.discard_pending_episode()
             self._button.led_off()
 
     def _do_stop_capture(self) -> None:
@@ -152,6 +153,9 @@ class ButtonListener:
         )
         try:
             status = future.result(timeout=30.0)
+            self._session_manager.register_episode(
+                getattr(status, "session_id", None)
+            )
             self._button.led_off()
             logger.info(
                 "Button capture stopped: %.1fs, %d frames",

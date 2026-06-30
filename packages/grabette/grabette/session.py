@@ -63,6 +63,11 @@ class SessionManager:
         self._capture_session_active: bool = False
         self._capture_session_task_id: str | None = None
         self._capture_session_count: int = 0
+        # Episode whose directory exists but which hasn't been filed into a
+        # session yet — i.e. a capture in progress. (episode_id, session_id).
+        # It's registered on stop, so a half-started/aborted capture never
+        # shows up in the session or its count.
+        self._pending_episode: tuple[str, str | None] | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -149,26 +154,60 @@ class SessionManager:
         return self.episodes_dir / episode_id
 
     def create_episode(self, session_id: str | None = None) -> str:
-        """Create a new episode directory and add it to the given session.
+        """Create a new episode directory for a capture about to start.
 
-        When a capture session is active, its task overrides any passed session_id.
-        Falls back to active_session_id, then Unassigned.
+        The episode is NOT filed into a session yet — that happens in
+        register_episode() once the capture finishes and its files are
+        written, so an in-progress or aborted capture never appears in the
+        session or its count. The intended target session is remembered and
+        resolved at registration time.
         """
         episode_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         ep_dir = self.episode_dir(episode_id)
         ep_dir.mkdir(parents=True, exist_ok=True)
+        self._pending_episode = (episode_id, session_id)
+        return episode_id
+
+    def register_episode(self, episode_id: str | None = None) -> None:
+        """File the just-finished episode into its session and bump the count.
+
+        Called after stop_capture has written the episode's files. Resolves
+        the target the same way create_episode used to: an active capture
+        session's task wins, else the session_id passed to create_episode,
+        else the active session, else Unassigned. Idempotent and a no-op if
+        there's no pending episode.
+        """
+        pending = self._pending_episode
+        self._pending_episode = None
+        if pending is None:
+            return
+        eid, session_id = pending
+        if episode_id is not None and episode_id != eid:
+            eid = episode_id
 
         if self._capture_session_active and self._capture_session_task_id:
             target_id = self._capture_session_task_id
         else:
             target_id = session_id or self.active_session_id
         target = self._find_session(target_id) or self._find_session(UNASSIGNED_ID)
-        target["episode_ids"].append(episode_id)
+        if eid not in target["episode_ids"]:
+            target["episode_ids"].append(eid)
         self.active_session_id = target["id"]
         if self._capture_session_active:
             self._capture_session_count += 1
         self._save()
-        return episode_id
+
+    def discard_pending_episode(self) -> None:
+        """Drop a pending (created-but-never-registered) episode, removing its
+        directory. Used when a capture fails to start so no empty episode is
+        left behind."""
+        pending = self._pending_episode
+        self._pending_episode = None
+        if pending is None:
+            return
+        ep_dir = self.episode_dir(pending[0])
+        if ep_dir.exists():
+            shutil.rmtree(ep_dir, ignore_errors=True)
 
     # ── Capture session (runtime lock) ────────────────────────────────
 
