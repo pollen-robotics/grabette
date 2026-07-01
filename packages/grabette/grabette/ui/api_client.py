@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from pathlib import Path
 
 import httpx
 
@@ -14,12 +15,24 @@ class GrabetteClient:
     Used by both the local Gradio dashboard and the HF Spaces app.
     """
 
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        download_dir: str | Path | None = None,
+    ) -> None:
         self.base_url = (
             base_url
             or os.environ.get("GRABETTE_API_URL")
             or "http://localhost:8000"
         )
+        # Where downloaded episode archives are staged before Gradio serves
+        # them to the browser. Passed explicitly by the local daemon so the
+        # multi-GB tar.gz lands on the SD card, NOT on Pi OS's tmpfs /tmp
+        # (which is small enough to fill after a couple of downloads and
+        # brick the whole daemon with ENOSPC). Falls back to the OS temp
+        # dir for callers that don't set it — fine on workstations / HF
+        # Spaces where /tmp is a normal-sized filesystem.
+        self._download_dir = Path(download_dir) if download_dir else Path(tempfile.gettempdir())
         self._http = httpx.Client(base_url=self.base_url, timeout=10.0)
 
     # -- Camera --
@@ -259,9 +272,8 @@ class GrabetteClient:
                 timeout=60.0,
             )
             r.raise_for_status()
-            path = os.path.join(
-                tempfile.gettempdir(), f"{episode_id}.tar.gz"
-            )
+            self._download_dir.mkdir(parents=True, exist_ok=True)
+            path = str(self._download_dir / f"{episode_id}.tar.gz")
             with open(path, "wb") as f:
                 f.write(r.content)
             return path
@@ -277,7 +289,8 @@ class GrabetteClient:
             )
             r.raise_for_status()
             filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"
-            path = os.path.join(tempfile.gettempdir(), filename)
+            self._download_dir.mkdir(parents=True, exist_ok=True)
+            path = str(self._download_dir / filename)
             with open(path, "wb") as f:
                 f.write(r.content)
             return path
