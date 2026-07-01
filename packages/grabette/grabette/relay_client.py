@@ -16,6 +16,8 @@ from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
 
+from grabette.wifi import get_route_ip
+
 logger = logging.getLogger("grabette.relay_client")
 
 CommandHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -31,6 +33,7 @@ class RelayClient:
         *,
         name: Optional[str] = None,
         capabilities: Optional[list[str]] = None,
+        hand: Optional[str] = None,
         poll_interval: float = 2.5,
     ) -> None:
         self.base_url = base_url.rstrip("/")
@@ -38,6 +41,7 @@ class RelayClient:
         self.device_id = device_id
         self.name = name or device_id
         self.capabilities = capabilities or []
+        self.hand = hand or ""
         self.poll_interval = poll_interval
         self.status = "offline"
 
@@ -45,7 +49,13 @@ class RelayClient:
         return {"Authorization": f"Bearer {token}"}
 
     async def _register(self, session: aiohttp.ClientSession, token: str) -> None:
-        body = {"device_id": self.device_id, "name": self.name, "capabilities": self.capabilities}
+        body = {
+            "device_id": self.device_id,
+            "name": self.name,
+            "capabilities": self.capabilities,
+            "hand": self.hand,
+            "ip": get_route_ip(),  # recomputed each register so IP changes are caught
+        }
         async with session.post(
             f"{self.base_url}/api/devices/register", json=body, headers=self._headers(token)
         ) as r:

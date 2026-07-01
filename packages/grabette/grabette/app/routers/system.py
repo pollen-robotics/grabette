@@ -96,13 +96,9 @@ def system_info():
     }
 
     # IP address
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        info["ip"] = s.getsockname()[0]
-        s.close()
-    except Exception:
-        info["ip"] = "unknown"
+    from grabette.wifi import get_route_ip
+
+    info["ip"] = get_route_ip() or "unknown"
 
     # Disk usage
     try:
