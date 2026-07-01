@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
@@ -182,10 +183,14 @@ def download_episode(episode_id: str, sm: SessionManager = Depends(get_session_m
         archive_path = sm.create_episode_archive(episode_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Episode not found")
+    # Delete the archive as soon as the response finishes streaming. Without
+    # this, every download leaks a multi-GB file into the staging dir; the
+    # SessionManager sweeps on startup but that only helps across restarts.
     return FileResponse(
         archive_path,
         media_type="application/gzip",
         filename=f"{episode_id}.tar.gz",
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
     )
 
 
@@ -199,7 +204,12 @@ def download_episodes(req: DownloadEpisodesRequest, sm: SessionManager = Depends
         raise HTTPException(status_code=400, detail="No episode IDs provided")
     archive_path = sm.create_episodes_zip(req.episode_ids)
     filename = f"episodes_{req.episode_ids[0]}.tar.gz" if len(req.episode_ids) == 1 else "episodes.tar.gz"
-    return FileResponse(archive_path, media_type="application/gzip", filename=filename)
+    return FileResponse(
+        archive_path,
+        media_type="application/gzip",
+        filename=filename,
+        background=BackgroundTask(archive_path.unlink, missing_ok=True),
+    )
 
 
 @router.get("/api/episodes/{episode_id}/video")
