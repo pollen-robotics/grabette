@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from pathlib import Path
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+# Read-response in 8 MB chunks. Large enough to keep syscall overhead low,
+# small enough that a multi-GB download never puts >8 MB in RAM at a time.
+# The old `r.content` reader buffered the whole response (>1 GB for a full
+# dataset), which OOM'd on the 4 GB Pi and silently returned None.
+_DOWNLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 class GrabetteClient:
@@ -266,35 +275,46 @@ class GrabetteClient:
             return {"error": str(e)}
 
     def download_episode(self, episode_id: str) -> str | None:
+        # Stream to disk in 8 MB chunks — see _DOWNLOAD_CHUNK_BYTES. timeout=None
+        # disables the total-request deadline (large episodes can take a while);
+        # httpx still errors on stalled reads via its per-op defaults.
         try:
-            r = self._http.get(
-                f"/api/episodes/{episode_id}/download",
-                timeout=60.0,
-            )
-            r.raise_for_status()
             self._download_dir.mkdir(parents=True, exist_ok=True)
             path = str(self._download_dir / f"{episode_id}.tar.gz")
-            with open(path, "wb") as f:
-                f.write(r.content)
+            with self._http.stream(
+                "GET",
+                f"/api/episodes/{episode_id}/download",
+                timeout=None,
+            ) as r:
+                r.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+                        f.write(chunk)
             return path
         except Exception:
+            # Log the real cause instead of swallowing silently — the previous
+            # bare except left the Gradio UI showing no error and no link.
+            logger.exception("download_episode(%s) failed", episode_id)
             return None
 
     def download_episodes(self, episode_ids: list[str]) -> str | None:
         try:
-            r = self._http.post(
-                "/api/episodes/download",
-                json={"episode_ids": episode_ids},
-                timeout=120.0,
-            )
-            r.raise_for_status()
             filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"
             self._download_dir.mkdir(parents=True, exist_ok=True)
             path = str(self._download_dir / filename)
-            with open(path, "wb") as f:
-                f.write(r.content)
+            with self._http.stream(
+                "POST",
+                "/api/episodes/download",
+                json={"episode_ids": episode_ids},
+                timeout=None,
+            ) as r:
+                r.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+                        f.write(chunk)
             return path
         except Exception:
+            logger.exception("download_episodes(%s) failed", episode_ids)
             return None
 
     def move_episodes(self, episode_ids: list[str], target_session_id: str) -> dict:
