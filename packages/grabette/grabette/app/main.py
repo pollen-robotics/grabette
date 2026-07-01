@@ -229,7 +229,17 @@ def create_app() -> FastAPI:
             from grabette.ui.app import create_ui
 
             demo = create_ui()
-            app = gr.mount_gradio_app(app, demo, path="/")
+            # `allowed_paths` whitelists directories from which Gradio's
+            # `/gradio_api/file=<path>` handler will serve files to the
+            # browser. Without this, the multi-GB episode archives written
+            # to data_dir/.downloads/ pass silently through — the file
+            # exists on disk but Gradio refuses to hand it out, and the UI
+            # never surfaces a download link. Default allowed paths cover
+            # only Gradio's own cache and the OS temp dir.
+            app = gr.mount_gradio_app(
+                app, demo, path="/",
+                allowed_paths=[str(settings.data_dir / ".downloads")],
+            )
             logger.info("Gradio UI mounted at /")
         except ImportError:
             logger.warning(
