@@ -137,6 +137,7 @@ async def lifespan(app: FastAPI):
             device_id=settings.device_id,
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "logout"],
+            hand=settings.hand,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

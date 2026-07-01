@@ -2,11 +2,13 @@
 
 Used by:
 - app/routers/wifi.py to serve status and connect to networks from the web UI
+- app/routers/system.py and relay_client.py for the device's routable LAN IP
 """
 
 from __future__ import annotations
 
 import logging
+import socket
 import subprocess
 import time
 
@@ -62,6 +64,25 @@ def get_current_ssid() -> str | None:
         if line.startswith("yes:"):
             return line[4:] or None
     return None
+
+
+def get_route_ip() -> str:
+    """Best-effort routable LAN IPv4 (the address an operator would use to reach
+    this device), or "" if the host has no route out.
+
+    Opens a UDP socket toward a public address (no packets are actually sent)
+    and reads back the local address the kernel would route through. Unlike
+    ``get_local_ip`` this is interface-agnostic (works over Ethernet too).
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except OSError:
+        return ""
 
 
 def get_local_ip() -> str | None:
