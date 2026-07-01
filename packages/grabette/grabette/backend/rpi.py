@@ -14,9 +14,20 @@ from pathlib import Path
 
 from grabette.backend.base import Backend
 from grabette.config import settings
+from grabette.hardware.frames import build_frames_payload
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 
 logger = logging.getLogger(__name__)
+
+# Per-episode calibration artifacts. rpi_camera_intrinsics.json is the
+# checked-in canonical fisheye calibration (KannalaBrandt8 model); a
+# per-device calibration workflow is a deferred item — for now every device
+# uses the same file. frames.json is generated per capture from the
+# hand-appropriate URDF and includes T_camera_in_oak_l so downstream
+# consumers can re-express SLAM poses in the primary camera frame.
+_PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+_CAMERA_INTRINSICS_SRC = _PACKAGE_ROOT / "config" / "rpi_camera_intrinsics.json"
+_URDF_ROOT = _PACKAGE_ROOT / "urdf"
 
 FPS = 46
 
@@ -490,6 +501,40 @@ class RpiBackend(Backend):
                     json.dumps({"samples": angle_samples})
                 )
 
+            urdf_name = f"grabette_{settings.hand}"
+            urdf_path = _URDF_ROOT / urdf_name / "robot.urdf"
+
+            # Copy the canonical RPi fisheye calibration (KannalaBrandt8) into
+            # this episode so downstream consumers can undistort the primary
+            # camera stream without out-of-band lookups.
+            if _CAMERA_INTRINSICS_SRC.is_file():
+                (self._capture_session_dir / "rpi_camera_intrinsics.json").write_bytes(
+                    _CAMERA_INTRINSICS_SRC.read_bytes()
+                )
+            else:
+                logger.warning(
+                    "Camera intrinsics file missing at %s — episode will lack "
+                    "rpi_camera_intrinsics.json", _CAMERA_INTRINSICS_SRC,
+                )
+
+            # Frame transforms derived from the hand-appropriate URDF. Ships
+            # T_camera_in_oak_l (needed to re-express SLAM poses in the primary
+            # camera frame) plus every grip_r-relative frame consumers might
+            # care about. Best-effort: log-and-continue on URDF parse errors so
+            # a URDF glitch doesn't lose the whole capture.
+            if urdf_path.is_file():
+                try:
+                    frames_payload = build_frames_payload(urdf_path)
+                    (self._capture_session_dir / "frames.json").write_text(
+                        json.dumps(frames_payload, indent=2)
+                    )
+                except Exception as e:
+                    logger.warning("Could not build frames.json from %s: %s", urdf_path, e)
+            else:
+                logger.warning(
+                    "URDF missing at %s — episode will lack frames.json", urdf_path,
+                )
+
             meta = {
                 "duration_seconds": status.duration_seconds,
                 "frame_count": status.frame_count,
@@ -506,6 +551,9 @@ class RpiBackend(Backend):
                 "hand": settings.hand,
                 "angle_convention": "positive_closing",
                 "device_id": settings.device_id,
+                # Which URDF was used for frames.json (matches settings.hand;
+                # explicit for downstream traceability).
+                "urdf": urdf_name,
             }
             if oakd_stats:
                 meta["oakd"] = oakd_stats
