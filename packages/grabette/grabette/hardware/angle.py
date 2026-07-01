@@ -4,6 +4,11 @@ V1 hardware used AS5600 (fixed address 0x36); V2 HAT uses AS5600L which has
 the same register layout but defaults to address 0x40 and supports user-
 programmable addresses (so multiple sensors can share one I2C bus). For now
 we keep one sensor per bus and use the default 0x40.
+
+Robot-frame output convention: 0 = fingers fully open, positive = closing.
+The per-sensor sign that turns raw magnet rotation into this convention is
+read from gripette.config.settings (proximal_sign / distal_sign, derived
+from `hand`).
 """
 
 import json
@@ -14,6 +19,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..config import settings
 from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
@@ -43,12 +49,9 @@ class AngleCapture:
     DEFAULT_SAMPLE_RATE_HZ = 100
     AS5600_ADDRESS = 0x40  # AS5600L default; AS5600 (non-L) was 0x36
     ANGLE_REGISTER = 0x0C
-    # V2 mechanical: the distal sensor is mounted such that the magnet rotates
-    # opposite to the proximal one. Applied to cal1 (bus 3 = distal) after
-    # offset+normalize so user-calibrated offsets stay valid under the new
-    # mounting (recalibrate after changing this).
-    DISTAL_SIGN = -1
-    PROXIMAL_SIGN = 1
+    # Per-sensor signs are read from settings.distal_sign / proximal_sign,
+    # derived from settings.hand. See gripette/grabette/config.py for the
+    # right/left → sign mapping.
 
     def __init__(
         self,
@@ -120,8 +123,9 @@ class AngleCapture:
                 ts = self.sync.get_timestamp_ms()
                 raw1 = self._read_angle_raw(self._i2c_1)
                 raw2 = self._read_angle_raw(self._i2c_2)
-                cal1 = self._normalize_angle(raw1 - self._offset_1_deg) * self.DISTAL_SIGN
-                cal2 = self._normalize_angle(raw2 - self._offset_2_deg) * self.PROXIMAL_SIGN
+                # i2c_bus_1 is the DISTAL sensor, _2 is PROXIMAL — see init.
+                cal1 = self._normalize_angle(raw1 - self._offset_1_deg) * settings.distal_sign
+                cal2 = self._normalize_angle(raw2 - self._offset_2_deg) * settings.proximal_sign
 
                 self._samples.samples.append({
                     "cts": ts,

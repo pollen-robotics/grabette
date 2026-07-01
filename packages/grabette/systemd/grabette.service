@@ -10,6 +10,10 @@ ExecStart=/home/rasp/Project/Repo/grabette/.venv/bin/python -m grabette
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Per-device persistent config (GRABETTE_HAND, GRABETTE_*_SIGN, …).
+# Written by 'make install-rpi HAND=...'. Leading '-' makes it optional so
+# a fresh dev install (no file yet) still boots.
+EnvironmentFile=-/etc/grabette/env
 
 [Install]
 WantedBy=multi-user.target

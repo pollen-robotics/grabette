@@ -22,7 +22,7 @@ help:
 install-rpi: enable-i2c
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
-	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg i2c-tools
+	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg i2c-tools git-lfs
 	cd $(WORKSPACE_ROOT) && rm -rf .venv \
 	  && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package casquette --extra rpi

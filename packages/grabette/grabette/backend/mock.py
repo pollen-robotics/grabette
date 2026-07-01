@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from grabette.backend.base import Backend
+from grabette.config import settings
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 from grabette.output import write_imu_json
 
@@ -224,7 +225,8 @@ class MockBackend(Backend):
         # Placeholder video file
         (session_dir / "raw_video.mp4").write_bytes(b"MOCK_VIDEO")
 
-        # Metadata
+        # Metadata — mirror the rpi backend's identity + convention tags so
+        # dev-mode recordings have the same shape as production ones.
         meta = {
             "duration_seconds": status.duration_seconds,
             "frame_count": status.frame_count,
@@ -233,5 +235,8 @@ class MockBackend(Backend):
             "fps": FPS,
             "imu_hz": IMU_HZ,
             "backend": "mock",
+            "hand": settings.hand,
+            "angle_convention": "positive_closing",
+            "device_id": settings.device_id,
         }
         (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))

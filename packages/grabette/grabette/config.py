@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -48,6 +49,24 @@ class Settings(BaseSettings):
     # Angle sensors (AS5600 on I2C buses 4 & 5)
     angle_sensors: bool = True
 
+    # ------------------------------------------------------------------
+    # Robot-frame angle convention (matches the gripette runtime):
+    #   0 rad        = fingers fully open
+    #   positive rad = closing
+    # The AS5600L magnets rotate in directions determined by the physical
+    # sensor mounting, so we apply a sign per channel to produce the
+    # convention above. The sign per finger depends on which hand this
+    # is (mirror builds); override individual signs only for asymmetric
+    # hardware revisions.
+    # ------------------------------------------------------------------
+    hand: Literal["left", "right"] = "right"
+
+    # Per-sensor sign for raw -> robot-frame mapping (+1 or -1). Derived
+    # from `hand` in the model validator below unless explicitly set via
+    # GRABETTE_PROXIMAL_SIGN / GRABETTE_DISTAL_SIGN.
+    proximal_sign: int | None = None
+    distal_sign: int | None = None
+
     # OAK-D SR — default OFF to save battery. Toggle from the UI to enable.
     enable_oakd: bool = False
     # After a capture that auto-enabled the OAK-D, keep it warm this many
@@ -82,6 +101,28 @@ class Settings(BaseSettings):
             return v
         import socket
         return socket.gethostname()
+
+    @model_validator(mode="after")
+    def _derive_signs_from_hand(self):
+        # V2 mechanical: the two AS5600L magnets rotate in OPPOSITE
+        # directions when the fingers close (distal mounted upside-down
+        # relative to proximal). So for a given hand the per-sensor signs
+        # have OPPOSITE values. The right vs left build is the mirror
+        # image, which negates both signs at once.
+        #
+        # Right hand: distal=+1, proximal=-1 → both go positive on close.
+        # Left hand:  distal=-1, proximal=+1 → both go positive on close.
+        # (The left configuration happens to match what the OLD code used
+        # to call 'right' under the negative-closing convention. Renamed
+        # consistently with the new positive=closing convention.)
+        right_signs = {"distal": +1, "proximal": -1}
+        left_signs = {"distal": -1, "proximal": +1}
+        default = right_signs if self.hand == "right" else left_signs
+        if self.distal_sign is None:
+            self.distal_sign = default["distal"]
+        if self.proximal_sign is None:
+            self.proximal_sign = default["proximal"]
+        return self
 
 
 settings = Settings()
