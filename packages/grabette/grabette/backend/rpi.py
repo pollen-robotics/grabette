@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from grabette.backend.base import Backend
+from grabette.config import settings
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 
 logger = logging.getLogger(__name__)
@@ -334,8 +335,11 @@ class RpiBackend(Backend):
                 try:
                     raw1 = self._angle._read_angle_raw(self._angle._i2c_1)
                     raw2 = self._angle._read_angle_raw(self._angle._i2c_2)
-                    cal1 = self._angle._normalize_angle(raw1 - self._angle._offset_1_deg) * self._angle.DISTAL_SIGN
-                    cal2 = self._angle._normalize_angle(raw2 - self._angle._offset_2_deg) * self._angle.PROXIMAL_SIGN
+                    # Sign source matches AngleCapture._capture_loop — read
+                    # from settings (derived from `hand`) rather than the
+                    # AS5600 class constants that used to live on the wrapper.
+                    cal1 = self._angle._normalize_angle(raw1 - self._angle._offset_1_deg) * settings.distal_sign
+                    cal2 = self._angle._normalize_angle(raw2 - self._angle._offset_2_deg) * settings.proximal_sign
                     angle = AngleSample(
                         timestamp_ms=time.time() * 1000,
                         proximal=math.radians(cal2),
@@ -493,6 +497,15 @@ class RpiBackend(Backend):
                 "angle_sample_count": status.angle_sample_count,
                 "fps": actual_fps,
                 "backend": "rpi",
+                # Identity + convention tags — let downstream readers know which
+                # device + handedness recorded this episode and which sign
+                # convention the angle samples follow. Legacy episodes without
+                # these fields predate the positive-closing flip; readers should
+                # treat absent `angle_convention` as the legacy negative-closing
+                # convention.
+                "hand": settings.hand,
+                "angle_convention": "positive_closing",
+                "device_id": settings.device_id,
             }
             if oakd_stats:
                 meta["oakd"] = oakd_stats
