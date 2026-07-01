@@ -238,5 +238,9 @@ class MockBackend(Backend):
             "hand": settings.hand,
             "angle_convention": "positive_closing",
             "device_id": settings.device_id,
+            # Which URDF the rpi backend would use for this hand — mock doesn't
+            # write frames.json / intrinsics, but the field keeps the metadata
+            # schema uniform across backends.
+            "urdf": f"grabette_{settings.hand}",
         }
         (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
