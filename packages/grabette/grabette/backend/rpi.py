@@ -429,6 +429,10 @@ class RpiBackend(Backend):
         # prevent the daemon poll loop (get_state) from doing direct
         # I2C reads while the angle capture thread is still running.
 
+        # Per-phase timing for a one-line summary at the end. Useful for
+        # diagnosing where the "LED-blinks-too-long-on-stop" time goes.
+        t_phases: dict[str, float] = {}
+
         # Grab sync-clock duration before stopping streams (monotonic,
         # same clock used by all stream timestamps — no wall-clock drift).
         duration_ms = self._sync.get_timestamp_ms()
@@ -436,12 +440,15 @@ class RpiBackend(Backend):
         # Stop angle BEFORE camera. camera.stop() runs ffmpeg muxing
         # which takes ~1-2s — if angle capture is still running during
         # muxing, samples extend past the video duration.
+        _t = time.monotonic()
         angle_samples = None
         angle_count = 0
         if self._angle:
             angle_data = self._angle.stop()
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
+        t_phases["angle_stop"] = (time.monotonic() - _t) * 1000
+
         # Finalize OAK and RPi camera concurrently. Both flip their "recording"
         # flag immediately (capture stops at once) and then spend ~1-2s muxing
         # H.264 → mp4. Running the OAK finalize in an executor while the camera
@@ -451,12 +458,16 @@ class RpiBackend(Backend):
         # before the camera mux" ordering still holds.
         import asyncio
         loop = asyncio.get_event_loop()
+        _t_muxes = time.monotonic()
         oakd_fut = None
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
+        _t_cam = time.monotonic()
         frame_timestamps = self._camera.stop()
+        t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
         self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
+        t_phases["muxes_wallclock"] = (time.monotonic() - _t_muxes) * 1000
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
@@ -487,91 +498,124 @@ class RpiBackend(Backend):
             angle_sample_count=angle_count,
         )
 
-        # Write output files
-        if self._capture_session_dir:
-            # Save per-frame timestamps (sync-clock-relative ms) for frame
-            # drop detection and accurate video-trajectory alignment.
-            (self._capture_session_dir / "frame_timestamps.json").write_text(
-                json.dumps(frame_timestamps)
-            )
+        # Build the metadata dict now so all values are captured while state
+        # is still live; the actual write is deferred to the finalize task.
+        urdf_name = f"grabette_{settings.hand}"
+        urdf_path = _URDF_ROOT / urdf_name / "robot.urdf"
+        meta = {
+            "duration_seconds": status.duration_seconds,
+            "frame_count": status.frame_count,
+            "imu_sample_count": status.imu_sample_count,
+            "angle_sample_count": status.angle_sample_count,
+            "fps": actual_fps,
+            "backend": "rpi",
+            # Identity + convention tags — let downstream readers know which
+            # device + handedness recorded this episode and which sign
+            # convention the angle samples follow. Legacy episodes without
+            # these fields predate the positive-closing flip; readers should
+            # treat absent `angle_convention` as the legacy negative-closing
+            # convention.
+            "hand": settings.hand,
+            "angle_convention": "positive_closing",
+            "device_id": settings.device_id,
+            # Which URDF was used for frames.json (matches settings.hand;
+            # explicit for downstream traceability).
+            "urdf": urdf_name,
+        }
+        if oakd_stats:
+            meta["oakd"] = oakd_stats
 
-            # Save angle data on its own (no longer multiplexed into imu_data.json).
-            if angle_samples is not None:
-                (self._capture_session_dir / "angle_data.json").write_text(
-                    json.dumps({"samples": angle_samples})
-                )
-
-            urdf_name = f"grabette_{settings.hand}"
-            urdf_path = _URDF_ROOT / urdf_name / "robot.urdf"
-
-            # Copy the canonical RPi fisheye calibration (KannalaBrandt8) into
-            # this episode so downstream consumers can undistort the primary
-            # camera stream without out-of-band lookups.
-            if _CAMERA_INTRINSICS_SRC.is_file():
-                (self._capture_session_dir / "rpi_camera_intrinsics.json").write_bytes(
-                    _CAMERA_INTRINSICS_SRC.read_bytes()
-                )
-            else:
-                logger.warning(
-                    "Camera intrinsics file missing at %s — episode will lack "
-                    "rpi_camera_intrinsics.json", _CAMERA_INTRINSICS_SRC,
-                )
-
-            # Frame transforms derived from the hand-appropriate URDF. Ships
-            # T_camera_in_oak_l (needed to re-express SLAM poses in the primary
-            # camera frame) plus every grip_r-relative frame consumers might
-            # care about. Best-effort: log-and-continue on URDF parse errors so
-            # a URDF glitch doesn't lose the whole capture.
-            if urdf_path.is_file():
-                try:
-                    frames_payload = build_frames_payload(urdf_path)
-                    (self._capture_session_dir / "frames.json").write_text(
-                        json.dumps(frames_payload, indent=2)
-                    )
-                except Exception as e:
-                    logger.warning("Could not build frames.json from %s: %s", urdf_path, e)
-            else:
-                logger.warning(
-                    "URDF missing at %s — episode will lack frames.json", urdf_path,
-                )
-
-            meta = {
-                "duration_seconds": status.duration_seconds,
-                "frame_count": status.frame_count,
-                "imu_sample_count": status.imu_sample_count,
-                "angle_sample_count": status.angle_sample_count,
-                "fps": actual_fps,
-                "backend": "rpi",
-                # Identity + convention tags — let downstream readers know which
-                # device + handedness recorded this episode and which sign
-                # convention the angle samples follow. Legacy episodes without
-                # these fields predate the positive-closing flip; readers should
-                # treat absent `angle_convention` as the legacy negative-closing
-                # convention.
-                "hand": settings.hand,
-                "angle_convention": "positive_closing",
-                "device_id": settings.device_id,
-                # Which URDF was used for frames.json (matches settings.hand;
-                # explicit for downstream traceability).
-                "urdf": urdf_name,
-            }
-            if oakd_stats:
-                meta["oakd"] = oakd_stats
-            (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
-
+        # Snapshot session_dir + clear so a fast restart doesn't collide.
+        session_dir = self._capture_session_dir
+        self._capture_session_dir = None
         self._sync.reset()
 
-        # Defer hardware re-init OUT of the stop path: re-creating the picamera2
-        # instance (~1-2s) is prep for the NEXT capture, not part of saving this
-        # one, so it must not delay the LED/stop. Schedule it to run right after
-        # this coroutine returns (LED already off). It still completes during
-        # idle — keeping the RPi live preview alive for framing the next shot —
-        # and blocks the loop no longer than the old in-stop re-init did.
-        loop.call_soon(self._reinit_hardware)
+        # Defer file writes AND hardware re-init OUT of the stop path. The
+        # devices are already stopped and the mp4s already flushed by this
+        # point, so persisting JSON sidecars + copying calibration + parsing
+        # the URDF for frames.json doesn't need to gate the "LED can go off"
+        # moment. call_soon schedules the callback right after this coroutine
+        # returns, on the same event loop — the caller (button listener /
+        # REST endpoint) sees stop_capture complete immediately.
+        loop.call_soon(
+            self._finalize_and_reinit,
+            session_dir, frame_timestamps, angle_samples, meta, urdf_path,
+        )
 
-        self._capture_session_dir = None
-        logger.info("RpiBackend capture stopped")
+        total_ms = t_phases.get("angle_stop", 0) + t_phases.get("muxes_wallclock", 0)
+        logger.info(
+            "RpiBackend capture stopped [ms: %s  total_awaited=%.0f]  file writes deferred",
+            " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
+            total_ms,
+        )
         return status
+
+    def _finalize_and_reinit(
+        self,
+        session_dir,
+        frame_timestamps,
+        angle_samples,
+        meta,
+        urdf_path,
+    ) -> None:
+        """Deferred post-stop work: JSON writes + calibration + frames + reinit.
+
+        Runs on the event loop AFTER stop_capture returns (scheduled via
+        loop.call_soon). Everything here is best-effort: a failure logs a
+        warning but doesn't propagate — the recording is already saved by
+        the time we reach this point.
+        """
+        _t = time.monotonic()
+        try:
+            if session_dir:
+                (session_dir / "frame_timestamps.json").write_text(
+                    json.dumps(frame_timestamps)
+                )
+                if angle_samples is not None:
+                    (session_dir / "angle_data.json").write_text(
+                        json.dumps({"samples": angle_samples})
+                    )
+                # Canonical RPi fisheye calibration (KannalaBrandt8).
+                if _CAMERA_INTRINSICS_SRC.is_file():
+                    (session_dir / "rpi_camera_intrinsics.json").write_bytes(
+                        _CAMERA_INTRINSICS_SRC.read_bytes()
+                    )
+                else:
+                    logger.warning(
+                        "Camera intrinsics file missing at %s — episode will lack "
+                        "rpi_camera_intrinsics.json", _CAMERA_INTRINSICS_SRC,
+                    )
+                # URDF-derived frame transforms (incl. T_camera_in_oak_l).
+                if urdf_path.is_file():
+                    try:
+                        frames_payload = build_frames_payload(urdf_path)
+                        (session_dir / "frames.json").write_text(
+                            json.dumps(frames_payload, indent=2)
+                        )
+                    except Exception as e:
+                        logger.warning("Could not build frames.json from %s: %s", urdf_path, e)
+                else:
+                    logger.warning(
+                        "URDF missing at %s — episode will lack frames.json", urdf_path,
+                    )
+                # metadata.json goes last so its presence signals the episode
+                # is fully saved to any watcher.
+                (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        except Exception:
+            logger.exception("Deferred file writes failed")
+        writes_ms = (time.monotonic() - _t) * 1000
+
+        _t = time.monotonic()
+        try:
+            self._reinit_hardware()
+        except Exception:
+            logger.exception("Deferred hardware re-init failed")
+        reinit_ms = (time.monotonic() - _t) * 1000
+
+        logger.info(
+            "RpiBackend post-stop finalize: writes=%.0fms reinit=%.0fms",
+            writes_ms, reinit_ms,
+        )
 
     def _reinit_hardware(self) -> None:
         """Re-create the RPi camera (picamera2 needs a fresh instance after a
