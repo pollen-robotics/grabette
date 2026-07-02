@@ -980,7 +980,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pct = job.get("progress", 0)
             if status == "completed":
                 link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
-                yield f"✅ Done! Dataset: {link}"
+                yield f"✅ Done! Dataset: [{link}]({link})"
                 return
             elif status == "failed":
                 yield f"❌ Failed: {msg}"
@@ -1422,9 +1422,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             interactive=False,
         )
         gr.HTML("</div>")
-        ds_upload_msg = gr.Textbox(
-            show_label=False, interactive=False, max_lines=3, container=False,
-        )
+        ds_upload_msg = gr.Markdown(container=False)
         gr.HTML("</div>")
 
         ds_task_cbg.change(
