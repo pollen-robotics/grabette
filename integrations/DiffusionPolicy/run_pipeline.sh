@@ -30,7 +30,7 @@
 #
 # Examples:
 #   ./run_pipeline.sh local/test_pick_can_100_fixed --raw-root /tmp/lerobot_out_100_fixed
-#   ./run_pipeline.sh SteveNguyen/my_raw --proprioception relative
+#   ./run_pipeline.sh <user>/my_raw --proprioception relative
 
 set -euo pipefail
 
