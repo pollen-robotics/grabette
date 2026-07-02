@@ -281,16 +281,33 @@ class SessionManager:
     def _sweep_download_staging(self) -> None:
         """Delete any leftover archives from previous sessions (crash /
         aborted download safety net). Called from __init__ so the daemon
-        starts clean."""
+        starts clean.
+
+        Also wipes the Gradio file cache. Gradio hashes every callback-returned
+        file path and copies it into GRADIO_TEMP_DIR (routed to data_dir/
+        .gradio-cache to keep it off the /tmp tmpfs). Gradio never sweeps
+        this cache itself, so without this every downloaded archive would
+        accumulate forever on the SD card. A daemon restart is rare enough
+        that unconditionally clearing the cache costs at most one re-hash
+        on the next download.
+        """
         staging = self.data_dir / ".downloads"
-        if not staging.is_dir():
-            return
-        for f in staging.glob("*.tar.gz"):
+        if staging.is_dir():
+            for f in staging.glob("*.tar.gz"):
+                try:
+                    f.unlink()
+                    logger.info("Removed stale download archive: %s", f.name)
+                except Exception as e:
+                    logger.warning("Could not remove stale archive %s: %s", f, e)
+
+        gradio_cache = self.data_dir / ".gradio-cache"
+        if gradio_cache.is_dir() and any(gradio_cache.iterdir()):
             try:
-                f.unlink()
-                logger.info("Removed stale download archive: %s", f.name)
+                shutil.rmtree(gradio_cache)
+                gradio_cache.mkdir(parents=True, exist_ok=True)
+                logger.info("Cleared Gradio file cache: %s", gradio_cache)
             except Exception as e:
-                logger.warning("Could not remove stale archive %s: %s", f, e)
+                logger.warning("Could not clear Gradio cache %s: %s", gradio_cache, e)
 
     def create_episode_archive(self, episode_id: str) -> Path:
         ep_dir = self.episode_dir(episode_id)
