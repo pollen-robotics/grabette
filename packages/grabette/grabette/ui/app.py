@@ -939,6 +939,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             target_repo=target_repo,
             raw_repo=raw_repo,
             task_description=task_description,
+            private=bool(private),
         )
         if "error" in result:
             yield f"Error: {result['error']}"
@@ -1385,6 +1386,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 label="Repository name", placeholder="grabette-data",
                 scale=2,
             )
+        ds_private = gr.Checkbox(
+            label="Private repository",
+            value=False,
+        )
 
         # ── Upload ────────────────────────────────────────────────────
         gr.HTML("<div style='margin-top:1.5rem;max-width:260px;'>")
@@ -1401,7 +1406,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         ds_upload_btn.click(
             fn=on_ds_upload,
-            inputs=[ds_task_cbg, ds_namespace, ds_repo_name],
+            inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_private],
             outputs=ds_upload_msg,
         )
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])

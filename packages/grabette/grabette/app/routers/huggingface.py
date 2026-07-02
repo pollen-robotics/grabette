@@ -32,6 +32,7 @@ class PushAndProcessRequest(BaseModel):
     target_repo: str  # e.g. "owner/my-dataset"
     raw_repo: str     # e.g. "owner/my-dataset-raw"
     task_description: str
+    private: bool = False
 
 
 @router.post("/auth")
@@ -141,6 +142,7 @@ async def push_and_process(
         task_description=req.task_description,
         hf_client=hf,
         session_manager=sm,
+        private=req.private,
     )
     return {"job_id": job_id, "status": "started"}
 
