@@ -53,8 +53,10 @@ into one (often bad) mode.
    *touching but not grasping*.
 
 4. **Move smoothly.** No jitter, no nervous micro-corrections. The policy
-   reproduces shakiness, and diffusion turns noisy demos into erratic action
-   samples.
+   reproduces shakiness (diffusion turns noisy demos into erratic action
+   samples), *and* fast/jerky motion blurs frames and jumps the view between
+   frames, making the SLAM tracker lose lock and emit pose glitches (see Part E).
+   Steady, moderate pace.
 
 5. **Keep a consistent pace** and record at the rate you'll deploy at.
 
@@ -103,7 +105,29 @@ generalization.
 
 ---
 
-## Part E — Pre-flight (engineer, once)
+## Part E — Protect the SLAM tracking (avoid pose glitches)
+
+The hand pose comes from visual SLAM on the wrist camera. When the camera can't
+see enough of the **static scene**, tracking degrades and the trajectory
+**teleports** — those frames get zeroed, or the whole episode dropped, and it's
+usually the **grasp phase** (the most important part) that's lost.
+
+1. **Don't let the grasped object occlude the camera.** As you close on and lift
+   the object, keep some background/scene in the camera's view — don't bring the
+   object right up to the lens or let it fill the frame. This is the single
+   biggest cause of glitches we see: the object blanks the wrist camera through
+   the grasp + lift, and SLAM relocalizes with a jump.
+2. **No fast swings.** Fast motion = motion blur + large frame-to-frame jumps =
+   lost tracking. Keep a steady, moderate pace (this is the tracking side of
+   Part A's "move smoothly").
+
+*Symptom to recognize in QA* (`clean_dataset.py` / the postprocess trajectory
+checks): a burst of periodic, same-size position jumps ≈ the object occluded the
+camera through the grasp and lift.
+
+---
+
+## Part F — Pre-flight (engineer, once)
 
 - **Camera/device identical to deployment** (mount, FOV, calibration). The policy
   keys off the camera view; a different view at deployment is a different task.
@@ -119,7 +143,8 @@ generalization.
 - [ ] One natural, easy grasp angle; tight ±10°, **not** hard-top-down.
 - [ ] Reach *through* to seat the object deep in the jaw — no gentle settle.
 - [ ] Firm, decisive close.
-- [ ] Smooth motion, no jitter.
+- [ ] Smooth motion, no jitter; no fast swings (also protects SLAM tracking).
+- [ ] Object never blanks the camera — keep the scene in view through grasp + lift.
 - [ ] Diverse object **positions** (and orientations *only if* grasp-aligned).
 - [ ] Clean first-try successes; no accidental misses.
 - [ ] Consistent pace; record at deployment rate.
@@ -134,7 +159,8 @@ generalization.
 | Tight, centered grasp angle | Mode-collapse to a bad average grasp (top-down) |
 | Reach through / seat the object | Under-reach: policy creeps and stalls ~1 cm short |
 | Firm decisive close | Touch-but-don't-grasp; hesitant/abortable close |
-| Smooth motion | Erratic / jittery deployment behavior |
+| Smooth motion / no fast swings | Erratic deployment behavior **and** motion-blur SLAM tracking loss |
+| Object never occludes the camera | SLAM tracking loss → pose glitches; filtered / dropped episodes |
 | Diverse object positions | Fails outside the demonstrated workspace |
 | Clean successes by default | Policy imitating an injected/accidental miss |
 | Consistent camera/frame/state | Large systematic offsets (frame mismatch) |
