@@ -32,6 +32,16 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 
 ## Workflow
 
+**One-shot data prep:** `run_pipeline.sh` chains the filtering + conversion (steps
+2–3 below, plus QA) so you don't run them by hand. Training stays a separate,
+deliberate command — the script prints the exact `train.py` invocation at the end.
+
+```bash
+./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] [--no-qa]
+```
+
+The steps below document each stage the script runs (and how to run them manually).
+
 ### 1. Inspect the raw dataset (recommended)
 
 ```bash
