@@ -907,7 +907,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         return gr.update(choices=task_choices, value=[]), ns_update
 
-    def on_ds_upload(task_ids, namespace, repo_name):
+    def on_task_selection_count(task_ids):
+        if not task_ids:
+            return ""
+        sessions = _get_sessions()
+        session_map = {s["id"]: s for s in sessions}
+        total = sum(
+            len(s.get("episodes", []))
+            for tid in task_ids
+            if (s := session_map.get(tid))
+        )
+        n_tasks = len(task_ids)
+        return (
+            f'<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;'
+            f'padding:0.4rem 0.75rem;margin-top:0.5rem;display:inline-block;">'
+            f'<span style="color:#93c5fd;font-size:0.85rem;">'
+            f'{n_tasks} task{"s" if n_tasks != 1 else ""} selected</span>'
+            f'<span style="color:#bfdbfe;font-size:0.85rem;margin:0 0.4rem;">·</span>'
+            f'<span style="color:#ffffff;font-size:0.9rem;font-weight:700;">{total}</span>'
+            f'<span style="color:#93c5fd;font-size:0.85rem;"> episode{"s" if total != 1 else ""}</span>'
+            f'</div>'
+        )
+
+    def on_ds_upload(task_ids, namespace, repo_name, private):
         """Start one upload job per episode, then poll until all finish,
         streaming progress + per-episode status, and end on a dataset link.
 
@@ -1362,6 +1384,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         </div>
         """)
         ds_task_cbg = gr.CheckboxGroup(choices=[], label=None, container=False)
+        ds_episode_count = gr.HTML("")
 
         # ── Step 2 ────────────────────────────────────────────────────
         gr.HTML("""
@@ -1404,6 +1427,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         gr.HTML("</div>")
 
+        ds_task_cbg.change(
+            fn=on_task_selection_count,
+            inputs=ds_task_cbg,
+            outputs=ds_episode_count,
+        )
         ds_upload_btn.click(
             fn=on_ds_upload,
             inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_private],
