@@ -44,6 +44,7 @@ class RpiBackend(Backend):
         self, enable_angle: bool = False, enable_oakd: bool = True,
         oakd_keepalive_s: float = 30.0,
     ) -> None:
+        super().__init__()
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
@@ -372,52 +373,66 @@ class RpiBackend(Backend):
             raise RuntimeError("Already capturing")
 
         self._starting = True
+        # Blink while the start path runs — it may spend several seconds warming
+        # up the OAK-D before the recording clock starts. Driven here (not in the
+        # button daemon) so dashboard- and fleet-initiated captures get the same
+        # LED feedback as a physical button press. Goes solid only once recording
+        # is genuinely live; off on failure.
+        self._led_saving()
         import asyncio
         loop = asyncio.get_event_loop()
 
-        # A new capture cancels any pending OAK-D keep-alive power-down.
-        self._cancel_oakd_keepalive()
+        try:
+            # A new capture cancels any pending OAK-D keep-alive power-down.
+            self._cancel_oakd_keepalive()
 
-        # Auto-connect the OAK-D if it's currently off — recording without
-        # depth/IMU is rarely what the user wants, and this matches the UI
-        # convention that toggling on/off is the "intent" flag. Errors during
-        # init are logged inside _init_oakd and leave _oakd=None; the rest
-        # of start_capture handles that gracefully. We then own its power and
-        # will auto-power-down after the keep-alive window once capture stops.
-        if not self.is_oakd_initialized:
-            await self.set_oakd_enabled(True)
-            self._oakd_auto_enabled = True
+            # Auto-connect the OAK-D if it's currently off — recording without
+            # depth/IMU is rarely what the user wants, and this matches the UI
+            # convention that toggling on/off is the "intent" flag. Errors during
+            # init are logged inside _init_oakd and leave _oakd=None; the rest
+            # of start_capture handles that gracefully. We then own its power and
+            # will auto-power-down after the keep-alive window once capture stops.
+            if not self.is_oakd_initialized:
+                await self.set_oakd_enabled(True)
+                self._oakd_auto_enabled = True
 
-        # Safety net: the previous stop_capture schedules the camera re-init to
-        # run during idle (see stop_capture). If a restart beats it, do it now.
-        if self._needs_reinit:
-            self._reinit_hardware()
+            # Safety net: the previous stop_capture schedules the camera re-init
+            # to run during idle (see stop_capture). If a restart beats it, do
+            # it now.
+            if self._needs_reinit:
+                self._reinit_hardware()
 
-        # Defer the recording clock until the OAK-D is producing valid frames
-        # (autoexposure + depth converged), so t=0 lands on good data instead
-        # of cold-boot warmup. No-op/fast if the OAK-D is already warm.
-        if self._oakd and self._oakd.is_initialized:
-            await loop.run_in_executor(
-                None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
-            )
+            # Defer the recording clock until the OAK-D is producing valid frames
+            # (autoexposure + depth converged), so t=0 lands on good data instead
+            # of cold-boot warmup. No-op/fast if the OAK-D is already warm.
+            if self._oakd and self._oakd.is_initialized:
+                await loop.run_in_executor(
+                    None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
+                )
 
-        self._capture_session_dir = session_dir
+            self._capture_session_dir = session_dir
 
-        # Set flag BEFORE starting streams so the daemon poll loop
-        # (get_state) reads from capture buffers instead of doing
-        # direct I2C reads that would contend with the angle capture thread.
-        self._starting = False
-        self._capturing = True
+            # Set flag BEFORE starting streams so the daemon poll loop
+            # (get_state) reads from capture buffers instead of doing
+            # direct I2C reads that would contend with the angle capture thread.
+            self._capturing = True
 
-        # Start synchronized capture — all streams share the same
-        # SyncManager t=0 reference (time.monotonic based).
-        self._sync.start()
-        if self._angle:
-            self._angle.start_capture()
-        if self._oakd and self._oakd.is_initialized:
-            self._oakd.start_recording(session_dir)
-        self._camera.start_recording(session_dir / "raw_video.mp4")
+            # Start synchronized capture — all streams share the same
+            # SyncManager t=0 reference (time.monotonic based).
+            self._sync.start()
+            if self._angle:
+                self._angle.start_capture()
+            if self._oakd and self._oakd.is_initialized:
+                self._oakd.start_recording(session_dir)
+            self._camera.start_recording(session_dir / "raw_video.mp4")
+        except Exception:
+            self._led_idle()
+            raise
+        finally:
+            self._starting = False
 
+        # Recording is live — solid LED.
+        self._led_recording()
         logger.info("RpiBackend capture started → %s", session_dir)
 
     async def stop_capture(self) -> CaptureStatus:
@@ -425,6 +440,18 @@ class RpiBackend(Backend):
             raise RuntimeError("Not capturing")
 
         self._starting = False
+        # Acknowledge the stop immediately: capture ends at once, but the mp4
+        # mux below takes a few seconds. Blink to show "saving" instead of a
+        # solid LED (which would read as "still recording"). The finally turns
+        # it off when the save completes. Driven here so dashboard/fleet stops
+        # get the same feedback as a button press.
+        self._led_saving()
+        try:
+            return await self._stop_capture()
+        finally:
+            self._led_idle()
+
+    async def _stop_capture(self) -> CaptureStatus:
         # Keep _capturing = True until ALL streams have stopped, to
         # prevent the daemon poll loop (get_state) from doing direct
         # I2C reads while the angle capture thread is still running.
