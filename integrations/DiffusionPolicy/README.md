@@ -45,27 +45,30 @@ uv run python analyze_dataset.py --repo_id <user>/<ds> --root <local-converted p
 Flags episodes that never actuate the gripper, SLAM position spikes, and
 truncated episodes.
 
-### 2. Clean: reject glitch-ridden episodes
+### 2. Clean: reject episodes with unrecoverable tracking loss
 
-SLAM tracking glitches come in two forms: *return* spikes (teleport out and
-back) and *relocalization* steps (teleport and stay). **Isolated** glitches are
-handled automatically at conversion (step 3 zeroes them). This step drops the
-episodes that *can't* be salvaged that way — a tracking-loss segment too long to
-zero, or a glitch inside the grasp window.
+When the grasped object occludes the wrist camera, SLAM loses tracking and the
+build flags those frames (`is_lost`) while holding the last pose. A **short**
+lost gap is fine — "assume no motion" (held pose → delta ≈ 0) is a good
+approximation for one or a few frames. A **long** lost run means the arm really
+moved through the occlusion; that motion is gone and unrecoverable, so the whole
+episode is dropped.
 
 ```bash
 # audit only — decide thresholds, change nothing:
-uv run python clean_dataset.py --repo_id <user>/<raw_dataset> --dry_run
+uv run python clean_dataset.py --repo_id <user>/<dataset> --dry_run
 # write the kept-episode dataset:
-uv run python clean_dataset.py --repo_id <user>/<raw_dataset> \
-    --output_repo_id <user>/<raw_dataset>_clean
+uv run python clean_dataset.py --repo_id <user>/<dataset> \
+    --output_repo_id <user>/<dataset>_clean
 ```
 
-A glitch = a per-step jump over `--despike_max_mm` (80 mm) or `--despike_max_deg`
-(45°) — **keep these in sync with step 3**. An episode is rejected if its longest
-glitch run exceeds `--max_run` (3), its glitch fraction exceeds
-`--reject_fraction` (5%), or a glitch lands within `± --grasp_window` (10) frames
-of the most-closed instant. Non-destructive (uses lerobot's `delete_episodes`).
+Rejection keys off the SLAM's own `is_lost` flag (carried into the dataset by the
+postprocess build — **rebuild an old dataset if it lacks the feature**): an
+episode is dropped if its **longest consecutive lost run** exceeds `--max_lost_run`
+(10) or its **lost fraction** exceeds `--max_lost_fraction` (30%). Longest-run is
+the primary signal — a low-% but sustained occlusion is still unrecoverable.
+Everything kept has only short lost gaps; the per-frame re-acquisition jumps are
+mopped up by step 3's despike. Non-destructive (uses lerobot's `delete_episodes`).
 
 ### 3. Convert the dataset
 
