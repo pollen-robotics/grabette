@@ -32,6 +32,17 @@ FEATURES_BASE = {
         "shape": (8,),
         "names": ["x", "y", "z", "ax", "ay", "az", "proximal", "distal"],
     },
+    # SLAM tracking-lost flag (1.0 = lost) for the frame. Carried so downstream
+    # training can MASK the action label on lost frames (its pose is held, not
+    # measured — see trajectory_to_poses). Deliberately NOT prefixed "action"/
+    # "observation": lerobot's dataset_to_policy_features skips such keys, so the
+    # policy never treats it as input/output (works for pi0 and diffusion alike);
+    # it is still loaded into the batch for masking. Additive/backward-compatible.
+    "is_lost": {
+        "dtype": "float32",
+        "shape": (1,),
+        "names": ["is_lost"],
+    },
 }
 
 
@@ -188,6 +199,8 @@ def build_dataset(
         traj_ts = df['timestamp'].values.astype(np.float64)
         n_frames = len(df)
         actions = _episode_actions(df, traj_ts, ep_dir)
+        # Per-frame SLAM tracking-lost flag, aligned with the action rows.
+        is_lost = df['is_lost'].astype(np.float32).values
 
         # --- cam0: RPi video, nearest-by-timestamp frame selection ---
         video_path = ep_dir / "raw_video.mp4"
@@ -208,6 +221,7 @@ def build_dataset(
                 "task": task,
                 "observation.images.cam0": img_rgb,
                 "action": actions[i],
+                "is_lost": np.array([is_lost[i]], dtype=np.float32),
             })
 
         dataset.save_episode()
