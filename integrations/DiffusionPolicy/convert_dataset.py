@@ -21,11 +21,11 @@ Transforms the dataset:
 Usage:
   # Gripper-only state (2D):
   uv run python convert_dataset.py \\
-      --repo_id SteveNguyen/Grabette_redcube_quest
+      --repo_id <user>/<raw_dataset>
 
   # With relative proprioception (11D, UMI-style):
   uv run python convert_dataset.py \\
-      --repo_id SteveNguyen/Grabette_redcube_quest --proprioception relative
+      --repo_id <user>/<raw_dataset> --proprioception relative
 """
 
 import argparse
@@ -215,7 +215,7 @@ def parse_args():
     parser.add_argument(
         "--repo_id",
         type=str,
-        default="SteveNguyen/Grabette_redcube_quest",
+        required=True,
         help="LeRobot dataset repo ID",
     )
     parser.add_argument(
@@ -263,7 +263,7 @@ def parse_args():
         type=str,
         default=None,
         help="If set, push the converted dataset to this Hub repo id "
-             "(e.g. 'SteveNguyen/sim_grasp_train_v2'). If the local repo "
+             "(e.g. '<user>/<dataset>_train'). If the local repo "
              "id does not match, the push retargets to this id.",
     )
     parser.add_argument(

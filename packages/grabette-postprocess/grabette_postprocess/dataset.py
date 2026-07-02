@@ -139,7 +139,7 @@ def build_dataset(
         - camera_trajectory.csv (or mapping_camera_trajectory.csv)
 
     Args:
-        repo_id: dataset identifier (e.g. "steve/grabette-demo")
+        repo_id: dataset identifier (e.g. "<user>/<dataset>")
         episode_dirs: list of episode directory paths
         task: task description string
         fps: dataset frame rate (default: 50fps, the native Arducam rate)
