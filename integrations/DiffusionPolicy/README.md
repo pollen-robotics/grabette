@@ -6,10 +6,11 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 
 | File | Purpose |
 |---|---|
-| `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**. |
+| `analyze_dataset.py` | Dataset QA (raw 8D **or** converted 11D): gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (SLAM spikes / truncated episodes). Run first. |
+| `clean_dataset.py` | Reject glitch-ridden episodes (tracking-loss segments too long to absorb, or glitches in the grasp window). Non-destructive; writes a new dataset. |
+| `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**, zeroing per-step outlier deltas (isolated SLAM glitches) along the way. |
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
-| `analyze_dataset.py` | Dataset QA: gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (glitchy/truncated episodes). Run before training. |
-| `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` (see [Notes](#notes)). |
+| `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
 sim) and lives in the robot integration (e.g. `integrations/openarm`).
@@ -31,7 +32,7 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 
 ## Workflow
 
-### 1. Inspect the raw dataset (optional but recommended)
+### 1. Inspect the raw dataset (recommended)
 
 ```bash
 uv run python analyze_dataset.py --repo_id <user>/<raw_dataset>
@@ -41,20 +42,46 @@ uv run python analyze_dataset.py --repo_id <user>/<real> <user>/<sim>
 uv run python analyze_dataset.py --repo_id <user>/<ds> --root <local-converted path>
 ```
 
-Flags episodes that never actuate the gripper, glitchy SLAM spikes, and
-truncated episodes — drop those before training.
+Flags episodes that never actuate the gripper, SLAM position spikes, and
+truncated episodes.
 
-### 2. Convert the dataset
+### 2. Clean: reject glitch-ridden episodes
+
+SLAM tracking glitches come in two forms: *return* spikes (teleport out and
+back) and *relocalization* steps (teleport and stay). **Isolated** glitches are
+handled automatically at conversion (step 3 zeroes them). This step drops the
+episodes that *can't* be salvaged that way — a tracking-loss segment too long to
+zero, or a glitch inside the grasp window.
+
+```bash
+# audit only — decide thresholds, change nothing:
+uv run python clean_dataset.py --repo_id <user>/<raw_dataset> --dry_run
+# write the kept-episode dataset:
+uv run python clean_dataset.py --repo_id <user>/<raw_dataset> \
+    --output_repo_id <user>/<raw_dataset>_clean
+```
+
+A glitch = a per-step jump over `--despike_max_mm` (80 mm) or `--despike_max_deg`
+(45°) — **keep these in sync with step 3**. An episode is rejected if its longest
+glitch run exceeds `--max_run` (3), its glitch fraction exceeds
+`--reject_fraction` (5%), or a glitch lands within `± --grasp_window` (10) frames
+of the most-closed instant. Non-destructive (uses lerobot's `delete_episodes`).
+
+### 3. Convert the dataset
 
 The policy trains on **camera-local delta actions** (`[dx,dy,dz, dr6d_0..5,
 proximal, distal]`, 11D) and **2D gripper state**, derived from the raw recorded
-camera poses:
+camera poses. Any single-step delta above the physical cap (an isolated SLAM
+glitch) is zeroed — "hold for that frame" — which removes the bad action without
+disturbing the rest of the trajectory:
 
 ```bash
 uv run python convert_dataset.py \
-    --repo_id <user>/<raw_dataset> \
+    --repo_id <user>/<raw_dataset>_clean \
     --proprioception none \
     --output_repo_id <user>/<dataset>_cartesian
+# reading a clean_dataset.py output that isn't on the Hub? add its local root:
+#   --root ~/.cache/huggingface/lerobot/local-converted/<user>--<raw_dataset>_clean
 ```
 
 - `--proprioception none` → `observation.state = [proximal, distal]` (gripper
@@ -67,7 +94,7 @@ uv run python convert_dataset.py \
   frame of the recorded pose (`Rᵀ·Δ`); whatever frame the data was recorded in
   (e.g. `oak_l`) is what the deltas live in. It bakes in no transform.
 
-### 3. Train
+### 4. Train
 
 ```bash
 uv run python train.py \
