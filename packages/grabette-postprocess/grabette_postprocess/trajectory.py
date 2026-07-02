@@ -36,7 +36,15 @@ def quaternion_to_axis_angle(qx: np.ndarray, qy: np.ndarray,
 def trajectory_to_poses(df: pd.DataFrame) -> np.ndarray:
     """Convert trajectory DataFrame to (N, 6) pose array [x, y, z, ax, ay, az].
 
-    Lost frames get all zeros.
+    Lost frames keep the SLAM's HELD pose (the CSV already holds the last good
+    pose on is_lost — see oak_slam._integrate_deltas). We must NOT zero them:
+    zeroing sends the pose to the world origin, so every tracked<->lost
+    transition becomes a physically-impossible teleport in the derived
+    (delta) actions — the dominant source of "SLAM glitches" seen downstream,
+    whose magnitude is just the gripper's distance from the origin. Keeping the
+    held pose makes the delta ~0 across a lost span (benign). The `is_lost`
+    flag is carried separately (build_dataset) so those frames can be masked
+    at training time without corrupting the numeric pose stream.
 
     Args:
         df: trajectory DataFrame from load_trajectory_csv()
@@ -46,19 +54,13 @@ def trajectory_to_poses(df: pd.DataFrame) -> np.ndarray:
     """
     n = len(df)
     poses = np.zeros((n, 6), dtype=np.float32)
+    if n == 0:
+        return poses
 
-    tracked = ~df['is_lost'].astype(bool)
-    if tracked.any():
-        pos = df.loc[tracked, ['x', 'y', 'z']].values
-        rotvec = quaternion_to_axis_angle(
-            df.loc[tracked, 'q_x'].values,
-            df.loc[tracked, 'q_y'].values,
-            df.loc[tracked, 'q_z'].values,
-            df.loc[tracked, 'q_w'].values,
-        )
-        poses[tracked, :3] = pos
-        poses[tracked, 3:] = rotvec
-
+    poses[:, :3] = df[['x', 'y', 'z']].values
+    poses[:, 3:] = quaternion_to_axis_angle(
+        df['q_x'].values, df['q_y'].values, df['q_z'].values, df['q_w'].values,
+    )
     return poses
 
 
