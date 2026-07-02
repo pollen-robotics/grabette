@@ -55,8 +55,9 @@ class HuggingFaceClient:
         if self._api is None:
             if not token:
                 raise ValueError("No token available")
-            self._api = HfApi(token=token)
-            self._api.whoami()
+            api = HfApi(token=token)
+            api.whoami()
+            self._api = api
         return self._api
 
     def get_user_info(self) -> dict | None:
