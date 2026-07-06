@@ -9,7 +9,9 @@ dependencies = [
     "placo>=0.9",
     "numpy",
     "opencv-python>=4.9",
-    "grpcio>=1.60",
+    # Floor matches the generated proto stubs (GRPC_GENERATED_VERSION=1.81.0):
+    # they refuse to import on older grpcio.
+    "grpcio>=1.81",
     "protobuf>=4.25",
     "openarm-gripette-model",
 ]

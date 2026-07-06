@@ -5,16 +5,16 @@ which handles the smooth interpolation server-side (3 seconds by default).
 
 Usage:
   # Move to a specific 7-joint configuration (radians)
-  uv run python examples/openarm_gripette/set_arm_pose.py \\
+  uv run python examples/set_arm_pose.py \\
       --arm_addr localhost:50052 \\
       --joints 0.0 0.0 0.0 1.57 0.0 0.0 0.0
 
   # Move to the default home pose (no --joints argument)
-  uv run python examples/openarm_gripette/set_arm_pose.py \\
+  uv run python examples/set_arm_pose.py \\
       --arm_addr localhost:50052
 
   # Move to a pose specified in degrees (added convenience)
-  uv run python examples/openarm_gripette/set_arm_pose.py \\
+  uv run python examples/set_arm_pose.py \\
       --arm_addr localhost:50052 \\
       --joints_deg 0 0 0 90 0 0 0
 
@@ -28,6 +28,8 @@ import math
 
 import grpc
 from openarm_gripette_simu.proto import arm_pb2, arm_pb2_grpc
+
+from _torque_guard import abort_torque_off, add_keep_torque_arg
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,7 @@ def parse_args():
         metavar="DEG",
         help="7 joint positions in degrees (converted to radians)",
     )
+    add_keep_torque_arg(p)
     return p.parse_args()
 
 
@@ -83,15 +86,22 @@ def main():
     logger.info(f"Server responded: {ping.status} (uptime: {ping.uptime_seconds:.1f}s)")
 
     # Send Reset with target joints (blocks until the interpolation finishes)
-    logger.info("Sending Reset (smooth interpolation, ~3s)...")
-    response = stub.Reset(arm_pb2.ResetRequest(joint_positions=joints))
+    try:
+        logger.info("Sending Reset (smooth interpolation, ~3s)...")
+        response = stub.Reset(arm_pb2.ResetRequest(joint_positions=joints))
 
-    if response.success:
-        logger.info("Done. Arm at target position.")
-    else:
-        logger.error(f"Reset failed: {response.error}")
-
-    channel.close()
+        if response.success:
+            logger.info("Done. Arm at target position.")
+        else:
+            logger.error(f"Reset failed: {response.error}")
+    except KeyboardInterrupt:
+        logger.warning("Interrupted — arm may be mid-motion.")
+        abort_torque_off(stub, args.keep_torque)
+    except Exception:
+        abort_torque_off(stub, args.keep_torque)
+        raise
+    finally:
+        channel.close()
 
 
 if __name__ == "__main__":

@@ -14,15 +14,15 @@ than MAX_PER_STEP_MM.
 
 Usage:
   # Safe defaults (Y-axis sinusoid, ±2 cm at 0.25 Hz, 10 s run)
-  uv run python examples/openarm_gripette/cartesian_sinusoid.py \\
+  uv run python examples/cartesian_sinusoid.py \\
       --arm_addr 192.168.10.147:50052
 
   # Faster / larger sweep (still sanity-checked against MAX_PER_STEP_MM)
-  uv run python examples/openarm_gripette/cartesian_sinusoid.py \\
+  uv run python examples/cartesian_sinusoid.py \\
       --arm_addr 192.168.10.147:50052 --amplitude_mm 30 --frequency_hz 0.5
 
   # Test a different axis
-  uv run python examples/openarm_gripette/cartesian_sinusoid.py \\
+  uv run python examples/cartesian_sinusoid.py \\
       --arm_addr 192.168.10.147:50052 --axis z
 """
 
@@ -33,6 +33,8 @@ import time
 import grpc
 import numpy as np
 from openarm_gripette_simu.proto import arm_pb2, arm_pb2_grpc
+
+from _torque_guard import abort_torque_off, add_keep_torque_arg
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +68,7 @@ def parse_args():
         default=None,
         help="Optional CSV file to dump per-step commanded + actual pose for plotting.",
     )
+    add_keep_torque_arg(p)
     return p.parse_args()
 
 
@@ -170,6 +173,10 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("Interrupted.")
+        abort_torque_off(stub, args.keep_torque)
+    except Exception:
+        abort_torque_off(stub, args.keep_torque)
+        raise
     finally:
         if csv_file:
             csv_file.close()

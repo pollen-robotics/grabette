@@ -5,7 +5,7 @@ Uses matplotlib for display (interactive mode) so it works with LeRobot's
 cv2 is still used to decode the JPEG bytes; only the GUI path is matplotlib.
 
 Usage:
-  uv run python examples/openarm_gripette/view_camera.py \\
+  uv run python examples/view_camera.py \\
       --gripper_addr localhost:50051
 
 Press 'q' in the figure window or Ctrl+C in the terminal to quit.

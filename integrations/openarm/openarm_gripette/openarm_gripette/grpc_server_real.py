@@ -20,20 +20,14 @@ Behavioral notes:
     Cube randomization is a no-op — returns dummy cube coords for API compat.
   - GetSuccessStatus: always returns goal_reached=False (no cube tracking here).
 
-Prerequisites:
-  uv sync --locked --extra diffusion --extra kinematics --extra openarms
-  uv pip install -e /path/to/openarm_gripette_simu --no-deps
-  pip install openarm-gripette-model
+Prerequisites: CAN bus setup + firmware-zero calibration — see README.md.
 
-Usage:
-  uv run python examples/openarm_gripette/grpc_server_real.py \\
+Usage (on the CAN-connected machine):
+  uv run python -m openarm_gripette.grpc_server_real \\
       --can_port can0 --side right --arm_port 50052
 
-Then, from the inference machine:
-  uv run python examples/openarm_gripette/eval_simulator.py \\
-      --checkpoint SteveNguyen/gripette_v3 \\
-      --arm_addr <robot-ip>:50052 \\
-      --gripper_addr <gripette-ip>:<gripette-port>
+Then, from the inference machine, point the eval / teleop client at
+`--arm_addr <robot-ip>:50052` (see integrations/DiffusionPolicy/README.md).
 """
 
 import argparse
@@ -132,6 +126,25 @@ class ArmInterface:
         }
         with self._lock:
             self._robot.send_action(action)
+
+    def set_torque(self, enable: bool):
+        """Enable/disable torque on all arm motors (Damiao enable/disable).
+
+        Disable = motors freewheel; the arm falls under gravity.
+
+        The Damiao enable/disable frames are fire-and-forget in LeRobot: a
+        motor that misses the frame stays in its previous state and the driver
+        only logs it at DEBUG level (observed in practice: joint_7 kept torque
+        after a server shutdown). Send TWO full passes with a pause so a
+        single lost frame can't silently leave a motor powered.
+        """
+        with self._lock:
+            for _ in range(2):
+                if enable:
+                    self._robot.bus.enable_torque(num_retry=2)
+                else:
+                    self._robot.bus.disable_torque(num_retry=2)
+                time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +418,39 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         """No cube tracking on a real robot — always returns goal_reached=False."""
         return arm_pb2.SuccessStatusResponse(goal_reached=False, cube_displacement=0.0)
 
+    def SetTorque(self, request, context):
+        """Enable/disable motor torque on the whole arm.
+
+        Disable: pauses the setpoint interpolator FIRST (so it stops streaming
+        MIT commands), clears its targets, then sends the Damiao disable — the
+        motors freewheel and the arm FALLS under gravity.
+
+        Enable: re-enables torque, resyncs the Cartesian integrator to the
+        current (hanging) pose, and leaves the interpolator with no target —
+        the arm stays limp-but-enabled until the next Reset / delta command,
+        which then starts from the measured pose (no jump to a stale target).
+        """
+        try:
+            with self._cmd_lock:
+                if request.enable:
+                    self._arm.set_torque(True)
+                    self._latest_target_joints = None
+                    self._current_cmd_joints = None
+                    self._sync_target_from_robot()
+                    self._ik_jump_violations = 0
+                    self._interp_enabled = True
+                    logger.info("Torque ENABLED — arm holds nothing until the next command (Reset to home).")
+                else:
+                    self._interp_enabled = False
+                    self._latest_target_joints = None
+                    self._current_cmd_joints = None
+                    self._arm.set_torque(False)
+                    logger.warning("Torque DISABLED — motors freewheeling, arm falls under gravity.")
+            return arm_pb2.ArmCommandResponse(success=True)
+        except Exception as e:
+            logger.exception("SetTorque failed")
+            return arm_pb2.ArmCommandResponse(success=False, error=str(e))
+
     def Ping(self, request, context):
         uptime = time.monotonic() - self._start_time
         return arm_pb2.ArmPingResponse(status="ok", uptime_seconds=uptime)
@@ -595,6 +641,15 @@ def main():
     finally:
         server.stop(grace=2.0)
         servicer.stop()
+        # Belt and braces: explicit double-pass torque disable BEFORE
+        # disconnect. robot.disconnect() also disables, but with single
+        # fire-and-forget frames per motor — one lost frame leaves that motor
+        # powered and holding (seen on joint_7/wrist_pitch). The arm FALLS.
+        try:
+            arm_iface.set_torque(False)
+            logger.info("Torque disabled on all motors (double-pass).")
+        except Exception as e:
+            logger.error(f"Explicit torque disable failed: {e} — check the arm, some motors may still be powered!")
         robot.disconnect()
         logger.info("Robot disconnected. Goodbye.")
 

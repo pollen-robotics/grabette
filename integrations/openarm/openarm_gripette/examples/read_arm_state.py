@@ -4,11 +4,11 @@ Works with the simulator OR the real-robot server.
 
 Usage:
   # One-shot read (default)
-  uv run python examples/openarm_gripette/read_arm_state.py \\
+  uv run python examples/read_arm_state.py \\
       --arm_addr localhost:50052
 
   # Continuous monitoring at 10 Hz
-  uv run python examples/openarm_gripette/read_arm_state.py \\
+  uv run python examples/read_arm_state.py \\
       --arm_addr localhost:50052 --watch --fps 10
 """
 

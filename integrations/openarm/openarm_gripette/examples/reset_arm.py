@@ -14,19 +14,19 @@ repeated --waypoint_deg flags on the CLI.
 
 Usage:
   # Named preset (edit the PRESETS dict below to tune for your setup)
-  uv run python examples/openarm_gripette/reset_arm.py \\
+  uv run python examples/reset_arm.py \\
       --arm_addr 192.168.10.147:50052 --preset home_right_over_table
 
   # Explicit waypoints on the CLI (7 space-separated joint angles in degrees,
   # repeat the flag for each waypoint). Negative values work fine this way.
-  uv run python examples/openarm_gripette/reset_arm.py \\
+  uv run python examples/reset_arm.py \\
       --arm_addr 192.168.10.147:50052 \\
       --waypoint_deg -10 0 0 0 0 0 0 \\
       --waypoint_deg -10 0 0 100 0 0 0 \\
       --waypoint_deg 0 0 0 90 0 0 0
 
   # Dry run: print the planned sequence without sending anything
-  uv run python examples/openarm_gripette/reset_arm.py \\
+  uv run python examples/reset_arm.py \\
       --preset home_right_over_table --dry_run
 """
 
@@ -37,6 +37,8 @@ import time
 
 import grpc
 from openarm_gripette_simu.proto import arm_pb2, arm_pb2_grpc
+
+from _torque_guard import abort_torque_off, add_keep_torque_arg
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +53,9 @@ PRESETS: dict[str, list[list[float]]] = {
     # shoulder rotates into position. Tune the intermediate waypoints for your
     # actual table height / arm mounting.
     "home_right_over_table": [
-        [0.0, 0.0, 0.0, 30.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 60.0, 0.0, 0.0, 0.0],
+        [-30.0, 0.0, 0.0, 30.0, 0.0, 0.0, 0.0],
+        [-30.0, 0.0, 0.0, 60.0, 0.0, 0.0, 0.0],
+        [-30.0, 0.0, 0.0, 120.0, 0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0],
     ],
 }
@@ -90,6 +93,7 @@ def parse_args():
         action="store_true",
         help="Print the planned waypoint sequence without sending any commands.",
     )
+    add_keep_torque_arg(p)
     return p.parse_args()
 
 
@@ -137,7 +141,11 @@ def main():
                 time.sleep(args.pause_s)
         logger.info("Done — arm at final waypoint.")
     except KeyboardInterrupt:
-        logger.warning("Interrupted — arm may be mid-motion. Last commanded waypoint will hold.")
+        logger.warning("Interrupted — arm may be mid-motion.")
+        abort_torque_off(stub, args.keep_torque)
+    except Exception:
+        abort_torque_off(stub, args.keep_torque)
+        raise
     finally:
         channel.close()
 
