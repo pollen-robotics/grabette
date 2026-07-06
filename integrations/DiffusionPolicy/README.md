@@ -6,12 +6,13 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 
 | File | Purpose |
 |---|---|
-| `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**. |
+| `analyze_dataset.py` | Dataset QA (raw 8D **or** converted 11D): gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (SLAM spikes / truncated episodes). Run first. |
+| `clean_dataset.py` | Reject glitch-ridden episodes (tracking-loss segments too long to absorb, or glitches in the grasp window). Non-destructive; writes a new dataset. |
+| `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**, zeroing per-step outlier deltas (isolated SLAM glitches) along the way. |
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
 | `offline_eval.py` | Open-loop sanity check of a trained checkpoint against the held-out val episodes (deployment inference path fed recorded observations). Run before a robot session. |
 | `ood_check.py` | Is the robot seeing what the policy was trained on? Scores deployment frames (from `evaluate.py --dump_obs`) against the training distribution in the policy's own encoder features, + state-range parity. Run when the robot behaves "stereotyped"/ignores the scene. |
-| `analyze_dataset.py` | Dataset QA: gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (glitchy/truncated episodes). Run before training. |
-| `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` (see [Notes](#notes)). |
+| `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
 sim) and lives in the robot integration (e.g. `integrations/openarm`).
@@ -33,7 +34,17 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 
 ## Workflow
 
-### 1. Inspect the raw dataset (optional but recommended)
+**One-shot data prep:** `run_pipeline.sh` chains the filtering + conversion (steps
+2–3 below, plus QA) so you don't run them by hand. Training stays a separate,
+deliberate command — the script prints the exact `train.py` invocation at the end.
+
+```bash
+./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] [--no-qa]
+```
+
+The steps below document each stage the script runs (and how to run them manually).
+
+### 1. Inspect the raw dataset (recommended)
 
 ```bash
 uv run python analyze_dataset.py --repo_id <user>/<raw_dataset>
@@ -43,20 +54,49 @@ uv run python analyze_dataset.py --repo_id <user>/<real> <user>/<sim>
 uv run python analyze_dataset.py --repo_id <user>/<ds> --root <local-converted path>
 ```
 
-Flags episodes that never actuate the gripper, glitchy SLAM spikes, and
-truncated episodes — drop those before training.
+Flags episodes that never actuate the gripper, SLAM position spikes, and
+truncated episodes.
 
-### 2. Convert the dataset
+### 2. Clean: reject episodes with unrecoverable tracking loss
+
+When the grasped object occludes the wrist camera, SLAM loses tracking and the
+build flags those frames (`is_lost`) while holding the last pose. A **short**
+lost gap is fine — "assume no motion" (held pose → delta ≈ 0) is a good
+approximation for one or a few frames. A **long** lost run means the arm really
+moved through the occlusion; that motion is gone and unrecoverable, so the whole
+episode is dropped.
+
+```bash
+# audit only — decide thresholds, change nothing:
+uv run python clean_dataset.py --repo_id <user>/<dataset> --dry_run
+# write the kept-episode dataset:
+uv run python clean_dataset.py --repo_id <user>/<dataset> \
+    --output_repo_id <user>/<dataset>_clean
+```
+
+Rejection keys off the SLAM's own `is_lost` flag (carried into the dataset by the
+postprocess build — **rebuild an old dataset if it lacks the feature**): an
+episode is dropped if its **longest consecutive lost run** exceeds `--max_lost_run`
+(10) or its **lost fraction** exceeds `--max_lost_fraction` (30%). Longest-run is
+the primary signal — a low-% but sustained occlusion is still unrecoverable.
+Everything kept has only short lost gaps; the per-frame re-acquisition jumps are
+mopped up by step 3's despike. Non-destructive (uses lerobot's `delete_episodes`).
+
+### 3. Convert the dataset
 
 The policy trains on **camera-local delta actions** (`[dx,dy,dz, dr6d_0..5,
 proximal, distal]`, 11D) and **2D gripper state**, derived from the raw recorded
-camera poses:
+camera poses. Any single-step delta above the physical cap (an isolated SLAM
+glitch) is zeroed — "hold for that frame" — which removes the bad action without
+disturbing the rest of the trajectory:
 
 ```bash
 uv run python convert_dataset.py \
-    --repo_id <user>/<raw_dataset> \
+    --repo_id <user>/<raw_dataset>_clean \
     --proprioception none \
     --output_repo_id <user>/<dataset>_cartesian
+# reading a clean_dataset.py output that isn't on the Hub? add its local root:
+#   --root ~/.cache/huggingface/lerobot/local-converted/<user>--<raw_dataset>_clean
 ```
 
 - `--proprioception none` → `observation.state = [proximal, distal]` (gripper
@@ -69,7 +109,7 @@ uv run python convert_dataset.py \
   frame of the recorded pose (`Rᵀ·Δ`); whatever frame the data was recorded in
   (e.g. `oak_l`) is what the deltas live in. It bakes in no transform.
 
-### 3. Train
+### 4. Train
 
 ```bash
 uv run python train.py \
