@@ -366,6 +366,7 @@ class GrabetteClient:
         target_repo: str,
         raw_repo: str,
         task_description: str,
+        private: bool = False,
     ) -> dict:
         try:
             r = self._http.post(
@@ -375,6 +376,7 @@ class GrabetteClient:
                     "target_repo": target_repo,
                     "raw_repo": raw_repo,
                     "task_description": task_description,
+                    "private": private,
                 },
             )
             r.raise_for_status()
