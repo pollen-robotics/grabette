@@ -21,11 +21,11 @@ Transforms the dataset:
 Usage:
   # Gripper-only state (2D):
   uv run python convert_dataset.py \\
-      --repo_id SteveNguyen/Grabette_redcube_quest
+      --repo_id <user>/<raw_dataset>
 
   # With relative proprioception (11D, UMI-style):
   uv run python convert_dataset.py \\
-      --repo_id SteveNguyen/Grabette_redcube_quest --proprioception relative
+      --repo_id <user>/<raw_dataset> --proprioception relative
 """
 
 import argparse
@@ -215,8 +215,15 @@ def parse_args():
     parser.add_argument(
         "--repo_id",
         type=str,
-        default="SteveNguyen/Grabette_redcube_quest",
+        required=True,
         help="LeRobot dataset repo ID",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Local dataset root for the SOURCE (e.g. a clean_dataset.py output). "
+             "If unset, the dataset is resolved from the HF cache by repo_id.",
     )
     parser.add_argument(
         "--proprioception",
@@ -256,13 +263,31 @@ def parse_args():
         type=str,
         default=None,
         help="If set, push the converted dataset to this Hub repo id "
-             "(e.g. 'SteveNguyen/sim_grasp_train_v2'). If the local repo "
+             "(e.g. '<user>/<dataset>_train'). If the local repo "
              "id does not match, the push retargets to this id.",
     )
     parser.add_argument(
         "--hub_private",
         action="store_true",
         help="Make the Hub repo private (default: public).",
+    )
+    parser.add_argument(
+        "--no_despike",
+        action="store_true",
+        help="Disable zeroing of per-step outlier deltas (SLAM glitches).",
+    )
+    parser.add_argument(
+        "--despike_max_mm",
+        type=float,
+        default=80.0,
+        help="Per-step |Δpos| above this (mm) is a glitch → that delta is zeroed. "
+             "80mm/step ≈ 4 m/s at 50fps, well above hand speed but below SLAM jumps.",
+    )
+    parser.add_argument(
+        "--despike_max_deg",
+        type=float,
+        default=45.0,
+        help="Per-step rotation delta above this (deg) is a glitch → that delta is zeroed.",
     )
     return parser.parse_args()
 
@@ -281,7 +306,7 @@ def main():
     # directory and operate on the copy. Otherwise the conversion is in-place
     # on the HF cache (original behavior).
     if args.output_repo_id:
-        src_ds = LeRobotDataset(args.repo_id)
+        src_ds = LeRobotDataset(args.repo_id, root=args.root)
         src_root = Path(src_ds.root)
         if args.output_root:
             dst_root = Path(args.output_root).expanduser().resolve()
@@ -324,9 +349,9 @@ def main():
         work_root: Path | None = dst_root
         ds = LeRobotDataset(work_repo_id, root=work_root)
     else:
-        ds = LeRobotDataset(args.repo_id)
+        ds = LeRobotDataset(args.repo_id, root=args.root)
         work_repo_id = args.repo_id
-        work_root = None  # let LeRobotDataset resolve from HF cache by repo_id
+        work_root = args.root  # None → HF cache by repo_id; else the given local root
     root = Path(ds.root)
     logger.info(f"Dataset root: {root}")
     logger.info(f"Frames: {len(ds)}, Episodes: {ds.meta.total_episodes}")
@@ -366,6 +391,32 @@ def main():
             f"  {pf.name}: delta actions "
             f"(mean pos delta: {np.linalg.norm(delta_actions[:, :3], axis=1).mean() * 1000:.2f} mm)"
         )
+
+        # --- Zero out per-step outlier deltas (SLAM tracking glitches) ---
+        # A single glitch frame yields one impossibly-large delta (a
+        # relocalization "step" — the offset cancels in every OTHER delta) or
+        # two (a "return" spike). Since we train on deltas, replacing the
+        # outlier with 0 = "hold for that frame", which removes the bad action
+        # with no side effect on the rest of the trajectory. Episodes with
+        # segments too long to absorb this way are dropped upstream by
+        # clean_dataset.py (same --despike_max_* thresholds).
+        if not args.no_despike:
+            dpos_mm = np.linalg.norm(delta_actions[:, :3], axis=1) * 1000.0
+            r6d = delta_actions[:, 3:9]
+            Rd = rotation_6d_to_rotation_matrix_numpy(r6d)
+            cos = np.clip((np.trace(Rd, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
+            ang_deg = np.degrees(np.arccos(cos))
+            # Episode-boundary deltas are already zeroed to [0..0]; that degenerate
+            # 6D yields a bogus angle, so only apply the rotation test to real
+            # (non-zero) rotation deltas.
+            valid_rot = np.linalg.norm(r6d, axis=1) > 1e-6
+            bad = (dpos_mm > args.despike_max_mm) | (valid_rot & (ang_deg > args.despike_max_deg))
+            if bad.any():
+                delta_actions[bad, :9] = 0.0
+                logger.info(
+                    f"  {pf.name}: zeroed {int(bad.sum())} outlier delta(s) "
+                    f"(>{args.despike_max_mm:.0f}mm or >{args.despike_max_deg:.0f}°)"
+                )
 
         # Compute observation state
         if use_relative:
