@@ -12,7 +12,7 @@ from grabette_postprocess.episode_manager import find_processed_episodes
 @click.option("-i", "--input_dir", required=True, type=click.Path(exists=True),
               help="Parent directory containing episode subdirectories")
 @click.option("--repo_id", required=True,
-              help="Dataset identifier (e.g. 'steve/grabette-demo')")
+              help="Dataset identifier (e.g. '<user>/<dataset>')")
 @click.option("--task", required=True,
               help="Task description (e.g. 'cup manipulation')")
 @click.option("--fps", type=float, default=None,

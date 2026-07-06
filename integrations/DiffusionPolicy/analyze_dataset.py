@@ -1,4 +1,11 @@
-"""Quantify a converted Gripette dataset (11D delta action + 2D gripper state).
+"""Quantify a Grabette dataset — RAW (8D absolute pose) or CONVERTED (11D delta).
+
+Handles both action layouts the converter accepts, so it works at README step 1
+(inspect the raw dataset, before conversion) AND step 2 (the converted dataset):
+  raw 8D:        [x, y, z, ax, ay, az, proximal(6), distal(7)]   — absolute pose
+  converted 11D: [dx, dy, dz, r6d_0..5, proximal(9), distal(10)] — per-step deltas
+Position-delta / SLAM-spike checks are computed consistently for both (raw poses
+are diffed within-episode; converted actions are already per-step deltas).
 
 Prints the numbers that matter for diagnosing "not enough data / variability":
 size, gripper-closure coverage, distal usage, action-delta magnitudes, and an
@@ -15,8 +22,6 @@ import argparse
 import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-# action layout: [dx,dy,dz, r6d_0..5, proximal(9), distal(10)]
-PROX, DIST = 9, 10
 CLOSED_THRESH = -1.0  # proximal below this = "closed" (full close ~ -1.5)
 
 
@@ -28,6 +33,38 @@ def analyze(repo_id: str, root: str | None = None):
     eps = np.unique(ep)
 
     print(f"\n{'='*64}\n  {repo_id}\n{'='*64}")
+
+    # --- Layout detection. The converter accepts a raw 8D or converted 11D
+    #     action; the gripper columns and the meaning of the first 3 dims
+    #     differ, so branch on the action dim rather than assuming 11D. ---
+    D = A.shape[1]
+    if D == 8:
+        PROX, DIST, is_delta = 6, 7, False
+        layout = "raw 8D (absolute pose + axis-angle + 2D gripper)"
+    elif D == 11:
+        PROX, DIST, is_delta = 9, 10, True
+        layout = "converted 11D (camera-local delta actions + 2D gripper)"
+    else:
+        print(f"  ERROR: action dim = {D}; expected 8 (raw) or 11 (converted).")
+        print("  This tool inspects Grabette datasets. If this is a raw recording,")
+        print("  it should be 8D; if converted, 11D. Nothing to analyze — skipping.")
+        return
+
+    # Per-step position-delta magnitude (mm), consistent across layouts:
+    #   converted 11D → first 3 dims are already the per-step delta;
+    #   raw 8D        → positions are absolute, so diff consecutive frames
+    #                   WITHIN each episode (this is where SLAM spikes appear).
+    if is_delta:
+        dpos_mm = np.linalg.norm(A[:, :3], axis=1) * 1000.0
+    else:
+        dpos_mm = np.zeros(len(A))
+        pos = A[:, :3]
+        for e in eps:
+            idx = np.where(ep == e)[0]
+            if len(idx) > 1:
+                dpos_mm[idx[1:]] = np.linalg.norm(np.diff(pos[idx], axis=0), axis=1) * 1000.0
+
+    print(f"  layout: {layout}")
     lens = np.array([(ep == e).sum() for e in eps])
     print(f"  episodes: {len(eps)}   frames: {len(A)}   "
           f"ep length min/mean/max: {lens.min()}/{lens.mean():.0f}/{lens.max()}")
@@ -54,10 +91,9 @@ def analyze(repo_id: str, root: str | None = None):
           f"(≈1 = distal actuates with proximal; «1 = distal under-used)")
 
     # --- Action deltas (position) ---
-    dmag = np.linalg.norm(A[:, :3], axis=1)
     print(f"\n  POSITION DELTAS (per-step, mm)")
-    print(f"    |Δpos| mean {1000*dmag.mean():.2f}  p50 {1000*np.median(dmag):.2f}  "
-          f"p95 {1000*np.percentile(dmag,95):.2f}  max {1000*dmag.max():.2f}")
+    print(f"    |Δpos| mean {dpos_mm.mean():.2f}  p50 {np.median(dpos_mm):.2f}  "
+          f"p95 {np.percentile(dpos_mm,95):.2f}  max {dpos_mm.max():.2f}")
 
     # --- Episode-type breakdown (object-agnostic: by gripper SWING direction) ---
     # A "close transition" = proximal ends meaningfully more closed than its
@@ -78,14 +114,13 @@ def analyze(repo_id: str, root: str | None = None):
     print(f"    episodes starting already-closed (release-like): {starts_low}/{n} ({100*starts_low/n:.0f}%)")
 
     # --- Data-hygiene anomalies: glitchy (position-delta spike) + truncated ---
-    SPIKE_MM = 15.0    # a per-step delta this large is almost certainly a SLAM/tracking glitch
+    SPIKE_MM = 80.0    # per-step delta this large = SLAM glitch, not motion (matches clean/convert --despike_max_mm; 80mm/step ≈ 4 m/s at 50fps)
     SHORT_FRAMES = 80  # episodes shorter than this are likely truncated/incomplete
-    dmag_mm = np.linalg.norm(A[:, :3], axis=1) * 1000
     glitchy, short = [], []
     for e in eps:
         m = ep == e
-        if dmag_mm[m].max() > SPIKE_MM:
-            glitchy.append((int(e), round(float(dmag_mm[m].max()), 1)))
+        if dpos_mm[m].max() > SPIKE_MM:
+            glitchy.append((int(e), round(float(dpos_mm[m].max()), 1)))
         if m.sum() < SHORT_FRAMES:
             short.append((int(e), int(m.sum())))
     print(f"\n  ANOMALIES (candidates to drop before training)")
