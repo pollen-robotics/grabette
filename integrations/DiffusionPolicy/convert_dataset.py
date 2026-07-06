@@ -429,9 +429,11 @@ def main():
         f"names={ds_final.meta.features['action']['names']}"
     )
 
-    sample = ds_final[50]
+    # Mid-episode sample (clamped: episodes can be shorter than 50 frames).
+    mid = min(50, len(ds_final) - 1)
+    sample = ds_final[mid]
     state = sample["observation.state"].tolist()
-    logger.info("\nSample frame 50:")
+    logger.info(f"\nSample frame {mid}:")
     logger.info(f"  observation.state ({state_dim}D):")
     for n, v in zip(state_names, state, strict=True):
         logger.info(f"    {n:12s}: {v:+.6f}")

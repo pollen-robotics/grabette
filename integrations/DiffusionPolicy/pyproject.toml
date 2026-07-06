@@ -5,8 +5,13 @@ description = "Diffusion Policy training & data-prep for Grabette demonstrations
 requires-python = ">=3.12"
 # Pin lerobot to the exact version you validate against (recipe validated on 0.5.x).
 dependencies = [
-    "lerobot>=0.5.1",
+    # Upper bound matters: the recipe (and our imports: policies.factory,
+    # datasets as a core dep, DiffusionConfig fields) is validated on the 0.5.x
+    # series. Newer series move `datasets` behind a lerobot[dataset] extra and
+    # shift APIs — a fresh unpinned resolve breaks on import.
+    "lerobot>=0.5.1,<0.6",
     "scipy>=1.10",
+    "matplotlib>=3.7",  # offline_eval.py overlay plots
     # numpy / torch / pyarrow come transitively with lerobot.
 ]
 

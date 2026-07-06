@@ -8,6 +8,8 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 |---|---|
 | `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**. |
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
+| `offline_eval.py` | Open-loop sanity check of a trained checkpoint against the held-out val episodes (deployment inference path fed recorded observations). Run before a robot session. |
+| `ood_check.py` | Is the robot seeing what the policy was trained on? Scores deployment frames (from `evaluate.py --dump_obs`) against the training distribution in the policy's own encoder features, + state-range parity. Run when the robot behaves "stereotyped"/ignores the scene. |
 | `analyze_dataset.py` | Dataset QA: gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (glitchy/truncated episodes). Run before training. |
 | `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` (see [Notes](#notes)). |
 
@@ -93,6 +95,52 @@ SpatialSoftmax, resize 236 / random-crop 0.95, DDIM 50/16, down_dims
 - `--resume_from <ckpt_dir>` — resume model + optimizer + step + rng.
 
 ---
+
+### 5. Offline sanity check (before a robot session)
+
+```bash
+uv run python offline_eval.py \
+    --checkpoint <user>/<model>-best \
+    --dataset_repo_id <user>/<dataset>_cartesian [--dataset_root DIR]
+```
+
+Replays the **held-out val episodes** (same deterministic split as train.py)
+through the exact deployment inference path (`select_action` queueing, eval-time
+center crop), feeding recorded observations, and compares predicted vs
+ground-truth actions. Catches normalization/frame bugs (`mag_ratio` far from 1),
+averaging / mode collapse (`std_ratio` « 1), and gripper timing errors
+(`grip_corr`, `grip_lag`), and writes per-episode overlay plots (integrated
+path, |Δpos| profile, gripper channels).
+
+**Open-loop agreement is necessary, not sufficient** — the policy sees
+ground-truth observations, so compounding-error failures are invisible. A pass
+means "worth a robot session", not "it works". Note `cos_dpos` ~0.4–0.5 is
+normal (per-step direction of noisy SLAM-derivative deltas + 8-step replan
+cadence); judge direction by the integrated-path overlay instead.
+
+### 6. If the robot ignores the scene: OOD check
+
+Offline pass + "stereotyped" robot behavior (same motion regardless of the
+scene) usually means the deployment **observation** is out-of-distribution for
+the policy's encoder. Dump one episode of the exact observations the robot
+pipeline feeds the policy (`evaluate.py --dump_obs /tmp/deploy_obs
+--num_episodes 1 ...`), then:
+
+```bash
+uv run python ood_check.py \
+    --checkpoint <user>/<model>-best \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --images /tmp/deploy_obs/ep000 [--self_test]
+```
+
+Fits the training-frame distribution in the policy's own encoder features
+(64-D, Mahalanobis), calibrates on the val episodes, scores the deployment
+frames, and checks `observation.state` ranges against the dataset (units /
+sign / measured-vs-command). `--self_test` demonstrates sensitivity on
+synthetic bugs: 180° rotation → strongly OOD; BGR swap → suspect; mild
+exposure shifts → in-distribution (inside the color-jitter augmentation
+envelope, so genuinely harmless). Sharpest for geometric/view mismatches —
+the class that produces "ignores the scene" failures.
 
 ## `train.py` parameters
 
