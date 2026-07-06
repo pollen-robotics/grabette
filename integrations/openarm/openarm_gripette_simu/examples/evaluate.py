@@ -102,6 +102,18 @@ def parse_args():
     p.add_argument("--debug", action="store_true", help="Show camera feed during evaluation")
     p.add_argument("--log_gripper", action="store_true",
                    help="Print the gripper command (proximal/distal) sent each step, vs the observed gripper state")
+    p.add_argument("--dump_obs", type=str, default=None,
+                   help="Directory to dump the EXACT observations fed to the policy "
+                        "(obs_XXXXX.png + state.jsonl, one subdir per episode). Use with "
+                        "--num_episodes 1 for a train/deploy distribution check (ood_check.py).")
+    p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
+                   metavar=("PROX", "DIST"),
+                   help="Gripper opening commanded at each episode start. MUST match the "
+                        "demos' typical first-frame state, or the policy starts conditioned "
+                        "on an out-of-distribution gripper state. Sim datasets start fully "
+                        "open (0 0, the default); real Grabette demos start partially "
+                        "squeezed (e.g. 0.40 0.30 for the pick-can dataset — check with "
+                        "ood_check.py / the dataset's first-frame stats).")
     p.add_argument(
         "--n_action_steps",
         type=int,
@@ -211,11 +223,15 @@ def run_episode(
     clamp_pos_m=None,
     clamp_rot_rad=None,
     log_gripper=False,
+    dump_dir=None,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats."""
     n_clamped = 0
     dt = 1.0 / fps
     episode_start = time.perf_counter()
+    if dump_dir is not None:
+        dump_dir = _Path(dump_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
 
     for step in range(max_steps):
         loop_start = time.perf_counter()
@@ -231,6 +247,15 @@ def run_episode(
             start_rot,
             joint_mode=joint_mode,
         )
+
+        # Dump the exact observation fed to the policy (pre-normalization), for
+        # offline train/deploy distribution checks (DiffusionPolicy/ood_check.py).
+        # camera_image is RGB HWC uint8 here; cv2.imwrite expects BGR.
+        if dump_dir is not None:
+            cv2.imwrite(str(dump_dir / f"obs_{step:05d}.png"),
+                        cv2.cvtColor(camera_image, cv2.COLOR_RGB2BGR))
+            with open(dump_dir / "state.jsonl", "a") as f:
+                f.write(_json.dumps({"step": step, "state": [float(v) for v in state]}) + "\n")
 
         state_tensor = torch.from_numpy(state).float()
         image_tensor = torch.from_numpy(camera_image).float() / 255.0
@@ -404,11 +429,14 @@ def main():
             logger.error(f"Reset failed: {reset_resp.error}")
             continue
 
-        # Explicitly re-open the gripper between episodes. arm_stub.Reset()
-        # only re-randomizes the arm/cube; without this, the gripper retains
-        # the closed state from the previous episode's grasp + lift, which
-        # is severely out of distribution for the policy at episode start.
-        gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(motor1_goal=0.0, motor2_goal=0.0))
+        # Re-set the gripper opening between episodes. arm_stub.Reset() only
+        # re-randomizes the arm/cube; without this, the gripper retains the
+        # closed state from the previous episode's grasp + lift. The opening
+        # must match the demos' typical FIRST-FRAME state (--start_gripper):
+        # a fully-open (0,0) start is itself out of distribution for datasets
+        # recorded with a partially-squeezed trigger (real Grabette demos).
+        gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
+            motor1_goal=args.start_gripper[0], motor2_goal=args.start_gripper[1]))
 
         # Reset policy action queue
         policy.reset()
@@ -440,6 +468,7 @@ def main():
             success_check_freq=args.success_check_freq,
             debug=args.debug,
             log_gripper=args.log_gripper,
+            dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
             use_relative_proprio=use_relative_proprio,
             start_pos=start_pos,
             start_rot=start_rot,
