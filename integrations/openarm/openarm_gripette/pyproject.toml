@@ -16,8 +16,17 @@ dependencies = [
     # for now (see integrations/openarm/README.md for the wart).
     "openarm-gripette-simu",
 
-    "grpcio>=1.60",
+    # Floor matches the proto stubs generated in openarm-gripette-simu
+    # (GRPC_GENERATED_VERSION=1.81.0): they refuse to import on older grpcio.
+    "grpcio>=1.81",
     "numpy",
+
+    # OpenArm's official CAN bindings — used only by the firmware-zero
+    # calibration tool (examples/calibrate_arm_no_gripper.py). Not on PyPI:
+    # built from source at install time (scikit-build-core fetches cmake
+    # automatically; a C++ compiler must be present). Pinned: newer tags add
+    # build deps (CLI11 at 1.2.9) and require a matching system OpenArmCAN.
+    "openarm-can",
 ]
 
 [build-system]
@@ -28,6 +37,7 @@ build-backend = "hatchling.build"
 # Resolved from the monorepo workspace (integrations/openarm/openarm_gripette_simu),
 # not PyPI.
 openarm-gripette-simu = { workspace = true }
+openarm-can = { git = "https://github.com/enactic/openarm_can", subdirectory = "python", tag = "1.2.8" }
 
 # See openarm_gripette_simu/pyproject.toml — lerobot pulls opencv-python-headless
 # which clobbers our opencv-python. Override cascades to any consumer of this pkg.

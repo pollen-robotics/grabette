@@ -9,23 +9,23 @@ By dataset convention (from `check_action_means.py`):
 
 Usage:
   # Send explicit goals (radians)
-  uv run python examples/openarm_gripette/set_gripper_pose.py \\
+  uv run python examples/set_gripper_pose.py \\
       --gripper_addr localhost:50051 --motors -1.5 -2.1
 
   # Or in degrees (added convenience)
-  uv run python examples/openarm_gripette/set_gripper_pose.py \\
+  uv run python examples/set_gripper_pose.py \\
       --gripper_addr localhost:50051 --motors_deg -85 -120
 
   # Presets
-  uv run python examples/openarm_gripette/set_gripper_pose.py --gripper_addr ... --open
-  uv run python examples/openarm_gripette/set_gripper_pose.py --gripper_addr ... --close
+  uv run python examples/set_gripper_pose.py --gripper_addr ... --open
+  uv run python examples/set_gripper_pose.py --gripper_addr ... --close
 
   # Just read the current motor positions (no command)
-  uv run python examples/openarm_gripette/set_gripper_pose.py \\
+  uv run python examples/set_gripper_pose.py \\
       --gripper_addr localhost:50051 --read
 
   # Enable / disable torque (free-move / hold)
-  uv run python examples/openarm_gripette/set_gripper_pose.py \\
+  uv run python examples/set_gripper_pose.py \\
       --gripper_addr localhost:50051 --torque off
 """
 

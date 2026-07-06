@@ -28,14 +28,14 @@ frame deltas — that's the regression the camera-local refactor was meant to
 fix. See `feedback_action_deltas_camera_local` in memory.
 
 Usage:
-  uv run python examples/openarm_gripette/cartesian_square.py \\
+  uv run python examples/cartesian_square.py \\
       --arm_addr localhost:50052
-  uv run python examples/openarm_gripette/cartesian_square.py \\
+  uv run python examples/cartesian_square.py \\
       --arm_addr <robot-ip>:50052 --gripper_addr <gripette-ip>:50051 --show_camera
 
   # Optional: trace the square in the camera-local XY plane (image-right ×
   # image-down) instead of the default YZ plane.
-  uv run python examples/openarm_gripette/cartesian_square.py --plane xy
+  uv run python examples/cartesian_square.py --plane xy
 """
 
 import argparse
@@ -46,6 +46,8 @@ import time
 import grpc
 import numpy as np
 from openarm_gripette_simu.proto import arm_pb2, arm_pb2_grpc
+
+from _torque_guard import abort_torque_off, add_keep_torque_arg
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +219,7 @@ def parse_args():
                         "URDF frame). The IK locks the camera-site (which the "
                         "policy uses), but you watch the gripper tip — these "
                         "two diverge when wrist joints swing in the null space.")
+    add_keep_torque_arg(p)
     args = p.parse_args()
     if args.tiny:
         args.half_size = TINY_HALF_SIZE
@@ -404,6 +407,10 @@ def main():
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
+        abort_torque_off(arm_stub, args.keep_torque)
+    except Exception:
+        abort_torque_off(arm_stub, args.keep_torque)
+        raise
     finally:
         stop_event.set()
         if cam_thread is not None:

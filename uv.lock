@@ -3030,6 +3030,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/39/5a/8ba33c034a5031a2ca3fb6998b5d00683d923347f472890dfb671a9b38e6/onshape_to_robot-1.8.2.tar.gz", hash = "sha256:c22e5c3985b07ac4af105f1f390235e18c685c5c2dc19b5e6506bfa85739d472", size = 46597, upload-time = "2026-03-27T09:06:34.662Z" }
 
 [[package]]
+name = "openarm-can"
+version = "1.2.8"
+source = { git = "https://github.com/enactic/openarm_can?subdirectory=python&tag=1.2.8#1cca52d904f6d0d370c03769f0231fbd04b45171" }
+
+[[package]]
 name = "openarm-gripette"
 version = "0.1.0"
 source = { editable = "integrations/openarm/openarm_gripette" }
@@ -3037,14 +3042,16 @@ dependencies = [
     { name = "grpcio" },
     { name = "lerobot", extra = ["damiao"], marker = "python_full_version >= '3.12'" },
     { name = "numpy" },
+    { name = "openarm-can" },
     { name = "openarm-gripette-simu" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "grpcio", specifier = ">=1.60" },
+    { name = "grpcio", specifier = ">=1.81" },
     { name = "lerobot", extras = ["damiao"], marker = "python_full_version >= '3.12'", specifier = ">=0.5.1" },
     { name = "numpy" },
+    { name = "openarm-can", git = "https://github.com/enactic/openarm_can?subdirectory=python&tag=1.2.8" },
     { name = "openarm-gripette-simu", editable = "integrations/openarm/openarm_gripette_simu" },
 ]
 
@@ -3096,7 +3103,7 @@ eval = [
 
 [package.metadata]
 requires-dist = [
-    { name = "grpcio", specifier = ">=1.60" },
+    { name = "grpcio", specifier = ">=1.81" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.60" },
     { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'dataset'", specifier = ">=0.5" },
     { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'eval'", specifier = ">=0.5.1" },

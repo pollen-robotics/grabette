@@ -13,8 +13,12 @@
 #
 # Usage (right arm):
 #   sudo ip link set can0 up type can bitrate 1000000
-#   uv run python examples/openarm_gripette/calibrate_arm_no_gripper.py \
+#   uv run python examples/calibrate_arm_no_gripper.py \
 #       --canport can0 --arm-side right_arm
+#
+# The zeros are written into the Damiao motor firmware (set_zero_all), so this
+# only needs to run once per physical arm — re-run after replacing a motor or
+# mechanically disassembling the arm.
 #
 # Before running:
 #   - Disconnect the Gripette (or just leave it; this script doesn't touch it).

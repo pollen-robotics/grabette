@@ -26,7 +26,7 @@ motors (7 here vs. 8 for the standard OpenArm).
 import logging
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_not_connected
+from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
 from lerobot.robots.openarm_follower.openarm_follower import OpenArmFollower
 from lerobot.robots.utils import ensure_safe_goal_position
@@ -65,6 +65,29 @@ class OpenArm7Follower(OpenArmFollower):
     # the LeRobot calibration fields (homing_offset / drive_mode / range_*),
     # so LeRobot's file-based calibration is purely vestigial for this arm.
     # We bypass it entirely to avoid prompts and accidental zero overwrites.
+
+    @check_if_already_connected
+    def connect(self, calibrate: bool = True) -> None:
+        """Connect WITHOUT re-zeroing the motors.
+
+        Upstream `OpenArmFollower.connect` calls `bus.set_zero_position()` on
+        every connect when `is_calibrated` is True (their convention: zero =
+        the hanging rest pose the arm is assumed to be in at startup). Our
+        zeros are the OpenArm official firmware calibration and must survive
+        restarts — re-zeroing at the current pose silently DESTROYS the
+        calibration whenever the server starts with the arm away from the
+        calibration pose (e.g. after a torque-off fall).
+
+        Identical to the upstream method otherwise (bus + cameras + configure
+        + enable torque); LeRobot calibration is skipped per the bypass above.
+        """
+        logger.info(f"Connecting arm on {self.config.port} (firmware zeros preserved)...")
+        self.bus.connect()
+        for cam in self.cameras.values():
+            cam.connect()
+        self.configure()
+        self.bus.enable_torque()
+        logger.info(f"{self} connected.")
 
     @property
     def is_calibrated(self) -> bool:

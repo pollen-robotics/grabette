@@ -24,7 +24,7 @@ class ArmCommandResponse(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ...) -> None: ...
 
 class GetArmStateRequest(_message.Message):
     __slots__ = ()
@@ -62,7 +62,7 @@ class ResetResponse(_message.Message):
     cube_x: float
     cube_y: float
     cube_z: float
-    def __init__(self, success: bool = ..., error: _Optional[str] = ..., cube_x: _Optional[float] = ..., cube_y: _Optional[float] = ..., cube_z: _Optional[float] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., cube_x: _Optional[float] = ..., cube_y: _Optional[float] = ..., cube_z: _Optional[float] = ...) -> None: ...
 
 class SuccessStatusRequest(_message.Message):
     __slots__ = ()
@@ -74,7 +74,13 @@ class SuccessStatusResponse(_message.Message):
     CUBE_DISPLACEMENT_FIELD_NUMBER: _ClassVar[int]
     goal_reached: bool
     cube_displacement: float
-    def __init__(self, goal_reached: bool = ..., cube_displacement: _Optional[float] = ...) -> None: ...
+    def __init__(self, goal_reached: _Optional[bool] = ..., cube_displacement: _Optional[float] = ...) -> None: ...
+
+class SetTorqueRequest(_message.Message):
+    __slots__ = ("enable",)
+    ENABLE_FIELD_NUMBER: _ClassVar[int]
+    enable: bool
+    def __init__(self, enable: _Optional[bool] = ...) -> None: ...
 
 class ArmPingRequest(_message.Message):
     __slots__ = ()
