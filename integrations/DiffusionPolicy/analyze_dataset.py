@@ -21,8 +21,40 @@ Usage:
 import argparse
 import numpy as np
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets.io_utils import load_episodes
 
 CLOSED_THRESH = -1.0  # proximal below this = "closed" (full close ~ -1.5)
+
+
+def video_length_mismatches(meta) -> list[tuple[int, str, int, int]]:
+    """Episodes whose stored video segment doesn't span `length` frames.
+
+    Camera frames lost at capture/encode without padding make the video
+    SHORTER than the parquet rows. Such episodes (a) desync image
+    observations from actions after each gap (20 ms per missing frame at
+    50 fps), and (b) crash LeRobot's `delete_episodes` with "Episode length
+    mismatch" when they are KEPT while another episode in the same video
+    file is deleted. Drop them before training/cleaning.
+
+    Returns (episode_index, video_key, length, video_span) tuples; metadata
+    only, no video decode.
+    """
+    if not meta.video_keys:
+        return []
+    if meta.episodes is None:
+        meta.episodes = load_episodes(meta.root)
+    bad = []
+    for e in range(meta.total_episodes):
+        ep_meta = meta.episodes[e]
+        for vk in meta.video_keys:
+            from_ts = ep_meta.get(f"videos/{vk}/from_timestamp")
+            to_ts = ep_meta.get(f"videos/{vk}/to_timestamp")
+            if from_ts is None or to_ts is None:
+                continue  # pre-v3 metadata without per-episode video spans
+            span = round(to_ts * meta.fps) - round(from_ts * meta.fps)
+            if span != ep_meta["length"]:
+                bad.append((e, vk, int(ep_meta["length"]), int(span)))
+    return bad
 
 
 def analyze(repo_id: str, root: str | None = None):
@@ -128,6 +160,15 @@ def analyze(repo_id: str, root: str | None = None):
           f"{glitchy[:12]}{' ...' if len(glitchy)>12 else ''}")
     print(f"    truncated (<{SHORT_FRAMES} frames): {len(short)} eps  "
           f"{short[:12]}{' ...' if len(short)>12 else ''}")
+
+    # --- Video/parquet consistency (metadata only, v3 datasets) ---
+    mismatched = video_length_mismatches(ds.meta)
+    bad_eps = sorted({e for e, _, _, _ in mismatched})
+    print(f"    video shorter than data (lost frames, MUST drop): {len(bad_eps)} eps  {bad_eps}")
+    if bad_eps:
+        worst = max(mismatched, key=lambda m: m[2] - m[3])
+        print(f"      worst: ep {worst[0]} ({worst[1]}) is {worst[2] - worst[3]} frame(s) short. "
+              f"These desync image obs from actions and crash delete_episodes if kept.")
 
 
 def main():
