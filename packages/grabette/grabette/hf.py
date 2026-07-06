@@ -55,8 +55,9 @@ class HuggingFaceClient:
         if self._api is None:
             if not token:
                 raise ValueError("No token available")
-            self._api = HfApi(token=token)
-            self._api.whoami()
+            api = HfApi(token=token)
+            api.whoami()
+            self._api = api
         return self._api
 
     def get_user_info(self) -> dict | None:
@@ -75,6 +76,7 @@ class HuggingFaceClient:
         episode_dir: Path,
         repo_id: str,
         progress_callback=None,
+        private: bool = False,
     ) -> str:
         """Upload an episode directory to HuggingFace Hub.
 
@@ -82,6 +84,7 @@ class HuggingFaceClient:
             episode_dir: Path to episode directory containing raw_video.mp4 + imu_data.json
             repo_id: HuggingFace repo ID (e.g., "username/grabette-data")
             progress_callback: Optional callable(percent: float, message: str)
+            private: Whether the repository should be created as private
 
         Returns:
             URL of the uploaded data on HuggingFace Hub.
@@ -93,7 +96,7 @@ class HuggingFaceClient:
             progress_callback(0.0, "Creating repository...")
 
         # Create repo if it doesn't exist
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
+        api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=private)
 
         if progress_callback:
             progress_callback(10.0, "Uploading files...")
