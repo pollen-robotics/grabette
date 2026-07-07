@@ -106,6 +106,11 @@ def parse_args():
                    help="Print the exact Cartesian delta sent to the arm each step "
                         "(post-clamp): Δpos per axis + magnitude (mm), rotation-delta "
                         "angle (deg), and the gripper goals.")
+    p.add_argument("--ask_success", type=str, default=None, metavar="RESULTS_JSONL",
+                   help="REAL-ARM scoring: after each episode, prompt the operator for "
+                        "grasp success (y/N) and append {episode, success, steps, "
+                        "checkpoint, ...} to this JSONL. Use for A/B sessions — the sim's "
+                        "automatic success check is a stub on the real server.")
     p.add_argument("--dump_obs", type=str, default=None,
                    help="Directory to dump the EXACT observations fed to the policy "
                         "(obs_XXXXX.png + state.jsonl, one subdir per episode). Use with "
@@ -498,6 +503,18 @@ def main():
             clamp_pos_m=(args.clamp_pos_mm / 1000.0) if args.clamp_pos_mm else None,
             clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
         )
+        # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
+        # result["success"] is meaningless there: ask the operator instead and
+        # append every episode to a JSONL so A/B sessions produce real numbers.
+        if args.ask_success:
+            ans = input(f"  Episode {ep + 1}: grasp success? [y/N] ").strip().lower()
+            result["success"] = ans in ("y", "yes", "o", "oui")
+            with open(args.ask_success, "a") as f:
+                f.write(_json.dumps({
+                    "episode": ep, "success": result["success"],
+                    "steps": result["steps"], "checkpoint": args.checkpoint,
+                    "n_action_steps": args.n_action_steps, "fps": args.fps,
+                }) + "\n")
         results.append(result)
 
         status_str = "SUCCESS" if result["success"] else "FAIL"

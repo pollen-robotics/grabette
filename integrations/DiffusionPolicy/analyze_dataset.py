@@ -156,6 +156,32 @@ def analyze(repo_id: str, root: str | None = None):
     print(f"    |Δpos| mean {dpos_mm.mean():.2f}  p50 {np.median(dpos_mm):.2f}  "
           f"p95 {np.percentile(dpos_mm,95):.2f}  max {dpos_mm.max():.2f}")
 
+    # --- Supervision SNR per phase (is the delta signal motion or SLAM noise?) ---
+    # smooth-motion : residual ratio inside a 5-frame window. Measured impact:
+    # unsmoothed real data sits ~1.4:1 in the grasp window (the phase needing
+    # mm precision) vs noiseless sim data that reached 70% grasp success —
+    # convert_dataset.py --smooth_poses exists to fix exactly this.
+    def _delta_vectors(sub):
+        return sub[:, :3] if is_delta else np.diff(sub[:, :3], axis=0)
+    print(f"\n  SUPERVISION SNR (smooth-motion : noise, 5-frame window; ≥3 is healthy)")
+    for lo, hi, label in [(0.00, 0.30, "approach (0-30%)"),
+                          (0.25, 0.45, "grasp window (25-45%)"),
+                          (0.50, 0.90, "lift/transport (50-90%)")]:
+        snr = []
+        for e in eps:
+            d = _delta_vectors(A[ep == e])
+            seg = d[int(len(d) * lo):int(len(d) * hi)]
+            if len(seg) < 12:
+                continue
+            k = 5
+            smooth = np.stack([np.convolve(seg[:, j], np.ones(k) / k, mode="valid")
+                               for j in range(3)], 1)
+            resid = seg[k // 2: k // 2 + len(smooth)] - smooth
+            snr.append(np.linalg.norm(smooth, axis=1).mean()
+                       / max(np.linalg.norm(resid, axis=1).mean(), 1e-9))
+        print(f"    {label:<24} {np.median(snr):5.2f}" if snr else
+              f"    {label:<24}   n/a (episodes too short)")
+
     # --- Action deltas (rotation) ---
     drot_deg = per_step_rotation_deg(A, ep, eps, is_delta)
     print(f"\n  ROTATION DELTAS (per-step, deg)")
