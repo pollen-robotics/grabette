@@ -225,24 +225,28 @@ def main():
             raise FileExistsError(f"{dst_root} exists; pass --overwrite_output or pick another output.")
         shutil.rmtree(dst_root)
 
-    # Order: strip cameras FIRST (cheap copy-minus-stream), THEN reject episodes
-    # (re-encodes the kept episodes' videos — cheaper with fewer streams).
+    # Order: reject episodes FIRST, strip cameras SECOND. This is the only order
+    # lerobot 0.5.1 supports: delete_episodes cannot consume remove_feature's
+    # output (its per-episode image-stats quantiles come back (3,) where
+    # aggregate_stats requires (3,1,1) → ValueError). The reverse chaining is
+    # also the historically proven path. Costs a re-encode of the soon-to-be-
+    # dropped camera during rejection — correctness over speed.
     work = src
-    cam_tmp = None
-    if to_remove:
-        target = dst_root if not reject else dst_root.with_name(dst_root.name + "_camtmp")
-        if target != dst_root:
-            cam_tmp = target
-            if cam_tmp.exists():
-                shutil.rmtree(cam_tmp)
-        logger.info(f"Removing camera stream(s) {to_remove} ...")
-        work = remove_feature(work, to_remove, output_dir=target, repo_id=args.output_repo_id)
+    ep_tmp = None
     if reject:
-        logger.info(f"Removing {len(reject)} episode(s) → {dst_root}")
-        delete_episodes(work, reject, output_dir=dst_root, repo_id=args.output_repo_id)
-        if cam_tmp is not None:
-            shutil.rmtree(cam_tmp)  # intermediate camera-stripped copy, no longer needed
-    elif not to_remove:
+        target = dst_root if not to_remove else dst_root.with_name(dst_root.name + "_eptmp")
+        if target != dst_root:
+            ep_tmp = target
+            if ep_tmp.exists():
+                shutil.rmtree(ep_tmp)
+        logger.info(f"Removing {len(reject)} episode(s) ...")
+        work = delete_episodes(work, reject, output_dir=target, repo_id=args.output_repo_id)
+    if to_remove:
+        logger.info(f"Removing camera stream(s) {to_remove} → {dst_root}")
+        remove_feature(work, to_remove, output_dir=dst_root, repo_id=args.output_repo_id)
+        if ep_tmp is not None:
+            shutil.rmtree(ep_tmp)  # intermediate kept-episodes copy, no longer needed
+    elif not reject:
         logger.info(f"No rejects → copying to {dst_root}")
         copy_dataset(Path(work.root), dst_root, args.overwrite_output)
 
