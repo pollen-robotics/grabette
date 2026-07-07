@@ -1,6 +1,6 @@
 
 # GRABETTE
-<img align="left" width="50%" src="docs/images/grabette_logo_small.png">
+<img align="left" width="25%" src="docs/images/grabette_logo_small.png">
 Open-source toolkit for collecting robotic manipulation demonstrations and
 turning them into training-ready datasets.
 
