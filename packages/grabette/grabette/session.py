@@ -319,6 +319,19 @@ class SessionManager:
         self._save()
         return session_id
 
+    def get_or_create_session(self, name: str) -> str:
+        """Resolve a session by exact name match, creating one if none exists.
+
+        Session ids are per-device UUIDs with no meaning across devices, so a
+        shared task name (e.g. from a fleet-dispatched group capture) is the
+        only stable join key: each device independently resolves the same
+        name to its own local session, created on first use.
+        """
+        for s in self._sessions:
+            if s["name"] == name:
+                return s["id"]
+        return self.create_session(name)
+
     def get_session(self, session_id: str) -> SessionInfo:
         s = self._find_session(session_id)
         if s is None:
