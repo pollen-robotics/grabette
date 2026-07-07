@@ -22,6 +22,11 @@ sim) and lives in the robot integration (e.g. `integrations/openarm`).
 
 ## Setup (uv)
 
+> Unlike the rest of the monorepo, this directory is a **standalone uv project**
+> (own `.venv` + `uv.lock`, NOT a workspace member) — its heavy training pins
+> (torch/lerobot, Python 3.12) stay isolated from the device packages. A plain
+> `uv sync` here is correct and touches nothing else.
+
 ```bash
 cd integrations/DiffusionPolicy
 uv sync                     # creates the env from pyproject.toml (lerobot + scipy)

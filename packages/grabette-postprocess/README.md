@@ -40,8 +40,11 @@ LeRobot v3 dataset/
 
 Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
 
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
+
 ```bash
-uv sync
+uv sync --package grabette-postprocess
 ```
 
 The OAK SLAM step requires Docker with a locally built image:
