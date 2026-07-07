@@ -26,6 +26,10 @@
 #                         real disk, NOT /tmp: /tmp is often RAM-backed tmpfs)
 #   --proprioception M    convert mode: none (default) | relative
 #   --max-lost-run N      clean: reject if longest lost run > N (default: script's 10)
+#   --smooth-poses N      Savitzky-Golay window (odd, frames) smoothing the absolute
+#                         poses before differencing (recommended: 9 at 50fps). Removes
+#                         SLAM pose jitter that dominates grasp-phase delta supervision.
+#                         Default: off (omit the flag) until A/B-validated.
 #   --cameras "C ..."     camera stream(s) to KEEP (default: "cam0", the camera the
 #                         policy trains on). Extra recorded streams are removed:
 #                         they double training decode cost and can crash training
@@ -42,7 +46,7 @@ set -euo pipefail
 
 usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
-RAW="" RAW_ROOT="" WORK="" PROPRIO="none" MAX_LOST_RUN="" CAMERAS="cam0" DO_QA=1
+RAW="" RAW_ROOT="" WORK="" PROPRIO="none" MAX_LOST_RUN="" CAMERAS="cam0" SMOOTH_POSES="" DO_QA=1
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -50,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     --work)           WORK="$2"; shift 2 ;;
     --proprioception) PROPRIO="$2"; shift 2 ;;
     --max-lost-run)   MAX_LOST_RUN="$2"; shift 2 ;;
+    --smooth-poses)   SMOOTH_POSES="$2"; shift 2 ;;
     --cameras)        CAMERAS="$2"; shift 2 ;;
     --no-qa)          DO_QA=0; shift ;;
     -h|--help)        usage; exit 0 ;;
@@ -103,11 +108,13 @@ uv run python clean_dataset.py \
   --output_repo_id "$CLEAN_ID" --output_root "$CLEAN_ROOT" --overwrite_output \
   "${CLEAN_EXTRA[@]}"
 
+CONVERT_EXTRA=(); [[ -n "$SMOOTH_POSES" ]] && CONVERT_EXTRA=(--smooth_poses "$SMOOTH_POSES")
 echo; echo "==> [2] convert — camera-local deltas + per-frame despike"
 uv run python convert_dataset.py \
   --repo_id "$CLEAN_ID" --root "$CLEAN_ROOT" \
   --proprioception "$PROPRIO" \
-  --output_repo_id "$CART_ID" --output_root "$CART_ROOT" --overwrite_output
+  --output_repo_id "$CART_ID" --output_root "$CART_ROOT" --overwrite_output \
+  "${CONVERT_EXTRA[@]}"
 
 if [[ "$DO_QA" == 1 ]]; then
   echo; echo "==> [3] analyze — QA on the converted dataset"
