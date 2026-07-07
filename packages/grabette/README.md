@@ -57,9 +57,12 @@ Autonomous Raspberry Pi service for robotic manipulation data collection. Captur
 
 ### Development (mock mode, no hardware needed)
 
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
+
 ```bash
-uv sync
-uv run python main.py
+uv sync --package grabette
+uv run --package grabette python main.py
 # → http://localhost:8000
 ```
 
