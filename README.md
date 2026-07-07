@@ -1,50 +1,40 @@
-# GRABETTE
 
+# GRABETTE
+<img align="left" width="50%" src="docs/images/grabette_logo_small.png">
 Open-source toolkit for collecting robotic manipulation demonstrations and
 turning them into training-ready datasets.
 
 A GRABETTE rig records synchronized **camera + IMU** streams from hand-held or
 gripper-mounted devices, recovers camera trajectories with SLAM, and exports
 [LeRobot](https://huggingface.co/docs/lerobot) datasets for policy learning.
-The data-collection pipeline is **arm-agnostic** — OpenArm is provided as one
-worked integration, not a requirement.
-
-> This is a uv **workspace monorepo**. It supersedes the former per-component
-> repositories (`grabette`, `casquette`, `gripette`, `grabette-data`,
-> `openarm_gripette_simu`, `openarm_gripette_model`), which are archived
-> read-only. Electronics and screen firmware live in a separate hardware repo.
+The data-collection pipeline is **robot-agnostic**.
 
 ## Components
 
-### `packages/` — arm-agnostic core
+### `packages/` — robot-agnostic core
 
 | Package | Role | Target | Interface |
 |---|---|---|---|
-| [`grabette`](packages/grabette) | On-device data-collection service (camera + IMU + angle/OAK-D) | Raspberry Pi | HTTP/WebSocket, :8000 |
-| [`casquette`](packages/casquette) | POV head-mounted camera + IMU collection service | Raspberry Pi Zero 2W | HTTP/WebSocket, :8001 |
-| [`gripette`](packages/gripette) | Gripper motor + camera service | Raspberry Pi Zero 2W | gRPC, :50051 |
-| [`grabette-postprocess`](packages/grabette-postprocess) | SLAM/VIO (OAK-D + RTAB-Map, Dockerized) → LeRobot dataset generation | Workstation | CLI |
+| [`grabette`](packages/grabette) | Hand held data-collection device | Raspberry Pi | HTTP/WebSocket, :8000 |
+| [`gripette`](packages/gripette) | Robot mounted Gripper motor | Raspberry Pi Zero 2W | gRPC, :50051 |
+| [`grabette-postprocess`](packages/grabette-postprocess) | Data postprocess + SLAM → LeRobot dataset generation | Workstation | CLI |
+| [`casquette (WIP)`](packages/casquette) | POV head-mounted device | Raspberry Pi Zero 2W | HTTP/WebSocket, :8001 |
 
-### `integrations/openarm/` — reference integration (OpenArm 7-DOF arm)
+### `integrations/` — integration example (OpenArm 7-DOF arm + Gripette)
 
 | Package | Role |
 |---|---|
-| [`openarm_gripette_simu`](integrations/openarm/openarm_gripette_simu) | MuJoCo simulation of OpenArm + Gripette, with gRPC gripper (:50051) and arm (:50052) control and synthetic data collection |
+| [`openarm_gripette`](integrations/openarm/openarm_gripette) | Code to control the OpenArm + Gripette robot |
+| [`openarm_gripette_simu`](integrations/openarm/openarm_gripette_simu) | MuJoCo simulation of OpenArm + Gripette and synthetic data collection |
 | [`openarm_gripette_model`](integrations/openarm/openarm_gripette_model) | Robot description (URDF / MuJoCo XML) and mesh assets, generated from Onshape |
+| [`DiffusionPolicy`](integrations/DiffusionPolicy) | Diffusion Policy training code |
 
-**Using GRABETTE with a different arm:** the core in `packages/` carries no
+**Using GRABETTE with a different robot arm:**
+the core in `packages/` carries no
 OpenArm dependency. To target another platform, add an
 `integrations/<your-arm>/` alongside `openarm/` — the OpenArm integration is the
 reference example.
 
-## Layout
-
-```
-packages/                       arm-agnostic core (uv workspace members)
-integrations/openarm/           reference integration for the OpenArm arm
-pyproject.toml                  uv workspace root
-uv.lock                         single lock for the whole workspace
-```
 
 ## Cloning
 
