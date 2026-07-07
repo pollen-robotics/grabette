@@ -74,7 +74,13 @@ BASE="${RAW##*/}"
 # under pressure (corrupt videos), starve training (OOM kills), and vanish on
 # reboot. All four happened.
 WORK="${WORK:-${XDG_CACHE_HOME:-$HOME/.cache}/grabette_pipeline/$BASE}"
-WORK_FSTYPE=$(df -PT "$(dirname "$WORK")" 2>/dev/null | awk 'NR==2{print $2}')
+# Create the work dir BEFORE probing its filesystem: df on a not-yet-existing
+# path returns nonzero, and under `set -e` a failing $(...) in an assignment
+# kills the whole script — silently, since df's stderr is suppressed. (Bit us:
+# first run on a fresh machine died with no output at all.) `|| true` keeps the
+# probe advisory no matter what.
+mkdir -p "$WORK"
+WORK_FSTYPE=$(df -PT "$WORK" 2>/dev/null | awk 'NR==2{print $2}' || true)
 if [[ "$WORK_FSTYPE" == "tmpfs" || "$WORK_FSTYPE" == "ramfs" ]]; then
   echo "WARNING: work dir '$WORK' is on $WORK_FSTYPE (RAM-backed)." >&2
   echo "         Datasets there consume RAM, can be silently truncated (corrupt" >&2
