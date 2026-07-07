@@ -1,21 +1,29 @@
 """Test camera stream: measure framerate and save a sample frame.
 
 Usage:
-    uv run python scripts/camera_test.py [host:port]
+    uv run python scripts/camera_test.py <host:port>
+    uv run python scripts/camera_test.py 192.168.1.36:50051
 """
 
-import sys
+import argparse
 import time
 
 from gripette.client import GripperClient
+from gripette.config import settings
 
-TARGET = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.36:50051"
 NUM_FRAMES = 50
 
 
 def main():
-    with GripperClient(TARGET) as g:
-        print(f"Connected to {TARGET}")
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("target",
+                        help=f"Gripette endpoint as HOST or HOST:PORT (port defaults to {settings.port})")
+    args = parser.parse_args()
+
+    target = args.target if ":" in args.target else f"{args.target}:{settings.port}"
+
+    with GripperClient(target) as g:
+        print(f"Connected to {target}")
         print(f"Streaming {NUM_FRAMES} frames...")
 
         sizes = []

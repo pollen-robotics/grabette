@@ -33,6 +33,8 @@ def serve() -> None:
             (settings.motor1_min, settings.motor1_max),
             (settings.motor2_min, settings.motor2_max),
         ),
+        signs=(settings.motor1_sign, settings.motor2_sign),
+        offsets=(settings.motor1_offset, settings.motor2_offset),
     )
 
     camera.start()
