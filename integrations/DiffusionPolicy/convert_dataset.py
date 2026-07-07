@@ -286,8 +286,12 @@ def parse_args():
     parser.add_argument(
         "--despike_max_deg",
         type=float,
-        default=45.0,
-        help="Per-step rotation delta above this (deg) is a glitch → that delta is zeroed.",
+        default=5.0,
+        help="Per-step rotation delta above this (deg) is a glitch → that delta is zeroed. "
+             "5°/step = 250°/s at 50fps, above human wrist speed (~150°/s peak) but below "
+             "SLAM orientation glitches. (Was 45°: that let 5-45° glitches into training — "
+             "the policy reproduced them at eval, amplified through the widened r6d "
+             "normalization ranges, and tripped the arm server's IK-jump watchdog.)",
     )
     return parser.parse_args()
 

@@ -157,6 +157,19 @@ def main():
     extract = FeatureExtractor(policy, pre, args.device)
 
     meta = LeRobotDatasetMetadata(args.dataset_repo_id, root=args.dataset_root)
+    # Guard: fitting on a RAW dataset (8D actions, no state, extra cameras,
+    # pre-rejection episodes) would score against the WRONG distribution — and
+    # crash later with an opaque KeyError. Fail with the diagnosis.
+    if "observation.state" not in meta.features or meta.features["action"]["shape"][0] != 11:
+        raise SystemExit(
+            f"\nERROR: '{args.dataset_repo_id}' looks like a RAW dataset "
+            f"(action dim {meta.features['action']['shape'][0]}, "
+            f"state {'present' if 'observation.state' in meta.features else 'MISSING'}).\n"
+            f"This check must fit on the dataset the checkpoint TRAINED on — the converted\n"
+            f"*_cartesian output of run_pipeline.sh. If it only exists on the training\n"
+            f"machine, push it to the Hub from there, or run this check on that machine\n"
+            f"with --dataset_root."
+        )
     val_eps = val_episodes_from_checkpoint(args.checkpoint) \
         or val_episodes_like_train(meta.total_episodes, args.val_ratio, args.val_split)
     train_eps = [e for e in range(meta.total_episodes) if e not in val_eps]
