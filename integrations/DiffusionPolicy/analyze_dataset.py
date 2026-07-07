@@ -183,7 +183,7 @@ def analyze(repo_id: str, root: str | None = None):
 
     # --- Data-hygiene anomalies: glitchy (position-delta spike) + truncated ---
     SPIKE_MM = 80.0    # per-step delta this large = SLAM glitch, not motion (matches clean/convert --despike_max_mm; 80mm/step ≈ 4 m/s at 50fps)
-    SPIKE_DEG = 5.0    # per-step rotation above this = SLAM orientation glitch (5°/step = 250°/s at 50fps; human wrist peaks ~150°/s). NOTE: far below convert's --despike_max_deg default (45°) — spikes in this band survive conversion, the policy learns them, and at eval they trip the server's IK-jump watchdog.
+    SPIKE_DEG = 5.0    # per-step rotation above this = SLAM orientation glitch (5°/step = 250°/s at 50fps; human wrist peaks ~150°/s). Matches convert's --despike_max_deg default: on a CONVERTED dataset this list should be empty; on a RAW dataset it previews what despike will zero.
     SHORT_FRAMES = 80  # episodes shorter than this are likely truncated/incomplete
     glitchy, rot_glitchy, short = [], [], []
     for e in eps:

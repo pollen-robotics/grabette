@@ -14,7 +14,7 @@ dataset by the postprocess build), NOT a magnitude heuristic:
     recording or SLAM early-abort — not a demonstration), OR
   * reject if the longest consecutive lost run > --max_lost_run, OR
   * reject if the lost-frame fraction > --max_lost_fraction.
-Everything else is kept (held pose ≈ no motion); the 80 mm/45° per-frame despike
+Everything else is kept (held pose ≈ no motion); the 80 mm/5° per-frame despike
 in convert_dataset.py mops up the few re-acquisition jumps / genuine glitches.
 
 Requires the `is_lost` feature (rebuild the dataset with the postprocess

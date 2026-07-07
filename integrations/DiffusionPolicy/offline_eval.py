@@ -221,6 +221,17 @@ def main():
     args = p.parse_args()
 
     meta = LeRobotDatasetMetadata(args.dataset_repo_id, root=args.dataset_root)
+    # Guard: a RAW dataset (8D actions, no observation.state) is not what the
+    # checkpoint trained on — comparing against it is meaningless and crashes
+    # later. Same guard as train.py / ood_check.py.
+    if "observation.state" not in meta.features or meta.features["action"]["shape"][0] != 11:
+        raise SystemExit(
+            f"\nERROR: '{args.dataset_repo_id}' looks like a RAW dataset "
+            f"(action dim {meta.features['action']['shape'][0]}, "
+            f"state {'present' if 'observation.state' in meta.features else 'MISSING'}).\n"
+            f"Point --dataset_repo_id at the converted *_cartesian dataset the checkpoint\n"
+            f"was trained on (run_pipeline.sh output)."
+        )
     split_src = "explicit --episodes"
     episodes = args.episodes
     if episodes is None:
