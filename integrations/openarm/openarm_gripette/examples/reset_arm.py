@@ -53,8 +53,7 @@ PRESETS: dict[str, list[list[float]]] = {
     # shoulder rotates into position. Tune the intermediate waypoints for your
     # actual table height / arm mounting.
     "home_right_over_table": [
-        [-30.0, 0.0, 0.0, 30.0, 0.0, 0.0, 0.0],
-        [-30.0, 0.0, 0.0, 60.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 120.0, 0.0, 0.0, 0.0],
         [-30.0, 0.0, 0.0, 120.0, 0.0, 0.0, 0.0],
         [0.0, 0.0, 0.0, 90.0, 0.0, 0.0, 0.0],
     ],

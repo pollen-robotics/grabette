@@ -102,6 +102,10 @@ def parse_args():
     p.add_argument("--debug", action="store_true", help="Show camera feed during evaluation")
     p.add_argument("--log_gripper", action="store_true",
                    help="Print the gripper command (proximal/distal) sent each step, vs the observed gripper state")
+    p.add_argument("--log_deltas", action="store_true",
+                   help="Print the exact Cartesian delta sent to the arm each step "
+                        "(post-clamp): Δpos per axis + magnitude (mm), rotation-delta "
+                        "angle (deg), and the gripper goals.")
     p.add_argument("--dump_obs", type=str, default=None,
                    help="Directory to dump the EXACT observations fed to the policy "
                         "(obs_XXXXX.png + state.jsonl, one subdir per episode). Use with "
@@ -223,6 +227,7 @@ def run_episode(
     clamp_pos_m=None,
     clamp_rot_rad=None,
     log_gripper=False,
+    log_deltas=False,
     dump_dir=None,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats."""
@@ -310,6 +315,21 @@ def run_episode(
                 motor2_goal=float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0,
             )
         )
+
+        if log_deltas and not joint_mode:
+            # The EXACT command sent to the arm this step (post-clamp): camera-
+            # local position delta (mm), its magnitude, the rotation-delta angle,
+            # and the absolute gripper goals.
+            r_delta = rotation_6d_to_rotation_matrix_numpy(delta_rot_6d.reshape(1, 6))[0]
+            ang_deg = np.degrees(np.arccos(np.clip((np.trace(r_delta) - 1.0) / 2.0, -1.0, 1.0)))
+            d_mm = delta_pos * 1000.0
+            print(
+                f"step {step:3d} | Δpos mm: [{d_mm[0]:+6.2f} {d_mm[1]:+6.2f} {d_mm[2]:+6.2f}]"
+                f" |Δ| {np.linalg.norm(d_mm):5.2f} | Δrot {ang_deg:5.2f}°"
+                f" | grip ({gripper_goal[0]:+.3f}, "
+                f"{gripper_goal[1] if len(gripper_goal) > 1 else 0.0:+.3f})",
+                flush=True,
+            )
 
         if log_gripper:
             # state[-2:] is always the observed gripper (2D-only, relative, and
@@ -468,6 +488,7 @@ def main():
             success_check_freq=args.success_check_freq,
             debug=args.debug,
             log_gripper=args.log_gripper,
+            log_deltas=args.log_deltas,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
             use_relative_proprio=use_relative_proprio,
             start_pos=start_pos,

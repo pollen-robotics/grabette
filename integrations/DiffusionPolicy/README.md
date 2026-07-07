@@ -151,7 +151,11 @@ uv run python offline_eval.py \
     --dataset_repo_id <user>/<dataset>_cartesian [--dataset_root DIR]
 ```
 
-Replays the **held-out val episodes** (same deterministic split as train.py)
+Replays the **held-out val episodes** — read from the `val_episodes.json` that
+train.py saves next to its checkpoints, so eval can never disagree with the
+training split (the split is **strided**: every Nth episode, spread across the
+recording session rather than a correlated consecutive tail; for checkpoints
+trained before this change, pass `--val_split tail`). Episodes are replayed
 through the exact deployment inference path (`select_action` queueing, eval-time
 center crop), feeding recorded observations, and compares predicted vs
 ground-truth actions. Catches normalization/frame bugs (`mag_ratio` far from 1),
@@ -321,6 +325,7 @@ library · `0`/`1` = read the log.
 | Training stops silently mid-run; `dmesg -T` shows `oom-kill … pt_data_worker` | DataLoader workers exhausted system RAM | Lower `--num_workers` / `--prefetch_factor` (defaults are safe); after any crash, `pkill -9 -f train.py` — orphaned workers keep eating RAM |
 | `unable to allocate shared memory(shm) for file </torch_…>` mid-training | `$TMPDIR` is RAM-backed tmpfs; worker shm files filled it (train.py warns about this at startup) | `mkdir -p ~/tmp && TMPDIR=~/tmp uv run python train.py …` |
 | `Could not push packet to decoder: Invalid data …` | A corrupt video segment in the dataset (often written to a full tmpfs) | `check_dataset_videos.py` names the episodes → `--exclude_episodes <list>`, or re-run the pipeline with `--work` on real disk |
+| Same decode error appearing only after HOURS of training that previously read the same episodes fine | Bad bytes reached the disk but the page cache served the good copy until eviction (write-path/RAM issue on that machine) | Re-run `check_dataset_videos.py` after a reboot (cold cache = true disk reads); if corruption recurs across datasets, memtest the machine |
 | Instant exit, empty log, or import-time segfault | Broken venv (interrupted sync) or Python ≠ 3.12 | `rm -rf .venv && uv sync` (the pyproject pins Python 3.12 and lerobot 0.5.x) |
 | `AttributeError: 'NoneType' … shape` at policy init | Pointed at the RAW dataset instead of the converted one (train.py now explains this itself) | Train on the `*_cartesian` output; the exact command is in `<work>/train_command.txt` |
 | `HFValidationError: Repo id must be in the form…` on `--resume_from` | Checkpoint path didn't exist so it was treated as a Hub id (now guarded) | Pass the **absolute** path; dirs are zero-padded (`checkpoint_015000`) |

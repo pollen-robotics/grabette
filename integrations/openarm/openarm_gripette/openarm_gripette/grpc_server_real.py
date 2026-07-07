@@ -258,6 +258,18 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 )
 
             with self._cmd_lock:
+                # Once the IK-jump watchdog latched (or torque is off), the
+                # interpolator is disabled and motion is frozen until Reset.
+                # Reject outright instead of running IK: solving against the
+                # stale pre-latch joint solution just re-trips the watchdog
+                # with confusing repeated "would change by N°" errors while
+                # the arm isn't moving at all.
+                if not self._interp_enabled:
+                    return arm_pb2.ArmCommandResponse(
+                        success=False,
+                        error="motion frozen (IK-jump watchdog latch or torque off) — call Reset to re-home and re-arm",
+                    )
+
                 # Camera-LOCAL frame deltas (Stage-6 convention) applied to
                 # the INTEGRATOR target. See sim arm_servicer.SendCartesianDelta
                 # for the full math explanation. Crucial: deltas are applied
@@ -399,6 +411,8 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                     self._current_cmd_joints = target_joints.copy()
                     self._latest_target_joints = target_joints.copy()
                     self._sync_target_from_robot()
+                    # Re-homing un-latches the IK-jump watchdog: fresh count.
+                    self._ik_jump_violations = 0
             finally:
                 self._interp_enabled = True
 

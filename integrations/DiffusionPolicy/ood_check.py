@@ -38,7 +38,7 @@ import torch
 
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
 
-from offline_eval import load_policy, val_episodes_like_train
+from offline_eval import load_policy, val_episodes_from_checkpoint, val_episodes_like_train
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +141,9 @@ def main():
     p.add_argument("--self_test", action="store_true",
                    help="Score BGR-swapped / rotated / darkened val frames (detector sanity check)")
     p.add_argument("--val_ratio", type=float, default=0.1, help="Reproduces train.py's split")
+    p.add_argument("--val_split", choices=["stride", "tail"], default="stride",
+                   help="Fallback split rule when the checkpoint has no val_episodes.json "
+                        "('tail' for checkpoints trained before the strided split).")
     p.add_argument("--fit_stride", type=int, default=8, help="Fit on every Nth training frame")
     p.add_argument("--device", default="cuda")
     args = p.parse_args()
@@ -154,7 +157,8 @@ def main():
     extract = FeatureExtractor(policy, pre, args.device)
 
     meta = LeRobotDatasetMetadata(args.dataset_repo_id, root=args.dataset_root)
-    val_eps = val_episodes_like_train(meta.total_episodes, args.val_ratio)
+    val_eps = val_episodes_from_checkpoint(args.checkpoint) \
+        or val_episodes_like_train(meta.total_episodes, args.val_ratio, args.val_split)
     train_eps = [e for e in range(meta.total_episodes) if e not in val_eps]
 
     print(f"Fitting on {len(train_eps)} training episodes (stride {args.fit_stride})...")

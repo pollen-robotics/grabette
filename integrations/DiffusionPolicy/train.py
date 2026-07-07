@@ -21,6 +21,7 @@ Usage:
 """
 
 import argparse
+import json
 from pathlib import Path
 
 import torch
@@ -540,10 +541,23 @@ def main():
         excl = set(args.exclude_episodes)
         all_episodes = [e for e in all_episodes if e not in excl]
         print(f"  Excluding {len(excl)} episodes; {len(all_episodes)} remain.")
-    num_val = max(1, int(len(all_episodes) * args.val_ratio))
-    # Use last episodes as validation (deterministic split, no randomness)
-    val_episodes = all_episodes[-num_val:]
-    train_episodes = all_episodes[:-num_val]
+    # STRIDED validation split (deterministic, no randomness): every Nth episode.
+    # Consecutive episodes are recorded minutes apart — same lighting, operator
+    # rhythm, object placements — so a tail split (old behavior) validates on a
+    # correlated blob and flatters the metrics. Striding spreads the val set
+    # across the whole recording session(s).
+    stride = max(2, round(1 / args.val_ratio))
+    val_episodes = all_episodes[::stride]
+    val_set = set(val_episodes)
+    train_episodes = [e for e in all_episodes if e not in val_set]
+    # Persist the exact split next to the checkpoints: offline_eval.py reads it
+    # from there, so eval can never silently disagree with training (exclusions
+    # and split changes included).
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "val_episodes.json").write_text(json.dumps(
+        {"val_episodes": val_episodes, "split": "stride", "val_ratio": args.val_ratio}))
+    print(f"  Val episodes (strided, saved to val_episodes.json): {val_episodes}")
 
     train_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,

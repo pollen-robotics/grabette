@@ -50,10 +50,31 @@ def load_policy(checkpoint: str):
     return get_policy_class(policy_type).from_pretrained(checkpoint)
 
 
-def val_episodes_like_train(total: int, val_ratio: float) -> list[int]:
-    """Reproduce train.py's deterministic split: the LAST max(1, ratio*N) episodes."""
-    num_val = max(1, int(total * val_ratio))
-    return list(range(total - num_val, total))
+def val_episodes_like_train(total: int, val_ratio: float, mode: str = "stride") -> list[int]:
+    """Reproduce train.py's deterministic split.
+
+    mode="stride" (current train.py): every Nth episode — val spread across the
+    whole recording session, avoiding the correlated-consecutive-episodes trap.
+    mode="tail" (legacy): the LAST max(1, ratio*N) episodes — for checkpoints
+    trained before the strided split.
+    """
+    if mode == "tail":
+        num_val = max(1, int(total * val_ratio))
+        return list(range(total - num_val, total))
+    stride = max(2, round(1 / val_ratio))
+    return list(range(0, total, stride))
+
+
+def val_episodes_from_checkpoint(checkpoint: str) -> list[int] | None:
+    """The authoritative split: train.py saves val_episodes.json next to its
+    checkpoints. If the checkpoint is local, read it (checking the dir and its
+    parent, since --checkpoint may point at <output_dir>/best). Returns None for
+    Hub checkpoints / older runs — caller falls back to the deterministic rule."""
+    ckpt = Path(checkpoint)
+    for candidate in (ckpt / "val_episodes.json", ckpt.parent / "val_episodes.json"):
+        if candidate.is_file():
+            return json.loads(candidate.read_text())["val_episodes"]
+    return None
 
 
 def integrate_deltas(deltas: np.ndarray) -> np.ndarray:
@@ -185,9 +206,14 @@ def main():
     p.add_argument("--dataset_repo_id", required=True, help="Converted (11D delta) dataset")
     p.add_argument("--dataset_root", default=None, help="Local dataset root (else HF cache/Hub)")
     p.add_argument("--episodes", type=int, nargs="+", default=None,
-                   help="Explicit episode indices. Default: train.py's val split (last val_ratio).")
+                   help="Explicit episode indices. Default: the split saved next to the "
+                        "checkpoint (val_episodes.json), else train.py's deterministic rule.")
     p.add_argument("--val_ratio", type=float, default=0.1,
                    help="Val fraction used to reproduce train.py's split (default 0.1)")
+    p.add_argument("--val_split", choices=["stride", "tail"], default="stride",
+                   help="Split rule fallback when the checkpoint has no val_episodes.json: "
+                        "'stride' = current train.py (every Nth episode); 'tail' = legacy "
+                        "(last N) for checkpoints trained before the strided split.")
     p.add_argument("--max_episodes", type=int, default=None, help="Cap the number of episodes")
     p.add_argument("--device", default="cuda", help="Compute device")
     p.add_argument("--out_dir", default="offline_eval_out", help="Where the overlay PNGs go")
@@ -195,12 +221,18 @@ def main():
     args = p.parse_args()
 
     meta = LeRobotDatasetMetadata(args.dataset_repo_id, root=args.dataset_root)
-    episodes = args.episodes or val_episodes_like_train(meta.total_episodes, args.val_ratio)
+    split_src = "explicit --episodes"
+    episodes = args.episodes
+    if episodes is None:
+        episodes = val_episodes_from_checkpoint(args.checkpoint)
+        split_src = "val_episodes.json saved by train.py"
+    if episodes is None:
+        episodes = val_episodes_like_train(meta.total_episodes, args.val_ratio, args.val_split)
+        split_src = f"deterministic rule ({args.val_split}, ratio {args.val_ratio})"
     if args.max_episodes:
         episodes = episodes[: args.max_episodes]
     print(f"Dataset: {args.dataset_repo_id} ({meta.total_episodes} episodes)")
-    print(f"Evaluating episodes: {episodes}"
-          + ("" if args.episodes else f"  (train.py val split, ratio {args.val_ratio})"))
+    print(f"Evaluating episodes: {episodes}  [{split_src}]")
 
     policy = load_policy(args.checkpoint).to(args.device)
     policy.eval()

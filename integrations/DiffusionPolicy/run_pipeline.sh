@@ -114,6 +114,18 @@ if [[ "$DO_QA" == 1 ]]; then
   uv run python analyze_dataset.py --repo_id "$CART_ID" --root "$CART_ROOT"
 fi
 
+# The dataset-tools steps above RE-ENCODE video; an occasional encoder glitch
+# writes an invalid packet that only surfaces hours into training ("Could not
+# push packet to decoder"). Decode-check every episode NOW, through the same
+# path training uses, and fail the pipeline loudly instead.
+echo; echo "==> [4] video integrity — decode-check every episode"
+if ! uv run python check_dataset_videos.py --repo_id "$CART_ID" --dataset_root "$CART_ROOT"; then
+  echo "ERROR: the converted dataset has corrupt video segment(s) — see the episode" >&2
+  echo "       list above. Re-run this pipeline (a fresh re-encode usually fixes it)." >&2
+  echo "       If the same episodes fail repeatedly, inspect their raw recordings." >&2
+  exit 1
+fi
+
 echo; echo "════════════════════════════════════════════════════════════════"
 echo "  Data prep complete. Converted dataset ready for training:"
 echo "    repo_id : $CART_ID"
