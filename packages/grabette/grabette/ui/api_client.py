@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
+from pathlib import Path
 
 import httpx
+
+logger = logging.getLogger(__name__)
+
+# Read-response in 8 MB chunks. Large enough to keep syscall overhead low,
+# small enough that a multi-GB download never puts >8 MB in RAM at a time.
+# The old `r.content` reader buffered the whole response (>1 GB for a full
+# dataset), which OOM'd on the 4 GB Pi and silently returned None.
+_DOWNLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 class GrabetteClient:
@@ -14,12 +24,24 @@ class GrabetteClient:
     Used by both the local Gradio dashboard and the HF Spaces app.
     """
 
-    def __init__(self, base_url: str | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str | None = None,
+        download_dir: str | Path | None = None,
+    ) -> None:
         self.base_url = (
             base_url
             or os.environ.get("GRABETTE_API_URL")
             or "http://localhost:8000"
         )
+        # Where downloaded episode archives are staged before Gradio serves
+        # them to the browser. Passed explicitly by the local daemon so the
+        # multi-GB tar.gz lands on the SD card, NOT on Pi OS's tmpfs /tmp
+        # (which is small enough to fill after a couple of downloads and
+        # brick the whole daemon with ENOSPC). Falls back to the OS temp
+        # dir for callers that don't set it — fine on workstations / HF
+        # Spaces where /tmp is a normal-sized filesystem.
+        self._download_dir = Path(download_dir) if download_dir else Path(tempfile.gettempdir())
         self._http = httpx.Client(base_url=self.base_url, timeout=10.0)
 
     # -- Camera --
@@ -253,35 +275,46 @@ class GrabetteClient:
             return {"error": str(e)}
 
     def download_episode(self, episode_id: str) -> str | None:
+        # Stream to disk in 8 MB chunks — see _DOWNLOAD_CHUNK_BYTES. timeout=None
+        # disables the total-request deadline (large episodes can take a while);
+        # httpx still errors on stalled reads via its per-op defaults.
         try:
-            r = self._http.get(
+            self._download_dir.mkdir(parents=True, exist_ok=True)
+            path = str(self._download_dir / f"{episode_id}.tar.gz")
+            with self._http.stream(
+                "GET",
                 f"/api/episodes/{episode_id}/download",
-                timeout=60.0,
-            )
-            r.raise_for_status()
-            path = os.path.join(
-                tempfile.gettempdir(), f"{episode_id}.tar.gz"
-            )
-            with open(path, "wb") as f:
-                f.write(r.content)
+                timeout=None,
+            ) as r:
+                r.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+                        f.write(chunk)
             return path
         except Exception:
+            # Log the real cause instead of swallowing silently — the previous
+            # bare except left the Gradio UI showing no error and no link.
+            logger.exception("download_episode(%s) failed", episode_id)
             return None
 
     def download_episodes(self, episode_ids: list[str]) -> str | None:
         try:
-            r = self._http.post(
+            filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"
+            self._download_dir.mkdir(parents=True, exist_ok=True)
+            path = str(self._download_dir / filename)
+            with self._http.stream(
+                "POST",
                 "/api/episodes/download",
                 json={"episode_ids": episode_ids},
-                timeout=120.0,
-            )
-            r.raise_for_status()
-            filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"
-            path = os.path.join(tempfile.gettempdir(), filename)
-            with open(path, "wb") as f:
-                f.write(r.content)
+                timeout=None,
+            ) as r:
+                r.raise_for_status()
+                with open(path, "wb") as f:
+                    for chunk in r.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
+                        f.write(chunk)
             return path
         except Exception:
+            logger.exception("download_episodes(%s) failed", episode_ids)
             return None
 
     def move_episodes(self, episode_ids: list[str], target_session_id: str) -> dict:
