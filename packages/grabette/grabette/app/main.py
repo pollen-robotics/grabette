@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,6 +12,16 @@ from fastapi.staticfiles import StaticFiles
 
 from grabette.config import settings
 from grabette.daemon import Daemon
+
+# Route Gradio's internal file cache to the SD card. Gradio copies every
+# callback-returned file path into its cache dir (defaulting to
+# tempfile.gettempdir() + '/gradio/' = /tmp/gradio/ on Pi OS) to serve it
+# via a stable /gradio_api/file=... URL. Without this, downloading a
+# multi-GB episode archive fills the /tmp tmpfs even though we already
+# routed archive staging + api_client staging to the SD card. Must be set
+# before any Gradio import so the cache-dir constant is picked up.
+os.environ.setdefault("GRADIO_TEMP_DIR", str(settings.data_dir / ".gradio-cache"))
+(settings.data_dir / ".gradio-cache").mkdir(parents=True, exist_ok=True)
 
 # Configure logging
 logging.basicConfig(
@@ -229,7 +240,17 @@ def create_app() -> FastAPI:
             from grabette.ui.app import create_ui
 
             demo = create_ui()
-            app = gr.mount_gradio_app(app, demo, path="/")
+            # `allowed_paths` whitelists directories from which Gradio's
+            # `/gradio_api/file=<path>` handler will serve files to the
+            # browser. Without this, the multi-GB episode archives written
+            # to data_dir/.downloads/ pass silently through — the file
+            # exists on disk but Gradio refuses to hand it out, and the UI
+            # never surfaces a download link. Default allowed paths cover
+            # only Gradio's own cache and the OS temp dir.
+            app = gr.mount_gradio_app(
+                app, demo, path="/",
+                allowed_paths=[str(settings.data_dir / ".downloads")],
+            )
             logger.info("Gradio UI mounted at /")
         except ImportError:
             logger.warning(

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import tarfile
 import tempfile
@@ -75,6 +76,7 @@ class SessionManager:
         self._load()
         self._migrate_legacy()
         self._ensure_unassigned()
+        self._sweep_download_staging()
         self._save()
 
     # ── Persistence ───────────────────────────────────────────────────
@@ -258,17 +260,66 @@ class SessionManager:
         shutil.rmtree(ep_dir)
         self._save()
 
+    def _new_archive_path(self, prefix: str = "download") -> Path:
+        """Return a fresh tar.gz path in the data_dir download-staging dir.
+
+        We stage under data_dir/.downloads (SD-card-backed) rather than /tmp
+        because Pi OS mounts /tmp as a tmpfs of only a few GB — a handful of
+        large episode archives will fill it and cause ENOSPC across the whole
+        daemon (live camera, capture writes, everything). The staging dir is
+        also swept on SessionManager init as a backstop for archives that
+        weren't cleaned up by the download endpoint (crashed daemon, aborted
+        client, etc.). Individual archive files are deleted by the endpoint's
+        BackgroundTask once the FileResponse finishes streaming.
+        """
+        staging = self.data_dir / ".downloads"
+        staging.mkdir(parents=True, exist_ok=True)
+        fd, path = tempfile.mkstemp(suffix=".tar.gz", prefix=f"{prefix}_", dir=staging)
+        os.close(fd)  # we only wanted the unique path; tarfile opens by name
+        return Path(path)
+
+    def _sweep_download_staging(self) -> None:
+        """Delete any leftover archives from previous sessions (crash /
+        aborted download safety net). Called from __init__ so the daemon
+        starts clean.
+
+        Also wipes the Gradio file cache. Gradio hashes every callback-returned
+        file path and copies it into GRADIO_TEMP_DIR (routed to data_dir/
+        .gradio-cache to keep it off the /tmp tmpfs). Gradio never sweeps
+        this cache itself, so without this every downloaded archive would
+        accumulate forever on the SD card. A daemon restart is rare enough
+        that unconditionally clearing the cache costs at most one re-hash
+        on the next download.
+        """
+        staging = self.data_dir / ".downloads"
+        if staging.is_dir():
+            for f in staging.glob("*.tar.gz"):
+                try:
+                    f.unlink()
+                    logger.info("Removed stale download archive: %s", f.name)
+                except Exception as e:
+                    logger.warning("Could not remove stale archive %s: %s", f, e)
+
+        gradio_cache = self.data_dir / ".gradio-cache"
+        if gradio_cache.is_dir() and any(gradio_cache.iterdir()):
+            try:
+                shutil.rmtree(gradio_cache)
+                gradio_cache.mkdir(parents=True, exist_ok=True)
+                logger.info("Cleared Gradio file cache: %s", gradio_cache)
+            except Exception as e:
+                logger.warning("Could not clear Gradio cache %s: %s", gradio_cache, e)
+
     def create_episode_archive(self, episode_id: str) -> Path:
         ep_dir = self.episode_dir(episode_id)
         if not ep_dir.exists():
             raise FileNotFoundError(f"Episode {episode_id} not found")
-        archive_path = Path(tempfile.mktemp(suffix=".tar.gz"))
+        archive_path = self._new_archive_path(prefix=episode_id)
         with tarfile.open(archive_path, "w:gz") as tar:
             tar.add(ep_dir, arcname=episode_id)
         return archive_path
 
     def create_episodes_zip(self, episode_ids: list[str]) -> Path:
-        archive_path = Path(tempfile.mktemp(suffix=".tar.gz"))
+        archive_path = self._new_archive_path(prefix="episodes")
         with tarfile.open(archive_path, "w:gz") as tar:
             for episode_id in episode_ids:
                 ep_dir = self.episode_dir(episode_id)

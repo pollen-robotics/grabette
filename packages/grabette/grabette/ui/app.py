@@ -236,7 +236,15 @@ def _upload_progress_md(repo_id: str, rows: list[dict], finished: bool) -> str:
 
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
-    client = GrabetteClient(base_url=api_url)
+    # Route downloaded episode archives to the SD-card-backed data_dir
+    # instead of the OS /tmp (which on Pi OS is a small tmpfs). Same reason
+    # as the SessionManager staging; the SessionManager's startup sweep
+    # cleans this same directory across daemon restarts.
+    from grabette.config import settings
+    client = GrabetteClient(
+        base_url=api_url,
+        download_dir=settings.data_dir / ".downloads",
+    )
 
     # ── Camera ────────────────────────────────────────────────────────
 
