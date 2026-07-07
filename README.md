@@ -90,6 +90,20 @@ uv sync --package grabette-postprocess
 uv run --package grabette-postprocess python scripts/arducam_slam/generate_dataset.py --help
 ```
 
+> **The one rule to know:** this repo is a single uv **workspace** — one shared
+> `.venv` and one `uv.lock` at the root. A bare `uv sync`, run from *anywhere*
+> in the repo (including inside a package directory), operates on the **whole
+> workspace** and installs every package's dependencies — gigabytes of
+> torch/mujoco on a Raspberry Pi if you're not careful. Therefore:
+>
+> - **Deployment / single package** → always `uv sync --package <name>`
+>   (extras attach to it: `uv sync --package grabette --extra rpi`).
+> - **Full dev environment** → `uv sync --all-packages`.
+> - `uv run --package <name> …` runs against that package's dependency set.
+> - Exception: `integrations/DiffusionPolicy` is deliberately **standalone**
+>   (own `uv.lock`, heavy training pins) — inside it, a plain `uv sync` is
+>   correct and touches nothing else.
+
 ### Notes
 
 - **Python / `lerobot`:** `lerobot` (used by `grabette-postprocess` and the sim's
