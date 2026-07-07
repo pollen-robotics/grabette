@@ -10,6 +10,9 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 | `clean_dataset.py` | Reject glitch-ridden episodes (tracking-loss segments too long to absorb, or glitches in the grasp window). Non-destructive; writes a new dataset. |
 | `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**, zeroing per-step outlier deltas (isolated SLAM glitches) along the way. |
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
+| `offline_eval.py` | Open-loop sanity check of a trained checkpoint against the held-out val episodes (deployment inference path fed recorded observations). Run before a robot session. |
+| `ood_check.py` | Is the robot seeing what the policy was trained on? Scores deployment frames (from `evaluate.py --dump_obs`) against the training distribution in the policy's own encoder features, + state-range parity. Run when the robot behaves "stereotyped"/ignores the scene. |
+| `check_dataset_videos.py` | Decode-check every episode's video segments through the exact training path; prints the failing episodes (`train.py --exclude_episodes` takes the list). Run when training crashes on video decode. |
 | `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
@@ -37,8 +40,14 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 deliberate command — the script prints the exact `train.py` invocation at the end.
 
 ```bash
-./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] [--no-qa]
+./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] \
+                  [--cameras "cam0"|all] [--no-qa]
 ```
+
+By default the pipeline keeps **only `cam0`** (the camera the policy trains on) and
+removes any extra recorded streams: an unused stream doubles video-decode cost at
+every training step, and if its encoding is corrupt it crashes training even
+though the policy never reads it. `--cameras all` keeps everything.
 
 The steps below document each stage the script runs (and how to run them manually).
 
@@ -115,7 +124,7 @@ uv run python train.py \
     --dataset_root <path printed by convert> \
     --output_dir outputs/diffusion \
     --training_steps 50000 --batch_size 64 --bf16 \
-    --num_workers 8 --prefetch_factor 4 \
+    --num_workers 4 --prefetch_factor 2 \
     --color_jitter --state_noise_std 0.01 \
     --eval_freq 500 --save_freq 5000 \
     --push_to_hub <user>/<model>
@@ -133,6 +142,56 @@ SpatialSoftmax, resize 236 / random-crop 0.95, DDIM 50/16, down_dims
 - `--resume_from <ckpt_dir>` — resume model + optimizer + step + rng.
 
 ---
+
+### 5. Offline sanity check (before a robot session)
+
+```bash
+uv run python offline_eval.py \
+    --checkpoint <user>/<model>-best \
+    --dataset_repo_id <user>/<dataset>_cartesian [--dataset_root DIR]
+```
+
+Replays the **held-out val episodes** — read from the `val_episodes.json` that
+train.py saves next to its checkpoints, so eval can never disagree with the
+training split (the split is **strided**: every Nth episode, spread across the
+recording session rather than a correlated consecutive tail; for checkpoints
+trained before this change, pass `--val_split tail`). Episodes are replayed
+through the exact deployment inference path (`select_action` queueing, eval-time
+center crop), feeding recorded observations, and compares predicted vs
+ground-truth actions. Catches normalization/frame bugs (`mag_ratio` far from 1),
+averaging / mode collapse (`std_ratio` « 1), and gripper timing errors
+(`grip_corr`, `grip_lag`), and writes per-episode overlay plots (integrated
+path, |Δpos| profile, gripper channels).
+
+**Open-loop agreement is necessary, not sufficient** — the policy sees
+ground-truth observations, so compounding-error failures are invisible. A pass
+means "worth a robot session", not "it works". Note `cos_dpos` ~0.4–0.5 is
+normal (per-step direction of noisy SLAM-derivative deltas + 8-step replan
+cadence); judge direction by the integrated-path overlay instead.
+
+### 6. If the robot ignores the scene: OOD check
+
+Offline pass + "stereotyped" robot behavior (same motion regardless of the
+scene) usually means the deployment **observation** is out-of-distribution for
+the policy's encoder. Dump one episode of the exact observations the robot
+pipeline feeds the policy (`evaluate.py --dump_obs /tmp/deploy_obs
+--num_episodes 1 ...`), then:
+
+```bash
+uv run python ood_check.py \
+    --checkpoint <user>/<model>-best \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --images /tmp/deploy_obs/ep000 [--self_test]
+```
+
+Fits the training-frame distribution in the policy's own encoder features
+(64-D, Mahalanobis), calibrates on the val episodes, scores the deployment
+frames, and checks `observation.state` ranges against the dataset (units /
+sign / measured-vs-command). `--self_test` demonstrates sensitivity on
+synthetic bugs: 180° rotation → strongly OOD; BGR swap → suspect; mild
+exposure shifts → in-distribution (inside the color-jitter augmentation
+envelope, so genuinely harmless). Sharpest for geometric/view mismatches —
+the class that produces "ignores the scene" failures.
 
 ## `train.py` parameters
 
@@ -178,7 +237,7 @@ HF_HUB_OFFLINE=1 uv run python train.py \
     --dataset_root ~/.cache/huggingface/lerobot/local-converted/<repo--id> \
     --output_dir outputs/diffusion \
     --training_steps 50000 --batch_size 64 --bf16 \
-    --num_workers 8 --prefetch_factor 4 \
+    --num_workers 4 --prefetch_factor 2 \
     --color_jitter --state_noise_std 0.01 \
     --eval_freq 500 --save_freq 5000 \
     --wandb_project gripette --wandb_run_name diffusion_5090
@@ -253,6 +312,24 @@ for a quick official baseline.
   approach more reactive but can make the policy hesitate on the grasp trigger.
 
 ---
+
+## Troubleshooting (symptom → cause → fix)
+
+Run trainings inside `screen`/`tmux`, log with `... 2>&1 | tee train.log`, and
+read the true exit code with `${pipestatus[1]}` (zsh) / `${PIPESTATUS[0]}` (bash).
+`137` = killed by the OS (usually out of RAM) · `139` = segfault in a native
+library · `0`/`1` = read the log.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Training stops silently mid-run; `dmesg -T` shows `oom-kill … pt_data_worker` | DataLoader workers exhausted system RAM | Lower `--num_workers` / `--prefetch_factor` (defaults are safe); after any crash, `pkill -9 -f train.py` — orphaned workers keep eating RAM |
+| `unable to allocate shared memory(shm) for file </torch_…>` mid-training | `$TMPDIR` is RAM-backed tmpfs; worker shm files filled it (train.py warns about this at startup) | `mkdir -p ~/tmp && TMPDIR=~/tmp uv run python train.py …` |
+| `Could not push packet to decoder: Invalid data …` | A corrupt video segment in the dataset (often written to a full tmpfs) | `check_dataset_videos.py` names the episodes → `--exclude_episodes <list>`, or re-run the pipeline with `--work` on real disk |
+| Same decode error appearing only after HOURS of training that previously read the same episodes fine | Bad bytes reached the disk but the page cache served the good copy until eviction (write-path/RAM issue on that machine) | Re-run `check_dataset_videos.py` after a reboot (cold cache = true disk reads); if corruption recurs across datasets, memtest the machine |
+| Instant exit, empty log, or import-time segfault | Broken venv (interrupted sync) or Python ≠ 3.12 | `rm -rf .venv && uv sync` (the pyproject pins Python 3.12 and lerobot 0.5.x) |
+| `AttributeError: 'NoneType' … shape` at policy init | Pointed at the RAW dataset instead of the converted one (train.py now explains this itself) | Train on the `*_cartesian` output; the exact command is in `<work>/train_command.txt` |
+| `HFValidationError: Repo id must be in the form…` on `--resume_from` | Checkpoint path didn't exist so it was treated as a Hub id (now guarded) | Pass the **absolute** path; dirs are zero-padded (`checkpoint_015000`) |
+| Datasets vanished after a reboot | They were in `/tmp` (tmpfs) | Keep work dirs on disk (`run_pipeline.sh` now defaults to `~/.cache/grabette_pipeline` and warns on tmpfs); raw datasets belong on the Hub |
 
 ## Notes
 

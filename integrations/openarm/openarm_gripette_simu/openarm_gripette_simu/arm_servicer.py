@@ -494,6 +494,15 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
             cube_displacement=lift,
         )
 
+    def SetTorque(self, request, context):
+        """No-op in simulation (position actuators have no torque switch).
+
+        Exists for API parity with the real server, where the examples'
+        abort handlers call SetTorque(enable=False) on Ctrl+C / crash.
+        """
+        logger.info(f"SetTorque(enable={request.enable}) — no-op in simulation")
+        return arm_pb2.ArmCommandResponse(success=True)
+
     def Ping(self, request, context):
         uptime = time.monotonic() - self._start_time
         return arm_pb2.ArmPingResponse(status="ok", uptime_seconds=uptime)

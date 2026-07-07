@@ -95,6 +95,66 @@ def pose_8d_to_11d(data_8d: np.ndarray) -> np.ndarray:
     return np.concatenate([pos, rot6d, gripper], axis=1)
 
 
+def smooth_poses_11d(poses_11d: np.ndarray, episode_indices: np.ndarray,
+                     window: int, polyorder: int = 3,
+                     jump_cap_m: float = 0.08) -> np.ndarray:
+    """Savitzky-Golay-smooth the absolute poses BEFORE differencing.
+
+    Why: per-step deltas are numerical derivatives of SLAM poses at 50 fps —
+    a ±1-2 mm pose wobble becomes ±2-3 mm of per-step delta noise. Measured on
+    real data, the grasp window's supervision signal-to-noise drops to ~1.4:1
+    (vs noiseless sim data that reached 70% success): the policy learns the
+    approach from clean signal and the final fine-positioning from mush. A
+    ~9-frame window at 50 fps (~150 ms) removes the jitter while preserving
+    hand dynamics below ~5 Hz.
+
+    Details:
+      * positions: SG filter per axis; rotations: SG on sign-aligned quaternion
+        components + renormalize (valid for the small intra-window rotations of
+        a 150 ms window). Gripper dims (9,10) are NOT smoothed — the close is a
+        clean step command and softening it would teach a hesitant close.
+      * smoothing runs per contiguous CLEAN segment: segments are split at
+        episode boundaries and at raw per-step jumps > jump_cap_m (SLAM
+        re-acquisition steps). Smoothing across a jump would smear it into a
+        fast ramp that sneaks under the despike cap — splitting keeps the jump
+        as a single delta that the existing despike then zeroes.
+      * segments shorter than the window are left unsmoothed.
+    """
+    from scipy.signal import savgol_filter
+    from scipy.spatial.transform import Rotation
+
+    out = poses_11d.copy()
+    pos = poses_11d[:, :3].astype(np.float64)
+    step = np.linalg.norm(np.diff(pos, axis=0), axis=1)
+    n = len(poses_11d)
+
+    # Segment breaks: episode changes and re-acquisition jumps.
+    breaks = {0, n}
+    breaks.update((np.where(episode_indices[1:] != episode_indices[:-1])[0] + 1).tolist())
+    breaks.update((np.where(step > jump_cap_m)[0] + 1).tolist())
+    bounds = sorted(breaks)
+
+    n_smoothed = 0
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        seg = hi - lo
+        if seg <= window or window <= polyorder:
+            continue
+        out[lo:hi, :3] = savgol_filter(pos[lo:hi], window, polyorder, axis=0)
+        # Rotations: r6d -> quaternion, align signs, smooth, renormalize.
+        quat = Rotation.from_matrix(
+            rotation_6d_to_rotation_matrix_numpy(poses_11d[lo:hi, 3:9])).as_quat()
+        flip = np.cumprod(np.where(np.sum(quat[1:] * quat[:-1], axis=1) < 0, -1.0, 1.0))
+        quat[1:] *= flip[:, None]
+        quat = savgol_filter(quat, window, polyorder, axis=0)
+        quat /= np.linalg.norm(quat, axis=1, keepdims=True)
+        out[lo:hi, 3:9] = rotation_matrix_to_rotation_6d_numpy(
+            Rotation.from_quat(quat).as_matrix())
+        n_smoothed += seg
+    logger.info(f"  pose smoothing: SG window {window}, {n_smoothed}/{n} frames smoothed "
+                f"({len(bounds) - 1} segments; gripper untouched)")
+    return out
+
+
 def compute_delta_actions(poses_11d: np.ndarray, episode_indices: np.ndarray) -> np.ndarray:
     """Compute per-frame delta actions in the CAMERA-LOCAL frame.
 
@@ -272,6 +332,16 @@ def parse_args():
         help="Make the Hub repo private (default: public).",
     )
     parser.add_argument(
+        "--smooth_poses",
+        type=int,
+        default=0,
+        help="Savitzky-Golay window (odd, frames) applied to the absolute poses "
+             "before differencing; 0 = off. Recommended 9 at 50fps (~150ms): "
+             "removes SLAM pose jitter that otherwise dominates the grasp-phase "
+             "delta supervision (measured ~1.4:1 signal-to-noise). Gripper "
+             "channels are never smoothed.",
+    )
+    parser.add_argument(
         "--no_despike",
         action="store_true",
         help="Disable zeroing of per-step outlier deltas (SLAM glitches).",
@@ -286,8 +356,12 @@ def parse_args():
     parser.add_argument(
         "--despike_max_deg",
         type=float,
-        default=45.0,
-        help="Per-step rotation delta above this (deg) is a glitch → that delta is zeroed.",
+        default=5.0,
+        help="Per-step rotation delta above this (deg) is a glitch → that delta is zeroed. "
+             "5°/step = 250°/s at 50fps, above human wrist speed (~150°/s peak) but below "
+             "SLAM orientation glitches. (Was 45°: that let 5-45° glitches into training — "
+             "the policy reproduced them at eval, amplified through the widened r6d "
+             "normalization ranges, and tripped the arm server's IK-jump watchdog.)",
     )
     return parser.parse_args()
 
@@ -385,6 +459,10 @@ def main():
         # Episode indices
         episode_indices = np.array(table.column("episode_index").to_pylist())
 
+        # Optional pose smoothing before differencing (see smooth_poses_11d).
+        if args.smooth_poses > 0:
+            poses_11d = smooth_poses_11d(poses_11d, episode_indices, args.smooth_poses)
+
         # Compute delta actions
         delta_actions = compute_delta_actions(poses_11d, episode_indices)
         logger.info(
@@ -480,9 +558,11 @@ def main():
         f"names={ds_final.meta.features['action']['names']}"
     )
 
-    sample = ds_final[50]
+    # Mid-episode sample (clamped: episodes can be shorter than 50 frames).
+    mid = min(50, len(ds_final) - 1)
+    sample = ds_final[mid]
     state = sample["observation.state"].tolist()
-    logger.info("\nSample frame 50:")
+    logger.info(f"\nSample frame {mid}:")
     logger.info(f"  observation.state ({state_dim}D):")
     for n, v in zip(state_names, state, strict=True):
         logger.info(f"    {n:12s}: {v:+.6f}")
