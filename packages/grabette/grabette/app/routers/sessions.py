@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
+from grabette.capture_scheduler import get_capture_scheduler
+from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.session import SessionManager
 
 router = APIRouter(tags=["sessions"])
@@ -145,8 +150,33 @@ async def start_capture(
 ):
     if backend.is_capturing:
         raise HTTPException(status_code=409, detail="Already capturing")
-    episode_id = sm.create_episode(req.session_id)
+    scheduler = get_capture_scheduler()
+    if scheduler.is_scheduled():
+        raise HTTPException(status_code=409, detail="A start is already scheduled")
+
+    # Whatever task is active on this device is what gets offered to the
+    # fleet as the shared task name — if this device is grouped, its peers
+    # will start into a same-named session of their own.
+    target_session_id = req.session_id or sm.active_session_id
+    try:
+        task_name = sm.get_session(target_session_id).name
+    except FileNotFoundError:
+        task_name = None
+
+    sync = await request_group_start(task_name)
+    episode_id = sm.create_episode(target_session_id)
     episode_dir = sm.episode_dir(episode_id)
+
+    if sync and sync.get("status") == "scheduled":
+        target = datetime.fromisoformat(sync["scheduled_start_utc"])
+        await scheduler.schedule(backend, sm, episode_dir, target)
+        return {
+            "episode_id": episode_id,
+            "status": "scheduled",
+            "start_at_utc": sync["scheduled_start_utc"],
+            "peers": sync.get("peers", []),
+        }
+
     try:
         await backend.start_capture(episode_dir)
     except Exception:
@@ -160,11 +190,20 @@ async def stop_capture(
     backend: Backend = Depends(get_backend),
     sm: SessionManager = Depends(get_session_manager),
 ):
+    scheduler = get_capture_scheduler()
+    try:
+        outcome = await scheduler.cancel_or_wait(backend)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    if outcome == "cancelled":
+        sm.discard_pending_episode()
+        return {"status": "cancelled"}
     if not backend.is_capturing:
         raise HTTPException(status_code=409, detail="Not capturing")
     status = await backend.stop_capture()
     # File the episode into its session only now that its data is written.
     sm.register_episode(getattr(status, "session_id", None))
+    asyncio.create_task(notify_group_stop())  # best-effort; must not delay this response
     return status
 
 
