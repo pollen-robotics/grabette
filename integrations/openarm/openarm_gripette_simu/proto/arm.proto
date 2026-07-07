@@ -11,6 +11,9 @@ service ArmService {
   rpc Reset (ResetRequest) returns (ResetResponse);
   // Check if the current episode goal is achieved (cube touched)
   rpc GetSuccessStatus (SuccessStatusRequest) returns (SuccessStatusResponse);
+  // Enable/disable motor torque. Real robot: Damiao enable/disable (disable =
+  // motors freewheel, the arm FALLS under gravity). Simulator: no-op.
+  rpc SetTorque (SetTorqueRequest) returns (ArmCommandResponse);
   // Health check
   rpc Ping (ArmPingRequest) returns (ArmPingResponse);
 }
@@ -54,6 +57,10 @@ message SuccessStatusRequest {}
 message SuccessStatusResponse {
   bool goal_reached = 1;           // true if cube was touched (moved from initial position)
   float cube_displacement = 2;     // how far the cube moved (meters)
+}
+
+message SetTorqueRequest {
+  bool enable = 1;  // true = enable torque, false = disable (arm falls!)
 }
 
 message ArmPingRequest {}

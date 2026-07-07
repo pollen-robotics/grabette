@@ -74,8 +74,24 @@ generalization.
    conditioned and learnable, and you get real orientation robustness. A grasp
    angle unrelated to the object's orientation is the Part-A mistake in disguise.
 3. **Start poses / approach directions** you'll actually encounter.
-4. **Appearance** (lighting, background) for real-world robustness — the camera
-   sees it, so it's conditioned. (Training-time color-jitter adds more.)
+4. **Appearance — and above all LIGHTING.** The camera sees it, so it's
+   conditioned — and lighting is the appearance factor we have *measured* to be
+   critical (deployment under different light scored ~6× further from the
+   training distribution than any other factor, and visibly degraded the
+   policy; reproducing the recording-day lighting restored it).
+   - **A single recording session bakes in exactly one lighting condition.**
+     All episodes recorded in one hour = one sun angle, one lamp setup. Any
+     change at deployment (time of day, blinds, sun vs cloud) is then
+     out-of-distribution.
+   - **Record batches across lighting conditions**: different times of day,
+     blinds open *and* closed, artificial light on/off — including direct
+     sun with hard shadows if deployment may see it.
+   - **Why augmentation doesn't save you**: training-time color-jitter covers
+     *global* brightness/tint shifts, but **hard shadows and sun patches are
+     spatial structure** — no global augmentation can synthesize them. Only
+     diverse data covers them.
+   - **At deployment**: until the dataset has lighting diversity, reproduce
+     the recording lighting as closely as possible.
 
 ---
 
@@ -127,6 +143,32 @@ camera through the grasp and lift.
 
 ---
 
+## Part E-bis — Record motions the TARGET ROBOT can execute
+
+The handheld device has no joint limits, no singularities, and no speed limit —
+the deployment arm has all three, and **the policy is blind to them** (it sees
+only the camera + gripper, no arm joints). A demo segment the arm can't execute
+becomes a deployment failure: the policy commands it, the arm's safety layer
+rejects it, the arm **freezes while the policy expects motion**, the frozen view
+is itself out-of-distribution, and the episode unravels from there.
+
+1. **Stay inside the arm's envelope** — especially for the lift/retreat after
+   the grasp: keep lifts **modest and central** (a wide, high lift arc is where
+   we measured the arm hitting a singularity branch flip and stopping).
+   Where you *start* relative to the object matters little (the policy is a
+   visual servo and enters the demo manifold at whatever view it first sees);
+   what matters is the **path** being executable.
+2. **Not too fast.** Peak hand speed translates directly into commanded
+   per-step deltas. Fast segments (a) exceed the arm's tracking, and (b) demand
+   large per-step joint changes that trip the IK-jump safety watchdog even away
+   from singularities. Keep hand speed moderate (≲ 0.5 m/s; our raw data peaked
+   ~3.7 m/s — far beyond the arm).
+3. **Verify, don't guess** — the operator can't see singularities. Run a pilot
+   batch through the IK-feasibility filter (`openarm_gripette_simu.ik_feasibility`,
+   from the deployment start pose) before recording the full set.
+
+---
+
 ## Part F — Pre-flight (engineer, once)
 
 - **Camera/device identical to deployment** (mount, FOV, calibration). The policy
@@ -146,6 +188,8 @@ camera through the grasp and lift.
 - [ ] Smooth motion, no jitter; no fast swings (also protects SLAM tracking).
 - [ ] Object never blanks the camera — keep the scene in view through grasp + lift.
 - [ ] Diverse object **positions** (and orientations *only if* grasp-aligned).
+- [ ] Diverse **lighting** across sessions (or deploy under the recording lighting).
+- [ ] Motions **executable by the target arm**: modest central lifts, hand speed ≲ 0.5 m/s.
 - [ ] Clean first-try successes; no accidental misses.
 - [ ] Consistent pace; record at deployment rate.
 - [ ] Camera/frame/state verified vs deployment.
@@ -161,6 +205,8 @@ camera through the grasp and lift.
 | Firm decisive close | Touch-but-don't-grasp; hesitant/abortable close |
 | Smooth motion / no fast swings | Erratic deployment behavior **and** motion-blur SLAM tracking loss |
 | Object never occludes the camera | SLAM tracking loss → pose glitches; filtered / dropped episodes |
+| Lighting diversity across sessions | Policy degrades under any lighting change (hard shadows are unaugmentable spatial features) |
+| Arm-executable motions (modest lift, moderate speed) | Watchdog-rejected commands → arm freezes → frozen view is OOD → episode unravels |
 | Diverse object positions | Fails outside the demonstrated workspace |
 | Clean successes by default | Policy imitating an injected/accidental miss |
 | Consistent camera/frame/state | Large systematic offsets (frame mismatch) |
