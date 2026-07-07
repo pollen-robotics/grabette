@@ -14,11 +14,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from pathlib import Path
-
-from grabette.session import UNASSIGNED_ID
+import time
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Upper bound on how long a button press waits for the recording to actually
+# become live before giving up on the LED feedback. Must cover the fleet
+# group-sync lead time (GROUP_START_LEAD_S in grabette-fleet, currently 6s)
+# plus worst-case hardware init (OAK-D cold boot ~5-8s).
+RECORDING_WAIT_TIMEOUT_S = 20.0
 
 
 class ButtonListener:
@@ -99,9 +104,11 @@ class ButtonListener:
 
     def _on_press(self) -> None:
         """Decide what a button press means given the current daemon mode."""
+        from grabette.capture_scheduler import get_capture_scheduler
+
         if self._backend.is_teleop_active:
             self._toggle_teleop_send()
-        elif self._backend.is_capturing:
+        elif self._backend.is_capturing or get_capture_scheduler().is_scheduled():
             self._do_stop_capture()
         else:
             self._do_start_capture()
@@ -120,47 +127,84 @@ class ButtonListener:
 
     def _do_start_capture(self) -> None:
         # Blink while the start coroutine runs — it may spend several seconds
-        # warming up the OAK-D before the recording clock starts. Go solid only
-        # when start_capture returns, i.e. recording is genuinely live.
+        # waiting for a fleet group-sync T0 and/or warming up the OAK-D. Go
+        # solid only once the recording is genuinely live.
         self._button.led_blink()
-        episode_id = self._session_manager.create_episode(session_id=UNASSIGNED_ID)
-        episode_dir = self._session_manager.episode_dir(episode_id)
-
-        future = asyncio.run_coroutine_threadsafe(
-            self._backend.start_capture(episode_dir), self._loop,
-        )
+        future = asyncio.run_coroutine_threadsafe(self._start_capture_coro(), self._loop)
         try:
-            future.result(timeout=20.0)
+            future.result(timeout=RECORDING_WAIT_TIMEOUT_S)
             self._button.led_on()
-            logger.info("Button capture started: %s", episode_id)
+            logger.info("Button capture started")
         except Exception:
             logger.exception("Button start_capture failed")
-            self._session_manager.discard_pending_episode()
             self._button.led_off()
 
-    def _do_stop_capture(self) -> None:
-        if not self._backend.is_capturing:
-            logger.warning("Button stop ignored — not capturing")
+    async def _start_capture_coro(self) -> None:
+        """Runs on the event loop: request group sync, then start (scheduled
+        or immediate), and block here until the recording is actually live so
+        the caller's LED feedback reflects reality."""
+        from grabette.capture_scheduler import get_capture_scheduler
+        from grabette.fleet_sync import request_group_start
+
+        sm = self._session_manager
+        task_name = sm.get_session(sm.active_session_id).name
+        sync = await request_group_start(task_name)
+        episode_id = sm.create_episode(sm.active_session_id)
+        episode_dir = sm.episode_dir(episode_id)
+
+        if sync and sync.get("status") == "scheduled":
+            target = datetime.fromisoformat(sync["scheduled_start_utc"])
+            scheduler = get_capture_scheduler()
+            await scheduler.schedule(self._backend, sm, episode_dir, target)
+            deadline = time.monotonic() + RECORDING_WAIT_TIMEOUT_S
+            while not self._backend.is_capturing:
+                if time.monotonic() > deadline:
+                    raise TimeoutError("scheduled group start did not fire in time")
+                await asyncio.sleep(0.1)
             return
 
+        try:
+            await self._backend.start_capture(episode_dir)
+        except Exception:
+            sm.discard_pending_episode()
+            raise
+
+    def _do_stop_capture(self) -> None:
         # Acknowledge the press immediately: capture stops at once, but
         # stop_capture then spends a few seconds muxing the mp4s. Blink to
         # show "saving" instead of leaving the LED solid (looks like it's
         # still recording), then go off when the save completes.
         self._button.led_blink()
-        future = asyncio.run_coroutine_threadsafe(
-            self._backend.stop_capture(), self._loop,
-        )
+        future = asyncio.run_coroutine_threadsafe(self._stop_capture_coro(), self._loop)
         try:
-            status = future.result(timeout=30.0)
-            self._session_manager.register_episode(
-                getattr(status, "session_id", None)
-            )
-            self._button.led_off()
-            logger.info(
-                "Button capture stopped: %.1fs, %d frames",
-                status.duration_seconds, status.frame_count,
-            )
+            future.result(timeout=30.0)
         except Exception:
             logger.exception("Button stop_capture failed")
+        finally:
             self._button.led_off()
+
+    async def _stop_capture_coro(self) -> None:
+        from grabette.capture_scheduler import get_capture_scheduler
+        from grabette.fleet_sync import notify_group_stop
+
+        scheduler = get_capture_scheduler()
+        sm = self._session_manager
+        try:
+            outcome = await scheduler.cancel_or_wait(self._backend)
+        except RuntimeError:
+            logger.exception("Button stop: refusing to interrupt in-flight start")
+            return
+        if outcome == "cancelled":
+            sm.discard_pending_episode()
+            logger.info("Button stop: cancelled a pending scheduled start")
+            return
+        if not self._backend.is_capturing:
+            logger.warning("Button stop ignored — not capturing")
+            return
+        status = await self._backend.stop_capture()
+        sm.register_episode(getattr(status, "session_id", None))
+        logger.info(
+            "Button capture stopped: %.1fs, %d frames",
+            status.duration_seconds, status.frame_count,
+        )
+        asyncio.create_task(notify_group_stop())  # best-effort; don't block on it

@@ -61,47 +61,17 @@ def _create_backend():
 
 _button_listener = None
 
-# Fleet-driven scheduled start (synchronized group recordings). A group start
-# fans out the same start_at_utc to every member's queue (see grabette-fleet's
-# /api/fleet/groups/{id}/start_capture) — each device waits it out on its own
-# NTP-disciplined clock, so the group starts in lockstep regardless of which
-# device happens to poll first. Module-level because _handle_relay_command is
-# a free function re-entered on every poll cycle; there's only ever one
-# capture (scheduled or running) per device.
-_scheduled_task: asyncio.Task | None = None
-_scheduled_start_utc: datetime | None = None
-# True once T0 has fired and backend.start_capture is in flight. Distinguishes
-# "safe to cancel" (still waiting) from "must let it finish" (hardware init in
-# progress) when a stop_capture races the scheduled start.
-_scheduled_starting: bool = False
-
-
-async def _wait_and_start(target_utc: datetime, episode_dir: Path, sm) -> None:
-    global _scheduled_task, _scheduled_start_utc, _scheduled_starting
-    try:
-        wait_s = (target_utc - datetime.now(timezone.utc)).total_seconds()
-        if wait_s > 0:
-            await asyncio.sleep(wait_s)
-        _scheduled_starting = True
-        try:
-            daemon = get_daemon_instance()
-            await daemon.backend.start_capture(episode_dir)
-            logger.info("Scheduled start fired (target %s)", target_utc.isoformat())
-        finally:
-            _scheduled_starting = False
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        logger.exception("Scheduled start failed; discarding pending episode")
-        sm.discard_pending_episode()
-    finally:
-        _scheduled_task = None
-        _scheduled_start_utc = None
-
 
 async def _handle_relay_command(cmd: dict) -> dict:
-    """Map fleet commands to grabette daemon actions."""
-    global _scheduled_task, _scheduled_start_utc, _scheduled_starting
+    """Map fleet commands to grabette daemon actions.
+
+    start_capture/stop_capture share their scheduling state machine (see
+    capture_scheduler.py) with the physical button and the local UI, so a
+    fleet-dispatched synchronized start (start_at_utc set by a group's
+    /api/fleet/groups/{id}/start_capture or another device's local trigger)
+    behaves identically to one triggered locally on this device.
+    """
+    from grabette.capture_scheduler import get_capture_scheduler
     from grabette.daemon import DaemonState
     from grabette.app.routers.sessions import get_session_manager
 
@@ -109,11 +79,12 @@ async def _handle_relay_command(cmd: dict) -> dict:
     daemon = get_daemon_instance()
     if daemon is None:
         return {"status": "error", "message": "daemon not running"}
+    scheduler = get_capture_scheduler()
 
     if ctype == "get_state":
         status = daemon.status
-        if _scheduled_task is not None and not _scheduled_task.done():
-            status["scheduled_start_utc"] = _scheduled_start_utc.isoformat() if _scheduled_start_utc else None
+        if scheduler.is_scheduled():
+            status["scheduled_start_utc"] = scheduler.scheduled_start_utc.isoformat()
         return {"status": "ok", "state": status}
 
     if ctype == "logout":
@@ -128,7 +99,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
     if ctype == "start_capture":
         if backend.is_capturing:
             return {"status": "error", "message": "already capturing"}
-        if _scheduled_task is not None and not _scheduled_task.done():
+        if scheduler.is_scheduled():
             return {"status": "error", "message": "a start is already scheduled"}
         sm = get_session_manager()
         args = cmd.get("args", {})
@@ -160,35 +131,22 @@ async def _handle_relay_command(cmd: dict) -> dict:
             sm.discard_pending_episode()
             return {"status": "error", "message": "start_at_utc is in the past"}
 
-        _scheduled_start_utc = target
-        _scheduled_task = asyncio.create_task(
-            _wait_and_start(target, episode_dir, sm), name=f"scheduled-start-{episode_id}",
-        )
+        await scheduler.schedule(backend, sm, episode_dir, target)
         return {"status": "scheduled", "episode_id": episode_id, "start_at_utc": target.isoformat()}
 
     if ctype == "stop_capture":
-        if _scheduled_task is not None and not _scheduled_task.done():
-            if _scheduled_starting:
-                # T0 already fired, hardware init in flight — wait it out
-                # rather than interrupt it, then fall through to a real stop.
-                try:
-                    await asyncio.wait_for(_scheduled_task, timeout=15.0)
-                except asyncio.TimeoutError:
-                    return {"status": "error", "message": "start_capture still running after 15s; refusing to stop"}
-                if not backend.is_capturing:
-                    return {"status": "cancelled"}
-            else:
-                _scheduled_task.cancel()
-                try:
-                    await _scheduled_task
-                except asyncio.CancelledError:
-                    pass
-                get_session_manager().discard_pending_episode()
-                return {"status": "cancelled"}
+        sm = get_session_manager()
+        try:
+            outcome = await scheduler.cancel_or_wait(backend)
+        except RuntimeError as e:
+            return {"status": "error", "message": str(e)}
+        if outcome == "cancelled":
+            sm.discard_pending_episode()
+            return {"status": "cancelled"}
         if not backend.is_capturing:
             return {"status": "error", "message": "not capturing"}
         result = await backend.stop_capture()
-        get_session_manager().register_episode(getattr(result, "session_id", None))
+        sm.register_episode(getattr(result, "session_id", None))
         return {"status": "ok", "result": result}
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 
