@@ -69,63 +69,33 @@ GIT_LFS_SKIP_SMUDGE=1 git clone git@github.com:pollen-robotics/grabette.git
 Requires [uv](https://docs.astral.sh/uv/). Python ≥ 3.11.
 
 ```bash
-uv sync --all-packages          # build the full workspace environment
+uv sync --all-packages          # full workspace dev environment
 uv run --package grabette python packages/grabette/main.py   # run a service (mock backend by default)
-```
-
-Work on a single component without pulling the rest:
-
-```bash
-uv sync --package grabette-postprocess
-uv run --package grabette-postprocess python scripts/arducam_slam/generate_dataset.py --help
 ```
 
 > **The one rule to know:** this repo is a single uv **workspace** — one shared
 > `.venv` and one `uv.lock` at the root. A bare `uv sync`, run from *anywhere*
-> in the repo (including inside a package directory), operates on the **whole
-> workspace** and installs every package's dependencies — gigabytes of
-> torch/mujoco on a Raspberry Pi if you're not careful. Therefore:
+> in the repo, builds the **whole workspace** and installs every package's
+> dependencies — gigabytes of torch/mujoco on a Raspberry Pi if you're not
+> careful. Therefore:
 >
-> - **Deployment / single package** → always `uv sync --package <name>`
+> - **Single package / deployment** → `uv sync --package <name>`
 >   (extras attach to it: `uv sync --package grabette --extra rpi`).
 > - **Full dev environment** → `uv sync --all-packages`.
-> - `uv run --package <name> …` runs against that package's dependency set.
-> - Exception: `integrations/DiffusionPolicy` is deliberately **standalone**
->   (own `uv.lock`, heavy training pins) — inside it, a plain `uv sync` is
->   correct and touches nothing else.
+> - `integrations/DiffusionPolicy` is deliberately **standalone** (own
+>   `uv.lock`, heavy training pins) — inside it a plain `uv sync` is correct.
 
-### Notes
+**On-device install (Raspberry Pi):** each device package ships a `make
+install-rpi` target that builds the `--system-site-packages` venv `picamera2`
+needs (a bare `uv sync` skips it and the service falls back to the mock
+backend). Follow the package's own README for the exact steps:
+[grabette](packages/grabette), [gripette](packages/gripette),
+[casquette](packages/casquette) *(WIP)*.
 
-- **Python / `lerobot`:** `lerobot` (used by `grabette-postprocess` and the sim's
-  `dataset` extra) requires Python ≥ 3.12, so it is gated by an environment
-  marker. The on-device services still install and run on Python 3.11
-  (Raspberry Pi OS Bookworm) — they don't depend on `lerobot`.
-- **OpenArm sim system deps:** `placo` (sim kinematics) dynamically links
-  `liburdfdom`; install it from your distro's packages before running the sim.
-- **Raspberry Pi install:** use the `make install-rpi` target (see below) — a
-  bare `uv sync` skips the apt deps and `--system-site-packages` venv that
-  `picamera2` needs, and the service silently falls back to the mock backend.
-
-## Running on a Raspberry Pi device
-
-The on-device services (`grabette`, `casquette`, `gripette`) install through a
-`make` target that builds the `--system-site-packages` venv at the workspace
-root, with the device's apt-provided `picamera2`/`libcamera`:
-
-```bash
-# clone skipping the meshes (on-device services don't load them)
-GIT_LFS_SKIP_SMUDGE=1 git clone git@github.com:pollen-robotics/grabette.git
-cd grabette/packages/grabette
-
-make install-rpi HAND=right                    # or HAND=left — grabette is built mirrored per side
-uv run --package grabette python -m grabette   # run the service (auto-detects hardware)
-make install-systemd                           # installs BOTH grabette.service AND grabette-bluetooth.service
-```
-
-On success the log shows `RPi hardware detected, using RpiBackend` (not
-`MockBackend`). `casquette` follows the same pattern from `packages/casquette` (no `HAND=`,
-it's hand-agnostic); `gripette` likewise needs `HAND=` from `packages/gripette`. Run `make help`
-in any package for the available targets.
+**Note — `lerobot` / Python 3.12:** `grabette-postprocess` and the sim's
+`dataset` extra require Python ≥ 3.12 (gated by an env marker); the on-device
+services run fine on 3.11. The OpenArm sim also needs the system `liburdfdom`
+package for `placo`.
 
 ## License
 
