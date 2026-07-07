@@ -1,6 +1,7 @@
 
 # GRABETTE
-<img align="left" width="25%" src="docs/images/grabette_logo_small.png">
+<img align="left" width="20%" src="docs/images/grabette_logo_small.png">
+<br><br><br>
 Open-source toolkit for collecting robotic manipulation demonstrations and
 turning them into training-ready datasets.
 
@@ -8,7 +9,7 @@ A GRABETTE rig records synchronized **camera + IMU** streams from hand-held or
 gripper-mounted devices, recovers camera trajectories with SLAM, and exports
 [LeRobot](https://huggingface.co/docs/lerobot) datasets for policy learning.
 The data-collection pipeline is **robot-agnostic**.
-
+<br><br><br><br><br><br>
 ## Components
 
 ### `packages/` — robot-agnostic core
