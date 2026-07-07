@@ -39,6 +39,45 @@ from lerobot.datasets.feature_utils import dataset_to_policy_features
 # before any DataLoader worker spawns (well before the training loop).
 torch.multiprocessing.set_sharing_strategy("file_system")
 
+# Line-buffer stdout even when piped (e.g. `... | tee train.log`). Python
+# block-buffers piped stdout, so a hard kill (OOM SIGKILL, segfault) discards
+# everything still in the buffer — leaving an EMPTY log for a run that printed
+# for minutes. Line buffering makes every step line land in the log immediately.
+import sys  # noqa: E402
+sys.stdout.reconfigure(line_buffering=True)
+
+
+def _warn_if_shm_dir_on_tmpfs() -> None:
+    """The file_system sharing strategy backs worker batches with files in
+    $TMPDIR. If that is a RAM-backed tmpfs (common for /tmp), the files eat RAM
+    and eventually exhaust the mount — the run dies mid-training with
+    "unable to allocate shared memory(shm) for file </torch_...>".
+    Warn up-front with the fix instead of failing at step 16000."""
+    import tempfile
+    tmp = Path(tempfile.gettempdir()).resolve()
+    try:
+        best, fstype = Path("/"), ""
+        for line in Path("/proc/mounts").read_text().splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            mnt = Path(parts[1])
+            if mnt == tmp or mnt in tmp.parents:
+                if len(str(mnt)) >= len(str(best)):
+                    best, fstype = mnt, parts[2]
+        if fstype in ("tmpfs", "ramfs"):
+            print(f"WARNING: TMPDIR ({tmp}) is on {fstype} (RAM-backed). DataLoader shared-\n"
+                  f"         memory files will consume RAM and can exhaust the mount mid-\n"
+                  f"         training ('unable to allocate shared memory ... </torch_...>').\n"
+                  f"         Fix: run with TMPDIR set to a real-disk dir, e.g.\n"
+                  f"             mkdir -p ~/tmp && TMPDIR=~/tmp uv run python train.py ...",
+                  file=sys.stderr)
+    except OSError:
+        pass  # non-Linux or unreadable /proc — nothing to check
+
+
+_warn_if_shm_dir_on_tmpfs()
+
 
 def save_train_state(ckpt_dir: Path, *, optimizer, step: int, best_val_loss: float):
     """Save optimizer + bookkeeping next to the model checkpoint, so the run
@@ -301,14 +340,19 @@ def parse_args():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=8,
-        help="DataLoader workers. Higher helps keep the GPU fed; typical range 4-16.",
+        default=4,
+        help="DataLoader workers. The default is sized to survive on ordinary RAM: "
+             "each worker holds prefetched batches of DECODED video frames, and "
+             "8+ workers have been OOM-killed (silent crash, exit 137, "
+             "'pt_data_worker' in dmesg) on 32GB machines. Raise to 8-16 only on "
+             "big-RAM boxes if the GPU is starved.",
     )
     parser.add_argument(
         "--prefetch_factor",
         type=int,
-        default=4,
-        help="Batches pre-loaded per worker. Default=4 hides most data-loading stalls.",
+        default=2,
+        help="Batches pre-loaded per worker. Multiplies worker memory; raise only "
+             "together with --num_workers on big-RAM machines.",
     )
     parser.add_argument(
         "--bf16",
@@ -363,6 +407,20 @@ def main():
     print(f"Input features:   {list(input_features.keys())}")
     print(f"Output features:  {list(output_features.keys())}")
     print(f"Action names:     {action_feature_names}")
+
+    # ---- Guard: this recipe trains on the CONVERTED dataset only ----
+    # A raw build has an 8D absolute-pose action and no observation.state;
+    # pointing train.py at it crashes deep in the policy init with an opaque
+    # AttributeError. Fail here with the actual diagnosis instead.
+    action_dim = dataset_metadata.features["action"]["shape"][0]
+    if action_dim != 11 or "observation.state" not in dataset_metadata.features:
+        raise SystemExit(
+            f"\nERROR: this looks like a RAW dataset (action dim {action_dim}, "
+            f"state {'present' if 'observation.state' in dataset_metadata.features else 'MISSING'}).\n"
+            f"train.py needs the CONVERTED dataset (11D delta actions + 2D gripper state).\n"
+            f"Run the prep pipeline first:  ./run_pipeline.sh {args.dataset_repo_id}\n"
+            f"then train on its printed output (repo_id local/<name>_cartesian + --dataset_root)."
+        )
 
     # ---- Policy configuration ----
     # Parameters are aligned with the UMI (Universal Manipulation Interface) project,
@@ -424,6 +482,16 @@ def main():
     # ---- Instantiate policy ----
     if args.resume_from:
         ckpt_path = Path(args.resume_from)
+        # Guard: if the directory doesn't exist, lerobot's from_pretrained
+        # falls through to interpreting the path as a HUB REPO ID and dies
+        # with a cryptic HFValidationError. Fail with the real diagnosis.
+        if not (ckpt_path / "config.json").is_file():
+            raise SystemExit(
+                f"\nERROR: --resume_from checkpoint not found: {ckpt_path.resolve()}\n"
+                f"(no config.json there). Relative paths resolve from the directory you\n"
+                f"run in — pass the ABSOLUTE path to the checkpoint dir, e.g.\n"
+                f"  --resume_from <output_dir>/checkpoint_15000  (must contain config.json)"
+            )
         print(f"\nResuming from checkpoint: {ckpt_path}")
         policy = DiffusionPolicy.from_pretrained(ckpt_path)
     else:
