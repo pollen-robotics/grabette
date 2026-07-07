@@ -12,6 +12,7 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
 | `offline_eval.py` | Open-loop sanity check of a trained checkpoint against the held-out val episodes (deployment inference path fed recorded observations). Run before a robot session. |
 | `ood_check.py` | Is the robot seeing what the policy was trained on? Scores deployment frames (from `evaluate.py --dump_obs`) against the training distribution in the policy's own encoder features, + state-range parity. Run when the robot behaves "stereotyped"/ignores the scene. |
+| `check_dataset_videos.py` | Decode-check every episode's video segments through the exact training path; prints the failing episodes (`train.py --exclude_episodes` takes the list). Run when training crashes on video decode. |
 | `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
@@ -39,8 +40,14 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 deliberate command — the script prints the exact `train.py` invocation at the end.
 
 ```bash
-./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] [--no-qa]
+./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] \
+                  [--cameras "cam0"|all] [--no-qa]
 ```
+
+By default the pipeline keeps **only `cam0`** (the camera the policy trains on) and
+removes any extra recorded streams: an unused stream doubles video-decode cost at
+every training step, and if its encoding is corrupt it crashes training even
+though the policy never reads it. `--cameras all` keeps everything.
 
 The steps below document each stage the script runs (and how to run them manually).
 
@@ -117,7 +124,7 @@ uv run python train.py \
     --dataset_root <path printed by convert> \
     --output_dir outputs/diffusion \
     --training_steps 50000 --batch_size 64 --bf16 \
-    --num_workers 8 --prefetch_factor 4 \
+    --num_workers 4 --prefetch_factor 2 \
     --color_jitter --state_noise_std 0.01 \
     --eval_freq 500 --save_freq 5000 \
     --push_to_hub <user>/<model>
@@ -226,7 +233,7 @@ HF_HUB_OFFLINE=1 uv run python train.py \
     --dataset_root ~/.cache/huggingface/lerobot/local-converted/<repo--id> \
     --output_dir outputs/diffusion \
     --training_steps 50000 --batch_size 64 --bf16 \
-    --num_workers 8 --prefetch_factor 4 \
+    --num_workers 4 --prefetch_factor 2 \
     --color_jitter --state_noise_std 0.01 \
     --eval_freq 500 --save_freq 5000 \
     --wandb_project gripette --wandb_run_name diffusion_5090
@@ -301,6 +308,23 @@ for a quick official baseline.
   approach more reactive but can make the policy hesitate on the grasp trigger.
 
 ---
+
+## Troubleshooting (symptom → cause → fix)
+
+Run trainings inside `screen`/`tmux`, log with `... 2>&1 | tee train.log`, and
+read the true exit code with `${pipestatus[1]}` (zsh) / `${PIPESTATUS[0]}` (bash).
+`137` = killed by the OS (usually out of RAM) · `139` = segfault in a native
+library · `0`/`1` = read the log.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Training stops silently mid-run; `dmesg -T` shows `oom-kill … pt_data_worker` | DataLoader workers exhausted system RAM | Lower `--num_workers` / `--prefetch_factor` (defaults are safe); after any crash, `pkill -9 -f train.py` — orphaned workers keep eating RAM |
+| `unable to allocate shared memory(shm) for file </torch_…>` mid-training | `$TMPDIR` is RAM-backed tmpfs; worker shm files filled it (train.py warns about this at startup) | `mkdir -p ~/tmp && TMPDIR=~/tmp uv run python train.py …` |
+| `Could not push packet to decoder: Invalid data …` | A corrupt video segment in the dataset (often written to a full tmpfs) | `check_dataset_videos.py` names the episodes → `--exclude_episodes <list>`, or re-run the pipeline with `--work` on real disk |
+| Instant exit, empty log, or import-time segfault | Broken venv (interrupted sync) or Python ≠ 3.12 | `rm -rf .venv && uv sync` (the pyproject pins Python 3.12 and lerobot 0.5.x) |
+| `AttributeError: 'NoneType' … shape` at policy init | Pointed at the RAW dataset instead of the converted one (train.py now explains this itself) | Train on the `*_cartesian` output; the exact command is in `<work>/train_command.txt` |
+| `HFValidationError: Repo id must be in the form…` on `--resume_from` | Checkpoint path didn't exist so it was treated as a Hub id (now guarded) | Pass the **absolute** path; dirs are zero-padded (`checkpoint_015000`) |
+| Datasets vanished after a reboot | They were in `/tmp` (tmpfs) | Keep work dirs on disk (`run_pipeline.sh` now defaults to `~/.cache/grabette_pipeline` and warns on tmpfs); raw datasets belong on the Hub |
 
 ## Notes
 

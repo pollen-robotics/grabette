@@ -39,7 +39,7 @@ from pathlib import Path
 import numpy as np
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.dataset_tools import delete_episodes
+from lerobot.datasets.dataset_tools import delete_episodes, remove_feature
 
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,28 @@ def decide(stats: dict, cfg) -> tuple[bool, str]:
     if stats["frac"] > cfg.max_lost_fraction:
         return True, f"lost {stats['frac']*100:.0f}%>{cfg.max_lost_fraction*100:.0f}%"
     return False, f"keep ({stats['n_lost']} lost frame(s), held pose ≈ no motion)"
+
+
+def cameras_to_remove(ds: LeRobotDataset, keep: list[str] | None) -> list[str]:
+    """Which camera streams to strip, resolved from --keep_cameras.
+
+    Accepts short names ('cam0') or full keys ('observation.images.cam0').
+    Fails with the available list on a typo — a wrong name must not silently
+    keep everything.
+    """
+    cams = list(ds.meta.video_keys)
+    if keep is None:
+        return []
+    keep_full: set[str] = set()
+    for k in keep:
+        matches = [c for c in cams if c == k or c.endswith("." + k)]
+        if not matches:
+            raise SystemExit(
+                f"--keep_cameras '{k}' does not match any camera in this dataset.\n"
+                f"Available cameras: {cams}"
+            )
+        keep_full.update(matches)
+    return [c for c in cams if c not in keep_full]
 
 
 def audit(repo_id: str, root, cfg) -> list[int]:
@@ -158,6 +180,12 @@ def parse_args():
                         "Short runs are kept: held pose ≈ no motion.")
     p.add_argument("--max_lost_fraction", type=float, default=0.3,
                    help="Also reject if the lost-frame fraction exceeds this (catches many scattered losses).")
+    p.add_argument("--keep_cameras", nargs="+", default=None, metavar="CAM",
+                   help="Keep ONLY these camera streams (e.g. 'cam0'); every other "
+                        "observation.images.* is removed from the output. The policy trains on "
+                        "one camera — extra streams double video-decode cost during training and "
+                        "can even crash it if their encoding is corrupt, although the policy "
+                        "never reads them. Default: keep all cameras.")
     p.add_argument("--push_to_hub", default=None, help="If set, push the cleaned dataset to this Hub repo id")
     p.add_argument("--hub_private", action="store_true", help="Push as a private Hub repo")
     return p.parse_args()
@@ -168,6 +196,18 @@ def main():
     args = parse_args()
 
     reject = audit(args.repo_id, args.root, args)
+
+    # Camera plan (also shown on --dry_run, so the operator sees the full effect).
+    src = LeRobotDataset(args.repo_id, root=args.root)
+    to_remove = cameras_to_remove(src, args.keep_cameras)
+    if args.keep_cameras:
+        kept = [c for c in src.meta.video_keys if c not in to_remove]
+        if to_remove:
+            logger.info(f"Cameras: keeping {kept}, REMOVING {to_remove} "
+                        f"(unused streams double training decode cost, and a corrupt "
+                        f"unused stream can crash training).")
+        else:
+            logger.info(f"Cameras: keeping all ({kept}) — nothing to remove.")
 
     if args.dry_run:
         logger.info("Dry run — no dataset written.")
@@ -180,18 +220,31 @@ def main():
     else:
         dst_root = Path.home() / ".cache/huggingface/lerobot/local-converted" / args.output_repo_id.replace("/", "--")
 
+    if dst_root.exists():
+        if not args.overwrite_output:
+            raise FileExistsError(f"{dst_root} exists; pass --overwrite_output or pick another output.")
+        shutil.rmtree(dst_root)
+
+    # Order: strip cameras FIRST (cheap copy-minus-stream), THEN reject episodes
+    # (re-encodes the kept episodes' videos — cheaper with fewer streams).
+    work = src
+    cam_tmp = None
+    if to_remove:
+        target = dst_root if not reject else dst_root.with_name(dst_root.name + "_camtmp")
+        if target != dst_root:
+            cam_tmp = target
+            if cam_tmp.exists():
+                shutil.rmtree(cam_tmp)
+        logger.info(f"Removing camera stream(s) {to_remove} ...")
+        work = remove_feature(work, to_remove, output_dir=target, repo_id=args.output_repo_id)
     if reject:
-        src = LeRobotDataset(args.repo_id, root=args.root)
-        if dst_root.exists():
-            if not args.overwrite_output:
-                raise FileExistsError(f"{dst_root} exists; pass --overwrite_output or pick another output.")
-            shutil.rmtree(dst_root)
         logger.info(f"Removing {len(reject)} episode(s) → {dst_root}")
-        delete_episodes(src, reject, output_dir=dst_root, repo_id=args.output_repo_id)
-    else:
+        delete_episodes(work, reject, output_dir=dst_root, repo_id=args.output_repo_id)
+        if cam_tmp is not None:
+            shutil.rmtree(cam_tmp)  # intermediate camera-stripped copy, no longer needed
+    elif not to_remove:
         logger.info(f"No rejects → copying to {dst_root}")
-        src_root = Path(LeRobotDataset(args.repo_id, root=args.root).root)
-        copy_dataset(src_root, dst_root, args.overwrite_output)
+        copy_dataset(Path(work.root), dst_root, args.overwrite_output)
 
     logger.info(f"Cleaned dataset ready: {dst_root}")
 

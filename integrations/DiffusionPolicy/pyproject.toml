@@ -2,7 +2,10 @@
 name = "grabette-diffusion-policy"
 version = "0.1.0"
 description = "Diffusion Policy training & data-prep for Grabette demonstrations, on stock upstream lerobot."
-requires-python = ">=3.12"
+# <3.13: the torch/torchcodec native stack produced repeated segfaults on
+# Python 3.13 (worker crashes, import-time faults) while identical runs on 3.12
+# were stable. Pin to the validated interpreter; uv installs it automatically.
+requires-python = ">=3.12,<3.13"
 # Pin lerobot to the exact version you validate against (recipe validated on 0.5.x).
 dependencies = [
     # Upper bound matters: the recipe (and our imports: policies.factory,
