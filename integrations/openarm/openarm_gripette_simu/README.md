@@ -17,10 +17,13 @@ Without them, `import placo` (and the sim) fails with
 
 Then sync the Python environment:
 
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
+
 ```bash
-uv sync                  # base install
-uv sync --extra dataset  # + lerobot (for LeRobot dataset collection)
-uv sync --extra dev      # + grpcio-tools (for regenerating proto stubs)
+uv sync --package openarm-gripette-simu                  # base install
+uv sync --package openarm-gripette-simu --extra dataset  # + lerobot (dataset collection)
+uv sync --package openarm-gripette-simu --extra dev      # + grpcio-tools (proto stubs)
 ```
 
 The robot model is fetched from [pollen-robotics/openarm_gripette_model](https://github.com/pollen-robotics/openarm_gripette_model). For local model development, swap the `[tool.uv.sources]` entry in `pyproject.toml`.
@@ -223,7 +226,7 @@ camera-local delta format produced by the `DiffusionPolicy` integration's
 `convert_dataset.py` (2D gripper state, 11D delta action).
 
 ```bash
-uv sync --extra eval          # adds lerobot + scipy
+uv sync --package openarm-gripette-simu --extra eval   # adds lerobot + scipy
 
 # Terminal 1 — arm grasp scene, headless
 uv run python -m openarm_gripette_simu --scene scenes/table_grasp.xml --headless
@@ -312,7 +315,7 @@ Camera rendering is done in the main thread (alongside physics and viewer) and c
 ## Regenerating proto stubs
 
 ```bash
-uv sync --extra dev
+uv sync --package openarm-gripette-simu --extra dev
 uv run python -m grpc_tools.protoc -I proto \
     --python_out=openarm_gripette_simu/proto \
     --grpc_python_out=openarm_gripette_simu/proto \

@@ -15,10 +15,13 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 
 ### Development machine (mock mode, no hardware needed)
 
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
+
 ```bash
-uv sync --extra dev
-uv run python generate_proto.py   # only needed if you modify gripper.proto
-uv run python main.py
+uv sync --package gripette --extra dev
+uv run --package gripette python generate_proto.py   # only needed if you modify gripper.proto
+uv run --package gripette python main.py
 ```
 
 ### Raspberry Pi Zero 2W
@@ -263,8 +266,8 @@ See [docs/bluetooth_setup.md](docs/bluetooth_setup.md) for the full setup guide 
 The gRPC service contract is defined in `proto/gripper.proto`. To regenerate the Python files after modifying it:
 
 ```bash
-uv sync --extra dev
-uv run python generate_proto.py
+uv sync --package gripette --extra dev
+uv run --package gripette python generate_proto.py
 ```
 
 Generated files in `gripette/proto/` are committed to the repository.

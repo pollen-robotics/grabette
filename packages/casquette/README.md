@@ -14,9 +14,12 @@ Runs on a Raspberry Pi Zero 2W with a camera module and BMI088 IMU.
 
 ### Development (mock mode, no hardware needed)
 
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
+
 ```bash
-uv sync
-uv run python main.py
+uv sync --package casquette
+uv run --package casquette python main.py
 # → http://localhost:8001
 ```
 
@@ -28,9 +31,9 @@ sudo cp config/config.txt /boot/firmware/
 # Reboot
 
 uv venv --python /usr/bin/python3 --system-site-packages
-uv sync --extra rpi --no-install-package numpy
+uv sync --package casquette --extra rpi --no-install-package numpy
 uv pip install -e .
-uv run python -m casquette
+uv run --package casquette python -m casquette
 ```
 
 ### systemd (auto-start on boot)
