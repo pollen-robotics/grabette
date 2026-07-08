@@ -23,6 +23,7 @@ def serve() -> None:
     camera = CameraCapture(
         resolution=(settings.camera_resolution_w, settings.camera_resolution_h),
         quality=settings.jpeg_quality,
+        mode=settings.camera_mode,
     )
     motors = MotorController(
         port=settings.motor_port,
@@ -43,7 +44,7 @@ def serve() -> None:
 
     # gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    servicer = GripperServicer(camera, motors, sync)
+    servicer = GripperServicer(camera, motors, sync, stream_hz=settings.stream_hz)
     gripper_pb2_grpc.add_GripperServiceServicer_to_server(servicer, server)
     server.add_insecure_port(f"{settings.host}:{settings.port}")
     server.start()

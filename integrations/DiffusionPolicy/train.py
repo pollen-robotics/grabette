@@ -33,6 +33,8 @@ training with HF Jobs"):
 
 import argparse
 import json
+import sys
+import time
 from pathlib import Path
 
 import torch
@@ -45,17 +47,20 @@ from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.datasets.feature_utils import dataset_to_policy_features
 
-# Back DataLoader-worker tensors with /tmp files instead of /dev/shm, so a small
-# /dev/shm (common on servers/containers) doesn't cause "RuntimeError: unable to
-# allocate shared memory" at higher --num_workers / --prefetch_factor. Must run
-# before any DataLoader worker spawns (well before the training loop).
-torch.multiprocessing.set_sharing_strategy("file_system")
+# DataLoader-worker tensor sharing: default to $TMPDIR-file-backed shm, so a
+# small /dev/shm (common on servers/containers) doesn't cause "RuntimeError:
+# unable to allocate shared memory". Cost: every batch crosses the worker→main
+# boundary through the filesystem — slow on container overlay fs; the
+# --shm_strategy flag switches to /dev/shm ('file_descriptor') where it's large
+# enough. Must be set before any DataLoader worker spawns; argparse runs later,
+# so we peek at argv directly here.
+_shm = "file_descriptor" if any("file_descriptor" in a for a in sys.argv) else "file_system"
+torch.multiprocessing.set_sharing_strategy(_shm)
 
 # Line-buffer stdout even when piped (e.g. `... | tee train.log`). Python
 # block-buffers piped stdout, so a hard kill (OOM SIGKILL, segfault) discards
 # everything still in the buffer — leaving an EMPTY log for a run that printed
 # for minutes. Line buffering makes every step line land in the log immediately.
-import sys  # noqa: E402
 sys.stdout.reconfigure(line_buffering=True)
 
 
@@ -365,6 +370,16 @@ def parse_args():
         default=2,
         help="Batches pre-loaded per worker. Multiplies worker memory; raise only "
              "together with --num_workers on big-RAM machines.",
+    )
+    parser.add_argument(
+        "--shm_strategy",
+        choices=["file_system", "file_descriptor"],
+        default="file_system",
+        help="How DataLoader workers hand tensors to the main process. "
+             "'file_system' (default) writes through $TMPDIR files — survives tiny "
+             "/dev/shm but every batch pays a filesystem round-trip (slow on container "
+             "overlay fs). 'file_descriptor' uses /dev/shm — faster where /dev/shm is "
+             "large enough (watch for 'unable to allocate shared memory' if not).",
     )
     parser.add_argument(
         "--video_backend",
@@ -679,6 +694,8 @@ def main():
     best_val_loss = resumed_best_val
     step = resumed_step
     done = False
+    t_log = time.perf_counter()  # throughput clock (it/s over each log window)
+    speed = ""
     while not done:
         for batch in train_dataloader:
             # Training-only image augmentation (BEFORE normalization in preprocessor)
@@ -706,6 +723,15 @@ def main():
 
             train_loss = loss.item()
 
+            # Throughput over the last log window (train steps only — the
+            # val pause is excluded by resetting the clock after eval below).
+            if step % args.log_freq == 0:
+                now = time.perf_counter()
+                its = args.log_freq / max(now - t_log, 1e-9) if step > 0 else 0.0
+                eta_h = (args.training_steps - step) / its / 3600 if its > 0 else 0.0
+                speed = f"  {its:5.2f} it/s  eta {eta_h:4.1f}h" if step > 0 else ""
+                t_log = now
+
             # ---- Validation ----
             val_loss = None
             if step > 0 and step % args.eval_freq == 0:
@@ -727,17 +753,21 @@ def main():
                     f"step: {step:>7d} / {args.training_steps}  "
                     f"train_loss: {train_loss:.4f}  val_loss: {val_loss:.4f}  "
                     f"best_val: {best_val_loss:.4f}" + (" *" if val_loss <= best_val_loss else "")
+                    + speed
                 )
+                t_log = time.perf_counter()  # don't bill the val pause to the next window
 
             if use_wandb:
                 log_dict = {"train_loss": train_loss, "step": step}
+                if step % args.log_freq == 0 and step > 0:
+                    log_dict["it_per_s"] = its
                 if val_loss is not None:
                     log_dict["val_loss"] = val_loss
                     log_dict["best_val_loss"] = best_val_loss
                 wandb.log(log_dict)
 
             if step % args.log_freq == 0 and val_loss is None:
-                print(f"step: {step:>7d} / {args.training_steps}  train_loss: {train_loss:.4f}")
+                print(f"step: {step:>7d} / {args.training_steps}  train_loss: {train_loss:.4f}{speed}")
 
             # Periodic checkpoint
             if step > 0 and step % args.save_freq == 0:
