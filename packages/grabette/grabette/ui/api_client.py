@@ -120,9 +120,9 @@ class GrabetteClient:
 
     # -- Capture --
 
-    def start_capture(self, session_id: str | None = None) -> dict:
+    def start_capture(self, task_id: str | None = None) -> dict:
         try:
-            body = {"session_id": session_id} if session_id else {}
+            body = {"task_id": task_id} if task_id else {}
             r = self._http.post("/api/episodes/start", json=body)
             r.raise_for_status()
             return r.json()
@@ -143,18 +143,18 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def get_capture_session_status(self) -> dict:
+    def get_session_status(self) -> dict:
         try:
-            r = self._http.get("/api/capture-session/status")
+            r = self._http.get("/api/session/status")
             r.raise_for_status()
             return r.json()
         except Exception:
             return {"active": False, "task_id": None, "task_name": None, "count": 0}
 
-    def start_capture_session(self, task_id: str | None = None) -> dict:
+    def start_session(self, task_id: str | None = None) -> dict:
         try:
             body = {"task_id": task_id} if task_id else {}
-            r = self._http.post("/api/capture-session/start", json=body)
+            r = self._http.post("/api/session/start", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
@@ -162,25 +162,25 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def stop_capture_session(self) -> dict:
+    def stop_session(self) -> dict:
         try:
-            r = self._http.post("/api/capture-session/stop")
+            r = self._http.post("/api/session/stop")
             r.raise_for_status()
             return r.json()
         except Exception as e:
             return {"error": str(e)}
 
-    def get_active_session(self) -> str | None:
+    def get_active_task(self) -> str | None:
         try:
-            r = self._http.get("/api/sessions/active")
+            r = self._http.get("/api/tasks/active")
             r.raise_for_status()
-            return r.json().get("session_id")
+            return r.json().get("task_id")
         except Exception:
             return None
 
-    def set_active_session(self, session_id: str) -> dict:
+    def set_active_task(self, task_id: str) -> dict:
         try:
-            r = self._http.put("/api/sessions/active", json={"session_id": session_id})
+            r = self._http.put("/api/tasks/active", json={"task_id": task_id})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
@@ -188,20 +188,20 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    # -- Sessions --
+    # -- Tasks --
 
-    def list_sessions(self) -> list[dict]:
+    def list_tasks(self) -> list[dict]:
         try:
-            r = self._http.get("/api/sessions")
+            r = self._http.get("/api/tasks")
             r.raise_for_status()
             return r.json()
         except Exception:
             return []
 
-    def create_session(self, name: str, description: str = "") -> dict:
+    def create_task(self, name: str, description: str = "") -> dict:
         try:
             r = self._http.post(
-                "/api/sessions",
+                "/api/tasks",
                 json={"name": name, "description": description},
             )
             r.raise_for_status()
@@ -212,14 +212,14 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def update_session(self, session_id: str, name: str | None = None, description: str | None = None) -> dict:
+    def update_task(self, task_id: str, name: str | None = None, description: str | None = None) -> dict:
         body = {}
         if name is not None:
             body["name"] = name
         if description is not None:
             body["description"] = description
         try:
-            r = self._http.put(f"/api/sessions/{session_id}", json=body)
+            r = self._http.put(f"/api/tasks/{task_id}", json=body)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
@@ -228,9 +228,9 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def delete_session(self, session_id: str) -> dict:
+    def delete_task(self, task_id: str) -> dict:
         try:
-            r = self._http.delete(f"/api/sessions/{session_id}")
+            r = self._http.delete(f"/api/tasks/{task_id}")
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
@@ -284,11 +284,11 @@ class GrabetteClient:
         except Exception:
             return None
 
-    def move_episodes(self, episode_ids: list[str], target_session_id: str) -> dict:
+    def move_episodes(self, episode_ids: list[str], target_task_id: str) -> dict:
         try:
             r = self._http.post(
                 "/api/episodes/move",
-                json={"episode_ids": episode_ids, "target_session_id": target_session_id},
+                json={"episode_ids": episode_ids, "target_task_id": target_task_id},
             )
             r.raise_for_status()
             return r.json()

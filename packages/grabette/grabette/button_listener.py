@@ -29,9 +29,9 @@ RECORDING_WAIT_TIMEOUT_S = 20.0
 class ButtonListener:
     """Watches the physical button and drives capture start/stop."""
 
-    def __init__(self, backend, session_manager) -> None:
+    def __init__(self, backend, task_manager) -> None:
         self._backend = backend
-        self._session_manager = session_manager
+        self._task_manager = task_manager
         self._button = None
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -145,15 +145,19 @@ class ButtonListener:
         the caller's LED feedback reflects reality."""
         from grabette.capture_scheduler import get_capture_scheduler
         from grabette.fleet_sync import request_group_start
+        from grabette.task import episode_id_for
 
-        sm = self._session_manager
-        task_name = sm.get_session(sm.active_session_id).name
+        sm = self._task_manager
+        task_name = sm.get_task(sm.active_task_id).name
         sync = await request_group_start(task_name)
-        episode_id = sm.create_episode(sm.active_session_id)
+        target = datetime.fromisoformat(sync["scheduled_start_utc"]) if sync and sync.get("status") == "scheduled" else None
+
+        # Derive the episode id from the shared T0 (not local creation time)
+        # so this device's episode folder matches its peers' exactly.
+        episode_id = sm.create_episode(sm.active_task_id, episode_id=episode_id_for(target) if target else None)
         episode_dir = sm.episode_dir(episode_id)
 
-        if sync and sync.get("status") == "scheduled":
-            target = datetime.fromisoformat(sync["scheduled_start_utc"])
+        if target is not None:
             scheduler = get_capture_scheduler()
             await scheduler.schedule(self._backend, sm, episode_dir, target)
             deadline = time.monotonic() + RECORDING_WAIT_TIMEOUT_S
@@ -188,7 +192,7 @@ class ButtonListener:
         from grabette.fleet_sync import notify_group_stop
 
         scheduler = get_capture_scheduler()
-        sm = self._session_manager
+        sm = self._task_manager
         try:
             outcome = await scheduler.cancel_or_wait(self._backend)
         except RuntimeError:
@@ -202,7 +206,7 @@ class ButtonListener:
             logger.warning("Button stop ignored — not capturing")
             return
         status = await self._backend.stop_capture()
-        sm.register_episode(getattr(status, "session_id", None))
+        sm.register_episode(getattr(status, "episode_id", None))
         logger.info(
             "Button capture stopped: %.1fs, %d frames",
             status.duration_seconds, status.frame_count,

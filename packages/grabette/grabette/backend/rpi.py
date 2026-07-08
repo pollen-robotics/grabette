@@ -41,7 +41,7 @@ class RpiBackend(Backend):
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
         self._oakd_initializing = False
-        self._capture_session_dir: Path | None = None
+        self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
@@ -356,7 +356,7 @@ class RpiBackend(Backend):
 
         return SensorState(imu=imu, angle=angle, capture=self.get_capture_status())
 
-    async def start_capture(self, session_dir: Path) -> None:
+    async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
 
@@ -390,7 +390,7 @@ class RpiBackend(Backend):
                 None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
             )
 
-        self._capture_session_dir = session_dir
+        self._episode_dir = episode_dir
 
         # Set flag BEFORE starting streams so the daemon poll loop
         # (get_state) reads from capture buffers instead of doing
@@ -404,10 +404,10 @@ class RpiBackend(Backend):
         if self._angle:
             self._angle.start_capture()
         if self._oakd and self._oakd.is_initialized:
-            self._oakd.start_recording(session_dir)
-        self._camera.start_recording(session_dir / "raw_video.mp4")
+            self._oakd.start_recording(episode_dir)
+        self._camera.start_recording(episode_dir / "raw_video.mp4")
 
-        logger.info("RpiBackend capture started → %s", session_dir)
+        logger.info("RpiBackend capture started → %s", episode_dir)
 
     async def stop_capture(self) -> CaptureStatus:
         if not self._capturing:
@@ -469,7 +469,7 @@ class RpiBackend(Backend):
 
         status = CaptureStatus(
             is_capturing=False,
-            session_id=self._capture_session_dir.name if self._capture_session_dir else None,
+            episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=duration,
             frame_count=self._camera.frame_count,
             imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
@@ -477,16 +477,16 @@ class RpiBackend(Backend):
         )
 
         # Write output files
-        if self._capture_session_dir:
+        if self._episode_dir:
             # Save per-frame timestamps (sync-clock-relative ms) for frame
             # drop detection and accurate video-trajectory alignment.
-            (self._capture_session_dir / "frame_timestamps.json").write_text(
+            (self._episode_dir / "frame_timestamps.json").write_text(
                 json.dumps(frame_timestamps)
             )
 
             # Save angle data on its own (no longer multiplexed into imu_data.json).
             if angle_samples is not None:
-                (self._capture_session_dir / "angle_data.json").write_text(
+                (self._episode_dir / "angle_data.json").write_text(
                     json.dumps({"samples": angle_samples})
                 )
 
@@ -509,7 +509,7 @@ class RpiBackend(Backend):
             }
             if oakd_stats:
                 meta["oakd"] = oakd_stats
-            (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+            (self._episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
         self._sync.reset()
 
@@ -521,7 +521,7 @@ class RpiBackend(Backend):
         # and blocks the loop no longer than the old in-stop re-init did.
         loop.call_soon(self._reinit_hardware)
 
-        self._capture_session_dir = None
+        self._episode_dir = None
         logger.info("RpiBackend capture stopped")
         return status
 
@@ -552,7 +552,7 @@ class RpiBackend(Backend):
         return CaptureStatus(
             is_capturing=self._capturing,
             is_starting=self._starting,
-            session_id=self._capture_session_dir.name if self._capture_session_dir else None,
+            episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,
             imu_sample_count=imu_count,

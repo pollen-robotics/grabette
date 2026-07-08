@@ -31,7 +31,7 @@ class SlamOrchestrator:
         target_repo: str,
         task_description: str,
         hf_client,
-        session_manager,
+        task_manager,
     ) -> str:
         """Upload all episodes from task_ids to raw_repo, trigger SLAM, poll, delete raw.
 
@@ -43,15 +43,15 @@ class SlamOrchestrator:
         async def _run() -> None:
             try:
                 # Collect episode dirs for all selected tasks
-                sessions = session_manager.list_sessions()
-                session_map = {s.id: s for s in sessions}
+                tasks = task_manager.list_tasks()
+                task_map = {t.id: t for t in tasks}
                 episode_dirs: list[Path] = []
                 for tid in task_ids:
-                    s = session_map.get(tid)
-                    if not s:
+                    t = task_map.get(tid)
+                    if not t:
                         continue
-                    for ep in s.episodes:
-                        ep_dir = session_manager.episode_dir(ep.episode_id)
+                    for ep in t.episodes:
+                        ep_dir = task_manager.episode_dir(ep.episode_id)
                         episode_dirs.append(ep_dir)
 
                 if not episode_dirs:

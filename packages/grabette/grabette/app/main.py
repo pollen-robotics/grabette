@@ -73,7 +73,8 @@ async def _handle_relay_command(cmd: dict) -> dict:
     """
     from grabette.capture_scheduler import get_capture_scheduler
     from grabette.daemon import DaemonState
-    from grabette.app.routers.sessions import get_session_manager
+    from grabette.task import episode_id_for
+    from grabette.app.routers.tasks import get_task_manager
 
     ctype = cmd.get("type")
     daemon = get_daemon_instance()
@@ -101,52 +102,58 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "already capturing"}
         if scheduler.is_scheduled():
             return {"status": "error", "message": "a start is already scheduled"}
-        sm = get_session_manager()
+        tm = get_task_manager()
         args = cmd.get("args", {})
         task_name = args.get("task_name")
-        session_id = sm.get_or_create_session(task_name) if task_name else args.get("session_id")
+        task_id = tm.get_or_create_task(task_name) if task_name else args.get("task_id")
         start_at_utc = args.get("start_at_utc")
 
-        episode_id = sm.create_episode(session_id)
-        episode_dir = sm.episode_dir(episode_id)
+        # Resolve T0 BEFORE creating the episode: a group-synchronized start
+        # derives the episode id from the shared T0 (see episode_id_for), not
+        # from local wall-clock creation time, so every device's episode
+        # folder for this recording has the same name — even though each one
+        # actually creates its directory whenever it happens to process this
+        # command (which can differ by up to the fleet poll interval).
+        target = None
+        if start_at_utc:
+            try:
+                target = datetime.fromisoformat(start_at_utc)
+            except ValueError:
+                return {"status": "error", "message": f"invalid start_at_utc: {start_at_utc!r}"}
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            if target <= datetime.now(timezone.utc):
+                return {"status": "error", "message": "start_at_utc is in the past"}
 
-        if not start_at_utc:
+        episode_id = tm.create_episode(task_id, episode_id=episode_id_for(target) if target else None)
+        episode_dir = tm.episode_dir(episode_id)
+
+        if target is None:
             try:
                 await backend.start_capture(episode_dir)
             except Exception:
-                sm.discard_pending_episode()
+                tm.discard_pending_episode()
                 raise
             return {"status": "ok", "episode_id": episode_id}
 
         # Scheduled (synchronized group) start: wait for T0 in the background
         # and ack immediately so the fleet dispatch round-trip doesn't block.
-        try:
-            target = datetime.fromisoformat(start_at_utc)
-        except ValueError:
-            sm.discard_pending_episode()
-            return {"status": "error", "message": f"invalid start_at_utc: {start_at_utc!r}"}
-        if target.tzinfo is None:
-            target = target.replace(tzinfo=timezone.utc)
-        if target <= datetime.now(timezone.utc):
-            sm.discard_pending_episode()
-            return {"status": "error", "message": "start_at_utc is in the past"}
-
-        await scheduler.schedule(backend, sm, episode_dir, target)
+        await scheduler.schedule(backend, tm, episode_dir, target)
         return {"status": "scheduled", "episode_id": episode_id, "start_at_utc": target.isoformat()}
 
     if ctype == "stop_capture":
-        sm = get_session_manager()
+        tm = get_task_manager()
         try:
             outcome = await scheduler.cancel_or_wait(backend)
         except RuntimeError as e:
             return {"status": "error", "message": str(e)}
         if outcome == "cancelled":
-            sm.discard_pending_episode()
+            tm.discard_pending_episode()
             return {"status": "cancelled"}
         if not backend.is_capturing:
             return {"status": "error", "message": "not capturing"}
         result = await backend.stop_capture()
-        sm.register_episode(getattr(result, "session_id", None))
+        tm.register_episode(getattr(result, "episode_id", None))
         return {"status": "ok", "result": result}
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 
@@ -164,9 +171,9 @@ async def lifespan(app: FastAPI):
     if settings.button_enabled:
         try:
             from grabette.button_listener import ButtonListener
-            from grabette.app.routers.sessions import get_session_manager
+            from grabette.app.routers.tasks import get_task_manager
 
-            _button_listener = ButtonListener(backend, get_session_manager())
+            _button_listener = ButtonListener(backend, get_task_manager())
             _button_listener.start(asyncio.get_running_loop())
         except Exception as e:
             logger.debug("Button listener not started: %s", e)
@@ -208,7 +215,7 @@ def create_app() -> FastAPI:
     from grabette.app.routers.camera import router as camera_router
     from grabette.app.routers.daemon import router as daemon_router
     from grabette.app.routers.huggingface import router as hf_router
-    from grabette.app.routers.sessions import router as sessions_router
+    from grabette.app.routers.tasks import router as tasks_router
     from grabette.app.routers.state import router as state_router
     from grabette.app.routers.system import router as system_router
 
@@ -247,7 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(daemon_router)
     app.include_router(state_router)
     app.include_router(wifi_router)
-    app.include_router(sessions_router)
+    app.include_router(tasks_router)
     app.include_router(camera_router)
     app.include_router(hf_router)
     app.include_router(system_router)
