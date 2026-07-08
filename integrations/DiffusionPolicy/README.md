@@ -13,6 +13,7 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 | `offline_eval.py` | Open-loop sanity check of a trained checkpoint against the held-out val episodes (deployment inference path fed recorded observations). Run before a robot session. |
 | `ood_check.py` | Is the robot seeing what the policy was trained on? Scores deployment frames (from `evaluate.py --dump_obs`) against the training distribution in the policy's own encoder features, + state-range parity. Run when the robot behaves "stereotyped"/ignores the scene. |
 | `check_dataset_videos.py` | Decode-check every episode's video segments through the exact training path; prints the failing episodes (`train.py --exclude_episodes` takes the list). Run when training crashes on video decode. |
+| `resize_dataset_videos.py` | Make a downscaled training copy of a dataset (default 480×360): the policy consumes 236×236, so full-res videos pay ~12× the needed decode per sample — this is what makes trainings dataloader-bound. Non-destructive; raw data stays on the Hub. |
 | `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
@@ -217,9 +218,24 @@ Gotchas that matter:
   the org account instead of yours — your token needs the org's Jobs permission.
   With org billing you likely want `--push_to_hub <org>/<model>` too.
 - Follow along with `hf jobs ps`, `hf jobs logs <id>`, `hf jobs stats`.
-- Flavor guide: `a10g-large` ($1.5/h, 24 GB) is the budget fit; `a100-large`
-  ($2.5/h) trains this model roughly twice as fast — similar total cost, half
-  the wait. `hf jobs hardware` lists everything.
+- Flavor + throughput guide (all numbers measured on this training):
+  1. **Full-resolution datasets are dataloader-bound** — an A10G matched an
+     RTX 5090 at ~0.9 it/s, both GPUs idling in a utilization sawtooth. A
+     bigger GPU does NOT help on full-res data.
+  2. **The fix is the dataset, not the GPU**: a 480×360 all-intra copy
+     (`resize_dataset_videos.py`) took the same training to **3.2 it/s at
+     87% GPU util on `l4x1` ($0.80/h) → ~2.5 h ≈ $2 per training** — the
+     recommended cloud config. (All-intra matters as much as resolution:
+     re-encoding with normal GOPs makes training *slower* — random access
+     decodes the whole GOP per sample. The resize tool handles this.)
+  3. Container knobs: `--num_workers` ≈ vCPUs−2, `--prefetch_factor 1`
+     (worker memory is the frozen-job-at-90%-MEM failure mode),
+     `--shm_strategy file_descriptor`, `--video_backend pyav`.
+- **Deployment note on resolution**: the robot feeds full-res live frames while
+  a downscaled dataset trains on 480×360-sourced ones — both meet at the
+  encoder's internal 236×236 resize, where the difference is negligible
+  resampling character. The raw data always stays on the Hub, so resolution
+  choices are reversible by rebuilding.
 
 ---
 

@@ -17,6 +17,7 @@ Usage:
 
 import argparse
 import logging
+import threading
 import time
 
 import cv2
@@ -98,6 +99,21 @@ def parse_args():
                         "Caps outlier samples (e.g. Diffusion 'explosions'). Cartesian only.")
     p.add_argument("--clamp_rot_deg", type=float, default=None,
                    help="Safety test: clip per-step rotation-delta angle to this (deg). Cartesian only.")
+    p.add_argument("--max_ticks", type=int, default=1,
+                   help="Max chunk actions consumed per loop iteration to compensate a "
+                        "slow loop (wallclock catch-up). 1 (default) = one action per "
+                        "iteration: smooth motion at whatever fraction of demo speed the "
+                        "loop achieves. >1 only makes sense if --log_latency shows the "
+                        "loop USUALLY holds the target rate: each tick costs ~20 ms "
+                        "(send incl. server IK + amortized inference), so a chronically "
+                        "slow loop just saturates the cap and moves in violent bursts.")
+    p.add_argument("--skip_stale", action="store_true",
+                   help="Latency compensation (UMI-style): at each replan, discard the "
+                        "chunk-head actions corresponding to motion the arm already "
+                        "executed while the observation frame aged (k = frame staleness "
+                        "/ loop period). Counters the systematic overshoot ('push through "
+                        "the object') caused by planning from a 100-300ms-old frame. "
+                        "Diffusion policies only (needs the action queue).")
     p.add_argument("--success_check_freq", type=int, default=10, help="Check success every N steps")
     p.add_argument("--debug", action="store_true", help="Show camera feed during evaluation")
     p.add_argument("--log_gripper", action="store_true",
@@ -111,6 +127,13 @@ def parse_args():
                         "grasp success (y/N) and append {episode, success, steps, "
                         "checkpoint, ...} to this JSONL. Use for A/B sessions — the sim's "
                         "automatic success check is a stub on the real server.")
+    p.add_argument("--log_latency", action="store_true",
+                   help="Measure the perception→action latency chain each step: true camera "
+                        "rate + stale-frame detection (inter-frame server timestamps), frame "
+                        "staleness above best-case (buffering), and inference time. Prints a "
+                        "per-episode summary. Training data assumes ZERO obs→act lag — if the "
+                        "measured lag spans several control periods, the policy is acting on "
+                        "the past (symptoms: jerky/oscillating endgame, failed fine alignment).")
     p.add_argument("--dump_obs", type=str, default=None,
                    help="Directory to dump the EXACT observations fed to the policy "
                         "(obs_XXXXX.png + state.jsonl, one subdir per episode). Use with "
@@ -143,17 +166,61 @@ def parse_args():
     return p.parse_args()
 
 
-def get_camera_frame(gripper_stub, gripper_pb2):
-    """Get latest camera frame and gripper state from the streaming service."""
-    for frame in gripper_stub.StreamState(gripper_pb2.StreamRequest()):
-        img_bgr = cv2.imdecode(np.frombuffer(frame.jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        gripper = np.array(
-            [frame.motor_state.motor1_position, frame.motor_state.motor2_position],
-            dtype=np.float32,
-        )
-        return img_rgb, gripper
-    raise RuntimeError("No frame received from camera stream")
+class CameraStream:
+    """Persistent camera stream: one background thread keeps StreamState open
+    and always holds the LATEST decoded frame.
+
+    Why: the previous per-step pattern (open a fresh gRPC stream, block for its
+    next emission) cost 180-330 ms per observation — measured to silently run
+    the whole control loop at ~5 Hz instead of 50, executing the policy in
+    slow-motion with target hops (jerky arm, failed fine alignment).
+
+    get() returns (img_rgb, gripper, frame_ts_ms) instantly. frame_ts_ms is the
+    SERVER's monotonic capture timestamp: not comparable to the local clock,
+    but inter-frame deltas give the true camera rate, and an unchanged value
+    marks a stale (already-consumed) frame.
+    """
+
+    def __init__(self, gripper_stub, gripper_pb2):
+        self._stub = gripper_stub
+        self._pb2 = gripper_pb2
+        self._lock = threading.Lock()
+        self._latest = None
+        self._ready = threading.Event()
+        self._stop = False
+        self._thread = threading.Thread(target=self._reader, daemon=True)
+        self._thread.start()
+
+    def _reader(self):
+        while not self._stop:
+            try:
+                for frame in self._stub.StreamState(self._pb2.StreamRequest()):
+                    if self._stop:
+                        return
+                    img_bgr = cv2.imdecode(
+                        np.frombuffer(frame.jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+                    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+                    gripper = np.array(
+                        [frame.motor_state.motor1_position,
+                         frame.motor_state.motor2_position],
+                        dtype=np.float32,
+                    )
+                    with self._lock:
+                        self._latest = (img_rgb, gripper, float(frame.timestamp_ms))
+                    self._ready.set()
+            except Exception as e:  # noqa: BLE001 — stream drop: reconnect
+                if not self._stop:
+                    logger.warning(f"Camera stream dropped ({e}); reconnecting...")
+                    time.sleep(0.2)
+
+    def get(self, timeout: float = 5.0):
+        if not self._ready.wait(timeout):
+            raise RuntimeError("No frame received from camera stream")
+        with self._lock:
+            return self._latest
+
+    def stop(self):
+        self._stop = True
 
 
 def capture_start_pose(arm_stub, arm_pb2):
@@ -184,15 +251,16 @@ def compute_relative_state(arm_state, gripper_joints, start_pos, start_rot):
 def build_observation(
     arm_stub,
     arm_pb2,
-    gripper_stub,
-    gripper_pb2,
+    camera,
     use_relative_proprio,
     start_pos,
     start_rot,
     joint_mode=False,
 ):
-    """Build the full observation (camera image + state) for one step."""
-    camera_image, gripper_joints = get_camera_frame(gripper_stub, gripper_pb2)
+    """Build the full observation (camera image + state) for one step.
+
+    Returns (camera_image, state, frame_ts_ms)."""
+    camera_image, gripper_joints, frame_ts_ms = camera.get()
 
     if joint_mode:
         # Joint-space state = [arm_q(7), proximal, distal], matching
@@ -208,7 +276,7 @@ def build_observation(
     else:
         state = gripper_joints
 
-    return camera_image, state
+    return camera_image, state, frame_ts_ms
 
 
 def run_episode(
@@ -219,6 +287,7 @@ def run_episode(
     gripper_stub,
     arm_pb2,
     gripper_pb2,
+    camera,
     device,
     max_steps,
     fps,
@@ -231,39 +300,76 @@ def run_episode(
     joint_mode=False,
     clamp_pos_m=None,
     clamp_rot_rad=None,
+    max_ticks=1,
+    skip_stale=False,
     log_gripper=False,
     log_deltas=False,
+    log_latency=False,
     dump_dir=None,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats."""
     n_clamped = 0
+    n_rejected = 0  # arm commands refused by the server (IK-jump watchdog etc.)
     dt = 1.0 / fps
     episode_start = time.perf_counter()
     if dump_dir is not None:
         dump_dir = _Path(dump_dir)
         dump_dir.mkdir(parents=True, exist_ok=True)
+    # Latency bookkeeping. frame_ts is the SERVER's monotonic clock, so an
+    # absolute frame→local age is unknowable; instead track (a) inter-frame
+    # timestamp deltas = true camera rate + stale-duplicate detection, and
+    # (b) staleness = (local_recv − frame_ts) above the episode's minimum
+    # offset — how much OLDER than best-case each frame is (buffering/queuing).
+    lat_prev_ts = None
+    lat_min_offset = float("inf")
+    lat_stats = {"dts": [], "stale": 0, "staleness": [], "infer": [], "ticks": []}
+    # Wallclock-consistent execution state: t_nominal tracks how much demo
+    # time has been sent to the arm; each iteration covers the elapsed real
+    # time, capped at max_ticks. CAUTION — the cap only helps when the loop
+    # is USUALLY at 50 Hz with occasional hiccups: each tick costs ~20 ms
+    # (one send incl. server-side IK + amortized inference), so if the loop
+    # can't hold rate the compensation saturates at the cap and delivers
+    # violent multi-tick motion bursts instead of catching up. max_ticks=1
+    # disables it: smooth motion at whatever fraction of demo speed the
+    # loop achieves.
+    t_nominal = None
+    # Loop-period history for --skip_stale: converts the measured frame
+    # staleness (wall ms) into "how many chunk actions the arm has already
+    # executed since this observation was captured".
+    prev_loop_start = None
+    loop_periods = []
 
     for step in range(max_steps):
         loop_start = time.perf_counter()
+        if prev_loop_start is not None:
+            loop_periods.append(loop_start - prev_loop_start)
+        prev_loop_start = loop_start
 
         # --- Observe ---
-        camera_image, state = build_observation(
+        camera_image, state, frame_ts_ms = build_observation(
             arm_stub,
             arm_pb2,
-            gripper_stub,
-            gripper_pb2,
+            camera,
             use_relative_proprio,
             start_pos,
             start_rot,
             joint_mode=joint_mode,
         )
+        recv_ms = time.perf_counter() * 1000.0
+        lat_min_offset = min(lat_min_offset, recv_ms - frame_ts_ms)
+        frame_staleness = (recv_ms - frame_ts_ms) - lat_min_offset
+        frame_dts = (frame_ts_ms - lat_prev_ts) if lat_prev_ts is not None else None
+        lat_prev_ts = frame_ts_ms
 
         # Dump the exact observation fed to the policy (pre-normalization), for
         # offline train/deploy distribution checks (DiffusionPolicy/ood_check.py).
         # camera_image is RGB HWC uint8 here; cv2.imwrite expects BGR.
         if dump_dir is not None:
+            # Lowest PNG compression: default (3) costs tens of ms per full-res
+            # frame, a large fraction of the 20 ms loop budget. Still lossless.
             cv2.imwrite(str(dump_dir / f"obs_{step:05d}.png"),
-                        cv2.cvtColor(camera_image, cv2.COLOR_RGB2BGR))
+                        cv2.cvtColor(camera_image, cv2.COLOR_RGB2BGR),
+                        [cv2.IMWRITE_PNG_COMPRESSION, 1])
             with open(dump_dir / "state.jsonl", "a") as f:
                 f.write(_json.dumps({"step": step, "state": [float(v) for v in state]}) + "\n")
 
@@ -281,38 +387,137 @@ def run_episode(
             "task": task,
         }
 
-        # --- Inference ---
+        # --- Inference + wallclock-consistent execution ---
+        # The training data is 50 fps: one action = the motion of ONE 20 ms
+        # tick. If the loop can't hold 50 Hz (camera acquisition, inference),
+        # sending one delta per iteration executes the demo in slow motion
+        # with target hops (the measured 5 Hz jerky-and-10x-slow failure).
+        # Instead, consume as many chunk actions as WALL-CLOCK ticks elapsed
+        # since the last iteration and send each as its own command (a replay
+        # burst) — motion runs at demonstrated speed whatever the loop rate.
+        t_inf = time.perf_counter()
         batch = preprocessor(batch)
-        with torch.no_grad():
-            action = policy.select_action(batch)
-        action = postprocessor(action)
 
-        action_np = action.squeeze(0).cpu().numpy()
-
-        # --- Send commands ---
         if joint_mode:
-            # 9D joint action: [arm_q(7), proximal, distal]. Arm joints go
-            # straight to the arm (no integrator/IK); gripper via the gripper
-            # service exactly as in the Cartesian path.
+            with torch.no_grad():
+                action = policy.select_action(batch)
+            action = postprocessor(action)
+            infer_ms = (time.perf_counter() - t_inf) * 1000.0
+            action_np = action.squeeze(0).cpu().numpy()
+            # 9D joint action: [arm_q(7), proximal, distal] — absolute, no
+            # composition needed; slow loops just track a slower reference.
             arm_joints = action_np[:7]
             gripper_goal = action_np[7:9]
             arm_stub.SendJointCommand(arm_pb2.JointCommand(joint_positions=arm_joints.tolist()))
-            delta_pos = None
+            delta_pos, n_ticks = None, 1
         else:
-            delta_pos = action_np[:3]
-            delta_rot_6d = action_np[3:9]
-            gripper_goal = action_np[9:]
-            if clamp_pos_m is not None or clamp_rot_rad is not None:
-                delta_pos, delta_rot_6d, was = clamp_delta(
-                    delta_pos, delta_rot_6d, clamp_pos_m, clamp_rot_rad)
-                n_clamped += int(was)
-            arm_stub.SendCartesianDelta(
-                arm_pb2.CartesianDelta(
-                    dx=float(delta_pos[0]),
-                    dy=float(delta_pos[1]),
-                    dz=float(delta_pos[2]),
-                    dr6d=delta_rot_6d.tolist(),
+            now = time.perf_counter()
+            if t_nominal is None:
+                t_nominal = now
+            n_ticks = int(np.clip(round((now - t_nominal) / dt), 1, max_ticks))
+            t_nominal += n_ticks * dt
+            if abs(now - t_nominal) > 0.5:  # lost sync (pause/debugger) → resync
+                t_nominal = now
+
+            # Send each tick's delta as its OWN command, exactly like a
+            # training-rate replay burst. The arm integrator accumulates them
+            # identically to one composed delta, but each command stays small
+            # (one tick + client clamps), which is what the server's IK-jump
+            # watchdog is calibrated for: a single COMPOUND delta of n_ticks
+            # motion looks like a singularity branch flip (>15deg on one joint
+            # in one command) and latches the arm frozen. p_acc/R_acc compose
+            # the ACCEPTED deltas for logging only.
+            p_acc = np.zeros(3)
+            R_acc = np.eye(3)
+            gripper_goal = None
+            frozen_error = None
+            for _ in range(n_ticks):
+                # Latency compensation (UMI-style): when the policy is about
+                # to REPLAN (action queue empty), the new chunk starts from
+                # the pose in the observation — but that frame is stale, and
+                # the arm has kept executing while it aged. The chunk's first
+                # k actions describe motion the arm has ALREADY done; executing
+                # them again overshoots (the "push through the object" failure).
+                # Discard them: k = staleness / measured loop period.
+                if skip_stale and loop_periods:
+                    q = getattr(policy, "_queues", None)
+                    q = q.get("action") if isinstance(q, dict) else None
+                    if q is not None and len(q) == 0:
+                        period_ms = 1000.0 * float(np.median(loop_periods[-20:]))
+                        k = int(np.clip(round(frame_staleness / max(period_ms, 1.0)),
+                                        0, policy.config.n_action_steps - 1))
+                        for _ in range(k):
+                            with torch.no_grad():
+                                policy.select_action(batch)  # discard stale head
+                        if log_latency and k:
+                            print(f"  skip_stale: dropped {k} chunk-head action(s) "
+                                  f"(staleness {frame_staleness:.0f}ms / period {period_ms:.0f}ms)",
+                                  flush=True)
+                with torch.no_grad():
+                    a = policy.select_action(batch)
+                a = postprocessor(a)
+                a_np = a.squeeze(0).cpu().numpy()
+                dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
+                if clamp_pos_m is not None or clamp_rot_rad is not None:
+                    dp, dr6, was = clamp_delta(dp, dr6, clamp_pos_m, clamp_rot_rad)
+                    n_clamped += int(was)
+                resp = arm_stub.SendCartesianDelta(
+                    arm_pb2.CartesianDelta(
+                        dx=float(dp[0]), dy=float(dp[1]), dz=float(dp[2]),
+                        dr6d=dr6.tolist(),
+                    )
                 )
+                if not resp.success:
+                    # The real-arm server rejects unsafe commands (IK-jump
+                    # watchdog) and, once latched, freezes ALL motion until
+                    # Reset. Silently dropping these responses means running
+                    # the policy against a frozen arm — surface them loudly.
+                    n_rejected += 1
+                    if "frozen" in resp.error:
+                        frozen_error = resp.error
+                        break
+                    if n_rejected <= 5 or n_rejected % 25 == 0:
+                        print(f"ARM REJECTED delta #{n_rejected}: {resp.error}", flush=True)
+                    continue  # rejected delta was NOT applied: skip composition
+                R_i = rotation_6d_to_rotation_matrix_numpy(dr6.reshape(1, 6))[0]
+                p_acc = p_acc + R_acc @ dp
+                R_acc = R_acc @ R_i
+            infer_ms = (time.perf_counter() - t_inf) * 1000.0
+
+            if frozen_error is not None:
+                print(
+                    f"\nARM MOTION FROZEN at step {step}: {frozen_error}\n"
+                    f"The server's IK-jump watchdog latched (check the arm "
+                    f"server log for the tripping joint). Aborting episode — "
+                    f"Reset/re-home the arm before the next one.",
+                    flush=True,
+                )
+                return {
+                    "success": False,
+                    "steps": step + 1,
+                    "displacement_mm": 0.0,
+                    "duration_s": time.perf_counter() - episode_start,
+                    "n_clamped": n_clamped,
+                    "n_rejected": n_rejected,
+                }
+
+            delta_pos = p_acc
+            delta_rot_6d = rotation_matrix_to_rotation_6d_numpy(R_acc.reshape(1, 3, 3))[0]
+
+        if log_latency:
+            lat_stats["infer"].append(infer_ms)
+            lat_stats["staleness"].append(frame_staleness)
+            lat_stats["ticks"].append(n_ticks)
+            if frame_dts is not None:
+                lat_stats["dts"].append(frame_dts)
+                if frame_dts <= 0.0:
+                    lat_stats["stale"] += 1
+            print(
+                f"lat step {step:3d} | frame Δts {frame_dts if frame_dts is not None else 0.0:6.1f}ms"
+                f"{' STALE' if frame_dts is not None and frame_dts <= 0 else ''}"
+                f" | staleness +{frame_staleness:5.1f}ms | infer {infer_ms:5.1f}ms"
+                f" | ticks x{n_ticks} | loop target {dt * 1000:.0f}ms",
+                flush=True,
             )
         gripper_stub.SendMotorCommand(
             gripper_pb2.MotorCommand(
@@ -322,15 +527,14 @@ def run_episode(
         )
 
         if log_deltas and not joint_mode:
-            # The EXACT command sent to the arm this step (post-clamp): camera-
-            # local position delta (mm), its magnitude, the rotation-delta angle,
-            # and the absolute gripper goals.
+            # The net motion commanded this iteration (post-clamp): the
+            # composition of the ACCEPTED per-tick deltas, plus gripper goals.
             r_delta = rotation_6d_to_rotation_matrix_numpy(delta_rot_6d.reshape(1, 6))[0]
             ang_deg = np.degrees(np.arccos(np.clip((np.trace(r_delta) - 1.0) / 2.0, -1.0, 1.0)))
             d_mm = delta_pos * 1000.0
             print(
                 f"step {step:3d} | Δpos mm: [{d_mm[0]:+6.2f} {d_mm[1]:+6.2f} {d_mm[2]:+6.2f}]"
-                f" |Δ| {np.linalg.norm(d_mm):5.2f} | Δrot {ang_deg:5.2f}°"
+                f" |Δ| {np.linalg.norm(d_mm):5.2f} | Δrot {ang_deg:5.2f}° | x{n_ticks} tick(s)"
                 f" | grip ({gripper_goal[0]:+.3f}, "
                 f"{gripper_goal[1] if len(gripper_goal) > 1 else 0.0:+.3f})",
                 flush=True,
@@ -375,6 +579,7 @@ def run_episode(
                     "displacement_mm": status.cube_displacement * 1000,
                     "duration_s": time.perf_counter() - episode_start,
                     "n_clamped": n_clamped,
+                    "n_rejected": n_rejected,
                 }
 
         # --- Timing ---
@@ -384,12 +589,37 @@ def run_episode(
 
     # Episode ended without success
     status = arm_stub.GetSuccessStatus(arm_pb2.SuccessStatusRequest())
+    if log_latency and lat_stats["infer"]:
+        dts = np.array(lat_stats["dts"]) if lat_stats["dts"] else np.array([0.0])
+        st = np.array(lat_stats["staleness"])
+        inf = np.array(lat_stats["infer"])
+        tk = np.array(lat_stats["ticks"])
+        n = len(inf)
+        print(
+            f"LATENCY SUMMARY ({n} steps) | camera: median Δts {np.median(dts):.1f}ms "
+            f"(≈{1000.0 / max(np.median(dts), 1e-6):.0f}Hz), stale frames {lat_stats['stale']}/{n} "
+            f"({100.0 * lat_stats['stale'] / n:.0f}%) | staleness p50 {np.percentile(st, 50):.0f}ms "
+            f"p95 {np.percentile(st, 95):.0f}ms | infer p50 {np.percentile(inf, 50):.0f}ms "
+            f"p95 {np.percentile(inf, 95):.0f}ms | ticks/send p50 {np.percentile(tk, 50):.0f} "
+            f"(1 = loop holds {1.0 / dt:.0f}Hz; >1 = wallclock compensation active) | "
+            f"loop target {dt * 1000:.0f}ms",
+            flush=True,
+        )
+
+    if n_rejected > 0:
+        print(
+            f"WARNING: the arm server rejected {n_rejected} command(s) this "
+            f"episode (IK-jump watchdog) — the executed motion differs from "
+            f"what the policy commanded.",
+            flush=True,
+        )
     return {
         "success": status.goal_reached,
         "steps": max_steps,
         "displacement_mm": status.cube_displacement * 1000,
         "duration_s": time.perf_counter() - episode_start,
         "n_clamped": n_clamped,
+        "n_rejected": n_rejected,
     }
 
 
@@ -440,6 +670,13 @@ def main():
     gripper_stub.Ping(gripper_pb2.PingRequest())
     logger.info("Connected to simulator")
 
+    # Persistent camera stream: opened ONCE for the whole run. Opening a fresh
+    # gRPC stream per observation blocked ~200 ms/step (measured), silently
+    # turning the 50 Hz control loop into a ~5 Hz one.
+    camera = CameraStream(gripper_stub, gripper_pb2)
+    camera.get()  # block until the first frame arrives
+    logger.info("Camera stream up")
+
     # ---- Evaluation loop ----
     results = []
     logger.info(
@@ -487,6 +724,7 @@ def main():
             gripper_stub=gripper_stub,
             arm_pb2=arm_pb2,
             gripper_pb2=gripper_pb2,
+            camera=camera,
             device=device,
             max_steps=args.max_steps,
             fps=args.fps,
@@ -494,6 +732,7 @@ def main():
             debug=args.debug,
             log_gripper=args.log_gripper,
             log_deltas=args.log_deltas,
+            log_latency=args.log_latency,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
             use_relative_proprio=use_relative_proprio,
             start_pos=start_pos,
@@ -502,6 +741,8 @@ def main():
             joint_mode=joint_mode,
             clamp_pos_m=(args.clamp_pos_mm / 1000.0) if args.clamp_pos_mm else None,
             clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
+            max_ticks=args.max_ticks,
+            skip_stale=args.skip_stale,
         )
         # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
         # result["success"] is meaningless there: ask the operator instead and
@@ -551,6 +792,7 @@ def main():
 
     if args.debug:
         cv2.destroyAllWindows()
+    camera.stop()
     arm_channel.close()
     gripper_channel.close()
 

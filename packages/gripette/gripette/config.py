@@ -20,6 +20,15 @@ class Settings(BaseSettings):
     camera_resolution_w: int = 1296
     camera_resolution_h: int = 972
     jpeg_quality: int = 70
+    # picamera2 pipeline: "still" = full-res sensor readout per frame (slow,
+    # ~10 Hz ceiling on a Pi Zero); "video" = continuous binned sensor mode
+    # (same full FOV on the RPi cameras, much faster capture). If you switch
+    # an already-trained deployment to "video", verify the streamed image
+    # still matches training with ood_check.py before trusting evals.
+    camera_mode: Literal["still", "video"] = "still"
+    # StreamState target rate (frames/s). Actual rate is capped by what
+    # capture+JPEG-encode achieves on the hardware (see camera_mode).
+    stream_hz: float = 10.0
 
     # Motors (Feetech STS3215 on serial bus)
     motor_port: str = "/dev/serial0"
