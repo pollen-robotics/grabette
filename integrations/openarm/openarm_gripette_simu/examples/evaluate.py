@@ -107,6 +107,14 @@ def parse_args():
                         "loop USUALLY holds the target rate: each tick costs ~20 ms "
                         "(send incl. server IK + amortized inference), so a chronically "
                         "slow loop just saturates the cap and moves in violent bursts.")
+    p.add_argument("--async_exec", action="store_true",
+                   help="Async execution: a sender thread streams actions to the arm at "
+                        "EXACTLY --fps (the demo clock) while inference replans in "
+                        "parallel from the freshest camera pair — reproducing the "
+                        "training/sim dynamics (demo-speed motion, fresh feedback, no "
+                        "pauses). Use --fps 50 to match a 50fps dataset. Gripper-only "
+                        "(2D state) cartesian models only; ignores --max_ticks/"
+                        "--skip_stale (both are subsumed).")
     p.add_argument("--skip_stale", action="store_true",
                    help="Latency compensation (UMI-style): at each replan, discard the "
                         "chunk-head actions corresponding to motion the arm already "
@@ -186,6 +194,10 @@ class CameraStream:
         self._pb2 = gripper_pb2
         self._lock = threading.Lock()
         self._latest = None
+        # Short history of recent frames (newest last) so consumers can build
+        # a 2-observation pair (the policy is n_obs_steps=2: it conditions on
+        # inter-frame motion). 8 frames ≈ 0.4 s at 20 Hz.
+        self._history = []
         self._ready = threading.Event()
         self._stop = False
         self._thread = threading.Thread(target=self._reader, daemon=True)
@@ -207,6 +219,9 @@ class CameraStream:
                     )
                     with self._lock:
                         self._latest = (img_rgb, gripper, float(frame.timestamp_ms))
+                        self._history.append(self._latest)
+                        if len(self._history) > 8:
+                            self._history.pop(0)
                     self._ready.set()
             except Exception as e:  # noqa: BLE001 — stream drop: reconnect
                 if not self._stop:
@@ -219,8 +234,117 @@ class CameraStream:
         with self._lock:
             return self._latest
 
+    def get_pair(self, timeout: float = 5.0):
+        """Return (previous_frame, latest_frame) — the two most recent DISTINCT
+        camera frames, each (img_rgb, gripper, ts_ms). The closest available
+        approximation of the 20 ms-spaced observation pair the policy was
+        trained on (camera period sets the floor). Duplicates latest if only
+        one frame exists yet."""
+        if not self._ready.wait(timeout):
+            raise RuntimeError("No frame received from camera stream")
+        with self._lock:
+            now = self._history[-1]
+            prev = self._history[-2] if len(self._history) >= 2 else now
+            return prev, now
+
     def stop(self):
         self._stop = True
+
+
+class ChunkExecutor:
+    """Async executor: streams per-tick actions to the arm at EXACTLY `fps`
+    from a replaceable chunk, while inference replans in parallel.
+
+    Why: the training data is 50 fps and one action = one 20 ms tick. A
+    synchronous observe-infer-act loop can never hold 50 Hz (inference alone
+    is ~80 ms), so motion runs at a fraction of demo speed and the policy
+    sees dynamics it was never trained on. Here the sender thread paces the
+    demo clock; submit() swaps in a fresher chunk whenever one is ready
+    (receding horizon), skipping the chunk-head actions that duplicate motion
+    already executed since the observation was captured.
+    """
+
+    def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
+                 clamp_pos_m=None, clamp_rot_rad=None):
+        self._arm_stub = arm_stub
+        self._arm_pb2 = arm_pb2
+        self._gripper_stub = gripper_stub
+        self._gripper_pb2 = gripper_pb2
+        self._dt = 1.0 / fps
+        self._clamp_pos_m = clamp_pos_m
+        self._clamp_rot_rad = clamp_rot_rad
+        self._lock = threading.Lock()
+        self._chunk = []
+        self._i = 0
+        # Counters (int reads/writes are atomic under the GIL).
+        self.sent_count = 0   # ticks consumed — the executor's clock
+        self.underruns = 0    # ticks with no action available (inference late)
+        self.n_rejected = 0
+        self.n_clamped = 0
+        self.frozen = None    # set to the error string on watchdog latch
+        self._stop = False
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def submit(self, chunk, skip):
+        """Replace the current chunk. `skip` = ticks executed since the obs
+        that generated this chunk was captured — those actions describe motion
+        already done, so they are dropped (always keep at least one action).
+        Returns the number actually skipped."""
+        with self._lock:
+            k = int(np.clip(skip, 0, max(len(chunk) - 1, 0)))
+            self._chunk = chunk[k:]
+            self._i = 0
+        return k
+
+    def _run(self):
+        next_t = time.monotonic()
+        while not self._stop:
+            a = None
+            with self._lock:
+                if self._i < len(self._chunk):
+                    a = self._chunk[self._i]
+                    self._i += 1
+            if a is None:
+                self.underruns += 1
+            else:
+                dp, dr6, grip = a[:3], a[3:9], a[9:]
+                if self._clamp_pos_m is not None or self._clamp_rot_rad is not None:
+                    dp, dr6, was = clamp_delta(dp, dr6, self._clamp_pos_m, self._clamp_rot_rad)
+                    self.n_clamped += int(was)
+                try:
+                    resp = self._arm_stub.SendCartesianDelta(
+                        self._arm_pb2.CartesianDelta(
+                            dx=float(dp[0]), dy=float(dp[1]), dz=float(dp[2]),
+                            dr6d=dr6.tolist(),
+                        )
+                    )
+                    if not resp.success:
+                        self.n_rejected += 1
+                        if "frozen" in resp.error:
+                            self.frozen = resp.error
+                            return
+                    # Gripper: fire-and-forget future — a blocking round trip
+                    # to the Pi over WiFi would eat the 20 ms tick budget.
+                    self._gripper_stub.SendMotorCommand.future(
+                        self._gripper_pb2.MotorCommand(
+                            motor1_goal=float(grip[0]),
+                            motor2_goal=float(grip[1]) if len(grip) > 1 else 0.0,
+                        )
+                    )
+                except Exception as e:  # noqa: BLE001 — surface, don't die silently
+                    logger.warning(f"Executor send failed: {e}")
+                self.sent_count += 1
+            next_t += self._dt
+            sleep_for = next_t - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+            elif sleep_for < -0.2:  # long stall (GIL/debugger) — resync, don't burst
+                next_t = time.monotonic()
+
+    def stop(self):
+        self._stop = True
+        self._thread.join(timeout=2.0)
 
 
 def capture_start_pose(arm_stub, arm_pb2):
@@ -623,6 +747,160 @@ def run_episode(
     }
 
 
+def run_episode_async(
+    policy,
+    preprocessor,
+    postprocessor,
+    arm_stub,
+    gripper_stub,
+    arm_pb2,
+    gripper_pb2,
+    camera,
+    device,
+    max_steps,
+    fps,
+    success_check_freq,
+    task,
+    clamp_pos_m=None,
+    clamp_rot_rad=None,
+    log_deltas=False,
+    log_latency=False,
+    dump_dir=None,
+) -> dict:
+    """Async episode: ChunkExecutor streams actions at exactly `fps` (the demo
+    clock) while this loop replans as fast as inference allows (~10 Hz), each
+    time from the freshest camera pair. This reproduces the training/sim
+    dynamics: demo-speed motion, ~20 ms-scale feedback, no pauses.
+
+    Observation pairs: the policy is n_obs_steps=2 — it conditions on
+    inter-frame MOTION. Each replan feeds the two most recent distinct camera
+    frames (the camera period, ~50 ms, is the closest physics allows to the
+    20 ms training spacing) instead of whatever two frames consecutive loop
+    iterations happened to see. Chunk handoff skips the actions already
+    executed since the newest frame was captured (executor tick count + frame
+    staleness), so the new chunk continues from the arm's true pose.
+
+    Supports the gripper-only (2D state) cartesian models only.
+    """
+    n_act = int(policy.config.n_action_steps)
+    if not isinstance(getattr(policy, "_queues", None), dict) or "action" not in policy._queues:
+        raise SystemExit("--async_exec needs the lerobot queue-based policy API "
+                         "(Diffusion); this policy type doesn't expose _queues['action'].")
+    if dump_dir is not None:
+        dump_dir = _Path(dump_dir)
+        dump_dir.mkdir(parents=True, exist_ok=True)
+
+    def make_batch(img, grip):
+        state = torch.from_numpy(np.asarray(grip, dtype=np.float32))
+        im = torch.from_numpy(img).float().div_(255.0).permute(2, 0, 1).contiguous()
+        return {
+            "observation.state": state.unsqueeze(0).to(device),
+            "observation.images.cam0": im.unsqueeze(0).to(device),
+            "task": task,
+        }
+
+    executor = ChunkExecutor(arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
+                             clamp_pos_m=clamp_pos_m, clamp_rot_rad=clamp_rot_rad)
+    episode_start = time.perf_counter()
+    lat_min_offset = float("inf")
+    stats = {"infer": [], "skip": [], "chunk": []}
+    cycle = 0
+    first_cycle = True
+    success = False
+    try:
+        while executor.sent_count < max_steps and executor.frozen is None:
+            (img_prev, grip_prev, _ts_prev), (img_now, grip_now, ts_now) = camera.get_pair()
+            sent_at_obs = executor.sent_count
+            recv_ms = time.perf_counter() * 1000.0
+            lat_min_offset = min(lat_min_offset, recv_ms - ts_now)
+            staleness_ms = (recv_ms - ts_now) - lat_min_offset
+
+            t_inf = time.perf_counter()
+            with torch.no_grad():
+                # First call feeds obs[t-1] and pops the leftover action we
+                # deliberately keep in the queue (see drain below), so it does
+                # NOT trigger generation. Second call feeds obs[t]: queue now
+                # empty -> generates the chunk conditioned on the (t-1, t)
+                # camera pair, matching training's consecutive-frame stacking.
+                _ = policy.select_action(preprocessor(make_batch(img_prev, grip_prev)))
+                if first_cycle:
+                    # No leftover existed: that call generated a junk chunk
+                    # from a duplicated frame. Flush it so the next call
+                    # regenerates from the real pair.
+                    policy._queues["action"].clear()
+                    first_cycle = False
+                a0 = policy.select_action(preprocessor(make_batch(img_now, grip_now)))
+            actions = [postprocessor(a0)]
+            q = policy._queues["action"]
+            while len(q) > 1:  # leave exactly one for the next cycle's prev-feed
+                actions.append(postprocessor(q.popleft()))
+            infer_ms = (time.perf_counter() - t_inf) * 1000.0
+            chunk = [a.squeeze(0).cpu().numpy() for a in actions]
+
+            # Skip = ticks executed while this obs aged: sends since the frame
+            # was grabbed + the frame's own staleness converted to ticks.
+            skip = (executor.sent_count - sent_at_obs) + int(round(staleness_ms * fps / 1000.0))
+            k = executor.submit(chunk, skip)
+
+            stats["infer"].append(infer_ms)
+            stats["skip"].append(k)
+            stats["chunk"].append(len(chunk) - k)
+            if log_deltas or log_latency:
+                d0 = chunk[min(k, len(chunk) - 1)]
+                print(
+                    f"cycle {cycle:3d} | tick {executor.sent_count:4d} | "
+                    f"infer {infer_ms:5.1f}ms | chunk {len(chunk)} skip {k} | "
+                    f"staleness +{staleness_ms:4.0f}ms | underruns {executor.underruns} | "
+                    f"Δ0 [{d0[0] * 1000:+5.1f} {d0[1] * 1000:+5.1f} {d0[2] * 1000:+5.1f}]mm "
+                    f"grip ({d0[9]:+.3f}, {d0[10] if len(d0) > 10 else 0.0:+.3f})",
+                    flush=True,
+                )
+            if dump_dir is not None:
+                cv2.imwrite(str(dump_dir / f"obs_{executor.sent_count:05d}.png"),
+                            cv2.cvtColor(img_now, cv2.COLOR_RGB2BGR),
+                            [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                with open(dump_dir / "state.jsonl", "a") as f:
+                    f.write(_json.dumps({"step": int(executor.sent_count),
+                                         "state": [float(v) for v in grip_now]}) + "\n")
+
+            if cycle % max(success_check_freq // n_act, 1) == 0:
+                status = arm_stub.GetSuccessStatus(arm_pb2.SuccessStatusRequest())
+                if status.goal_reached:
+                    success = True
+                    break
+            cycle += 1
+    finally:
+        executor.stop()
+
+    if executor.frozen is not None:
+        print(f"\nARM MOTION FROZEN: {executor.frozen}\nReset/re-home before the next episode.",
+              flush=True)
+    status = arm_stub.GetSuccessStatus(arm_pb2.SuccessStatusRequest())
+    success = success or status.goal_reached
+    if log_latency and stats["infer"]:
+        inf = np.array(stats["infer"])
+        sk = np.array(stats["skip"])
+        total = executor.sent_count + executor.underruns
+        print(
+            f"ASYNC SUMMARY | ticks sent {executor.sent_count} at {fps:.0f}Hz | "
+            f"underrun ticks {executor.underruns} "
+            f"({100.0 * executor.underruns / max(total, 1):.0f}%) | "
+            f"replans {len(inf)} (every ~{executor.sent_count / max(len(inf), 1):.1f} ticks) | "
+            f"infer p50 {np.percentile(inf, 50):.0f}ms p95 {np.percentile(inf, 95):.0f}ms | "
+            f"skip p50 {np.percentile(sk, 50):.0f} | rejected {executor.n_rejected} | "
+            f"clamped {executor.n_clamped}",
+            flush=True,
+        )
+    return {
+        "success": success,
+        "steps": executor.sent_count,
+        "displacement_mm": status.cube_displacement * 1000,
+        "duration_s": time.perf_counter() - episode_start,
+        "n_clamped": executor.n_clamped,
+        "n_rejected": executor.n_rejected,
+    }
+
+
 def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
@@ -716,7 +994,31 @@ def main():
             f"cube at ({reset_resp.cube_x:.3f}, {reset_resp.cube_y:.3f}, {reset_resp.cube_z:.3f})"
         )
 
-        result = run_episode(
+        if args.async_exec:
+            if joint_mode or use_relative_proprio:
+                raise SystemExit("--async_exec supports gripper-only (2D state) cartesian models only.")
+            result = run_episode_async(
+                policy=policy,
+                preprocessor=preprocessor,
+                postprocessor=postprocessor,
+                arm_stub=arm_stub,
+                gripper_stub=gripper_stub,
+                arm_pb2=arm_pb2,
+                gripper_pb2=gripper_pb2,
+                camera=camera,
+                device=device,
+                max_steps=args.max_steps,
+                fps=args.fps,
+                success_check_freq=args.success_check_freq,
+                task=args.task,
+                clamp_pos_m=(args.clamp_pos_mm / 1000.0) if args.clamp_pos_mm else None,
+                clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
+                log_deltas=args.log_deltas,
+                log_latency=args.log_latency,
+                dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
+            )
+        else:
+            result = run_episode(
             policy=policy,
             preprocessor=preprocessor,
             postprocessor=postprocessor,

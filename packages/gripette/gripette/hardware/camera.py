@@ -26,10 +26,12 @@ class CameraCapture:
         resolution: tuple[int, int] = (1296, 972),
         quality: int = 70,
         mode: str = "still",
+        framerate: float | None = None,
     ):
         self.resolution = resolution
         self.quality = quality
         self.mode = mode
+        self.framerate = framerate
         self._lock = threading.Lock()
         self._picam2 = None
         self._mock = not _HAS_PICAMERA2
@@ -42,9 +44,17 @@ class CameraCapture:
         if self.mode == "video":
             # Continuous pipeline on a binned sensor mode: full FOV on the
             # RPi cameras, much faster per-frame capture than still mode
-            # (which re-reads the full-res sensor every frame).
+            # (which re-reads the full-res sensor every frame). The video
+            # pipeline defaults to ~30 fps; capture_array blocks until the
+            # next sensor frame, so the SENSOR rate caps the stream rate —
+            # request it explicitly (OV5647 binned mode supports up to ~42).
+            controls = {}
+            if self.framerate:
+                dur_us = int(1_000_000 / self.framerate)
+                controls["FrameDurationLimits"] = (dur_us, dur_us)
             config = self._picam2.create_video_configuration(
                 main={"size": self.resolution, "format": "RGB888"},
+                controls=controls,
             )
         else:
             config = self._picam2.create_still_configuration(
