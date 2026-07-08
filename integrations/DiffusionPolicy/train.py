@@ -278,6 +278,15 @@ def parse_args():
         default=8,
         help="Actions executed before re-planning (4=reactive, 8=default, 16=smooth)",
     )
+    parser.add_argument(
+        "--n_obs_steps",
+        type=int,
+        default=2,
+        help="Observation frames the policy conditions on. 2 (default, UMI) adds an "
+             "inter-frame motion cue but requires deployment to reproduce the training "
+             "frame spacing (dataset-fps camera); 1 conditions on a single frame — "
+             "robust to any deployment camera rate / execution speed.",
+    )
     parser.add_argument("--log_freq", type=int, default=100, help="Log every N steps")
     parser.add_argument("--save_freq", type=int, default=10_000, help="Save checkpoint every N steps")
     parser.add_argument("--eval_freq", type=int, default=200, help="Evaluate on validation set every N steps")
@@ -466,7 +475,12 @@ def main():
         input_features=input_features,
         output_features=output_features,
         # -- Temporal structure (same as UMI) --
-        n_obs_steps=2,
+        # n_obs_steps=2 conditions the policy on a PAIR of consecutive frames
+        # (20 ms apart at 50 fps) — i.e. on inter-frame MOTION. Deployment must
+        # then reproduce that spacing (camera rate x execution speed), which a
+        # slow camera cannot. n_obs_steps=1 conditions on a single frame:
+        # weaker temporal cue, but immune to frame-rate mismatch at deployment.
+        n_obs_steps=args.n_obs_steps,
         horizon=16,
         n_action_steps=args.n_action_steps,
         # -- Vision encoder --
