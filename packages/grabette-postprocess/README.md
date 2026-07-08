@@ -3,7 +3,7 @@
 SLAM/VIO orchestration and LeRobot dataset generation for the GRABETTE project.
 
 Takes raw episode recordings (OAK-D stereo + depth + IMU) from
-[Grabette](https://github.com/pollen-robotics/grabette), runs offline visual-inertial
+[Grabette](../grabette), runs offline visual-inertial
 SLAM to produce a camera trajectory, and converts everything into a
 [LeRobot v3](https://huggingface.co/docs/lerobot) dataset (Parquet + MP4) ready
 for policy training.
