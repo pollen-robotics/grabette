@@ -18,7 +18,18 @@ Prerequisites:
 Usage:
   uv run python train.py --dataset_repo_id <user>/<dataset>_cartesian
   uv run python train.py --dataset_repo_id <user>/<dataset>_cartesian --batch_size 64
+
+Cloud training (no local GPU) — the PEP-723 header below makes this file a
+self-contained uv script, so it runs on HF Jobs as-is (see README → "Cloud
+training with HF Jobs"):
+  hf jobs uv run --flavor a100-large --timeout 8h -s HF_TOKEN train.py -- \\
+      --dataset_repo_id <user>/<dataset>_cartesian --push_to_hub <user>/<model> ...
 """
+
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["lerobot>=0.5.1,<0.6"]
+# ///
 
 import argparse
 import json
@@ -356,6 +367,15 @@ def parse_args():
              "together with --num_workers on big-RAM machines.",
     )
     parser.add_argument(
+        "--video_backend",
+        choices=["torchcodec", "pyav"],
+        default=None,
+        help="Video decoding backend (default: lerobot's choice, usually torchcodec). "
+             "torchcodec needs SYSTEM FFmpeg libraries; pyav bundles its own FFmpeg "
+             "inside the wheel. Use 'pyav' in containers/cloud jobs without system "
+             "FFmpeg (symptom: 'Could not load libtorchcodec / libavutil.so not found').",
+    )
+    parser.add_argument(
         "--bf16",
         action="store_true",
         help="Use bfloat16 autocast for forward/backward. ~1.5-2x speedup on Ampere+/Blackwell "
@@ -561,11 +581,13 @@ def main():
 
     train_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,
-        delta_timestamps=delta_timestamps, episodes=train_episodes
+        delta_timestamps=delta_timestamps, episodes=train_episodes,
+        video_backend=args.video_backend,
     )
     val_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,
-        delta_timestamps=delta_timestamps, episodes=val_episodes
+        delta_timestamps=delta_timestamps, episodes=val_episodes,
+        video_backend=args.video_backend,
     )
 
     print(f"  Train episodes:   {len(train_episodes)} ({len(train_dataset)} frames)")

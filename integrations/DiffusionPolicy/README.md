@@ -146,6 +146,81 @@ SpatialSoftmax, resize 236 / random-crop 0.95, DDIM 50/16, down_dims
 - Best-by-val-loss checkpoint → `<output_dir>/best`, pushed to `<model>-best`. Periodic checkpoints → `<output_dir>/checkpoint_<step>`.
 - `--resume_from <ckpt_dir>` — resume model + optimizer + step + rng.
 
+#### Cloud training with HF Jobs (no local GPU needed)
+
+`train.py` carries a [PEP-723](https://peps.python.org/pep-0723/) header, so it is
+a self-contained uv script: [HF Jobs](https://huggingface.co/docs/hub/jobs) can
+upload and run it directly on Hugging Face GPUs — the dataset comes from the Hub,
+the trained model goes back to the Hub, nothing touches your machine.
+
+Prerequisites, in the order you'll hit them if they're missing:
+
+1. **CLI**: `uv tool install -U --force hf` (the standalone `hf`, not the one
+   inside a project venv).
+2. **Token with Jobs rights**: `hf auth login` with a **classic write token**,
+   or a fine-grained token with *Jobs write + Storage buckets read/write +
+   Repos read/write*, **scoped to your org** if you bill there. An older
+   fine-grained token fails with `403 … missing permissions: job.write`.
+   Note the token you're *logged in with* authorizes creating the job;
+   `-s HF_TOKEN` separately injects a token *into* the job container.
+3. **Pre-paid credits** on the billed namespace — Jobs are strictly pre-paid;
+   an empty balance fails with `402 Payment Required`. Use
+   `--namespace <org>` to bill the org's credits instead of your own.
+
+```bash
+# smoke test first (~10 min, cents): tiny run on a T4 (no --bf16: T4 lacks bf16)
+hf jobs uv run --flavor t4-small -s HF_TOKEN train.py -- \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --training_steps 200 --batch_size 8 --num_workers 2 \
+    --video_backend pyav --output_dir /tmp/smoke
+
+# real training (~2-3 h on an A100 ≈ $5-8)
+hf jobs uv run --flavor a100-large --timeout 8h -s HF_TOKEN train.py -- \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --training_steps 30000 --batch_size 64 --bf16 \
+    --video_backend pyav \
+    --color_jitter --state_noise_std 0.01 \
+    --eval_freq 500 --save_freq 5000 \
+    --push_to_hub <user>/<model>
+```
+
+Gotchas that matter:
+
+- **`--video_backend pyav` is required in cloud jobs.** The default Jobs image
+  has **no system FFmpeg**, and lerobot's default decoder (torchcodec) hard-
+  requires it — the run dies at the first batch with `Could not load
+  libtorchcodec … libavutil.so.XX: cannot open shared object file`. pyav ships
+  its own FFmpeg inside the wheel and works in any container.
+- Secrets syntax: `-s NAME` forwards your local env var `NAME`;
+  `-s NAME=value` sets it inline. Don't paste a bare key as the flag value —
+  it would be treated as a (publicly visible) secret *name*.
+- **Always set `--timeout`** — the Jobs default is **30 minutes** and a timed-out
+  job is simply killed. Budget generously; you pay per second used, not per
+  timeout.
+- **Job storage is ephemeral**: only what reaches the Hub survives. `train.py`
+  pushes the best checkpoint at the end via `--push_to_hub`; if you want *every*
+  periodic checkpoint to survive a crash/timeout, mount a Storage Bucket
+  read-write and point the output there:
+  `-v hf://buckets/<user>/grabette-runs:/outputs` + `--output_dir /outputs/<run>`.
+- **`-s HF_TOKEN` is required even though you are logged in.** Your local login
+  authenticates *creating* the job; the job itself runs in a cloud container
+  with **no credentials** unless you forward them. `-s HF_TOKEN` injects your
+  token into the container — without it the run fails at the first Hub access
+  (private dataset download, model push). Add `-s WANDB_API_KEY` +
+  `--wandb_project <proj>` for live curves — recommended for watching cloud runs.
+  Careful: `-s NAME` forwards your **local environment variable** of that name;
+  only `HF_TOKEN` falls back to your stored login. `wandb login` keeps its key
+  in `~/.netrc`, NOT the environment — `export WANDB_API_KEY=<key from
+  https://wandb.ai/authorize>` first, or the job dies with
+  `wandb: No API key configured`.
+- **`--namespace <org>`** (e.g. `pollen-robotics`) runs and **bills** the job on
+  the org account instead of yours — your token needs the org's Jobs permission.
+  With org billing you likely want `--push_to_hub <org>/<model>` too.
+- Follow along with `hf jobs ps`, `hf jobs logs <id>`, `hf jobs stats`.
+- Flavor guide: `a10g-large` ($1.5/h, 24 GB) is the budget fit; `a100-large`
+  ($2.5/h) trains this model roughly twice as fast — similar total cost, half
+  the wait. `hf jobs hardware` lists everything.
+
 ---
 
 ### 5. Offline sanity check (before a robot session)
