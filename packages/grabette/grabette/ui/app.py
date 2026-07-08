@@ -1,4 +1,4 @@
-"""Gradio dashboard for Grabette — camera view, capture controls, session/episode management."""
+"""Gradio dashboard for Grabette — camera view, capture controls, task/session/episode management."""
 
 from __future__ import annotations
 
@@ -322,7 +322,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cap = state.get("capture", {})
         if cap.get("is_capturing", False):
             parts = [
-                f"● RECORDING  {cap.get('session_id', '')}",
+                f"● RECORDING  {cap.get('episode_id', '')}",
                 f"Duration: {cap.get('duration_seconds', 0):.1f}s",
                 f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
             ]
@@ -339,13 +339,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             rows, move_dd, _task_header, desc, *_ = _refresh_episode_table(session_id)
             return gr.update(value="Start Capture", variant="primary"), rows, move_dd, desc
         else:
-            client.start_capture(session_id=session_id or None)
+            client.start_capture(task_id=session_id or None)
             return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update(), gr.update()
 
     def on_start_stop_session(current_task):
-        cap_session = client.get_capture_session_status()
+        cap_session = client.get_session_status()
         if cap_session.get("active"):
-            client.stop_capture_session()
+            client.stop_session()
             _, _, _, _, cap_title, _ = _refresh_episode_table(current_task)
             return (
                 gr.update(value="▶ Start Session", variant="secondary"),
@@ -353,7 +353,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=""),
             )
         else:
-            result = client.start_capture_session(task_id=current_task or None)
+            result = client.start_session(task_id=current_task or None)
             if "error" in result:
                 return gr.update(), gr.skip(), gr.skip()
             task_name = result.get("task_name", "")
@@ -484,10 +484,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     gr.update(value=_ACCEL_IFRAME_PAUSED),
                     gr.update(value=_ANGLE_IFRAME_PAUSED))
 
-    # ── Task (Session) helpers ────────────────────────────────────────
+    # ── Task helpers ──────────────────────────────────────────────────
 
     def _get_sessions():
-        return client.list_sessions()
+        return client.list_tasks()
 
     def _task_choices(sessions):
         return [(s["name"], s["id"]) for s in sessions]
@@ -557,7 +557,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         #   2. otherwise the task this browser had selected (persisted
         #      client-side via BrowserState), so a refresh stays put;
         #   3. otherwise fall back to the first task.
-        cap_session = client.get_capture_session_status()
+        cap_session = client.get_session_status()
         cap_task = cap_session.get("task_id") if cap_session.get("active") else None
         if cap_task in valid_ids:
             value = cap_task
@@ -569,10 +569,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_task_select(session_id):
-        cap_session = client.get_capture_session_status()
+        cap_session = client.get_session_status()
         session_active = cap_session.get("active", False)
         if not session_active and session_id:
-            client.set_active_session(session_id)
+            client.set_active_task(session_id)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id)
         if session_active:
             return task_header, gr.skip(), desc, ep_title, rows, move_dd
@@ -581,7 +581,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_create_task(name, description):
         if not name:
             return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
-        result = client.create_session(name, description or "")
+        result = client.create_task(name, description or "")
         if "error" in result:
             return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
         sessions = _get_sessions()
@@ -604,7 +604,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_save_task(session_id, new_name, new_desc):
         if not session_id or not new_name.strip():
             return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
-        client.update_session(session_id, name=new_name.strip(), description=new_desc)
+        client.update_task(session_id, name=new_name.strip(), description=new_desc)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         _, _, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id, sessions)
@@ -617,7 +617,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_delete_task(session_id):
         if not session_id:
             return (gr.update(),) * 9
-        client.delete_session(session_id)
+        client.delete_task(session_id)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
@@ -1249,7 +1249,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         def get_capture_status_and_active_task(current_task):
             state = client.get_state()
-            cap_session = client.get_capture_session_status()
+            cap_session = client.get_session_status()
             cap = (state or {}).get("capture", {})
             is_recording = cap.get("is_capturing", False)
             is_starting = cap.get("is_starting", False)
@@ -1274,7 +1274,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 toggle_btn_update = gr.update(interactive=False, value="Start Capture", variant="primary")
             elif is_recording:
                 parts = [
-                    f"● RECORDING  {cap.get('session_id', '')}",
+                    f"● RECORDING  {cap.get('episode_id', '')}",
                     f"Duration: {cap.get('duration_seconds', 0):.1f}s",
                     f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
                 ]
@@ -1297,7 +1297,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 banner = gr.update(value=_session_banner_html(task_name, display_count))
                 task_update = gr.skip()
             else:
-                active = client.get_active_session()
+                active = client.get_active_task()
                 sess_btn = gr.update(value="▶ Start Session", variant="secondary")
                 cap_title = gr.skip()
                 banner = gr.update(value="")
