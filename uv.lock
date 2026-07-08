@@ -1713,7 +1713,7 @@ dependencies = [
 requires-dist = [
     { name = "av" },
     { name = "click" },
-    { name = "lerobot", marker = "python_full_version >= '3.12'", specifier = ">=0.5.0" },
+    { name = "lerobot", marker = "python_full_version >= '3.12'", specifier = "==0.5.1" },
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pandas" },

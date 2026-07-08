@@ -5,7 +5,10 @@ import click
 from pathlib import Path
 
 from grabette_postprocess.dataset import build_dataset
-from grabette_postprocess.episode_manager import find_processed_episodes
+from grabette_postprocess.episode_manager import (find_processed_episodes,
+                                                  find_trajectory_csv)
+from grabette_postprocess.checks.trajectory import check_trajectory
+from grabette_postprocess.checks.tags import episode_tags
 
 
 @click.command()
@@ -33,6 +36,16 @@ def main(input_dir, repo_id, task, fps, image_height, image_width, root):
     if not episode_dirs:
         raise click.ClickException(f"No processed episodes found under {input_dir}")
 
+    # CLI keeps every episode (no WARN drop); per-episode tags flag quality issues.
+    tags_by_recording = {}
+    for ep in episode_dirs:
+        traj = find_trajectory_csv(ep)
+        report = check_trajectory(traj, ep / "slam_metadata.json") if traj else None
+        tags = episode_tags(ep, report)
+        tags_by_recording[ep.name] = tags
+        if tags:
+            print(f"  {ep.name}: {', '.join(tags)}")
+
     build_dataset(
         repo_id=repo_id,
         episode_dirs=episode_dirs,
@@ -40,6 +53,7 @@ def main(input_dir, repo_id, task, fps, image_height, image_width, root):
         fps=fps,
         image_size=(image_height, image_width),
         root=Path(root) if root else None,
+        tags_by_recording=tags_by_recording,
     )
 
 
