@@ -157,17 +157,18 @@ async def start_capture(
     if scheduler.is_scheduled():
         raise HTTPException(status_code=409, detail="A start is already scheduled")
 
-    # Whatever task is active on this device is what gets offered to the
-    # fleet as the shared task name — if this device is grouped, its peers
-    # will start into a same-named task of their own.
+    # If this device is grouped, a start here behaves like the fleet "start
+    # group recording" button: the GROUP's task wins and the start is
+    # synchronized at the shared T0 — so we don't impose the locally-selected
+    # task. Solo (no group) → the requested/active local task, immediately.
     target_task_id = req.task_id or tm.active_task_id
-    try:
-        task_name = tm.get_task(target_task_id).name
-    except FileNotFoundError:
-        task_name = None
-
-    sync = await request_group_start(task_name)
-    target = datetime.fromisoformat(sync["scheduled_start_utc"]) if sync and sync.get("status") == "scheduled" else None
+    sync = await request_group_start("")
+    target = None
+    if sync and sync.get("status") == "scheduled":
+        gname = sync.get("task_name") or ""
+        if gname:
+            target_task_id = tm.get_or_create_task(gname)
+        target = datetime.fromisoformat(sync["scheduled_start_utc"])
 
     # A group-synchronized start derives the episode id from the shared T0
     # (not from local wall-clock creation time), so every device's episode
