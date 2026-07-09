@@ -148,13 +148,23 @@ class ButtonListener:
         from grabette.task import episode_id_for
 
         sm = self._task_manager
-        task_name = sm.get_task(sm.active_task_id).name
-        sync = await request_group_start(task_name)
-        target = datetime.fromisoformat(sync["scheduled_start_utc"]) if sync and sync.get("status") == "scheduled" else None
+        # When this device is grouped, a button press must behave exactly like
+        # the fleet "start group recording" button: the GROUP's task (assigned
+        # on the fleet) wins and the start is synchronized at the shared T0. So
+        # we don't impose our local active task — fleet returns the group's
+        # task in the sync response. Solo (no group) → local active task, now.
+        sync = await request_group_start("")
+        if sync and sync.get("status") == "scheduled":
+            gname = sync.get("task_name") or ""
+            task_id = sm.get_or_create_task(gname) if gname else sm.active_task_id
+            target = datetime.fromisoformat(sync["scheduled_start_utc"])
+        else:
+            task_id = sm.active_task_id
+            target = None
 
         # Derive the episode id from the shared T0 (not local creation time)
         # so this device's episode folder matches its peers' exactly.
-        episode_id = sm.create_episode(sm.active_task_id, episode_id=episode_id_for(target) if target else None)
+        episode_id = sm.create_episode(task_id, episode_id=episode_id_for(target) if target else None)
         episode_dir = sm.episode_dir(episode_id)
 
         if target is not None:
