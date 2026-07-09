@@ -42,18 +42,25 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 ## Workflow
 
 **One-shot data prep:** `run_pipeline.sh` chains the filtering + conversion (steps
-2–3 below, plus QA) so you don't run them by hand. Training stays a separate,
-deliberate command — the script prints the exact `train.py` invocation at the end.
+2–3 below, plus QA and the 480×360 training resize) so you don't run them by hand.
+Training stays a separate, deliberate command — the script prints the exact
+`train.py` invocation at the end.
 
 ```bash
 ./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] \
-                  [--cameras "cam0"|all] [--no-qa]
+                  [--cameras "cam0"|all] [--no-qa] [--no-resize]
 ```
 
 By default the pipeline keeps **only `cam0`** (the camera the policy trains on) and
 removes any extra recorded streams: an unused stream doubles video-decode cost at
 every training step, and if its encoding is corrupt it crashes training even
 though the policy never reads it. `--cameras all` keeps everything.
+
+It also produces the **480×360 training copy** by default and points the printed
+train command at it: the policy consumes 236×236 internally, and training on the
+full-resolution videos is a measured 2–3× slowdown for zero benefit (see
+*Dataset resolution* below). The full-res converted copy is kept alongside;
+`--no-resize` skips the step for debugging.
 
 The steps below document each stage the script runs (and how to run them manually).
 
