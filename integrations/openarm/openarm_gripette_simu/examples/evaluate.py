@@ -265,7 +265,8 @@ class ChunkExecutor:
     """
 
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
-                 clamp_pos_m=None, clamp_rot_rad=None):
+                 clamp_pos_m=None, clamp_rot_rad=None,
+                 start_pos=None, start_rot=None):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -276,6 +277,12 @@ class ChunkExecutor:
         self._lock = threading.Lock()
         self._chunk = []
         self._i = 0
+        # Integrated COMMANDED pose (world frame), seeded from the start FK:
+        # p += R @ dp ; R = R @ R_delta for every ACCEPTED delta — what the
+        # arm SHOULD have done. Compared to measured FK it quantifies
+        # tracking gain/lag/overshoot (telemetry, read via cmd_pose()).
+        self._p_cmd = start_pos.copy() if start_pos is not None else None
+        self._R_cmd = start_rot.copy() if start_rot is not None else None
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -324,6 +331,11 @@ class ChunkExecutor:
                         if "frozen" in resp.error:
                             self.frozen = resp.error
                             return
+                    elif self._p_cmd is not None:
+                        R_i = rotation_6d_to_rotation_matrix_numpy(np.asarray(dr6).reshape(1, 6))[0]
+                        with self._lock:
+                            self._p_cmd = self._p_cmd + self._R_cmd @ dp
+                            self._R_cmd = self._R_cmd @ R_i
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
@@ -341,6 +353,10 @@ class ChunkExecutor:
                 time.sleep(sleep_for)
             elif sleep_for < -0.2:  # long stall (GIL/debugger) — resync, don't burst
                 next_t = time.monotonic()
+
+    def cmd_pose(self):
+        with self._lock:
+            return (None, None) if self._p_cmd is None else (self._p_cmd.copy(), self._R_cmd.copy())
 
     def stop(self):
         self._stop = True
@@ -799,8 +815,11 @@ def run_episode_async(
             "task": task,
         }
 
+    ep_start_pos, ep_start_rot = capture_start_pose(arm_stub, arm_pb2)
     executor = ChunkExecutor(arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
-                             clamp_pos_m=clamp_pos_m, clamp_rot_rad=clamp_rot_rad)
+                             clamp_pos_m=clamp_pos_m, clamp_rot_rad=clamp_rot_rad,
+                             start_pos=ep_start_pos.astype(np.float64),
+                             start_rot=ep_start_rot.astype(np.float64))
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
@@ -862,6 +881,24 @@ def run_episode_async(
                 with open(dump_dir / "state.jsonl", "a") as f:
                     f.write(_json.dumps({"step": int(executor.sent_count),
                                          "state": [float(v) for v in grip_now]}) + "\n")
+                # Trajectory telemetry: measured FK vs integrated commanded
+                # pose — the "real numbers" for speed/overshoot/tracking
+                # analysis (DiffusionPolicy/compare_traj.py).
+                arm_state = arm_stub.GetArmState(arm_pb2.GetArmStateRequest())
+                p_cmd, R_cmd = executor.cmd_pose()
+                with open(dump_dir / "traj.jsonl", "a") as f:
+                    f.write(_json.dumps({
+                        "t": time.perf_counter() - episode_start,
+                        "tick": int(executor.sent_count),
+                        "meas": [float(arm_state.x), float(arm_state.y), float(arm_state.z)],
+                        "meas_r6d": [float(v) for v in arm_state.r6d],
+                        "cmd": [float(v) for v in p_cmd] if p_cmd is not None else None,
+                        "cmd_r6d": [float(v) for v in rotation_matrix_to_rotation_6d_numpy(
+                            R_cmd.reshape(1, 3, 3))[0]] if R_cmd is not None else None,
+                        "grip_cmd": [float(chunk[-1][9]),
+                                     float(chunk[-1][10]) if chunk[-1].shape[0] > 10 else 0.0],
+                        "grip_obs": [float(v) for v in grip_now],
+                    }) + "\n")
 
             if cycle % max(success_check_freq // n_act, 1) == 0:
                 status = arm_stub.GetSuccessStatus(arm_pb2.SuccessStatusRequest())

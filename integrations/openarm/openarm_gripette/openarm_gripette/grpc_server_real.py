@@ -177,6 +177,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         interp_alpha: float = 0.3,
         max_ik_jump_deg: float = 15.0,
         max_ik_jump_violations: int = 2,
+        max_target_lead_mm: float = 50.0,
     ):
         self._arm = arm
         self._kin = kin
@@ -202,6 +203,17 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         self._max_ik_jump_rad = float(np.deg2rad(max_ik_jump_deg))
         self._max_ik_jump_violations = int(max_ik_jump_violations)
         self._ik_jump_violations = 0
+
+        # Target-runaway ("rubber band") guard. The integrator accumulates
+        # deltas OPEN-LOOP on the target — right for tracking accuracy, but
+        # under CONTACT (arm pressing the table/object, motors stalled by the
+        # per-write safety clamp) the target keeps marching while the arm
+        # doesn't, so (a) press torque grows unbounded and (b) a later retreat
+        # command must first unwind the accumulated excess before the arm
+        # physically moves — corrections look ignored. Cap how far the target
+        # position may LEAD the measured FK pose. <= 0 disables.
+        self._max_target_lead_m = float(max_target_lead_mm) / 1000.0
+        self._lead_clamps = 0
 
         self._sync_target_from_robot()
 
@@ -278,12 +290,45 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                 # trajectory regardless of arm tracking error.
                 R_target = rotation_6d_to_matrix(self._target_r6d)
 
+                prev_target_pos = self._target_pos.copy()
                 delta_pos_world = R_target @ delta_pos
                 self._target_pos = self._target_pos + delta_pos_world
 
                 R_delta = rotation_6d_to_matrix(delta_r6d)
                 R_target_new = R_target @ R_delta
                 self._target_r6d = rotation_matrix_to_6d(R_target_new).copy()
+
+                # Target-runaway guard, TRIP-ONLY: if this delta would put the
+                # target more than the cap ahead of the MEASURED pose (arm in
+                # contact / stalled while the open-loop integrator marches on),
+                # REJECT the command and roll it back — exactly like the
+                # IK-jump watchdog. Never silently modify the target: pulling
+                # it toward the measured pose creates a delayed-feedback loop
+                # on the reference that corrupts the whole trajectory
+                # (measured to drag the arm downward with gravity sag).
+                # Deltas that REDUCE the lead (retreats) always pass, so
+                # contact stays bounded and corrections act immediately.
+                if self._max_target_lead_m > 0:
+                    fk_meas = self._kin.forward(self._arm.get_positions())
+                    lead_prev = float(np.linalg.norm(prev_target_pos - fk_meas[:3, 3]))
+                    lead_new = float(np.linalg.norm(self._target_pos - fk_meas[:3, 3]))
+                    if lead_new > self._max_target_lead_m and lead_new > lead_prev:
+                        self._lead_clamps += 1
+                        if self._lead_clamps <= 3 or self._lead_clamps % 50 == 0:
+                            logger.warning(
+                                f"Target-lead trip #{self._lead_clamps}: rejecting delta — "
+                                f"target would be {lead_new * 1000:.0f} mm ahead of the "
+                                f"measured pose (cap {self._max_target_lead_m * 1000:.0f} mm). "
+                                f"Arm in CONTACT or not tracking; only lead-reducing "
+                                f"commands accepted until it catches up."
+                            )
+                        self._target_pos = prev_target_pos
+                        self._target_r6d = rotation_matrix_to_6d(R_target).copy()
+                        return arm_pb2.ArmCommandResponse(
+                            success=False,
+                            error=f"target lead {lead_new * 1000:.0f}mm > "
+                                  f"{self._max_target_lead_m * 1000:.0f}mm cap (contact?)",
+                        )
 
                 target_tf = np.eye(4)
                 target_tf[:3, :3] = R_target_new
@@ -303,7 +348,17 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                     ik_seed = self._latest_target_joints
                 else:
                     ik_seed = self._arm.get_positions()
-                target_joints = self._kin.inverse(target_tf, current_joint_positions=ik_seed)
+                try:
+                    target_joints = self._kin.inverse(target_tf, current_joint_positions=ik_seed)
+                except Exception as e:
+                    # IK blew up (e.g. QP NaN near a singularity). Roll the
+                    # delta back — without this the failed delta stays in the
+                    # integrator and the target drifts away from every
+                    # subsequent solvable command.
+                    self._target_pos = prev_target_pos
+                    self._target_r6d = rotation_matrix_to_6d(R_target).copy()
+                    logger.error(f"IK solve failed ({e}); delta rolled back.")
+                    return arm_pb2.ArmCommandResponse(success=False, error=f"IK failed: {e}")
 
                 # IK-jump watchdog: refuse the update if any joint would change
                 # by more than `_max_ik_jump_rad` in this single step. Singular
@@ -349,6 +404,20 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                         )
                     # Healthy step — reset the consecutive-violation counter.
                     self._ik_jump_violations = 0
+
+                # Re-sync the integrator to what the accepted solution ACTUALLY
+                # achieves (the class docstring always promised this; it was
+                # never implemented). Exact IK -> FK(IK(target)) == target and
+                # this is a no-op, so faithful replay is unchanged. Compromised
+                # IK (joint limits, singular region, solver tolerance) -> the
+                # target stays on the reachable manifold instead of marching
+                # open-loop into unreachable space — measured as 70-120 mm of
+                # cmd-vs-meas divergence pinned at the trip-guard cap. Uses
+                # COMMANDED joints (deterministic), never measured ones — no
+                # feedback of tracking error/gravity sag into the reference.
+                fk_cmd = self._kin.forward(target_joints)
+                self._target_pos = fk_cmd[:3, 3].copy()
+                self._target_r6d = rotation_matrix_to_6d(fk_cmd[:3, :3]).copy()
 
                 # Hand off to the interpolator — no direct motor write.
                 self._latest_target_joints = target_joints.copy()
@@ -561,6 +630,18 @@ def parse_args():
         "to home before further motion. Default: 2.",
     )
     p.add_argument(
+        "--max_target_lead_mm",
+        type=float,
+        default=80.0,
+        help="Contact guard (TRIP-ONLY): reject any delta that would put the "
+        "integrator TARGET more than this far (mm) ahead of the MEASURED pose "
+        "AND increase the lead. Bounds press force under contact without ever "
+        "modifying the reference (a continuous pull-back corrupts the "
+        "trajectory). Lead-reducing deltas (retreats) always pass. Costs one "
+        "extra bus read per Cartesian command. <= 0 disables. Default: 80 "
+        "(above normal full-speed tracking lag).",
+    )
+    p.add_argument(
         "--arm_joint_map",
         type=str,
         nargs="+",
@@ -641,6 +722,7 @@ def main():
         interp_alpha=args.interp_alpha,
         max_ik_jump_deg=args.max_ik_jump_deg,
         max_ik_jump_violations=args.max_ik_jump_violations,
+        max_target_lead_mm=args.max_target_lead_mm,
     )
     arm_pb2_grpc.add_ArmServiceServicer_to_server(servicer, server)
     server.add_insecure_port(f"[::]:{args.arm_port}")
