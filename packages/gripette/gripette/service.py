@@ -10,10 +10,6 @@ from .proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-# Target streaming rate
-STREAM_HZ = 10
-STREAM_INTERVAL = 1.0 / STREAM_HZ
-
 
 class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
     """Implements StreamState, SendMotorCommand, and Ping RPCs."""
@@ -23,13 +19,15 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         camera: CameraCapture,
         motors: MotorController,
         sync: SyncManager,
+        stream_hz: float = 10.0,
     ):
         self._camera = camera
         self._motors = motors
         self._sync = sync
+        self._stream_interval = 1.0 / stream_hz
 
     def StreamState(self, request, context):
-        """Server-streaming: yields GripperFrame at ~10Hz."""
+        """Server-streaming: yields GripperFrame at the configured rate."""
         logger.info("StreamState: client connected")
         sequence = 0
         next_time = time.monotonic()
@@ -53,7 +51,7 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
             sequence += 1
 
             # Accumulator-pattern sleep to avoid drift
-            next_time += STREAM_INTERVAL
+            next_time += self._stream_interval
             sleep_duration = next_time - time.monotonic()
             if sleep_duration > 0:
                 time.sleep(sleep_duration)

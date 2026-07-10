@@ -94,6 +94,35 @@ def dataset_frames(ds: LeRobotDataset, stride: int) -> tuple[list[torch.Tensor],
     return frames, states
 
 
+def extract_dataset_pairs(ds: LeRobotDataset, stride: int, extract,
+                          batch: int = 64) -> tuple[np.ndarray, np.ndarray]:
+    """Features of consecutive-frame pairs (t, t+1) at the dataset's native
+    rate (20 ms at 50 fps), every `stride`-th, never crossing an episode
+    boundary. STREAMING: encodes in small batches and never holds more than
+    `batch` decoded frames — a full-res dataset held as float tensors is tens
+    of GB and OOMs the machine."""
+    fa, fb = [], []
+    buf_a, buf_b = [], []
+
+    def flush():
+        if buf_a:
+            fa.append(extract(buf_a))
+            fb.append(extract(buf_b))
+            buf_a.clear()
+            buf_b.clear()
+
+    for i in range(0, len(ds) - 1, stride):
+        it0, it1 = ds[i], ds[i + 1]
+        if int(it0["episode_index"]) != int(it1["episode_index"]):
+            continue
+        buf_a.append(it0["observation.images.cam0"])
+        buf_b.append(it1["observation.images.cam0"])
+        if len(buf_a) >= batch:
+            flush()
+    flush()
+    return np.concatenate(fa), np.concatenate(fb)
+
+
 def image_dir_frames(dir_: Path) -> tuple[list[torch.Tensor], np.ndarray | None]:
     """PNGs from an evaluate.py --dump_obs dir (+ state.jsonl if present)."""
     import cv2
@@ -140,6 +169,12 @@ def main():
                    help="Dir of deployment frames to score (from evaluate.py --dump_obs)")
     p.add_argument("--self_test", action="store_true",
                    help="Score BGR-swapped / rotated / darkened val frames (detector sanity check)")
+    p.add_argument("--pairs", action="store_true",
+                   help="ALSO score consecutive-frame PAIRS. The policy is n_obs_steps=2: it "
+                        "conditions on inter-frame MOTION, and per-frame stats are blind to a "
+                        "velocity/staleness mismatch (frames individually fine, but spaced or "
+                        "duplicated differently than training's 20 ms). Singles IN + pairs OUT "
+                        "= temporal mismatch (fps, stale frames, hovering in place).")
     p.add_argument("--val_ratio", type=float, default=0.1, help="Reproduces train.py's split")
     p.add_argument("--val_split", choices=["stride", "tail"], default="stride",
                    help="Fallback split rule when the checkpoint has no val_episodes.json "
@@ -195,10 +230,12 @@ def main():
         for kind in ("bgr_swap", "rot180", "dark"):
             report(f"self-test: {kind}", dist(extract(corrupt(base, kind))), val_p95, val_p99)
 
+    frames = None
     if args.images:
         frames, states = image_dir_frames(Path(args.images))
         print(f"\nScoring {len(frames)} deployment frames from {args.images}")
-        d_dep = dist(extract(frames))
+        f_dep = extract(frames)
+        d_dep = dist(f_dep)
         report("DEPLOYMENT images", d_dep, val_p95, val_p99)
         # Time course: a run that starts in-distribution and CLIMBS is live
         # covariate shift (the policy drifting off the demo manifold), not a
@@ -233,6 +270,35 @@ def main():
                           f"(also check the ACTION-side gripper units).")
             if not suspect:
                 print("  state distributions compatible ✓")
+
+    if args.pairs:
+        # Mahalanobis on the CONCATENATED features of two consecutive frames.
+        # (Invariant to the [a,b] vs [b, b-a] parameterization, so this scores
+        # the inter-frame motion as much as the frames themselves.)
+        print("\nPAIR-LEVEL CHECK (the policy is n_obs_steps=2: it conditions on inter-frame "
+              "motion; the per-frame stats above cannot see velocity/staleness mismatch)")
+        # Free the singles-path frame lists before decoding more — at full
+        # resolution they alone are many GB of float tensors.
+        n_dep = len(frames) if frames is not None else 0
+        fit_frames = val_frames = frames = None  # noqa: F841
+        fa, fb = extract_dataset_pairs(ds_train, args.fit_stride, extract)
+        pair_dist = Mahalanobis(np.concatenate([fa, fb], axis=1))
+        print(f"  fit on {len(fa)} training pairs (native 1-frame spacing)")
+        va, vb = extract_dataset_pairs(ds_val, max(1, args.fit_stride // 2), extract)
+        d_vp = pair_dist(np.concatenate([va, vb], axis=1))
+        vp95, vp99 = np.percentile(d_vp, 95), np.percentile(d_vp, 99)
+        report("val PAIRS (calib)", d_vp, vp95, vp99)
+        if n_dep >= 2:
+            d_pp = pair_dist(np.concatenate([f_dep[:-1], f_dep[1:]], axis=1))
+            report("DEPLOYMENT pairs", d_pp, vp95, vp99)
+            nb = min(8, len(d_pp))
+            print("  pair time course (episode split in 8): "
+                  + "  ".join(f"{np.mean(b):.1f}" for b in np.array_split(d_pp, nb)))
+            print("  Reading: singles IN + pairs OUT → the mismatch is TEMPORAL: the policy "
+                  "sees frame pairs whose apparent motion (spacing, stale duplicates, or "
+                  "standing still where demos always move) never occurs in training. "
+                  "Fixes: match execution speed + frame spacing to training "
+                  "(evaluate.py --async_exec --fps <dataset fps>), raise camera rate.")
 
     print("\nReading: IN-DISTRIBUTION → the camera view is not your problem; look at "
           "control frame / fps / state. OUT-OF-DISTRIBUTION → fix the observation "

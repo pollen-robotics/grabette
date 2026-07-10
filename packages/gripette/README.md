@@ -1,6 +1,6 @@
 # gripette
 
-Gripper version of the [Grabette](https://github.com/SteveNguyen/grabette) data collection system.
+Gripper version of the [Grabette](../grabette) data collection system.
 gRPC motor+camera service for the gripper, running on a Raspberry Pi Zero 2W.
 
 Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and accepts motor commands for two Feetech STS3215 servos over the network.

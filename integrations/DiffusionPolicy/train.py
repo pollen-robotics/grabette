@@ -18,10 +18,23 @@ Prerequisites:
 Usage:
   uv run python train.py --dataset_repo_id <user>/<dataset>_cartesian
   uv run python train.py --dataset_repo_id <user>/<dataset>_cartesian --batch_size 64
+
+Cloud training (no local GPU) — the PEP-723 header below makes this file a
+self-contained uv script, so it runs on HF Jobs as-is (see README → "Cloud
+training with HF Jobs"):
+  hf jobs uv run --flavor a100-large --timeout 8h -s HF_TOKEN train.py -- \\
+      --dataset_repo_id <user>/<dataset>_cartesian --push_to_hub <user>/<model> ...
 """
+
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["lerobot>=0.5.1,<0.6"]
+# ///
 
 import argparse
 import json
+import sys
+import time
 from pathlib import Path
 
 import torch
@@ -34,17 +47,20 @@ from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
 from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
 from lerobot.datasets.feature_utils import dataset_to_policy_features
 
-# Back DataLoader-worker tensors with /tmp files instead of /dev/shm, so a small
-# /dev/shm (common on servers/containers) doesn't cause "RuntimeError: unable to
-# allocate shared memory" at higher --num_workers / --prefetch_factor. Must run
-# before any DataLoader worker spawns (well before the training loop).
-torch.multiprocessing.set_sharing_strategy("file_system")
+# DataLoader-worker tensor sharing: default to $TMPDIR-file-backed shm, so a
+# small /dev/shm (common on servers/containers) doesn't cause "RuntimeError:
+# unable to allocate shared memory". Cost: every batch crosses the worker→main
+# boundary through the filesystem — slow on container overlay fs; the
+# --shm_strategy flag switches to /dev/shm ('file_descriptor') where it's large
+# enough. Must be set before any DataLoader worker spawns; argparse runs later,
+# so we peek at argv directly here.
+_shm = "file_descriptor" if any("file_descriptor" in a for a in sys.argv) else "file_system"
+torch.multiprocessing.set_sharing_strategy(_shm)
 
 # Line-buffer stdout even when piped (e.g. `... | tee train.log`). Python
 # block-buffers piped stdout, so a hard kill (OOM SIGKILL, segfault) discards
 # everything still in the buffer — leaving an EMPTY log for a run that printed
 # for minutes. Line buffering makes every step line land in the log immediately.
-import sys  # noqa: E402
 sys.stdout.reconfigure(line_buffering=True)
 
 
@@ -262,6 +278,15 @@ def parse_args():
         default=8,
         help="Actions executed before re-planning (4=reactive, 8=default, 16=smooth)",
     )
+    parser.add_argument(
+        "--n_obs_steps",
+        type=int,
+        default=2,
+        help="Observation frames the policy conditions on. 2 (default, UMI) adds an "
+             "inter-frame motion cue but requires deployment to reproduce the training "
+             "frame spacing (dataset-fps camera); 1 conditions on a single frame — "
+             "robust to any deployment camera rate / execution speed.",
+    )
     parser.add_argument("--log_freq", type=int, default=100, help="Log every N steps")
     parser.add_argument("--save_freq", type=int, default=10_000, help="Save checkpoint every N steps")
     parser.add_argument("--eval_freq", type=int, default=200, help="Evaluate on validation set every N steps")
@@ -356,6 +381,25 @@ def parse_args():
              "together with --num_workers on big-RAM machines.",
     )
     parser.add_argument(
+        "--shm_strategy",
+        choices=["file_system", "file_descriptor"],
+        default="file_system",
+        help="How DataLoader workers hand tensors to the main process. "
+             "'file_system' (default) writes through $TMPDIR files — survives tiny "
+             "/dev/shm but every batch pays a filesystem round-trip (slow on container "
+             "overlay fs). 'file_descriptor' uses /dev/shm — faster where /dev/shm is "
+             "large enough (watch for 'unable to allocate shared memory' if not).",
+    )
+    parser.add_argument(
+        "--video_backend",
+        choices=["torchcodec", "pyav"],
+        default=None,
+        help="Video decoding backend (default: lerobot's choice, usually torchcodec). "
+             "torchcodec needs SYSTEM FFmpeg libraries; pyav bundles its own FFmpeg "
+             "inside the wheel. Use 'pyav' in containers/cloud jobs without system "
+             "FFmpeg (symptom: 'Could not load libtorchcodec / libavutil.so not found').",
+    )
+    parser.add_argument(
         "--bf16",
         action="store_true",
         help="Use bfloat16 autocast for forward/backward. ~1.5-2x speedup on Ampere+/Blackwell "
@@ -431,7 +475,12 @@ def main():
         input_features=input_features,
         output_features=output_features,
         # -- Temporal structure (same as UMI) --
-        n_obs_steps=2,
+        # n_obs_steps=2 conditions the policy on a PAIR of consecutive frames
+        # (20 ms apart at 50 fps) — i.e. on inter-frame MOTION. Deployment must
+        # then reproduce that spacing (camera rate x execution speed), which a
+        # slow camera cannot. n_obs_steps=1 conditions on a single frame:
+        # weaker temporal cue, but immune to frame-rate mismatch at deployment.
+        n_obs_steps=args.n_obs_steps,
         horizon=16,
         n_action_steps=args.n_action_steps,
         # -- Vision encoder --
@@ -561,11 +610,13 @@ def main():
 
     train_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,
-        delta_timestamps=delta_timestamps, episodes=train_episodes
+        delta_timestamps=delta_timestamps, episodes=train_episodes,
+        video_backend=args.video_backend,
     )
     val_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,
-        delta_timestamps=delta_timestamps, episodes=val_episodes
+        delta_timestamps=delta_timestamps, episodes=val_episodes,
+        video_backend=args.video_backend,
     )
 
     print(f"  Train episodes:   {len(train_episodes)} ({len(train_dataset)} frames)")
@@ -657,6 +708,8 @@ def main():
     best_val_loss = resumed_best_val
     step = resumed_step
     done = False
+    t_log = time.perf_counter()  # throughput clock (it/s over each log window)
+    speed = ""
     while not done:
         for batch in train_dataloader:
             # Training-only image augmentation (BEFORE normalization in preprocessor)
@@ -684,6 +737,15 @@ def main():
 
             train_loss = loss.item()
 
+            # Throughput over the last log window (train steps only — the
+            # val pause is excluded by resetting the clock after eval below).
+            if step % args.log_freq == 0:
+                now = time.perf_counter()
+                its = args.log_freq / max(now - t_log, 1e-9) if step > 0 else 0.0
+                eta_h = (args.training_steps - step) / its / 3600 if its > 0 else 0.0
+                speed = f"  {its:5.2f} it/s  eta {eta_h:4.1f}h" if step > 0 else ""
+                t_log = now
+
             # ---- Validation ----
             val_loss = None
             if step > 0 and step % args.eval_freq == 0:
@@ -705,17 +767,21 @@ def main():
                     f"step: {step:>7d} / {args.training_steps}  "
                     f"train_loss: {train_loss:.4f}  val_loss: {val_loss:.4f}  "
                     f"best_val: {best_val_loss:.4f}" + (" *" if val_loss <= best_val_loss else "")
+                    + speed
                 )
+                t_log = time.perf_counter()  # don't bill the val pause to the next window
 
             if use_wandb:
                 log_dict = {"train_loss": train_loss, "step": step}
+                if step % args.log_freq == 0 and step > 0:
+                    log_dict["it_per_s"] = its
                 if val_loss is not None:
                     log_dict["val_loss"] = val_loss
                     log_dict["best_val_loss"] = best_val_loss
                 wandb.log(log_dict)
 
             if step % args.log_freq == 0 and val_loss is None:
-                print(f"step: {step:>7d} / {args.training_steps}  train_loss: {train_loss:.4f}")
+                print(f"step: {step:>7d} / {args.training_steps}  train_loss: {train_loss:.4f}{speed}")
 
             # Periodic checkpoint
             if step > 0 and step % args.save_freq == 0:
