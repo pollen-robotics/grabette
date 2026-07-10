@@ -89,6 +89,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--dataset_repo_id", required=True)
+    parser.add_argument("--dataset_root", default=None,
+                        help="Local dataset root (for a locally-converted dataset)")
     parser.add_argument("--episode", type=int, default=1, help="episode to take probe frames from")
     parser.add_argument("--n_samples", type=int, default=3, help="diffusion samples averaged per probe")
     args = parser.parse_args()
@@ -100,7 +102,7 @@ def main():
     def chunk(img_prev, img_now, state):
         return get_chunk(policy, pre, post, device, img_prev, img_now, state, args.n_samples)
 
-    ds = LeRobotDataset(args.dataset_repo_id, episodes=[args.episode])
+    ds = LeRobotDataset(args.dataset_repo_id, root=args.dataset_root, episodes=[args.episode])
     n = len(ds)
     acts = np.stack([np.asarray(ds[i]["action"]) for i in range(n)])
 
