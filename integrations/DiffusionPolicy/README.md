@@ -6,13 +6,15 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 
 | File | Purpose |
 |---|---|
-| `analyze_dataset.py` | Dataset QA (raw 8D **or** converted 11D): gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (SLAM spikes / truncated episodes). Run first. |
+| `analyze_dataset.py` | Dataset QA (raw 8D **or** converted 11D): action-delta magnitudes, supervision SNR, anomaly detection (SLAM spikes / truncated episodes / video-parquet mismatches). Run first. |
 | `clean_dataset.py` | Reject glitch-ridden episodes (tracking-loss segments too long to absorb, or glitches in the grasp window). Non-destructive; writes a new dataset. |
 | `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**, zeroing per-step outlier deltas (isolated SLAM glitches) along the way. |
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
 | `offline_eval.py` | Open-loop sanity check of a trained checkpoint against the held-out val episodes (deployment inference path fed recorded observations). Run before a robot session. |
 | `ood_check.py` | Is the robot seeing what the policy was trained on? Scores deployment frames (from `evaluate.py --dump_obs`) against the training distribution in the policy's own encoder features, + state-range parity. Run when the robot behaves "stereotyped"/ignores the scene. |
+| `vision_check.py` | Does the policy actually USE the image? Channel-specific probes on a trained checkpoint: stop-swap (does a pre-grasp image trigger braking+closing?) and pixel-shift (does the predicted lateral motion follow the object's position in frame, with usable gain?). A policy can pass every other offline gate while ignoring the camera — run this before a robot session, next to `offline_eval.py`. |
 | `check_dataset_videos.py` | Decode-check every episode's video segments through the exact training path; prints the failing episodes (`train.py --exclude_episodes` takes the list). Run when training crashes on video decode. |
+| `resize_dataset_videos.py` | Make a downscaled training copy of a dataset (default 480×360): the policy consumes 236×236, so full-res videos pay ~12× the needed decode per sample — this is what makes trainings dataloader-bound. Non-destructive; raw data stays on the Hub. |
 | `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
@@ -41,18 +43,25 @@ version you validate against (the recipe was validated on lerobot 0.5.x).
 ## Workflow
 
 **One-shot data prep:** `run_pipeline.sh` chains the filtering + conversion (steps
-2–3 below, plus QA) so you don't run them by hand. Training stays a separate,
-deliberate command — the script prints the exact `train.py` invocation at the end.
+2–3 below, plus QA and the 480×360 training resize) so you don't run them by hand.
+Training stays a separate, deliberate command — the script prints the exact
+`train.py` invocation at the end.
 
 ```bash
 ./run_pipeline.sh <raw_repo_id> [--raw-root DIR] [--proprioception none|relative] \
-                  [--cameras "cam0"|all] [--no-qa]
+                  [--cameras "cam0"|all] [--no-qa] [--no-resize]
 ```
 
 By default the pipeline keeps **only `cam0`** (the camera the policy trains on) and
 removes any extra recorded streams: an unused stream doubles video-decode cost at
 every training step, and if its encoding is corrupt it crashes training even
 though the policy never reads it. `--cameras all` keeps everything.
+
+It also produces the **480×360 training copy** by default and points the printed
+train command at it: the policy consumes 236×236 internally, and training on the
+full-resolution videos is a measured 2–3× slowdown for zero benefit (see
+*Dataset resolution* below). The full-res converted copy is kept alongside;
+`--no-resize` skips the step for debugging.
 
 The steps below document each stage the script runs (and how to run them manually).
 
@@ -145,6 +154,96 @@ SpatialSoftmax, resize 236 / random-crop 0.95, DDIM 50/16, down_dims
 - `--dataset_root <path>` + `HF_HUB_OFFLINE=1` — for a local-converted dataset not on the Hub.
 - Best-by-val-loss checkpoint → `<output_dir>/best`, pushed to `<model>-best`. Periodic checkpoints → `<output_dir>/checkpoint_<step>`.
 - `--resume_from <ckpt_dir>` — resume model + optimizer + step + rng.
+
+#### Cloud training with HF Jobs (no local GPU needed)
+
+`train.py` carries a [PEP-723](https://peps.python.org/pep-0723/) header, so it is
+a self-contained uv script: [HF Jobs](https://huggingface.co/docs/hub/jobs) can
+upload and run it directly on Hugging Face GPUs — the dataset comes from the Hub,
+the trained model goes back to the Hub, nothing touches your machine.
+
+Prerequisites, in the order you'll hit them if they're missing:
+
+1. **CLI**: `uv tool install -U --force hf` (the standalone `hf`, not the one
+   inside a project venv).
+2. **Token with Jobs rights**: `hf auth login` with a **classic write token**,
+   or a fine-grained token with *Jobs write + Storage buckets read/write +
+   Repos read/write*, **scoped to your org** if you bill there. An older
+   fine-grained token fails with `403 … missing permissions: job.write`.
+   Note the token you're *logged in with* authorizes creating the job;
+   `-s HF_TOKEN` separately injects a token *into* the job container.
+3. **Pre-paid credits** on the billed namespace — Jobs are strictly pre-paid;
+   an empty balance fails with `402 Payment Required`. Use
+   `--namespace <org>` to bill the org's credits instead of your own.
+
+```bash
+# smoke test first (~10 min, cents): tiny run on a T4 (no --bf16: T4 lacks bf16)
+hf jobs uv run --flavor t4-small -s HF_TOKEN train.py -- \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --training_steps 200 --batch_size 8 --num_workers 2 \
+    --video_backend pyav --output_dir /tmp/smoke
+
+# real training (~2-3 h on an A100 ≈ $5-8)
+hf jobs uv run --flavor a100-large --timeout 8h -s HF_TOKEN train.py -- \
+    --dataset_repo_id <user>/<dataset>_cartesian \
+    --training_steps 30000 --batch_size 64 --bf16 \
+    --video_backend pyav \
+    --color_jitter --state_noise_std 0.01 \
+    --eval_freq 500 --save_freq 5000 \
+    --push_to_hub <user>/<model>
+```
+
+Gotchas that matter:
+
+- **`--video_backend pyav` is required in cloud jobs.** The default Jobs image
+  has **no system FFmpeg**, and lerobot's default decoder (torchcodec) hard-
+  requires it — the run dies at the first batch with `Could not load
+  libtorchcodec … libavutil.so.XX: cannot open shared object file`. pyav ships
+  its own FFmpeg inside the wheel and works in any container.
+- Secrets syntax: `-s NAME` forwards your local env var `NAME`;
+  `-s NAME=value` sets it inline. Don't paste a bare key as the flag value —
+  it would be treated as a (publicly visible) secret *name*.
+- **Always set `--timeout`** — the Jobs default is **30 minutes** and a timed-out
+  job is simply killed. Budget generously; you pay per second used, not per
+  timeout.
+- **Job storage is ephemeral**: only what reaches the Hub survives. `train.py`
+  pushes the best checkpoint at the end via `--push_to_hub`; if you want *every*
+  periodic checkpoint to survive a crash/timeout, mount a Storage Bucket
+  read-write and point the output there:
+  `-v hf://buckets/<user>/grabette-runs:/outputs` + `--output_dir /outputs/<run>`.
+- **`-s HF_TOKEN` is required even though you are logged in.** Your local login
+  authenticates *creating* the job; the job itself runs in a cloud container
+  with **no credentials** unless you forward them. `-s HF_TOKEN` injects your
+  token into the container — without it the run fails at the first Hub access
+  (private dataset download, model push). Add `-s WANDB_API_KEY` +
+  `--wandb_project <proj>` for live curves — recommended for watching cloud runs.
+  Careful: `-s NAME` forwards your **local environment variable** of that name;
+  only `HF_TOKEN` falls back to your stored login. `wandb login` keeps its key
+  in `~/.netrc`, NOT the environment — `export WANDB_API_KEY=<key from
+  https://wandb.ai/authorize>` first, or the job dies with
+  `wandb: No API key configured`.
+- **`--namespace <org>`** (e.g. `pollen-robotics`) runs and **bills** the job on
+  the org account instead of yours — your token needs the org's Jobs permission.
+  With org billing you likely want `--push_to_hub <org>/<model>` too.
+- Follow along with `hf jobs ps`, `hf jobs logs <id>`, `hf jobs stats`.
+- Flavor + throughput guide (all numbers measured on this training):
+  1. **Full-resolution datasets are dataloader-bound** — an A10G matched an
+     RTX 5090 at ~0.9 it/s, both GPUs idling in a utilization sawtooth. A
+     bigger GPU does NOT help on full-res data.
+  2. **The fix is the dataset, not the GPU**: a 480×360 all-intra copy
+     (`resize_dataset_videos.py`) took the same training to **3.2 it/s at
+     87% GPU util on `l4x1` ($0.80/h) → ~2.5 h ≈ $2 per training** — the
+     recommended cloud config. (All-intra matters as much as resolution:
+     re-encoding with normal GOPs makes training *slower* — random access
+     decodes the whole GOP per sample. The resize tool handles this.)
+  3. Container knobs: `--num_workers` ≈ vCPUs−2, `--prefetch_factor 1`
+     (worker memory is the frozen-job-at-90%-MEM failure mode),
+     `--shm_strategy file_descriptor`, `--video_backend pyav`.
+- **Deployment note on resolution**: the robot feeds full-res live frames while
+  a downscaled dataset trains on 480×360-sourced ones — both meet at the
+  encoder's internal 236×236 resize, where the difference is negligible
+  resampling character. The raw data always stays on the Hub, so resolution
+  choices are reversible by rebuilding.
 
 ---
 

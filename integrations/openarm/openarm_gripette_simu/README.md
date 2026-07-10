@@ -26,7 +26,10 @@ uv sync --package openarm-gripette-simu --extra dataset  # + lerobot (dataset co
 uv sync --package openarm-gripette-simu --extra dev      # + grpcio-tools (proto stubs)
 ```
 
-The robot model is fetched from [pollen-robotics/openarm_gripette_model](https://github.com/pollen-robotics/openarm_gripette_model). For local model development, swap the `[tool.uv.sources]` entry in `pyproject.toml`.
+The robot model comes from the workspace package
+[`openarm_gripette_model`](../openarm_gripette_model), resolved locally from the
+monorepo via `[tool.uv.sources]` (`openarm-gripette-model = { workspace = true }`)
+— no external fetch.
 
 ## Run the server
 
@@ -50,7 +53,7 @@ Two gRPC services on separate ports:
 
 ### GripperService (port 50051)
 
-Identical to the real [Gripette](https://github.com/pollen-robotics/gripette) gRPC API.
+Identical to the real [Gripette](../../../packages/gripette) gRPC API.
 
 | RPC | Description |
 |-----|-------------|

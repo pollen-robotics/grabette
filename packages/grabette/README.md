@@ -239,15 +239,15 @@ RPi (camera + OAK-D + AS5600L)
   → Training dataset + 6DoF trajectories
 ```
 
-## Sibling Projects
+## Related packages
 
-| Project | Description |
+| Package | Description |
 |---|---|
-| [gripette](https://github.com/pollen-robotics/gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
-| [grabette-data](https://github.com/pollen-robotics/grabette-data) | grabette data processing (SLAM/VIO + LeRobot dataset generation, Docker) |
+| [gripette](../gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
+| [grabette-postprocess](../grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |
 
 ## Calibration
 
-- **Camera intrinsics**: `../universal_manipulation_interface/example/calibration/rpi_camera_intrinsics.json` (0.41px reproj error)
-- **IMU-to-camera transform (T_b_c1)**: 180° rotation around x-axis (back-to-back mounting), 11.15mm translation along z
+- **Camera intrinsics**: `config/rpi_camera_intrinsics.json` (KannalaBrandt8 fisheye, ~0.32px reproj error) — copied into each episode at capture stop. Ships as a single canonical file for all devices; per-device calibration is a separate open task.
+- **Camera ↔ OAK-D geometry**: written per-episode to `frames.json` (including the pre-composed `T_camera_in_oak_l`), computed from the device URDF at capture stop — see [Data](#data).
 - **Angle sensor offsets**: `scripts/calibrate_angles.py` → stored in `~/.grabette/angle_calibration.json`
