@@ -214,6 +214,11 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         # position may LEAD the measured FK pose. <= 0 disables.
         self._max_target_lead_m = float(max_target_lead_mm) / 1000.0
         self._lead_clamps = 0
+        # Windowed trip history (1=trip, 0=clean) — a dithering policy
+        # interleaves lead-increasing and lead-reducing commands, so a
+        # CONSECUTIVE counter never fires while the arm stays pressed at cap
+        # depth. Relax triggers on >=3 trips within the last 8 commands.
+        self._lead_trip_window = []
 
         self._sync_target_from_robot()
 
@@ -314,6 +319,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                     lead_new = float(np.linalg.norm(self._target_pos - fk_meas[:3, 3]))
                     if lead_new > self._max_target_lead_m and lead_new > lead_prev:
                         self._lead_clamps += 1
+                        self._lead_trip_window = (self._lead_trip_window + [1])[-8:]
                         if self._lead_clamps <= 3 or self._lead_clamps % 50 == 0:
                             logger.warning(
                                 f"Target-lead trip #{self._lead_clamps}: rejecting delta — "
@@ -322,6 +328,26 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                                 f"Arm in CONTACT or not tracking; only lead-reducing "
                                 f"commands accepted until it catches up."
                             )
+                        # RELAX-ON-CONTACT: N consecutive trips = confirmed
+                        # contact (not a transient). Pull the pending target
+                        # back to the measured pose so the interpolator stops
+                        # PRESSING at cap depth — force drops to ~zero, motion
+                        # resumes as soon as commands pull away. Event-
+                        # triggered only (never fires in free motion), unlike
+                        # the removed continuous rubber-band.
+                        if sum(self._lead_trip_window) >= 3:
+                            self._sync_target_from_robot()
+                            self._latest_target_joints = self._arm.get_positions().copy()
+                            self._current_cmd_joints = self._latest_target_joints.copy()
+                            logger.warning(
+                                "CONTACT confirmed (>=3 lead trips in last 8 commands) — "
+                                "target relaxed to the measured pose; press force released."
+                            )
+                            self._lead_trip_window = []
+                            return arm_pb2.ArmCommandResponse(
+                                success=False,
+                                error="contact: target relaxed to measured pose",
+                            )
                         self._target_pos = prev_target_pos
                         self._target_r6d = rotation_matrix_to_6d(R_target).copy()
                         return arm_pb2.ArmCommandResponse(
@@ -329,6 +355,7 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
                             error=f"target lead {lead_new * 1000:.0f}mm > "
                                   f"{self._max_target_lead_m * 1000:.0f}mm cap (contact?)",
                         )
+                    self._lead_trip_window = (self._lead_trip_window + [0])[-8:]
 
                 target_tf = np.eye(4)
                 target_tf[:3, :3] = R_target_new
@@ -508,21 +535,25 @@ class ArmServicer(arm_pb2_grpc.ArmServiceServicer):
         MIT commands), clears its targets, then sends the Damiao disable — the
         motors freewheel and the arm FALLS under gravity.
 
-        Enable: re-enables torque, resyncs the Cartesian integrator to the
-        current (hanging) pose, and leaves the interpolator with no target —
-        the arm stays limp-but-enabled until the next Reset / delta command,
-        which then starts from the measured pose (no jump to a stale target).
+        Enable: re-enables torque and HOLDS the current measured pose (the
+        interpolator target is set to the measured joints), so a hand-placed
+        arm stays exactly where you put it. The Cartesian integrator is
+        resynced to the same pose, so the next delta command continues from
+        there with no jump. (Previous behavior — enabled with NO target —
+        meant MIT control at zero torque: the arm felt *freer* than when
+        disabled, and FELL when released. Counterintuitive and unsafe.)
         """
         try:
             with self._cmd_lock:
                 if request.enable:
                     self._arm.set_torque(True)
-                    self._latest_target_joints = None
-                    self._current_cmd_joints = None
+                    meas = self._arm.get_positions()
+                    self._current_cmd_joints = meas.copy()
+                    self._latest_target_joints = meas.copy()
                     self._sync_target_from_robot()
                     self._ik_jump_violations = 0
                     self._interp_enabled = True
-                    logger.info("Torque ENABLED — arm holds nothing until the next command (Reset to home).")
+                    logger.info("Torque ENABLED — holding the current pose.")
                 else:
                     self._interp_enabled = False
                     self._latest_target_joints = None

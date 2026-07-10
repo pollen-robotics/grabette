@@ -107,6 +107,23 @@ def parse_args():
                         "loop USUALLY holds the target rate: each tick costs ~20 ms "
                         "(send incl. server IK + amortized inference), so a chronically "
                         "slow loop just saturates the cap and moves in violent bursts.")
+    p.add_argument("--latch_close", type=float, default=None, metavar="THRESH",
+                   help="Async mode: once any gripper command exceeds THRESH, hold the "
+                        "running max (the close becomes irreversible). Legitimate for "
+                        "end-at-lift datasets where no demo reopens near the object: "
+                        "diffusion re-draws its mode at every replan, so a multi-chunk close "
+                        "gets undone by the next draw — the latch turns one sampled "
+                        "close into a completed one. Suggested: 0.55.")
+    p.add_argument("--commit_close", type=float, default=None, metavar="THRESH",
+                   help="Async mode: when a drawn chunk's gripper command crosses THRESH "
+                        "anywhere in the chunk, execute that chunk TO THE END without "
+                        "replanning. The model initiates a close almost only by continuing "
+                        "one it observes (measured P(initiate|static pre-grasp) ~ 0-15%% vs "
+                        "100%% once the state shows a started close); replanning every few "
+                        "ticks executes only chunk heads and re-rolls the decision, so the "
+                        "close stays forever in the receding tail. Committing lets the "
+                        "fingers actually move; the state feedback then carries the close. "
+                        "Complementary to --latch_close. Suggested: 0.55.")
     p.add_argument("--async_exec", action="store_true",
                    help="Async execution: a sender thread streams actions to the arm at "
                         "EXACTLY --fps (the demo clock) while inference replans in "
@@ -146,6 +163,22 @@ def parse_args():
                    help="Directory to dump the EXACT observations fed to the policy "
                         "(obs_XXXXX.png + state.jsonl, one subdir per episode). Use with "
                         "--num_episodes 1 for a train/deploy distribution check (ood_check.py).")
+    p.add_argument("--no_reset", action="store_true",
+                   help="Do NOT move the arm at episode start (skip the server Reset). "
+                        "Workflow: torque off, place the arm by hand, torque on "
+                        "(set_arm_torque.py — the server resyncs its integrator on "
+                        "torque-on), then run with this flag: the episode starts from "
+                        "wherever the arm is.")
+    p.add_argument("--home_joints", type=float, nargs=7, default=None,
+                   metavar=("J1", "J2", "J3", "J4", "J5", "J6", "J7"),
+                   help="Episode start joint configuration (rad), passed to the arm "
+                        "server's Reset. CRITICAL for camera-local-delta policies: the "
+                        "deltas are relative, so the start pose ANCHORS the whole "
+                        "trajectory — the start CAMERA VIEW must match the demos' "
+                        "first frames (position AND pitch). Find it by jogging the arm "
+                        "until the live view matches a demo start frame, then reading "
+                        "the joints (examples/read_arm_state.py). Default: the server's "
+                        "built-in home.")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -266,7 +299,7 @@ class ChunkExecutor:
 
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                  clamp_pos_m=None, clamp_rot_rad=None,
-                 start_pos=None, start_rot=None):
+                 start_pos=None, start_rot=None, latch_close=None):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -283,6 +316,16 @@ class ChunkExecutor:
         # tracking gain/lag/overshoot (telemetry, read via cmd_pose()).
         self._p_cmd = start_pos.copy() if start_pos is not None else None
         self._R_cmd = start_rot.copy() if start_rot is not None else None
+        # Close-latch: in end-at-lift datasets, closing is IRREVERSIBLE by
+        # construction (no demo reopens near the object) — but diffusion
+        # re-draws its mode every replan, so a close that needs several
+        # consecutive chunks gets undone by the next draw (measured: distal
+        # 0.86 for one chunk, then reopened). Once any gripper command
+        # exceeds the threshold, hold the running max — one sampled close
+        # becomes a completed close.
+        self._latch_close = latch_close
+        self._grip_latch = None
+        self.latched_at_tick = None
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -303,6 +346,11 @@ class ChunkExecutor:
             self._chunk = chunk[k:]
             self._i = 0
         return k
+
+    def remaining(self):
+        """Actions of the current chunk not yet sent (thread-safe)."""
+        with self._lock:
+            return max(len(self._chunk) - self._i, 0)
 
     def _run(self):
         next_t = time.monotonic()
@@ -336,13 +384,20 @@ class ChunkExecutor:
                         with self._lock:
                             self._p_cmd = self._p_cmd + self._R_cmd @ dp
                             self._R_cmd = self._R_cmd @ R_i
+                    g1 = float(grip[0])
+                    g2 = float(grip[1]) if len(grip) > 1 else 0.0
+                    if self._latch_close is not None:
+                        if self._grip_latch is None and max(g1, g2) > self._latch_close:
+                            self._grip_latch = [g1, g2]
+                            self.latched_at_tick = self.sent_count
+                        if self._grip_latch is not None:
+                            self._grip_latch = [max(self._grip_latch[0], g1),
+                                                max(self._grip_latch[1], g2)]
+                            g1, g2 = self._grip_latch
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
-                        self._gripper_pb2.MotorCommand(
-                            motor1_goal=float(grip[0]),
-                            motor2_goal=float(grip[1]) if len(grip) > 1 else 0.0,
-                        )
+                        self._gripper_pb2.MotorCommand(motor1_goal=g1, motor2_goal=g2)
                     )
                 except Exception as e:  # noqa: BLE001 — surface, don't die silently
                     logger.warning(f"Executor send failed: {e}")
@@ -779,6 +834,8 @@ def run_episode_async(
     task,
     clamp_pos_m=None,
     clamp_rot_rad=None,
+    latch_close=None,
+    commit_close=None,
     log_deltas=False,
     log_latency=False,
     dump_dir=None,
@@ -819,13 +876,16 @@ def run_episode_async(
     executor = ChunkExecutor(arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                              clamp_pos_m=clamp_pos_m, clamp_rot_rad=clamp_rot_rad,
                              start_pos=ep_start_pos.astype(np.float64),
-                             start_rot=ep_start_rot.astype(np.float64))
+                             start_rot=ep_start_rot.astype(np.float64),
+                             latch_close=latch_close)
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
     cycle = 0
     first_cycle = True
     success = False
+    n_commits = 0
+    first_commit_tick = None
     try:
         while executor.sent_count < max_steps and executor.frozen is None:
             (img_prev, grip_prev, _ts_prev), (img_now, grip_now, ts_now) = camera.get_pair()
@@ -860,6 +920,34 @@ def run_episode_async(
             # was grabbed + the frame's own staleness converted to ticks.
             skip = (executor.sent_count - sent_at_obs) + int(round(staleness_ms * fps / 1000.0))
             k = executor.submit(chunk, skip)
+
+            # Close-commit: the model initiates a close almost only by
+            # CONTINUING one it observes (finger motion / raised grip state) —
+            # measured P(initiate|static pre-grasp) ~ 0-15% vs 100% once the
+            # state shows a started close. Replanning every ~3 ticks re-rolls
+            # that dice and executes only chunk heads, so the close stays
+            # forever in the receding tail. When a drawn chunk crosses the
+            # threshold, execute it TO THE END without replanning: the fingers
+            # actually move, the state rises, and the next replan continues
+            # the close instead of re-deciding it.
+            # Only the chunk HEAD (first 8 actions = the close is <=0.2s away)
+            # arms the commit: a tail-only close is "I'll close after
+            # advancing more" — committing on it executes that advance blind
+            # and closes while still moving (anchored8: pushed the object,
+            # skipped the trained pause). Head-crossing means the model itself
+            # schedules the close NOW.
+            if commit_close is not None and any(
+                float(max(a[9], a[10] if a.shape[0] > 10 else 0.0)) > commit_close
+                for a in chunk[k:k + 8]
+            ):
+                if n_commits == 0:
+                    first_commit_tick = executor.sent_count
+                n_commits += 1
+                print(f"CLOSE COMMIT at tick {executor.sent_count}: chunk crosses "
+                      f"{commit_close:.2f}, executing to the end without replan", flush=True)
+                while (executor.remaining() > 0 and executor.frozen is None
+                       and executor.sent_count < max_steps):
+                    time.sleep(0.005)
 
             stats["infer"].append(infer_ms)
             stats["skip"].append(k)
@@ -925,7 +1013,11 @@ def run_episode_async(
             f"replans {len(inf)} (every ~{executor.sent_count / max(len(inf), 1):.1f} ticks) | "
             f"infer p50 {np.percentile(inf, 50):.0f}ms p95 {np.percentile(inf, 95):.0f}ms | "
             f"skip p50 {np.percentile(sk, 50):.0f} | rejected {executor.n_rejected} | "
-            f"clamped {executor.n_clamped}",
+            f"clamped {executor.n_clamped}"
+            + (f" | CLOSE LATCHED at tick {executor.latched_at_tick}"
+               if executor.latched_at_tick is not None else "")
+            + (f" | close commits {n_commits} (first at tick {first_commit_tick})"
+               if n_commits else ""),
             flush=True,
         )
     return {
@@ -1000,11 +1092,21 @@ def main():
     )
 
     for ep in range(args.num_episodes):
-        # Reset environment with randomization
-        reset_resp = arm_stub.Reset(arm_pb2.ResetRequest())
-        if not reset_resp.success:
-            logger.error(f"Reset failed: {reset_resp.error}")
-            continue
+        # Reset environment with randomization. --home_joints overrides the
+        # server's built-in home: with relative (camera-local delta) policies
+        # the start pose anchors the entire trajectory, so it must reproduce
+        # the demos' start camera view. --no_reset skips the move entirely
+        # (hand-placed start; the server resynced its integrator at torque-on).
+        if args.no_reset:
+            logger.info("--no_reset: starting from the arm's current pose")
+        else:
+            reset_req = arm_pb2.ResetRequest()
+            if args.home_joints is not None:
+                reset_req.joint_positions.extend(args.home_joints)
+            reset_resp = arm_stub.Reset(reset_req)
+            if not reset_resp.success:
+                logger.error(f"Reset failed: {reset_resp.error}")
+                continue
 
         # Re-set the gripper opening between episodes. arm_stub.Reset() only
         # re-randomizes the arm/cube; without this, the gripper retains the
@@ -1026,10 +1128,13 @@ def main():
         if use_relative_proprio:
             start_pos, start_rot = capture_start_pose(arm_stub, arm_pb2)
 
-        logger.info(
-            f"Episode {ep + 1}/{args.num_episodes} — "
-            f"cube at ({reset_resp.cube_x:.3f}, {reset_resp.cube_y:.3f}, {reset_resp.cube_z:.3f})"
-        )
+        if args.no_reset:
+            logger.info(f"Episode {ep + 1}/{args.num_episodes} — from current arm pose")
+        else:
+            logger.info(
+                f"Episode {ep + 1}/{args.num_episodes} — "
+                f"cube at ({reset_resp.cube_x:.3f}, {reset_resp.cube_y:.3f}, {reset_resp.cube_z:.3f})"
+            )
 
         if args.async_exec:
             if joint_mode or use_relative_proprio:
@@ -1050,6 +1155,8 @@ def main():
                 task=args.task,
                 clamp_pos_m=(args.clamp_pos_mm / 1000.0) if args.clamp_pos_mm else None,
                 clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
+                latch_close=args.latch_close,
+                commit_close=args.commit_close,
                 log_deltas=args.log_deltas,
                 log_latency=args.log_latency,
                 dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),

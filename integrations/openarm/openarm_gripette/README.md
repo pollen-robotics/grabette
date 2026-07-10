@@ -102,6 +102,38 @@ If step 4 fails at 10 cm, don't run a policy — you have a URDF / home-pose / I
   ```
   It also reports which motors ACK — a motor that never ACKs has a wiring/communication problem.
 - None of this replaces the hardware e-stop — keep it within reach whenever the arm is powered.
+- `set_arm_torque.py --on` now **holds the current pose** (the interpolator target is set to the measured joints), so a hand-placed arm stays where you put it. Use with `evaluate.py --no_reset` to start an episode from a hand-chosen pose.
+
+## After a collision: recovering undetected motors
+
+A hard impact can make one or more motors disappear from detection. Recovery,
+in order of least-invasive (field-validated after a table strike that took out
+joints 1 and 7):
+
+1. **Full power cycle** (PSU off ≥30 s, not just software) — Damiao motors
+   latch protection faults (over-current from the impact) that only clear on
+   power-off. This alone often brings motors back.
+2. **A motor with a RED LED has power and is latching a fault** — it is NOT a
+   dead cable. Clear the latch over CAN without another power cycle (server
+   stopped, on the CAN machine):
+   ```bash
+   uv run python examples/clear_motor_fault.py --can_port can0 --motor 7
+   ```
+   This sends the Damiao clear-error frame (`[0xFF]*7 + 0xFB`, same protocol
+   family as enable/disable) and health-checks every motor with REFRESH. An
+   over-current latch — the typical post-impact fault — clears immediately
+   (validated: red LED off, motor detected again).
+3. **Reseat CAN/power connectors** at the affected motors and along the
+   harness near the impact path. If an END-of-chain motor is flaky, check the
+   CAN terminator's seating — a loose terminator degrades detection bus-wide.
+4. **Power off and rotate the joint by hand**: smooth = mechanics fine (the
+   fault was electrical); grinding/notchy/blocked = gearbox damage.
+5. If the red LED returns after every clear + power cycle, read the error
+   register with the Damiao USB debug tool — persistent encoder faults mean
+   hardware replacement.
+
+After recovery, verify calibration hasn't shifted (`read_arm_state.py` at a
+known pose) before the first torque-on.
 
 ## Using with the LeRobot CLI
 
