@@ -6,7 +6,7 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 
 | File | Purpose |
 |---|---|
-| `analyze_dataset.py` | Dataset QA (raw 8D **or** converted 11D): gripper-swing coverage, action-delta magnitudes, episode-type breakdown, anomaly detection (SLAM spikes / truncated episodes). Run first. |
+| `analyze_dataset.py` | Dataset QA (raw 8D **or** converted 11D): action-delta magnitudes, supervision SNR, anomaly detection (SLAM spikes / truncated episodes / video-parquet mismatches). Run first. |
 | `clean_dataset.py` | Reject glitch-ridden episodes (tracking-loss segments too long to absorb, or glitches in the grasp window). Non-destructive; writes a new dataset. |
 | `convert_dataset.py` | Convert a raw Grabette dataset (absolute camera poses) → **camera-local delta actions (11D) + 2D gripper state**, zeroing per-step outlier deltas (isolated SLAM glitches) along the way. |
 | `train.py` | Train a `DiffusionPolicy` with the certified recipe: lean loop, best-by-val-loss checkpoint, periodic val-loss eval, UMI augmentations. |
