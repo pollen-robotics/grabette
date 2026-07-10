@@ -16,6 +16,9 @@ openarm_gripette/
     ├── read_arm_state.py            # observability
     ├── set_arm_torque.py            # enable/disable arm torque (--off = arm falls!)
     ├── disable_all_motors_can.py    # software e-stop, direct CAN (no server needed)
+    ├── clear_motor_fault.py         # clear a latched fault (red LED), direct CAN
+    ├── read_motor_fault.py          # decode WHICH fault is latched + motor temps, direct CAN
+    ├── log_motor_health.py          # passive fault/temperature logger (RX-only, run alongside sessions)
     ├── _torque_guard.py             # shared Ctrl+C/crash handler: torque off on abort
     ├── reset_arm.py                 # smooth interpolation to home
     ├── set_arm_pose.py              # absolute-target test
@@ -104,15 +107,68 @@ If step 4 fails at 10 cm, don't run a policy — you have a URDF / home-pose / I
 - None of this replaces the hardware e-stop — keep it within reach whenever the arm is powered.
 - `set_arm_torque.py --on` now **holds the current pose** (the interpolator target is set to the measured joints), so a hand-placed arm stays where you put it. Use with `evaluate.py --no_reset` to start an episode from a hand-chosen pose.
 
-## After a collision: recovering undetected motors
+## Troubleshooting
+
+### Reading a motor's fault code
+
+Damiao motors report *why* they faulted in every feedback frame (status nibble,
+high 4 bits of byte 0) — but keep **no history**: the full register (RID) table
+holds only protection *thresholds* (`UV_Value`, `OT_Value`, …), so the code is
+live-only and gone after a reboot. Decode it while the fault is present
+(read-only, server stopped, on the CAN machine):
+
+```bash
+uv run python examples/read_motor_fault.py --can_port can0            # all joints
+uv run python examples/read_motor_fault.py --can_port can0 --motor 7
+```
+
+| code | meaning | | code | meaning |
+|---|---|---|---|---|
+| `0x0`/`0x1` | disabled/enabled, no fault | | `0xB` | MOS overtemperature |
+| `0x8` | overvoltage | | `0xC` | motor coil overtemperature |
+| `0x9` | undervoltage | | `0xD` | communication loss (CAN timeout) |
+| `0xA` | overcurrent | | `0xE` | overload |
+
+The same frame carries the MOS and rotor temperatures — the tool prints both.
+
+Since the motors keep no history, `log_motor_health.py` builds it host-side:
+run it in a separate terminal alongside any teleop/eval session. It is RX-only
+by construction (own socketcan socket, never sends a frame — the kernel gives
+every socket a copy of all traffic, so it cannot interfere with the arm
+server) and records every status transition, per-joint temperatures at 1 Hz,
+and any joint going **silent** while the rest of the bus streams:
+
+```bash
+uv run python examples/log_motor_health.py --can_port can0    # Ctrl-C to stop
+```
+
+### Red LED that survives "power cycles"
+
+A quick flip of the PSU switch may not actually reboot the motor controllers:
+the bus capacitors can hold the MCUs above brownout, so a latched fault — or a
+crashed controller, which additionally goes fully silent on CAN — sails right
+through the "power cycle". **Watch the motor LEDs when you switch off**: if
+they stay lit, nothing has reset yet. Field case: joint 7 with a red LED,
+completely silent on CAN (no REFRESH answer, bus error counters clean),
+unaffected by `clear_motor_fault.py` and several quick power cycles — it came
+back only after ~12 minutes powered off.
+
+If the LEDs do die quickly and the red LED still returns at every boot, the
+fault *condition* itself persists (hot coil → overtemp re-latch, sagging
+supply → undervoltage): grab the code with `read_motor_fault.py` as soon as
+the motor answers.
+
+### After a collision: recovering undetected motors
 
 A hard impact can make one or more motors disappear from detection. Recovery,
 in order of least-invasive (field-validated after a table strike that took out
 joints 1 and 7):
 
-1. **Full power cycle** (PSU off ≥30 s, not just software) — Damiao motors
-   latch protection faults (over-current from the impact) that only clear on
-   power-off. This alone often brings motors back.
+1. **Full power cycle** (PSU off until the motor LEDs go dark — see
+   ["Red LED that survives power cycles"](#red-led-that-survives-power-cycles),
+   not just software) — Damiao motors latch protection faults (over-current
+   from the impact) that only clear on power-off. This alone often brings
+   motors back.
 2. **A motor with a RED LED has power and is latching a fault** — it is NOT a
    dead cable. Clear the latch over CAN without another power cycle (server
    stopped, on the CAN machine):
@@ -128,9 +184,13 @@ joints 1 and 7):
    CAN terminator's seating — a loose terminator degrades detection bus-wide.
 4. **Power off and rotate the joint by hand**: smooth = mechanics fine (the
    fault was electrical); grinding/notchy/blocked = gearbox damage.
-5. If the red LED returns after every clear + power cycle, read the error
-   register with the Damiao USB debug tool — persistent encoder faults mean
-   hardware replacement.
+5. If the red LED returns after every clear + power cycle, decode the fault
+   with `read_motor_fault.py` (see above). If the motor is silent even to
+   REFRESH, bench-test it alone with the Damiao Debugging Assistant (PC tool,
+   via USB-CAN) — it can factory-reset, re-flash, and fix a corrupted ID/baud
+   config. Note a factory-reset motor answers on CAN ID `0x01`, which joint 1
+   shadows on the full chain — another reason to bench-test alone. Persistent
+   encoder/driver faults mean hardware replacement.
 
 After recovery, verify calibration hasn't shifted (`read_arm_state.py` at a
 known pose) before the first torque-on.
