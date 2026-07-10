@@ -91,6 +91,59 @@ uv run python examples/cartesian_square.py --arm_addr <robot-ip>:50052 --half_si
 
 If step 4 fails at 10 cm, don't run a policy — you have a URDF / home-pose / IK-jump issue that will silently produce garbage trajectories.
 
+## Choosing the start pose (two separate concerns)
+
+The evaluation start pose matters twice, for two independent reasons. Both
+produce failures that look like a bad model but aren't.
+
+### 1. The Gripette must start close to a pose seen in the dataset
+
+The policy conditions on what the camera sees. Start each episode with the
+Gripette posed the way the dataset episodes start **relative to the scene**:
+similar distance and bearing to the object, similar height and orientation.
+A start view the model has never seen puts it out of distribution from the
+first frame.
+
+- Symptom: stereotyped or erratic behavior right from the start of the
+  episode. Confirm with `DiffusionPolicy/ood_check.py` on a dumped episode.
+- To start from a hand-chosen pose: torque off, place the arm, torque on
+  (holds the pose), then `evaluate.py --no_reset`.
+
+### 2. The arm's starting joints must leave room to execute the task
+
+The policy's actions are camera-local deltas: it reproduces demo-scale
+motions **relative to wherever the arm starts**. The starting joints
+therefore place the entire task trajectory inside — or outside — the arm's
+reachable envelope. If the task zone lands near the reach boundary, the arm
+stretches toward full extension, IK trades away orientation to keep reaching
+(the camera view degrades away from anything in the dataset), and IK branch
+flips trip the server's per-command jump watchdog.
+
+- Symptom: the arm moves toward the object but overextends, ends up looking
+  down at it, and never completes the task → the task zone sits past the
+  comfortable envelope; move the start pose back/adjust it.
+
+How to verify a candidate start for your task/dataset, before touching the
+robot:
+
+1. Measure the demos' motion extent (net camera-local displacement from
+   episode start to the task event — it is usually clustered).
+2. Pick a start so that start + typical demo motion lands the task zone in
+   comfortable reach, not at the boundary.
+3. IK-walk real episodes from the candidate start: compose each episode's
+   action deltas from identity (`p += R @ dp; R = R @ R_delta`), place the
+   trajectory at the candidate start's FK, and check every pose with
+   `openarm_gripette_simu.ik_feasibility.IKFeasibilityChecker` (instantiate
+   kinematics with the server's solver weights, `orientation_weight=10`).
+   Require 100% pose feasibility and max per-step joint jump comfortably
+   under the watchdog (15°).
+   `openarm_gripette_simu/examples/check_grabette_reachable.py` shows the
+   checker in use.
+4. Pass the chosen joints to the eval:
+   `evaluate.py --home_joints J1 J2 J3 J4 J5 J6 J7` (radians; forwarded to
+   the server's `Reset`), and place the object at the demo-typical distance
+   **from the gripper**, not at an absolute table position.
+
 ## Torque safety
 
 - **Every motion example disables arm torque on Ctrl+C or crash** (via `ArmService.SetTorque`): the motors freewheel and **the arm falls under gravity** — be ready to catch it or let it drop safely. Pass `--keep_torque` to leave the arm holding instead. Normal completion always leaves torque on.
