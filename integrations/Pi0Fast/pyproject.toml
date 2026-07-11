@@ -1,0 +1,28 @@
+[project]
+name = "grabette-pi0fast"
+version = "0.1.0"
+description = "Pi0-FAST fine-tuning & gates for Grabette demonstrations, on lerobot main."
+# Same interpreter pin as the DiffusionPolicy integration (torch/torchcodec
+# stack validated on 3.12).
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # MUST be lerobot main (or newer), NOT a 0.5.x/0.6.x release and NOT the
+    # fix/pi0fast-double-bos branch: the stock `lerobot/pi0fast-base`
+    # checkpoint bakes in a double-<bos> quirk, and fine-tunes only work when
+    # training and inference share the SAME (main-branch) pipeline that is
+    # consistent about it — verified with lerobot/pi0fast-libero (see README).
+    # Pinned to the commit the libero verification ran against; bump deliberately.
+    "lerobot[pi,dataset] @ git+https://github.com/huggingface/lerobot@e40b58a8dfa9e7b86918c374791599d070518d11",
+    "scipy>=1.10",
+    "sentencepiece",
+    "num2words",
+    "accelerate",
+    "protobuf",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb"]
+
+[tool.uv]
+# Scripts-only project: manage the dependency env, don't build/install this dir.
+package = false
