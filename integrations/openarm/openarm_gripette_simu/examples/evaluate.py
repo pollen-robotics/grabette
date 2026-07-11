@@ -82,6 +82,23 @@ def clamp_delta(delta_pos, delta_rot_6d, clamp_pos_m, clamp_rot_rad):
             was = True
     return delta_pos, delta_rot_6d, was
 
+
+def apply_grip_gain(g1, g2, gain, ref):
+    """Gripper actuator calibration (--grip_gain): scale closure depth around
+    the open reference so open stays open and closes deepen.
+
+    The recorded close values are positions of the Grabette's trigger-driven
+    linkage squeezing deformable fingertips; the deployed Feetech servo
+    chasing the same position numbers delivers less squeeze (position control,
+    bounded torque, no force feedback). This maps model-units to
+    servo-effective-units at send time. Clamped to the servo-safe range.
+    """
+    if gain != 1.0:
+        g1 = ref[0] + gain * (g1 - ref[0])
+        g2 = ref[1] + gain * (g2 - ref[1])
+    return float(np.clip(g1, 0.0, 1.4)), float(np.clip(g2, 0.0, 1.4))
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -179,6 +196,15 @@ def parse_args():
                         "until the live view matches a demo start frame, then reading "
                         "the joints (examples/read_arm_state.py). Default: the server's "
                         "built-in home.")
+    p.add_argument("--grip_gain", type=float, default=1.0,
+                   help="Actuator calibration for the gripper: scale the model's gripper "
+                        "commands around the open reference (--start_gripper), so open "
+                        "stays open and CLOSES DEEPEN. The recorded closes are positions "
+                        "of the Grabette's trigger linkage squeezing soft fingertips; the "
+                        "deployed Feetech servo chasing the same position numbers delivers "
+                        "less squeeze (no force feedback). Try 1.3-1.6 if grasps slip. "
+                        "Applied at send time, AFTER commit/latch logic (those thresholds "
+                        "stay in model units).")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -299,7 +325,8 @@ class ChunkExecutor:
 
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                  clamp_pos_m=None, clamp_rot_rad=None,
-                 start_pos=None, start_rot=None, latch_close=None):
+                 start_pos=None, start_rot=None, latch_close=None,
+                 grip_gain=1.0, grip_ref=(0.0, 0.0)):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -326,6 +353,8 @@ class ChunkExecutor:
         self._latch_close = latch_close
         self._grip_latch = None
         self.latched_at_tick = None
+        self._grip_gain = grip_gain
+        self._grip_ref = grip_ref
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -394,6 +423,9 @@ class ChunkExecutor:
                             self._grip_latch = [max(self._grip_latch[0], g1),
                                                 max(self._grip_latch[1], g2)]
                             g1, g2 = self._grip_latch
+                    # Gain AFTER latch: latch/commit thresholds are in model
+                    # units; the gain is actuator calibration at send time.
+                    g1, g2 = apply_grip_gain(g1, g2, self._grip_gain, self._grip_ref)
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
@@ -501,9 +533,21 @@ def run_episode(
     log_deltas=False,
     log_latency=False,
     dump_dir=None,
+    grip_gain=1.0,
+    grip_ref=(0.0, 0.0),
+    latch_close=None,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats."""
     n_clamped = 0
+    # Gripper close-latch (sync path). The gripper is an ABSOLUTE position
+    # target re-sent every cycle; successive diffusion draws disagree, so the
+    # servo chases a dancing target: visible hesitation, and the deep close
+    # commands never persist long enough for the fingers to physically get
+    # there (they sit near the time-average of the oscillation). Once any
+    # command crosses the threshold, hold the running max — legitimate for
+    # end-at-lift datasets where no demo reopens near the object.
+    grip_latch = None
+    latched_at_step = None
     n_rejected = 0  # arm commands refused by the server (IK-jump watchdog etc.)
     dt = 1.0 / fps
     episode_start = time.perf_counter()
@@ -714,11 +758,19 @@ def run_episode(
                 f" | ticks x{n_ticks} | loop target {dt * 1000:.0f}ms",
                 flush=True,
             )
+        gg1 = float(gripper_goal[0])
+        gg2 = float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0
+        if latch_close is not None:
+            if grip_latch is None and max(gg1, gg2) > latch_close:
+                grip_latch = [gg1, gg2]
+                latched_at_step = step
+                print(f"CLOSE LATCHED at step {step}", flush=True)
+            if grip_latch is not None:
+                grip_latch = [max(grip_latch[0], gg1), max(grip_latch[1], gg2)]
+                gg1, gg2 = grip_latch
+        gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
         gripper_stub.SendMotorCommand(
-            gripper_pb2.MotorCommand(
-                motor1_goal=float(gripper_goal[0]),
-                motor2_goal=float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0,
-            )
+            gripper_pb2.MotorCommand(motor1_goal=gg1, motor2_goal=gg2)
         )
 
         if log_deltas and not joint_mode:
@@ -839,6 +891,8 @@ def run_episode_async(
     log_deltas=False,
     log_latency=False,
     dump_dir=None,
+    grip_gain=1.0,
+    grip_ref=(0.0, 0.0),
 ) -> dict:
     """Async episode: ChunkExecutor streams actions at exactly `fps` (the demo
     clock) while this loop replans as fast as inference allows (~10 Hz), each
@@ -877,7 +931,8 @@ def run_episode_async(
                              clamp_pos_m=clamp_pos_m, clamp_rot_rad=clamp_rot_rad,
                              start_pos=ep_start_pos.astype(np.float64),
                              start_rot=ep_start_rot.astype(np.float64),
-                             latch_close=latch_close)
+                             latch_close=latch_close,
+                             grip_gain=grip_gain, grip_ref=grip_ref)
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
@@ -930,15 +985,19 @@ def run_episode_async(
             # threshold, execute it TO THE END without replanning: the fingers
             # actually move, the state rises, and the next replan continues
             # the close instead of re-deciding it.
-            # Only the chunk HEAD (first 8 actions = the close is <=0.2s away)
-            # arms the commit: a tail-only close is "I'll close after
-            # advancing more" — committing on it executes that advance blind
-            # and closes while still moving (anchored8: pushed the object,
-            # skipped the trained pause). Head-crossing means the model itself
-            # schedules the close NOW.
+            # Trigger on a crossing ANYWHERE in the chunk. A head-only window
+            # (tried: first 8 actions) sounds cleaner — "commit only when the
+            # close is imminent" — but it silently re-creates the
+            # never-ignites failure for models that schedule their close
+            # further ahead than the window (measured: the mustard-200 model
+            # kept its close 9-13 steps out through 40+ replans; the commit
+            # never armed and the arm pressed into the workspace boundary).
+            # The cost of the full-chunk trigger is an occasional early
+            # commit that closes while still advancing (a push, sometimes a
+            # miss); the cost of the window is never grasping at all.
             if commit_close is not None and any(
                 float(max(a[9], a[10] if a.shape[0] > 10 else 0.0)) > commit_close
-                for a in chunk[k:k + 8]
+                for a in chunk[k:]
             ):
                 if n_commits == 0:
                     first_commit_tick = executor.sent_count
@@ -1157,6 +1216,8 @@ def main():
                 clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
                 latch_close=args.latch_close,
                 commit_close=args.commit_close,
+                grip_gain=args.grip_gain,
+                grip_ref=tuple(args.start_gripper),
                 log_deltas=args.log_deltas,
                 log_latency=args.log_latency,
                 dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1177,6 +1238,9 @@ def main():
             success_check_freq=args.success_check_freq,
             debug=args.debug,
             log_gripper=args.log_gripper,
+            grip_gain=args.grip_gain,
+            grip_ref=tuple(args.start_gripper),
+            latch_close=args.latch_close,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
