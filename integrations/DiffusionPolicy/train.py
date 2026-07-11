@@ -639,6 +639,12 @@ def main():
         pin_memory=device.type != "cpu",
         drop_last=False,
         num_workers=2,
+        # persistent: compute_val_loss breaks out of the iterator early
+        # (max_batches), and non-persistent workers torn down mid-iteration
+        # can leak /dev/shm segments — one small leak per eval fills shm
+        # after tens of evals and kills training with "unable to allocate
+        # shared memory". Persistent workers are created once and reused.
+        persistent_workers=True,
     )
 
     # ---- Optimizer ----
