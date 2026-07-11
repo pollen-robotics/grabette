@@ -85,12 +85,17 @@ only pi0fast fine-tune verified to generate correctly:
 | steps / batch | **20 000** / 32 | bf16, gradient_checkpointing, compile |
 | image transforms | off | |
 
-Training goes through stock `lerobot-train` (draccus CLI) on the pinned main
-revision. Template (validate flag names against `lerobot-train --help` on the
-training box — main moves fast):
+Training goes through `train_pi0fast.py` — stock `lerobot-train` with one
+surgical fix (see its docstring: the base checkpoint's serialized processor
+pipeline pins the unloadable `physical-intelligence/fast` tokenizer and would
+ignore your fitted one; the launcher rebuilds the pipeline fresh from the
+policy config). Note the pretrained weights load via
+`--policy.type` + `--policy.pretrained_path` — NOT `--policy.path`, which
+would also load the base checkpoint's config and demand its pretraining
+camera names.
 
 ```bash
-lerobot-train \
+uv run python train_pi0fast.py \
   --policy.type=pi0_fast \
   --policy.pretrained_path=lerobot/pi0fast-base \
   --policy.chunk_size=10 --policy.n_action_steps=10 \
