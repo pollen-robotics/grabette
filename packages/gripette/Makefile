@@ -66,7 +66,10 @@ check-hand:
 # Write /etc/gripette/env with GRIPPER_HAND=$(HAND), PRESERVING any existing
 # GRIPPER_MOTOR*_OFFSET lines so a re-run of install-rpi doesn't wipe a
 # calibration that was already captured by scripts/calibrate_zero_local.py.
-# Other lines (custom signs, comments) are preserved too.
+# Camera lines are preserved too if present; otherwise the deployment
+# defaults below are written (video mode — the "still" code default is a
+# ~10 Hz ceiling on a Pi Zero, while video mode reaches ~40 fps at the same
+# FOV; certified during the 2026-07 real-arm campaign).
 write-env: check-hand
 	@sudo mkdir -p /etc/gripette
 	@sudo touch /etc/gripette/env
@@ -76,6 +79,15 @@ write-env: check-hand
 	  echo "# Sourced by gripette.service via EnvironmentFile=-/etc/gripette/env."; \
 	  echo "GRIPPER_HAND=$(HAND)"; \
 	  sudo grep -E '^GRIPPER_(MOTOR[12]_(OFFSET|SIGN))=' /etc/gripette/env 2>/dev/null || true; \
+	  sudo grep -q '^GRIPPER_CAMERA_MODE=' /etc/gripette/env 2>/dev/null \
+	    && sudo grep -E '^GRIPPER_(CAMERA_MODE|STREAM_HZ|CAMERA_RESOLUTION_[WH]|JPEG_QUALITY)=' /etc/gripette/env \
+	    || { \
+	      echo "GRIPPER_CAMERA_MODE=video"; \
+	      echo "GRIPPER_STREAM_HZ=30"; \
+	      echo "GRIPPER_CAMERA_RESOLUTION_W=648"; \
+	      echo "GRIPPER_CAMERA_RESOLUTION_H=486"; \
+	      echo "GRIPPER_JPEG_QUALITY=70"; \
+	    }; \
 	} | sudo tee /etc/gripette/env.new >/dev/null
 	@sudo mv /etc/gripette/env.new /etc/gripette/env
 	@echo "Wrote /etc/gripette/env:"
