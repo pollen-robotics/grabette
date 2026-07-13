@@ -6,6 +6,7 @@ Motor commands control the proximal/distal joints.
 """
 
 import logging
+import os
 import time
 import threading
 import cv2
@@ -25,11 +26,13 @@ STREAM_INTERVAL = 1.0 / STREAM_HZ
 #
 # LEGACY-DATASET WARNING: datasets recorded BEFORE the convention flip
 # captured `proximal` as NEGATIVE-on-close. A policy trained on those
-# emits negative proximal goals and consumes negative proximal states,
-# so when evaluating against legacy data, set PROXIMAL_CMD_SIGN = -1.0
-# (or whatever env-driven override we land on when the dataset
-# compatibility story is sorted). See memory: openarm-proximal-sign-cross-model.
-PROXIMAL_CMD_SIGN = +1.0
+# emits negative proximal goals and consumes negative proximal states, so
+# when evaluating a legacy model, launch the server with
+#     PROXIMAL_CMD_SIGN=-1 python -m openarm_gripette_simu ...
+# (found the hard way 2026-07-12: the June sim models — e.g.
+# diffusion_grabette_simu_release — closed proximal NEGATIVE; after the
+# flip their closes pinned at the open-stop and obs read 0.0 forever.)
+PROXIMAL_CMD_SIGN = float(os.environ.get("PROXIMAL_CMD_SIGN", "+1.0"))
 
 
 class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):

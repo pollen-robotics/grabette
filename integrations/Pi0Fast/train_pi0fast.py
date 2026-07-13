@@ -1,3 +1,12 @@
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = [
+#   "lerobot[pi,dataset] @ git+https://github.com/huggingface/lerobot@e40b58a8dfa9e7b86918c374791599d070518d11",
+#   "scipy", "sentencepiece", "num2words", "accelerate", "protobuf", "wandb",
+#   "av",  # pyav video backend — HF-jobs images ship no FFmpeg shared libs,
+#          # so torchcodec cannot load there; pass --dataset.video_backend=pyav
+# ]
+# ///
 """Pi0-FAST fine-tuning launcher: stock `lerobot-train` with ONE surgical fix.
 
 Why this exists: when fine-tuning FROM `lerobot/pi0fast-base`

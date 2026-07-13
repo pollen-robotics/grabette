@@ -91,12 +91,20 @@ def apply_grip_gain(g1, g2, gain, ref):
     linkage squeezing deformable fingertips; the deployed Feetech servo
     chasing the same position numbers delivers less squeeze (position control,
     bounded torque, no force feedback). This maps model-units to
-    servo-effective-units at send time. Clamped to the servo-safe range.
+    servo-effective-units at send time.
+
+    At gain 1.0 this MUST be a pure identity: gripper sign/range conventions
+    vary by model (the sim models close with NEGATIVE proximal values, real
+    models with positive ones) — an unconditional clamp here silently broke
+    every sim close to "open" (regression found 2026-07-12 via the sim
+    re-eval of diffusion_grabette_simu_release). The clamp only applies to
+    gain-scaled values, symmetric so it is convention-agnostic.
     """
-    if gain != 1.0:
-        g1 = ref[0] + gain * (g1 - ref[0])
-        g2 = ref[1] + gain * (g2 - ref[1])
-    return float(np.clip(g1, 0.0, 1.4)), float(np.clip(g2, 0.0, 1.4))
+    if gain == 1.0:
+        return float(g1), float(g2)
+    g1 = ref[0] + gain * (g1 - ref[0])
+    g2 = ref[1] + gain * (g2 - ref[1])
+    return float(np.clip(g1, -1.6, 1.6)), float(np.clip(g2, -1.6, 1.6))
 
 
 logger = logging.getLogger(__name__)
@@ -104,7 +112,14 @@ logger = logging.getLogger(__name__)
 
 def parse_args():
     p = argparse.ArgumentParser(description="Evaluate Gripette policy on simulator")
-    p.add_argument("--checkpoint", type=str, required=True, help="Path to trained checkpoint")
+    p.add_argument("--checkpoint", type=str, default=None, help="Path to trained checkpoint")
+    p.add_argument("--policy_addr", type=str, default=None,
+                   help="HOST:PORT of a ficelle policy server (websocket transport) OR "
+                        "an iroh ticket (zero-config remote, printed by `serve.py "
+                        "--transport iroh`); replaces local policy inference at chunk "
+                        "granularity (sync cartesian mode only)")
+    p.add_argument("--jpeg_quality", type=int, default=None, help="encode images as JPEG at this quality (1-100) before sending")
+    p.add_argument("--resize", action="store_true", default=False, help="downscale images to the model's resize resolution before sending (transport-only; requires a server whose policy resizes internally, e.g. diffusion)")
     p.add_argument("--arm_addr", type=str, default="localhost:50052", help="ArmService gRPC address")
     p.add_argument("--gripper_addr", type=str, default="localhost:50051", help="GripperService gRPC address")
     p.add_argument("--device", type=str, default="cuda", help="Compute device")
@@ -230,7 +245,10 @@ def parse_args():
         "— the dataset's task was 'grasp_and_lift_cube', which the Pi0Fast "
         "processor cleans to 'grasp and lift cube'.",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.checkpoint is None and args.policy_addr is None:
+        p.error("either --checkpoint or --policy_addr is required")
+    return args
 
 
 class CameraStream:
@@ -536,9 +554,20 @@ def run_episode(
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
     latch_close=None,
+    client=None,
+    remote_k=None,
+    remote_img_wh=None,
 ) -> dict:
-    """Run a single evaluation episode. Returns dict with stats."""
+    """Run a single evaluation episode. Returns dict with stats.
+
+    client: if set, a ficelle PolicyClient replaces local policy inference at
+    CHUNK granularity (cartesian sync mode only) — see the remote branch in
+    the tick loop below. remote_k/remote_img_wh configure it (see main())."""
     n_clamped = 0
+    # Remote mode's local action queue (chunk from the last client.infer(),
+    # drained one action per tick — mirrors the local policy's own internal
+    # action queue, just kept client-side instead of inside `policy`).
+    action_queue = []
     # Gripper close-latch (sync path). The gripper is an ABSOLUTE position
     # target re-sent every cycle; successive diffusion draws disagree, so the
     # servo chases a dancing target: visible hesitation, and the deep close
@@ -612,19 +641,20 @@ def run_episode(
             with open(dump_dir / "state.jsonl", "a") as f:
                 f.write(_json.dumps({"step": step, "state": [float(v) for v in state]}) + "\n")
 
-        state_tensor = torch.from_numpy(state).float()
-        image_tensor = torch.from_numpy(camera_image).float() / 255.0
-        image_tensor = image_tensor.permute(2, 0, 1).contiguous()
+        if client is None:
+            state_tensor = torch.from_numpy(state).float()
+            image_tensor = torch.from_numpy(camera_image).float() / 255.0
+            image_tensor = image_tensor.permute(2, 0, 1).contiguous()
 
-        batch = {
-            "observation.state": state_tensor.unsqueeze(0).to(device),
-            "observation.images.cam0": image_tensor.unsqueeze(0).to(device),
-            # VLA policies (Pi0/Pi0Fast/Pi0.5) require a language task string;
-            # their preprocessor tokenizes it into the prompt. Classic policies
-            # (Diffusion/ACT) ignore it — exactly as during training, where the
-            # dataset always carried a `task` field. Harmless to always include.
-            "task": task,
-        }
+            batch = {
+                "observation.state": state_tensor.unsqueeze(0).to(device),
+                "observation.images.cam0": image_tensor.unsqueeze(0).to(device),
+                # VLA policies (Pi0/Pi0Fast/Pi0.5) require a language task string;
+                # their preprocessor tokenizes it into the prompt. Classic policies
+                # (Diffusion/ACT) ignore it — exactly as during training, where the
+                # dataset always carried a `task` field. Harmless to always include.
+                "task": task,
+            }
 
         # --- Inference + wallclock-consistent execution ---
         # The training data is 50 fps: one action = the motion of ONE 20 ms
@@ -635,7 +665,8 @@ def run_episode(
         # since the last iteration and send each as its own command (a replay
         # burst) — motion runs at demonstrated speed whatever the loop rate.
         t_inf = time.perf_counter()
-        batch = preprocessor(batch)
+        if client is None:
+            batch = preprocessor(batch)
 
         if joint_mode:
             with torch.no_grad():
@@ -678,7 +709,7 @@ def run_episode(
                 # k actions describe motion the arm has ALREADY done; executing
                 # them again overshoots (the "push through the object" failure).
                 # Discard them: k = staleness / measured loop period.
-                if skip_stale and loop_periods:
+                if client is None and skip_stale and loop_periods:
                     q = getattr(policy, "_queues", None)
                     q = q.get("action") if isinstance(q, dict) else None
                     if q is not None and len(q) == 0:
@@ -692,10 +723,29 @@ def run_episode(
                             print(f"  skip_stale: dropped {k} chunk-head action(s) "
                                   f"(staleness {frame_staleness:.0f}ms / period {period_ms:.0f}ms)",
                                   flush=True)
-                with torch.no_grad():
-                    a = policy.select_action(batch)
-                a = postprocessor(a)
-                a_np = a.squeeze(0).cpu().numpy()
+                if client is not None:
+                    # Remote CHUNK-granularity inference: refill the local
+                    # action queue with one ficelle round trip when it runs
+                    # dry, then pop one action per tick — the wire-protocol
+                    # equivalent of the local policy's own internal action
+                    # queue (policy.select_action, below).
+                    if not action_queue:
+                        (img_prev, grip_prev, _ts_prev), (img_now, grip_now, _ts_now) = camera.get_pair()
+                        img_prev_r = cv2.resize(img_prev, remote_img_wh, interpolation=cv2.INTER_AREA)
+                        img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
+                        obs = {
+                            "observation.images.cam0": np.stack([img_prev_r, img_now_r]),
+                            "observation.state": np.stack([grip_prev, grip_now]).astype(np.float32),
+                            "task": task,
+                        }
+                        reply = client.infer(obs)
+                        action_queue.extend(list(reply["actions"][:remote_k]))
+                    a_np = action_queue.pop(0)
+                else:
+                    with torch.no_grad():
+                        a = policy.select_action(batch)
+                    a = postprocessor(a)
+                    a_np = a.squeeze(0).cpu().numpy()
                 dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
                 if clamp_pos_m is not None or clamp_rot_rad is not None:
                     dp, dr6, was = clamp_delta(dp, dr6, clamp_pos_m, clamp_rot_rad)
@@ -1094,35 +1144,81 @@ def main():
     logging.basicConfig(level=logging.INFO)
     device = torch.device(args.device)
 
-    # ---- Load policy (any type: diffusion / act / pi0_fast / ...) ----
-    logger.info(f"Loading policy from {args.checkpoint}")
-    policy = _load_policy_any(args.checkpoint)
-    logger.info(f"Loaded policy type: {policy.config.type}")
-    # Optional re-planning-cadence override. Smaller n_action_steps re-infers
-    # more often (tighter closed loop), which matters a lot for policies that
-    # drift off-distribution during open-loop chunk execution — ACT in
-    # particular is designed for very frequent re-planning / temporal
-    # ensembling, and executing long chunks (its trained default of 8+) can
-    # cause it to wander off the grasp manifold and never trigger the close.
-    if args.n_action_steps is not None:
-        logger.info(
-            f"Overriding n_action_steps: {policy.config.n_action_steps} -> {args.n_action_steps}"
-        )
-        policy.config.n_action_steps = args.n_action_steps
-    policy.to(device)
-    policy.eval()
-    preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+    remote = args.policy_addr is not None
+    if remote and args.async_exec:
+        raise SystemExit("--policy_addr supports sync mode only (not --async_exec).")
 
-    # Auto-detect state/action mode from the policy's feature shapes.
-    state_dim = policy.config.robot_state_feature.shape[0]
-    action_dim = policy.config.action_feature.shape[0]
-    joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
-    use_relative_proprio = (state_dim > 2) and not joint_mode
-    logger.info(
-        f"Policy: action_space={'joint' if joint_mode else 'cartesian'}, "
-        f"state_dim={state_dim}, action_dim={action_dim}, "
-        f"n_action_steps={policy.config.n_action_steps}"
-    )
+    policy = preprocessor = postprocessor = None
+    client = remote_k = remote_img_wh = None
+
+    if remote:
+        # Lazy import: the whole point of remote mode is that the client
+        # machine needs no checkpoint (and, on a bare robot box, no ficelle
+        # client either unless this flag is actually used). open_client
+        # dispatches on the address shape: an iroh ticket (starts with
+        # "endpoint") gets IrohPolicyClient, anything else (HOST:PORT) gets
+        # PolicyClient (websocket) — so --policy_addr transparently accepts
+        # either, unchanged from the caller's point of view.
+        try:
+            from ficelle_client import open_client
+        except ImportError as e:
+            raise SystemExit(
+                "--policy_addr requires the ficelle_client package (uv pip install ./ficelle/client)"
+            ) from e
+        client = open_client(args.policy_addr, jpeg_quality=args.jpeg_quality, resize=args.resize)
+        metadata = client.metadata
+        state_spec = metadata.get("observations", {}).get("observation.state", {})
+        if (metadata.get("action_dim") != 11
+                or list(state_spec.get("frame_shape", [])) != [2]
+                or metadata.get("n_obs_steps") != 2):
+            raise SystemExit(
+                f"--policy_addr server at {args.policy_addr} reports action_dim="
+                f"{metadata.get('action_dim')}, state frame_shape="
+                f"{state_spec.get('frame_shape')}, n_obs_steps={metadata.get('n_obs_steps')} "
+                "— this eval only supports the 11D-cartesian/2D-gripper-state diffusion case."
+            )
+        joint_mode = False
+        use_relative_proprio = False
+        server_n_action_steps = metadata["n_action_steps"]
+        remote_k = (min(args.n_action_steps, server_n_action_steps)
+                    if args.n_action_steps is not None else server_n_action_steps)
+        h, w, _c = metadata["observations"]["observation.images.cam0"]["frame_shape"]
+        remote_img_wh = (w, h)
+        logger.info(
+            f"Remote policy: {metadata.get('policy_type')} from {metadata.get('checkpoint')} "
+            f"@ {args.policy_addr} | n_action_steps used={remote_k} | "
+            f"image wire shape (2, {h}, {w}, 3)"
+        )
+    else:
+        # ---- Load policy (any type: diffusion / act / pi0_fast / ...) ----
+        logger.info(f"Loading policy from {args.checkpoint}")
+        policy = _load_policy_any(args.checkpoint)
+        logger.info(f"Loaded policy type: {policy.config.type}")
+        # Optional re-planning-cadence override. Smaller n_action_steps re-infers
+        # more often (tighter closed loop), which matters a lot for policies that
+        # drift off-distribution during open-loop chunk execution — ACT in
+        # particular is designed for very frequent re-planning / temporal
+        # ensembling, and executing long chunks (its trained default of 8+) can
+        # cause it to wander off the grasp manifold and never trigger the close.
+        if args.n_action_steps is not None:
+            logger.info(
+                f"Overriding n_action_steps: {policy.config.n_action_steps} -> {args.n_action_steps}"
+            )
+            policy.config.n_action_steps = args.n_action_steps
+        policy.to(device)
+        policy.eval()
+        preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+
+        # Auto-detect state/action mode from the policy's feature shapes.
+        state_dim = policy.config.robot_state_feature.shape[0]
+        action_dim = policy.config.action_feature.shape[0]
+        joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
+        use_relative_proprio = (state_dim > 2) and not joint_mode
+        logger.info(
+            f"Policy: action_space={'joint' if joint_mode else 'cartesian'}, "
+            f"state_dim={state_dim}, action_dim={action_dim}, "
+            f"n_action_steps={policy.config.n_action_steps}"
+        )
 
     # ---- Connect to simulator ----
     from openarm_gripette_simu.proto import arm_pb2, arm_pb2_grpc, gripper_pb2, gripper_pb2_grpc
@@ -1176,8 +1272,11 @@ def main():
         gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
             motor1_goal=args.start_gripper[0], motor2_goal=args.start_gripper[1]))
 
-        # Reset policy action queue
-        policy.reset()
+        # Reset policy action queue (remote mode keeps its queue client-side —
+        # nothing to reset here, run_episode starts each episode with a fresh
+        # local action_queue).
+        if policy is not None:
+            policy.reset()
 
         # Small delay for physics to settle (and for gripper to actually open)
         time.sleep(0.5)
@@ -1253,6 +1352,9 @@ def main():
             clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
             max_ticks=args.max_ticks,
             skip_stale=args.skip_stale,
+            client=client,
+            remote_k=remote_k,
+            remote_img_wh=remote_img_wh,
         )
         # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
         # result["success"] is meaningless there: ask the operator instead and
