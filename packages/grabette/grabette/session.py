@@ -1,7 +1,7 @@
 """Session and episode management for capture data.
 
 Sessions are named groups of episodes. Episodes are individual captures
-(raw_video.mp4 + imu_data.json). The registry lives in sessions.json;
+(raw_video.mp4 + oakd_imu.json). The registry lives in sessions.json;
 episode directories are flat under episodes/.
 """
 
@@ -330,7 +330,8 @@ class SessionManager:
     def _get_episode_info(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)
         video_path = ep_dir / "raw_video.mp4"
-        imu_path = ep_dir / "imu_data.json"
+        # Real (OAK-D) episodes write oakd_imu.json; mock/legacy write imu_data.json.
+        imu_present = (ep_dir / "oakd_imu.json").exists() or (ep_dir / "imu_data.json").exists()
 
         duration = 0.0
         frame_count = 0
@@ -352,7 +353,7 @@ class SessionManager:
             imu_sample_count=imu_sample_count,
             angle_sample_count=angle_sample_count,
             has_video=video_path.exists(),
-            has_imu=imu_path.exists(),
+            has_imu=imu_present,
         )
 
     # ── Session operations ────────────────────────────────────────────
