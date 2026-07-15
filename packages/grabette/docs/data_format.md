@@ -18,15 +18,18 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         ├── angle_data.json             # AS5600L joint angles (~85–100Hz)
         ├── rpi_camera_intrinsics.json  # Fisheye KB8 calibration for the primary cam
         ├── frames.json                 # URDF-derived frame transforms, incl. T_camera_in_oak_l
-        ├── oakd_left.mp4               # OAK-D stereo left (H.264)
-        ├── oakd_right.mp4              # OAK-D stereo right (H.264)
-        ├── oakd_depth.mkv              # OAK-D depth stream
-        ├── oakd_*_timestamps.json      # Per-stream timestamps
+        ├── oakd_left.mp4               # OAK-D left, rectified mono H.264 (default 640×400)
+        ├── oakd_right.mp4              # OAK-D right, rectified mono H.264 (default 640×400)
+        ├── oakd_depth.mkv              # OAK-D depth, lossless FFV1 16-bit (PNG dir oakd_depth/ kept only if packing fails)
+        ├── oak_mask.png                # Body mask applied to the depth stream
+        ├── oakd_*_timestamps.json      # Per-stream timestamps (left / right / depth)
         ├── oakd_calib.json             # OAK-D factory EEPROM dump
         ├── oakd_calib_offline.json     # Flat fx/fy/cx/cy/baseline/imu_to_cam for SLAM
         ├── oakd_clock_pairs.json       # OAK-D ↔ SyncManager clock alignment
         └── metadata.json               # Duration, counts, hand, angle_convention, device_id, urdf
 ```
+
+The `oakd_*` files are present when the OAK-D was enabled for the capture (it's toggled on demand, default off to save battery); SLAM needs them, so a recording intended for the pipeline is made with the OAK-D on.
 
 ## Calibration & geometry
 
