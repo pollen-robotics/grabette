@@ -81,7 +81,7 @@ class HuggingFaceClient:
         """Upload an episode directory to HuggingFace Hub.
 
         Args:
-            episode_dir: Path to episode directory containing raw_video.mp4 + imu_data.json
+            episode_dir: Path to the episode directory (the entire folder is uploaded)
             repo_id: HuggingFace repo ID (e.g., "username/grabette-data")
             progress_callback: Optional callable(percent: float, message: str)
             private: Whether the repository should be created as private
