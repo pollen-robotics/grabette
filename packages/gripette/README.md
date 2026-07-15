@@ -1,4 +1,4 @@
-# gripette
+# Gripette
 
 Gripper version of the [Grabette](../grabette) data collection system.
 gRPC motor+camera service for the gripper, running on a Raspberry Pi Zero 2W.
@@ -10,8 +10,12 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 - Raspberry Pi Zero 2W
 - RPi camera module (1296x972, fisheye lens)
 - Two Feetech STS3215 servos on `/dev/serial0` (baudrate 1000000, IDs 1 and 2)
+- *Optional:* an OAK-D SR RGB-D camera — add it if you want depth/SLAM on the gripper; **not required** for the standard motor + camera service (unlike Grabette, where the OAK-D is mandatory for SLAM)
 
-## Installation
+📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
+🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD.
+
+## Install
 
 ### Development machine (mock mode, no hardware needed)
 
@@ -20,7 +24,7 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 
 ```bash
 uv sync --package gripette --extra dev
-uv run --package gripette python generate_proto.py   # only needed if you modify gripper.proto
+uv run --package gripette python generate_proto.py   # only if you modified proto/gripper.proto
 uv run --package gripette python main.py
 ```
 
@@ -70,41 +74,9 @@ If `make install-rpi` fails (e.g. unusual OS), the equivalent manual steps are:
 3. **Venv**: from the workspace root, `uv venv --python /usr/bin/python3 --system-site-packages && uv sync --package gripette --extra rpi --no-install-package numpy`.
 4. **Hand config**: `sudo mkdir -p /etc/gripette && echo "GRIPPER_HAND=right" | sudo tee /etc/gripette/env` (or `=left`).
 
-## Configuration
-
-### Robot-frame convention
-
-All motor positions in the API (gRPC, client, scripts, limits) are in **robot frame**:
-
-- `0 rad` — gripper fully **open**
-- positive — **closing**
-- limits: motor 1 ∈ `[0, +1.484]` (~85°), motor 2 ∈ `[0, +2.025]` (~116°)
-
-Commands outside these bounds are rejected with `ValueError` before reaching the bus. `MotorController` bridges robot frame ↔ encoder frame via per-motor `sign` (from `hand`) and `offset` (from calibration); callers never deal with the encoder values directly.
-
-### Environment variables
-
-All settings via environment variables with `GRIPPER_` prefix. Persistent per-device config lives in `/etc/gripette/env`, sourced by `gripette.service`.
-
-| Variable | Default | Description |
-|---|---|---|
-| `GRIPPER_HOST` | `0.0.0.0` | Server bind address |
-| `GRIPPER_PORT` | `50051` | gRPC port |
-| `GRIPPER_MOTOR_PORT` | `/dev/serial0` | Serial port for servos |
-| `GRIPPER_MOTOR_BAUDRATE` | `1000000` | Serial baudrate |
-| `GRIPPER_MOTOR_ID_1` | `1` | First servo ID |
-| `GRIPPER_MOTOR_ID_2` | `2` | Second servo ID |
-| `GRIPPER_HAND` | `right` | `left` or `right` — determines default `motor*_sign`. Written by `make install-rpi HAND=…` |
-| `GRIPPER_MOTOR1_OFFSET` | `0.0` | Encoder reading (rad) at robot-frame zero. Written by `scripts/calibrate_zero_local.py` |
-| `GRIPPER_MOTOR2_OFFSET` | `0.0` | Same, motor 2 |
-| `GRIPPER_MOTOR1_SIGN` | (from `hand`) | Override the hand-derived sign for motor 1. Use only if a hardware revision is asymmetric. ±1 |
-| `GRIPPER_MOTOR2_SIGN` | (from `hand`) | Same, motor 2 |
-| `GRIPPER_JPEG_QUALITY` | `70` | JPEG compression quality |
-| `GRIPPER_LOG_LEVEL` | `INFO` | Logging level |
-
 ## Usage
 
-### Python client
+Drive a running gripette over gRPC with the Python client:
 
 ```python
 from gripette.client import GripperClient
@@ -124,150 +96,31 @@ with GripperClient("192.168.1.36:50051") as g:
     g.torque_off()
 ```
 
-### Motor assembly
+The `scripts/` directory holds CLI tools for teleoperation, diagnostics, motor/camera tests, and reset — see [docs/scripts.md](docs/scripts.md).
 
-A gripette uses two Feetech STS3215 servos with distinct IDs. Brand-new motors all ship as ID=1 at 1Mbaud in position mode, so for each new gripper one of the two motors must be reconfigured before assembly.
+## systemd
 
-| role     | motor_id | physical position |
-|----------|----------|-------------------|
-| proximal | 1        | base of the finger |
-| distal   | 2        | tip of the finger  |
-
-Use `configure_motor.py` to set each motor's ID. Connect **one motor at a time** on the bus (two motors both at ID=1 collide and the bus returns nothing usable):
+`make install-systemd` installs both services (`gripette.service`, the gRPC motor+camera server, and `gripette-bluetooth.service`), patching the hard-coded workspace path in each unit file to this device's actual root, then enables + starts both.
 
 ```bash
-uv run python scripts/configure_motor.py             # interactive: prompts for role
-uv run python scripts/configure_motor.py --info      # read-only: prints current config
-uv run python scripts/configure_motor.py --role proximal --yes   # non-interactive
-```
-
-The script scans the bus, reports the motor's current state (ID, baudrate, mode, voltage, temperature), and runs the EEPROM unlock → write ID → lock → verify sequence. **Physically label each motor** ("P" or "D") before unplugging — once both are at distinct IDs, it's the only way to tell them apart.
-
-If a motor was previously configured and you don't know its ID, scan the bus:
-
-```bash
-uv run python scripts/scan_motors.py                 # full sweep, IDs 1..253
-uv run python scripts/scan_motors.py --start 1 --end 10
-```
-
-### Calibration (zero offset)
-
-A fresh gripette ships with `GRIPPER_MOTOR*_OFFSET=0`, so the encoder's mechanical zero is treated as robot-frame zero. That's usually a few degrees off the gripper's actual "fully open" pose. Calibrate once after assembly to align them.
-
-**On the Pi** (recommended for first-time setup; writes `/etc/gripette/env` directly):
-
-```bash
-sudo systemctl stop gripette                          # free /dev/serial0
-uv run python scripts/calibrate_zero_local.py         # torque off, prompt, write offsets
-sudo systemctl start gripette
-```
-
-Workflow: torque drops, you physically move the gripper to fully open, press ENTER, the script averages 10 encoder samples and merges `GRIPPER_MOTOR1_OFFSET=…` / `GRIPPER_MOTOR2_OFFSET=…` into `/etc/gripette/env` (preserving `GRIPPER_HAND`). Use `--dry-run` to preview without writing.
-
-**Remote, over gRPC** (no service restart needed; prints values for you to paste):
-
-```bash
-uv run python scripts/calibrate_zero.py 192.168.1.36 --hand right
-```
-
-Service stays up. The script reads `g.read_motors()` at the user-defined zero pose and prints the **delta** to add to `GRIPPER_MOTOR*_OFFSET` in `/etc/gripette/env`. The delta arithmetic is correct whether this is a first calibration or a re-cal (just add to existing).
-
-### Diagnostics
-
-```bash
-uv run python scripts/read_motors.py 192.168.1.36 --torque-off   # live positions, gripper back-drivable
-uv run python scripts/scan_motors.py                              # which IDs respond on the bus (run on Pi)
-uv run python scripts/configure_motor.py                          # set a brand-new motor's ID (run on Pi)
-```
-
-`read_motors.py` is useful for sanity-checking the current calibration: at fully-open the readings should be ~0; at fully-closed they should approach the `motor*_max` limits. See `make check` for the full hardware diagnostic.
-
----
-
-All the gRPC-based scripts below take the gripette endpoint as an explicit argument — there's no default IP. The port defaults to `50051` (gripette's default), so `192.168.1.36` is equivalent to `192.168.1.36:50051`. Replace with the address of your gripette in the examples.
-
-### Teleoperation bridge
-
-Reads angle sensors from the grabette glove (Pi 4) and forwards them as motor commands to the gripper:
-
-```bash
-uv run python scripts/teleop_bridge.py --grabette 192.168.1.35 --gripper 192.168.1.36:50051 --dry-run   # preview
-uv run python scripts/teleop_bridge.py --grabette 192.168.1.35 --gripper 192.168.1.36:50051            # live
-```
-
-`--grabette` accepts `HOST` (defaults to port 8000) or explicit `HOST:PORT`. `--gripper` requires `HOST:PORT`.
-
-### Motor test
-
-Sends a 1Hz sinusoidal command and records feedback positions for delay analysis:
-
-```bash
-uv run python scripts/sinus_test.py 192.168.1.36:50051
-# Outputs sinus_test.csv (plot inline — see the docstring)
-```
-
-For a local equivalent that doesn't go through gRPC, see `scripts/motor_test_local.py`.
-
-### Camera test
-
-Measures stream framerate and saves a sample frame:
-
-```bash
-uv run python scripts/camera_test.py 192.168.1.36:50051
-# Outputs camera_test.jpg
-```
-
-### Reset to zero
-
-Moves both motors to position 0 (fully open):
-
-```bash
-uv run python scripts/goto_zero.py 192.168.1.36:50051   # via gRPC
-uv run python scripts/goto_zero_local.py                # locally on the Pi, no gRPC
-```
-
-## systemd services
-
-`make install-systemd` installs both services (`gripette.service` and `gripette-bluetooth.service`), patching the hard-coded `/home/rasp/Project/Repo/gripette` path in each unit file to this device's actual workspace root.
-
-```bash
-make install-systemd          # install + enable both, start now
+make install-systemd
 journalctl -u gripette -f             # main service logs
 journalctl -u gripette-bluetooth -f   # BT WiFi-setup service logs
 ```
 
-### Main service
+## Documentation
 
-`gripette.service` runs `python -m gripette` as the `rasp` user — the gRPC motor+camera server.
+- [Configuration](docs/configuration.md) — environment variables and the robot-frame motor convention.
+- [Motor setup & assembly](docs/motor_setup.md) — assigning servo IDs for a new gripper.
+- [Calibration](docs/calibration.md) — setting the zero (fully-open) offset.
+- [Scripts & diagnostics](docs/scripts.md) — teleop bridge, motor/camera tests, reset-to-zero.
+- [Bluetooth WiFi setup](docs/bluetooth_setup.md) — headless WiFi provisioning over BLE.
 
-### Bluetooth WiFi configuration
+The gRPC contract is defined in `proto/gripper.proto`; regenerate the committed stubs with `generate_proto.py` (see Install → Development).
 
-`gripette-bluetooth.service` is a standalone BLE GATT service that lets you configure WiFi credentials on the enclosed Pi Zero 2W without SSH or a screen. A phone or laptop connects via Bluetooth Low Energy, authenticates with a PIN, and sends WiFi credentials.
+## Related packages
 
-Runs as root (required by BlueZ DBus GATT registration). PIN is configurable via `GRIPPER_BT_PIN` env var (default: `00000`). System deps (`python3-dbus`, `python3-gi`) are usually pre-installed on Raspberry Pi OS.
-
-**BLE commands** (written as UTF-8 to the COMMAND characteristic):
-
-| Command | Response | Description |
-|---|---|---|
-| `PING` | `PONG` | Health check |
-| `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` | Authenticate (required before WIFI/WIFI_RESET) |
-| `WIFI ssid password` | `OK: Connecting to <ssid>` / `ERROR: ...` | Connect to WiFi via nmcli |
-| `WIFI_RESET` | `OK: WiFi connections cleared` | Delete all saved WiFi networks |
-
-Network status is also readable from a dedicated BLE characteristic (auto-updates every 10s).
-
-**Web Bluetooth client**: open the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge on a phone or laptop, then pick **Gripette** in the device chooser (requires HTTPS — it's the single shared page, served via GitHub Pages from `docs/index.html`, and provisions any robot).
-
-See [docs/bluetooth_setup.md](docs/bluetooth_setup.md) for the full setup guide (BlueZ configuration, troubleshooting, etc.).
-
-## Proto definition
-
-The gRPC service contract is defined in `proto/gripper.proto`. To regenerate the Python files after modifying it:
-
-```bash
-uv sync --package gripette --extra dev
-uv run --package gripette python generate_proto.py
-```
-
-Generated files in `gripette/proto/` are committed to the repository.
+| Package | Description |
+|---|---|
+| [grabette](../grabette) | Handheld data-collection device (camera + OAK-D + angle sensors) |
+| [grabette-postprocess](../grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |

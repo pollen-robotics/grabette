@@ -18,7 +18,9 @@ mirrors the certified Pollen training recipe. Managed with **uv**.
 | `rotation.py` | Vendored 6D rotation helpers used by `convert_dataset.py` / `clean_dataset.py` (see [Notes](#notes)). |
 
 **Not here:** deployment / evaluation is **robot-specific** (gRPC to the arm or
-sim) and lives in the robot integration (e.g. `integrations/openarm`).
+sim) and lives in the robot integration — e.g.
+[`openarm_gripette_simu/examples/evaluate.py`](../openarm/openarm_gripette_simu/examples/evaluate.py)
+for the MuJoCo sim.
 
 ---
 

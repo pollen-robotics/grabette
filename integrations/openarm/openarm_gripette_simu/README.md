@@ -57,7 +57,7 @@ Identical to the real [Gripette](../../../packages/gripette) gRPC API.
 
 | RPC | Description |
 |-----|-------------|
-| `StreamState` | 50Hz JPEG camera frames + motor positions + timestamp |
+| `StreamState` | 30Hz JPEG camera frames + motor positions + timestamp |
 | `SendMotorCommand(m1, m2)` | Set gripper joint goals (rad) |
 | `ReadMotors` | Read gripper joint positions (rad) |
 | `SetTorque(enable)` | No-op in simulation |
@@ -89,12 +89,13 @@ self._target_r6d = rotation_matrix_to_6d(R_target @ rotation_6d_to_matrix(dr6d))
 # IK solves to the new (target_pos, target_r6d) and commands the arm joints.
 ```
 
-This matches `convert_dataset.py` in lerobot, which builds the per-frame
-action as `R[t].T @ Δpos_world` and `R[t].T @ R[t+1]`. The full rationale is
-in `examples/openarm_gripette/README.md` → "Frame Convention" on the lerobot
-side. To verify the integrator end-to-end against a running server, use the
-**lerobot-side** `cartesian_square.py` (not the one in this repo's
-`examples/`, see "Examples" below).
+This matches `convert_dataset.py` in the [DiffusionPolicy](../../DiffusionPolicy)
+integration, which builds the per-frame action as `R[t].T @ Δpos_world` and
+`R[t].T @ R[t+1]` (the integrator-semantics box above has the full frame
+rationale). To verify the integrator end-to-end against a running server, use
+the gRPC-client `cartesian_square.py` in the
+[`openarm_gripette`](../openarm_gripette) package — not the standalone one in
+this repo's `examples/` (see "Examples" below).
 
 ### Evaluation loop pattern
 
@@ -166,7 +167,7 @@ Dataset features match the Grabette training pipeline:
 - `observation.images.cam0`: video, 972×1296 fisheye
 - `action`: `[11]` float32 — same 11D (absolute, next-step target)
 
-All rates aligned at **50fps** to match real Grabette data (20ms per frame).
+Reach episodes record at **50fps** (20ms per frame), 972×1296 — the sim's native rate. (The real rig and the **grasp** dataset below use 30fps / 960×720 to match it; the reach set is a separate, older synthetic task.)
 
 ## Grasp data collection
 
@@ -292,14 +293,14 @@ uv run python examples/grpc_client_demo.py   # gRPC client (requires server runn
 > instance with world-frame waypoints. It is **not** a gRPC client — running
 > `python -m openarm_gripette_simu --scene ...` in another terminal has no
 > effect on it. The canonical end-to-end smoke test of the camera-local
-> delta convention is the *other* `cartesian_square.py` in the lerobot
-> repo: `examples/openarm_gripette/cartesian_square.py`. That one is a gRPC
-> client and tests the integrator semantics described above.
+> delta convention is the gRPC-client `cartesian_square.py` in the
+> [`openarm_gripette`](../openarm_gripette) package (takes `--arm_addr`) — it
+> drives a running server and tests the integrator semantics described above.
 
 ## Camera
 
 The simulated Gripette camera matches the real camera calibration:
-- Resolution: 1296×972
+- Render/calibration resolution: 1296×972 (distorted at this res, then downscaled to the **960×720** streamed to the policy)
 - Lens model: KannalaBrandt8 fisheye
 - MuJoCo renders a wide-FOV (130°) pinhole image, then remaps with real distortion coefficients
 
@@ -310,9 +311,9 @@ Camera rendering is done in the main thread (alongside physics and viewer) and c
 | Component | Rate |
 |-----------|------|
 | Physics | 500Hz (dt=0.002s) |
-| Camera render | 50Hz |
-| Gripper gRPC stream | 50Hz |
-| Dataset FPS | 50 |
+| Camera render | 30Hz (matches the real Grabette stream) |
+| Gripper gRPC stream | 30Hz |
+| Dataset FPS | 30 (grasp, matches real) · 50 (reach) |
 | Viewer sync | 60Hz |
 
 ## Regenerating proto stubs

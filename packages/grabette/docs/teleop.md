@@ -2,9 +2,7 @@
 
 How to drive a Gripette-equipped robot live with a Grabette V2 (Pi 4 + OAK-D SR).
 
-For the design rationale and option analysis that led to this implementation,
-see [`teleop_design.md`](teleop_design.md). This document covers the
-**implemented** system.
+This document covers the **implemented** teleoperation system.
 
 ## Overview
 
@@ -284,8 +282,6 @@ uv run python scripts/teleop_bridge.py --dry-run --debug
 
 ## See also
 
-- [`teleop_design.md`](teleop_design.md) — design analysis and option
-  evaluation that led to this implementation.
 - `openarm_gripette_simu/proto/{arm,gripper}.proto` — gRPC interface
   definitions.
 - `openarm_gripette_simu/rotation.py` — 6D rotation encoding used by
