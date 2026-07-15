@@ -36,12 +36,19 @@ def main():
                    help="Two episodes to probe (different scenes)")
     p.add_argument("--frame", type=int, default=10, help="Frame index within each episode")
     p.add_argument("--task", default="pick", help="Task string (must match training)")
+    p.add_argument("--policy_type", default="pi0_fast", choices=["pi0_fast", "pi05", "pi0"],
+                   help="Policy class of the checkpoint")
+    p.add_argument("--fp32", action="store_true",
+                   help="Load in float32 (the pi05 port has a bf16 dtype clash in "
+                        "its flow path — use this on cards with >=16GB)")
     args = p.parse_args()
 
     cfg = PreTrainedConfig.from_pretrained(args.checkpoint)
     cfg.device = "cpu"  # load on CPU first, then cast + move
-    policy = get_policy_class("pi0_fast").from_pretrained(args.checkpoint, config=cfg)
-    policy = policy.to(dtype=torch.bfloat16).eval()
+    if hasattr(cfg, "compile_model"):
+        cfg.compile_model = False  # deployment optimization; irrelevant to the gate
+    policy = get_policy_class(args.policy_type).from_pretrained(args.checkpoint, config=cfg)
+    policy = policy.to(dtype=torch.float32 if args.fp32 else torch.bfloat16).eval()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     policy = policy.to(device)
     policy.config.device = device
