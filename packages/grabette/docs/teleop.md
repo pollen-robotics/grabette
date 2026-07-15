@@ -175,7 +175,7 @@ where messages are being dropped.
 ## Tuning
 
 All knobs are CLI flags. Defaults are tuned for **sim** + a real
-BMI088-equipped Grabette at 320×200 BasaltVIO.
+OAK-D SR Grabette at 320×200 BasaltVIO.
 
 | Flag | Default | Purpose |
 |---|---|---|
