@@ -1,7 +1,6 @@
 # Grabette
 
-Part of the GRABETTE project.
-Autonomous Raspberry Pi service for robotic manipulation data collection. Captures synchronized camera + IMU streams, manages recording sessions, and integrates with HuggingFace for cloud SLAM processing.
+Autonomous Raspberry Pi service for robotic manipulation data collection. It captures synchronized camera + depth + IMU streams from a handheld gripper, manages recording sessions, and uploads episodes to Hugging Face for cloud SLAM processing. Part of the [GRABETTE project](../../README.md).
 
 ## Hardware
 
@@ -13,47 +12,9 @@ Autonomous Raspberry Pi service for robotic manipulation data collection. Captur
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
 
-## Architecture
+📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
 
-```
-                       ┌──────────────────────────┐
-                       │   Web UI (Gradio)         │
-                       │   HuggingFace Spaces      │
-                       └────────────┬─────────────┘
-                                    │
-┌───────────────────────────────────▼───────────────────────────────────┐
-│                    FastAPI + WebSocket API (:8000)                    │
-│                                                                       │
-│  /api/state     Live sensor polling + WS stream @10Hz                │
-│  /api/camera    JPEG snapshot + WS video stream ~15fps               │
-│  /api/episodes  Capture start/stop, download, delete                 │
-│  /api/sessions  Session CRUD, episode grouping                       │
-│  /api/replay    Episode playback with pause/seek                     │
-│  /api/hf        HuggingFace auth, upload, SLAM jobs                  │
-│  /api/system    System info, logs, OTA updates                       │
-│  /api/daemon    Daemon status + restart                              │
-│  /viewer        3D URDF model with live joint angles (Three.js)      │
-│  /charts/*      Real-time IMU + angle charts (uPlot)                 │
-└───────────────────────────────────┬───────────────────────────────────┘
-                                    │
-┌───────────────────────────────────▼───────────────────────────────────┐
-│                         Daemon Core                                   │
-│          State machine · 50Hz poll loop · Replay engine               │
-└───────────────────────────────────┬───────────────────────────────────┘
-                                    │
-                        ┌───────────┴───────────┐
-                        ▼                       ▼
-                   RpiBackend              MockBackend
-                  (real hardware)          (development)
-                        │
-          ┌─────────────┼─────────────┐
-          ▼             ▼             ▼
-     VideoCapture   OakdCapture   AngleCapture
-     (picamera2)    (RGB-D + IMU,  (AS5600L, I2C)
-                     toggleable)
-```
-
-## Quick Start
+## Install
 
 ### Development (mock mode, no hardware needed)
 
@@ -110,134 +71,25 @@ journalctl -u grabette-bluetooth -f     # BLE WiFi-setup service logs
 
 If you re-run `install-systemd` while the services are already up, `enable --now` does NOT restart them — issue `sudo systemctl restart grabette grabette-bluetooth` to pick up updated unit files.
 
-### Bluetooth WiFi configuration
+To put the device on WiFi without a screen or SSH, use the BLE setup service — see **[docs/bluetooth_setup.md](docs/bluetooth_setup.md)**.
 
-A standalone BLE GATT service (`grabette-bluetooth.service`) lets you configure WiFi credentials without SSH or a screen. It's installed + started by `make install-systemd` (above). Once running:
+## Usage
 
-Connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge and follow those steps : 
-1. Select Grabette and click on Connect
-2. Select your Grabette on the pop-up, then Pair
-3. Authenticate with the PIN
-4. Scan networks, select your wifi and send WiFi credentials.
+Once running (mock or on-device), open the dashboard at `http://<device>:8000`. From there — or with the hardware button — you can:
 
+1. Preview the camera and live sensor charts.
+2. Start/stop a recording (press the button, or use the UI / `/api/episodes`). Episodes are grouped into named sessions.
+3. Review or replay captured episodes.
+4. Upload episodes to a Hugging Face dataset repo and trigger cloud SLAM (`/api/hf`).
 
-PIN is configurable via the `GRABETTE_BT_PIN` env var (default: `00000`); set it in `systemd/grabette-bluetooth.service` (`Environment=GRABETTE_BT_PIN=...`) before installing.
+Recordings are written to `~/grabette-data/` — see the [data format](docs/data_format.md). Downstream SLAM → LeRobot dataset generation is handled by [grabette-postprocess](../grabette-postprocess).
 
-**Commands** (written to the COMMAND characteristic as UTF-8; responses arrive as notifications):
+## Documentation
 
-| Command | Response |
-|---|---|
-| `PING` | `PONG` |
-| `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` (required before the WIFI commands) |
-| `WIFI_SCAN` | JSON array of nearby SSIDs (strongest first) |
-| `WIFI ssid password` | `OK: Connecting to <ssid>` / `ERROR: ...` (connects via an explicit WPA-PSK profile) |
-| `WIFI_RESET` | `OK: WiFi connections cleared` |
-
-
-The adapter advertises with `Pairable = True` and uses the `NoInputNoOutput` agent for silent Just Works pairing — required because some centrals (notably Windows and some Linux/BlueZ stacks) refuse GATT operations until they've bonded. macOS clients can still connect "connection-only" without bonding; both modes work.
-
-> **If a client gets stuck pairing** (e.g. a stale bond from an earlier version that used `Pairable = False`): clear it on both ends — `bluetoothctl remove <mac.address.of.Grabette>` on the Pi and the client, plus Forget the device in `chrome://bluetooth-internals`.
-
-## Configuration
-
-### Robot-frame convention
-
-Finger angles published in `AngleSample.proximal` / `AngleSample.distal` (and in the data this daemon writes) are in **robot frame**, matching the gripette runtime:
-
-- `0 rad` — fingers fully **open**
-- positive — **closing**
-
-The two AS5600L magnets rotate in opposite directions when the fingers close, and a right-hand grabette is the mirror of a left-hand one — so the per-sensor sign that bridges raw rotation → robot frame depends on the `hand` setting. Defaults: `right → distal=+1, proximal=-1`; `left → distal=-1, proximal=+1`. Override individual signs via `GRABETTE_DISTAL_SIGN` / `GRABETTE_PROXIMAL_SIGN` only for an asymmetric hardware revision.
-
-### Environment variables
-
-All settings via environment variables with `GRABETTE_` prefix. Persistent per-device config lives in `/etc/grabette/env`, sourced by `grabette.service`.
-
-| Variable | Default | Description |
-|---|---|---|
-| `GRABETTE_HOST` | `0.0.0.0` | Server bind address |
-| `GRABETTE_PORT` | `8000` | Server port |
-| `GRABETTE_BACKEND` | `auto` | `auto`, `mock`, or `rpi` |
-| `GRABETTE_DATA_DIR` | `~/grabette-data` | Data storage directory |
-| `GRABETTE_CAMERA_FPS` | `46` | Camera frame rate |
-| `GRABETTE_IMU_HZ` | `200` | IMU sample rate |
-| `GRABETTE_ANGLE_SENSORS` | `true` | Enable AS5600 angle sensors |
-| `GRABETTE_HAND` | `right` | `left` or `right` — determines default `*_sign`. Written by `make install-rpi HAND=…` |
-| `GRABETTE_DISTAL_SIGN` | (from `hand`) | Override the hand-derived distal sensor sign. ±1 |
-| `GRABETTE_PROXIMAL_SIGN` | (from `hand`) | Override the hand-derived proximal sensor sign. ±1 |
-| `GRABETTE_UI_ENABLED` | `true` | Enable Gradio dashboard |
-| `GRABETTE_BUTTON_ENABLED` | `true` | Enable hardware button |
-| `GRABETTE_LOG_LEVEL` | `INFO` | Logging level |
-
-## Data
-
-### Organization
-
-Two-level hierarchy: **sessions** (named groups) containing **episodes** (individual captures).
-
-```
-~/grabette-data/
-├── sessions.json                       # Session registry
-└── episodes/
-    └── 20260310_143052/                # One episode
-        ├── raw_video.mp4               # Primary RPi cam, H.264 (1296x972 @ 46fps)
-        ├── frame_timestamps.json       # Per-frame timestamps for raw_video
-        ├── imu_data.json               # OAK-D IMU: accel + gyro + rotation (200Hz)
-        ├── angle_data.json             # AS5600L joint angles (~85–100Hz)
-        ├── rpi_camera_intrinsics.json  # Fisheye KB8 calibration for the primary cam
-        ├── frames.json                 # URDF-derived frame transforms, incl. T_camera_in_oak_l
-        ├── oakd_left.mp4               # OAK-D stereo left (H.264)
-        ├── oakd_right.mp4              # OAK-D stereo right (H.264)
-        ├── oakd_depth.mkv              # OAK-D depth stream
-        ├── oakd_*_timestamps.json      # Per-stream timestamps
-        ├── oakd_calib.json             # OAK-D factory EEPROM dump
-        ├── oakd_calib_offline.json     # Flat fx/fy/cx/cy/baseline/imu_to_cam for SLAM
-        ├── oakd_clock_pairs.json       # OAK-D ↔ SyncManager clock alignment
-        └── metadata.json               # Duration, counts, hand, angle_convention, device_id, urdf
-```
-
-**Per-episode calibration + geometry** (added by the rpi backend at capture stop):
-
-- `rpi_camera_intrinsics.json` — copied from `config/rpi_camera_intrinsics.json` (KannalaBrandt8 fisheye model, ~0.32px reproj). Ships as a single canonical file for all devices; per-device calibration is a separate open task.
-- `frames.json` — computed from `urdf/grabette_{hand}/robot.urdf` at capture stop. Contains each frame's 4×4 transform in the `grip_r` link frame (`camera`, `oak_l`, `oak_r`, `gripper_center`, `thumb_tip`) plus the pre-composed `T_camera_in_oak_l` (so SLAM poses produced in the `oak_l` frame can be re-expressed in the primary camera frame without URDF parsing on the consumer side).
-- `metadata.json.urdf` — records which URDF was used (`grabette_left` / `grabette_right`) for traceability.
-
-### IMU format
-
-GoPro-compatible JSON (ACCL/GYRO streams) consumed by the SLAM/VIO pipeline:
-
-```json
-{
-  "1": {
-    "streams": {
-      "ACCL": { "samples": [{"cts": 0.0, "value": [x, y, z]}] },
-      "GYRO": { "samples": [{"cts": 0.0, "value": [x, y, z]}] }
-    }
-  }
-}
-```
-
-Units: accel in m/s² (includes gravity), gyro in rad/s. Timestamps in milliseconds from video start.
-
-### Capture synchronization
-
-All sensor streams share a common `SyncManager` clock based on `time.monotonic()`:
-
-- **Camera**: SensorTimestamp from picamera2 (same SoC hardware clock — no drift)
-- **IMU**: depthai timestamps from the OAK-D pipeline, mapped onto the SyncManager clock at sample arrival
-- **Contention prevention**: `_capturing` flag blocks daemon I2C reads during recording
-- **Stop order**: IMU/depth first, then camera (camera stop includes ffmpeg muxing)
-- **IMU brackets video**: IMU starts before first frame, stops before last — required by the downstream SLAM/VIO pipeline
-
-## Data Pipeline
-
-```
-RPi (camera + OAK-D + AS5600L)
-  → Grabette service (capture, manage sessions)
-  → HuggingFace dataset repo (upload episodes)
-  → Cloud SLAM/VIO processing
-  → Training dataset + 6DoF trajectories
-```
+- [Architecture](docs/architecture.md) — daemon internals, API surface, backends.
+- [Configuration](docs/configuration.md) — environment variables and the robot-frame angle convention.
+- [Data format](docs/data_format.md) — episode layout, calibration & geometry, IMU format, synchronization.
+- [Bluetooth WiFi setup](docs/bluetooth_setup.md) — headless WiFi provisioning over BLE.
 
 ## Related packages
 
@@ -245,9 +97,3 @@ RPi (camera + OAK-D + AS5600L)
 |---|---|
 | [gripette](../gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
 | [grabette-postprocess](../grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |
-
-## Calibration
-
-- **Camera intrinsics**: `config/rpi_camera_intrinsics.json` (KannalaBrandt8 fisheye, ~0.32px reproj error) — copied into each episode at capture stop. Ships as a single canonical file for all devices; per-device calibration is a separate open task.
-- **Camera ↔ OAK-D geometry**: written per-episode to `frames.json` (including the pre-composed `T_camera_in_oak_l`), computed from the device URDF at capture stop — see [Data](#data).
-- **Angle sensor offsets**: `scripts/calibrate_angles.py` → stored in `~/.grabette/angle_calibration.json`

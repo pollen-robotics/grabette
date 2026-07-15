@@ -11,6 +11,8 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 - RPi camera module (1296x972, fisheye lens)
 - Two Feetech STS3215 servos on `/dev/serial0` (baudrate 1000000, IDs 1 and 2)
 
+📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
+
 ## Installation
 
 ### Development machine (mock mode, no hardware needed)
