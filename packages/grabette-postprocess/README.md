@@ -16,7 +16,7 @@ odometry, run in Docker.
 
 ```
 Episode directory (from Grabette)
-├── oakd_left.mp4 + oakd_depth/        OAK-D stereo + depth
+├── oakd_left.mp4 + oakd_depth.mkv     OAK-D stereo + depth
 ├── oakd_*_timestamps.json             frame timestamps
 ├── oakd_imu.json                      accel/gyro/rotation
 ├── oakd_calib_offline.json            intrinsics + imu_to_cam
@@ -151,6 +151,11 @@ uv run python scripts/pipeline/generate_dataset.py \
 
 Poses are gravity-aligned (Z-up). The pose component is position +
 axis-angle rotation; the gripper component is the two joint angles.
+
+To train a policy, the [DiffusionPolicy](../../integrations/DiffusionPolicy)
+integration's `convert_dataset.py` turns this 8D **absolute** action into the
+11D **camera-local delta** action (6D rotation) + 2D gripper state the policy
+actually trains on.
 
 ### 4. Push dataset to Hugging Face Hub
 
