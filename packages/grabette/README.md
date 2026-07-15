@@ -8,11 +8,12 @@ Autonomous Raspberry Pi service for robotic manipulation data collection. It cap
 |---|---|
 | **Board** | Raspberry Pi 4 |
 | **Primary camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
-| **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides depth + IMU stream for SLAM; replaces the legacy BMI088. Toggled on demand (default off to save battery). |
+| **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
 
 📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
+🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD.
 
 ## Install
 

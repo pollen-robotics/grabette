@@ -9,6 +9,8 @@ A GRABETTE rig records synchronized **camera + IMU** streams from hand-held or
 gripper-mounted devices, recovers camera trajectories with SLAM, and exports
 [LeRobot](https://huggingface.co/docs/lerobot) datasets for policy learning.
 The data-collection pipeline is **robot-agnostic**.
+
+🔩 **Build the hardware:** [Bill of Materials](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml) · [CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)
 <br><br><br><br><br><br>
 ## Components
 
