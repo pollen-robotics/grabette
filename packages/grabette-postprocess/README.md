@@ -227,6 +227,5 @@ grabette-postprocess/
 ## Hardware
 
 - **Camera/depth**: OAK-D SR (stereo + on-board depth)
-- **IMU**: BNO086 (accel + gyro + fused rotation)
+- **IMU**: OAK-D SR onboard IMU — BNO086 (accel + gyro + fused rotation vector)
 - **Angle sensors**: two joint encoders (proximal + distal)
-```

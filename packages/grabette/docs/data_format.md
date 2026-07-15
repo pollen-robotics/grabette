@@ -14,7 +14,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
     └── 20260310_143052/                # One episode
         ├── raw_video.mp4               # Primary RPi cam, H.264 (1296x972 @ 46fps)
         ├── frame_timestamps.json       # Per-frame timestamps for raw_video
-        ├── imu_data.json               # OAK-D IMU: accel + gyro + rotation (200Hz)
+        ├── oakd_imu.json               # OAK-D IMU: accel + gyro + rotation vector (200Hz)
         ├── angle_data.json             # AS5600L joint angles (~85–100Hz)
         ├── rpi_camera_intrinsics.json  # Fisheye KB8 calibration for the primary cam
         ├── frames.json                 # URDF-derived frame transforms, incl. T_camera_in_oak_l
@@ -39,20 +39,9 @@ Added by the rpi backend at capture stop:
 
 ## IMU format
 
-GoPro-compatible JSON (ACCL/GYRO streams) consumed by the SLAM/VIO pipeline:
+`oakd_imu.json` — the OAK-D SR onboard IMU stream, written as `{"samples": [...]}` with interleaved accelerometer, gyroscope, and rotation-vector packets (accel in m/s², gyro in rad/s), timestamped on the shared capture clock. `convert_episode_to_oak.py` (in [grabette-postprocess](../../grabette-postprocess)) expands it into `imu_acc.csv` / `imu_gyro.csv` / `imu_rotation.csv` for SLAM.
 
-```json
-{
-  "1": {
-    "streams": {
-      "ACCL": { "samples": [{"cts": 0.0, "value": [x, y, z]}] },
-      "GYRO": { "samples": [{"cts": 0.0, "value": [x, y, z]}] }
-    }
-  }
-}
-```
-
-Units: accel in m/s² (includes gravity), gyro in rad/s. Timestamps in milliseconds from video start.
+> The legacy GoPro-style `imu_data.json` (`ACCL`/`GYRO` streams) is the older casquette/V1 format and is **not** produced by the OAK-D recording — the mock backend still emits it for development.
 
 ## Capture synchronization
 
