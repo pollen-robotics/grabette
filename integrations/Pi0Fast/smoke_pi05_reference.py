@@ -20,11 +20,26 @@ CKPT = "lerobot/pi05_libero_finetuned_v044"
 
 cfg = PreTrainedConfig.from_pretrained(CKPT)
 cfg.device = "cpu"
+# Compile is a training/deployment optimization and (with the checkpoint's
+# max-autotune setting) surfaces a Float-vs-BFloat16 mismatch inside the
+# inductor graph on this port. Irrelevant for a generation-path smoke: off.
+cfg.compile_model = False
 policy = get_policy_class("pi05").from_pretrained(CKPT, config=cfg)
 policy = policy.to(dtype=torch.bfloat16).eval()
 device = "cuda" if torch.cuda.is_available() else "cpu"
 policy = policy.to(device)
 policy.config.device = device
+DTYPE_FALLBACK_DONE = False
+
+
+def fallback_to_fp32():
+    """bf16 dtype clash in eager too -> run full fp32 (fits a 24GB+ card)."""
+    global policy, DTYPE_FALLBACK_DONE
+    print("  (bf16 dtype clash — falling back to full float32)")
+    policy = policy.to(dtype=torch.float32).eval()
+    DTYPE_FALLBACK_DONE = True
+
+
 pre, post = make_pre_post_processors(policy.config, CKPT)
 cams = [k for k in policy.config.input_features if "image" in k]
 print(f"loaded {CKPT} on {device} | cams {cams} | chunk {policy.config.chunk_size} | "
@@ -40,7 +55,15 @@ for seed in (0, 1):
     policy.reset()
     try:
         with torch.no_grad():
-            a = post(policy.select_action(pre(batch))).squeeze(0).float().cpu().numpy()
+            try:
+                a = post(policy.select_action(pre(batch))).squeeze(0).float().cpu().numpy()
+            except RuntimeError as e:
+                if "dtype" in str(e) and not DTYPE_FALLBACK_DONE:
+                    fallback_to_fp32()
+                    policy.reset()
+                    a = post(policy.select_action(pre(batch))).squeeze(0).float().cpu().numpy()
+                else:
+                    raise
         outs.append(a)
         print(f"seed {seed}: action[:7] = {np.round(a[:7], 4)}  finite={np.all(np.isfinite(a))}")
     except Exception as e:
