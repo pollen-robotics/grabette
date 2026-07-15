@@ -310,7 +310,7 @@ Camera rendering is done in the main thread (alongside physics and viewer) and c
 
 | Component | Rate |
 |-----------|------|
-| Physics | 500Hz (dt=0.002s) |
+| Physics | 500Hz (dt=0.002s) default; 1000Hz (dt=0.001s) in the grasp scenes |
 | Camera render | 30Hz (matches the real Grabette stream) |
 | Gripper gRPC stream | 30Hz |
 | Dataset FPS | 30 (grasp, matches real) · 50 (reach) |
