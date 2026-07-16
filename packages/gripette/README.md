@@ -1,9 +1,12 @@
 # Gripette
+<img src="docs/images/gripette_face.jpg" align="left" width="200px"/><br>
 
 Gripper version of the [Grabette](../grabette) data collection system.
+
 gRPC motor+camera service for the gripper, running on a Raspberry Pi Zero 2W.
 
 Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and accepts motor commands for two Feetech STS3215 servos over the network.
+<br clear="left"/>
 
 ## Hardware
 
@@ -14,6 +17,7 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 
 📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
 🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD.
+:screwdriver: **[Assembly instructions](assembly/)** — step-by-step build guide.
 
 ## Install
 
@@ -30,8 +34,31 @@ uv run --package gripette python main.py
 
 ### Raspberry Pi Zero 2W
 
-Prerequisites: a Pi Zero 2W running Raspberry Pi OS (Bookworm or Trixie), with [uv](https://docs.astral.sh/uv/) installed.
+####  Prerequisites
+A  Pi Zero 2W running Raspberry Pi OS (Bookworm or Trixie), with [uv](https://docs.astral.sh/uv/) installed :
 
+<details>
+<summary> Flash the SD card</summary>
+
+1. Download the latest Raspberry Pi Imager from <a href="https://www.raspberrypi.com/software/">here</a>.
+2. Plug in your SD card and select Raspberry Pi OS Lite (64-bit) for Raspberry Pi Zero 2W.
+3. Select the storage device then:
+    - Set hostname (e.g., `R-gripette`).
+    - Set username and password.
+    - Set the WiFi SSID and password.
+    - Enable SSH.
+4. Click "Write" to flash the SD card.
+5. Once the flashing is complete, eject the SD card and insert it into your Raspberry Pi Zero 2W
+</details>
+
+And install uv : 
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh 
+```
+
+
+#### Install the gripette service
 A gripette is built as either a **left** or **right** hand — the motors are mounted mirrored, so the runtime needs to know which one this device is. Pick at install time:
 
 ```bash
@@ -41,7 +68,7 @@ sudo reboot                       # required if UART/cmdline were changed
 make check                        # post-reboot hardware diagnostic (camera + motors)
 ```
 
-`HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/gripette/env` as `GRIPPER_HAND=<value>` and persists across reboots.
+> `HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/gripette/env` as `GRIPPER_HAND=<value>` and persists across reboots.
 
 `make check` validates the camera and the motor bus. It also probes the two systemd services and reports them as `[SKIP]` if they aren't installed yet — that's the expected state right after `install-rpi`.
 
@@ -81,7 +108,7 @@ Drive a running gripette over gRPC with the Python client:
 ```python
 from gripette.client import GripperClient
 
-with GripperClient("192.168.1.36:50051") as g:
+with GripperClient("<gripette-id>:50051") as g:
     print(g.ping())
 
     g.torque_on()

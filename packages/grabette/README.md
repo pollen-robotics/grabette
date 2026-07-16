@@ -1,6 +1,16 @@
 # Grabette
+<img src="docs/images/grabette_face.jpg" align="left" width="200px"/><br>
+Autonomous Raspberry Pi service for robotic manipulation data collection: 
 
-Autonomous Raspberry Pi service for robotic manipulation data collection. It captures synchronized camera + depth + IMU streams from a handheld gripper, manages recording sessions, and uploads episodes to Hugging Face for cloud SLAM processing. Part of the [GRABETTE project](../../README.md).
+<ul style="padding-left: 260px">
+<li>captures synchronized camera + depth + IMU streams from a handheld gripper</li>
+<li>manages recording sessions</li>
+<li>uploads episodes to Hugging Face for cloud SLAM processing.</li>
+</ul>
+
+Part of the [GRABETTE project](../../README.md).
+
+<br clear="left"/>
 
 ## Hardware
 
@@ -13,7 +23,8 @@ Autonomous Raspberry Pi service for robotic manipulation data collection. It cap
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
 
 📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
-🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD.
+🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD. 
+:screwdriver: **[Assembly instructions](assembly/)** — step-by-step build guide.
 
 ## Install
 
@@ -32,20 +43,39 @@ uv run --package grabette python main.py
 
 Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. No specific Pi OS version is pinned — the Makefile target uses whatever system Python is at `/usr/bin/python3` (3.11 on Bookworm, 3.13 on Trixie).
 
-Prerequisite: install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (requires reboot):
+#### Prerequisites
+
+<details>
+<summary> Flash the SD card</summary>
+
+1. Download the latest Raspberry Pi Imager from <a href="https://www.raspberrypi.com/software/">here</a>.
+2. Plug in your SD card and select Raspberry Pi OS Lite (64-bit) for Raspberry Pi 4.
+3. Select the storage device then:
+    - Set hostname (e.g., `R-grabette`).
+    - Set username and password.
+    - Set the WiFi SSID and password.
+    - Enable SSH.
+4. Click "Write" to flash the SD card.
+5. Once the flashing is complete, eject the SD card and insert it into your Raspberry Pi
+</details>
+
+
+Install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (requires reboot):
 ```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh 
 sudo cp config/config.txt /boot/firmware
 make install-netdev
 sudo reboot
 ```
 
-Then one-shot bring-up. A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
+#### One-shot bringup
+A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
 ```bash
 make install-rpi HAND=right    # or HAND=left
 uv run python -m grabette
 ```
 
-`HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/grabette/env` as `GRABETTE_HAND=<value>` and persists across reboots (sourced by `grabette.service`).
+> `HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/grabette/env` as `GRABETTE_HAND=<value>` and persists across reboots (sourced by `grabette.service`).
 
 `make install-rpi HAND=...` does the following — automating the steps that are easy to get subtly wrong by hand:
 - `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg python3-dbus python3-gi` (the dbus/gi packages are system deps for the BLE WiFi service).
@@ -60,7 +90,7 @@ Note: `install-rpi` does **not** install or start the systemd services — that'
 
 If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the venv setup didn't take — `make install-rpi` will fix it on a re-run.
 
-### systemd (auto-start on boot)
+#### systemd (auto-start on boot)
 
 `make install-systemd` installs **both** services (`grabette.service` and `grabette-bluetooth.service`), runs `ensure-ble-only` to set BlueZ to `ControllerMode = le`, then `enable --now`s them so they're up immediately and across reboots.
 
@@ -76,14 +106,32 @@ To put the device on WiFi without a screen or SSH, use the BLE setup service —
 
 ## Usage
 
-Once running (mock or on-device), open the dashboard at `http://<device>:8000`. From there — or with the hardware button — you can:
+Once running (mock or on-device), open the dashboard at `http://<device>.local:8000`: 
+<img align= "center" src="docs/images/grabette-dashboard.png"  width="80%" /><br>
 
-1. Preview the camera and live sensor charts.
-2. Start/stop a recording (press the button, or use the UI / `/api/episodes`). Episodes are grouped into named sessions.
-3. Review or replay captured episodes.
-4. Upload episodes to a Hugging Face dataset repo and trigger cloud SLAM (`/api/hf`).
 
-Recordings are written to `~/grabette-data/` — see the [data format](docs/data_format.md). Downstream SLAM → LeRobot dataset generation is handled by [grabette-postprocess](../grabette-postprocess).
+From the different sections, you can:
+
+**Episodes**:
+1. Start/stop a recording (you can either use the button on the device)
+2. Create tasks
+3. Start/stop a session of recordings for one same task
+4. Replay and manage captured episodes.
+
+**Datasets**:
+- Trigger postprocessing with SLAM and upload episodes to a Hugging Face dataset repo (LeRobot format).
+
+**Live View**: 
+- Preview the cameras and live sensor charts.
+
+**Settings**:
+1. Find IP address and device info
+2. Manage the Wifi connexion
+3. Log in to Hugging Face 
+
+
+
+> Recordings are written to `~/grabette-data/` — see the [data format](docs/data_format.md).<br> Downstream SLAM → LeRobot dataset generation is handled by [grabette-postprocess](../grabette-postprocess).
 
 ## Documentation
 

@@ -2,11 +2,13 @@
 
 A standalone BLE GATT service (`grabette-bluetooth.service`) lets you configure WiFi credentials without SSH or a screen. It's installed + started by `make install-systemd` (see the [README](../README.md)). Once running:
 
-Connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in Chrome/Edge and follow those steps:
+Connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in **Chrome/Edge** and follow those steps:
 1. Select Grabette and click on Connect
 2. Select your Grabette on the pop-up, then Pair
 3. Authenticate with the PIN
 4. Scan networks, select your wifi and send WiFi credentials.
+
+> Be careful, Chrome may need to enable experimental features : <code>chrome://flags/#enable-experimental-web-platform-features</code>
 
 PIN is configurable via the `GRABETTE_BT_PIN` env var (default: `00000`); set it in `systemd/grabette-bluetooth.service` (`Environment=GRABETTE_BT_PIN=...`) before installing.
 
