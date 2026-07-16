@@ -33,23 +33,25 @@ from lerobot.policies.factory import get_policy_class
 
 
 def _load_policy_any(checkpoint: str):
-    """Load any LeRobot policy from a checkpoint, dispatching on the `type`
-    field in its config.json (e.g. 'diffusion', 'act', 'pi0_fast'). This
-    replaces the previous hardcoded DiffusionPolicy.from_pretrained so the
-    same eval works for the Diffusion / ACT / Pi0Fast comparison arms.
+    """Load any LeRobot policy from a checkpoint (local dir or Hub repo id),
+    dispatching on the `type` field in its config — the same eval works for
+    Diffusion / ACT / Pi0.5 / Pi0Fast.
 
-    Falls back to a local config.json read; for Hub repos the file is fetched.
+    VLA-specific handling (mirrors the smoke scripts and the Ficelle server):
+    compile is forced OFF (a train-time optimization; on the pi05 port it
+    also triggers an inductor dtype crash), and pi05/pi0 weights are cast to
+    float32 — their checkpoints are saved bf16, and the pi05 port's flow
+    path has a bf16 dtype clash at inference.
     """
-    cfg_path = _Path(checkpoint) / "config.json"
-    if cfg_path.is_file():
-        policy_type = _json.loads(cfg_path.read_text())["type"]
-    else:
-        from huggingface_hub import hf_hub_download
+    from lerobot.configs.policies import PreTrainedConfig
 
-        policy_type = _json.loads(
-            _Path(hf_hub_download(checkpoint, "config.json")).read_text()
-        )["type"]
-    return get_policy_class(policy_type).from_pretrained(checkpoint)
+    cfg = PreTrainedConfig.from_pretrained(checkpoint)
+    if hasattr(cfg, "compile_model"):
+        cfg.compile_model = False
+    policy = get_policy_class(cfg.type).from_pretrained(checkpoint, config=cfg)
+    if cfg.type in ("pi05", "pi0"):
+        policy = policy.to(dtype=torch.float32)
+    return policy
 from scipy.spatial.transform import Rotation
 from openarm_gripette_simu.rotation import (
     rotation_6d_to_matrix as rotation_6d_to_rotation_matrix_numpy,
