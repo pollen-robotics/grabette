@@ -33,23 +33,25 @@ from lerobot.policies.factory import get_policy_class
 
 
 def _load_policy_any(checkpoint: str):
-    """Load any LeRobot policy from a checkpoint, dispatching on the `type`
-    field in its config.json (e.g. 'diffusion', 'act', 'pi0_fast'). This
-    replaces the previous hardcoded DiffusionPolicy.from_pretrained so the
-    same eval works for the Diffusion / ACT / Pi0Fast comparison arms.
+    """Load any LeRobot policy from a checkpoint (local dir or Hub repo id),
+    dispatching on the `type` field in its config — the same eval works for
+    Diffusion / ACT / Pi0.5 / Pi0Fast.
 
-    Falls back to a local config.json read; for Hub repos the file is fetched.
+    VLA-specific handling (mirrors the smoke scripts and the Ficelle server):
+    compile is forced OFF (a train-time optimization; on the pi05 port it
+    also triggers an inductor dtype crash), and pi05/pi0 weights are cast to
+    float32 — their checkpoints are saved bf16, and the pi05 port's flow
+    path has a bf16 dtype clash at inference.
     """
-    cfg_path = _Path(checkpoint) / "config.json"
-    if cfg_path.is_file():
-        policy_type = _json.loads(cfg_path.read_text())["type"]
-    else:
-        from huggingface_hub import hf_hub_download
+    from lerobot.configs.policies import PreTrainedConfig
 
-        policy_type = _json.loads(
-            _Path(hf_hub_download(checkpoint, "config.json")).read_text()
-        )["type"]
-    return get_policy_class(policy_type).from_pretrained(checkpoint)
+    cfg = PreTrainedConfig.from_pretrained(checkpoint)
+    if hasattr(cfg, "compile_model"):
+        cfg.compile_model = False
+    policy = get_policy_class(cfg.type).from_pretrained(checkpoint, config=cfg)
+    if cfg.type in ("pi05", "pi0"):
+        policy = policy.to(dtype=torch.float32)
+    return policy
 from scipy.spatial.transform import Rotation
 from openarm_gripette_simu.rotation import (
     rotation_6d_to_matrix as rotation_6d_to_rotation_matrix_numpy,
@@ -82,12 +84,44 @@ def clamp_delta(delta_pos, delta_rot_6d, clamp_pos_m, clamp_rot_rad):
             was = True
     return delta_pos, delta_rot_6d, was
 
+
+def apply_grip_gain(g1, g2, gain, ref):
+    """Gripper actuator calibration (--grip_gain): scale closure depth around
+    the open reference so open stays open and closes deepen.
+
+    The recorded close values are positions of the Grabette's trigger-driven
+    linkage squeezing deformable fingertips; the deployed Feetech servo
+    chasing the same position numbers delivers less squeeze (position control,
+    bounded torque, no force feedback). This maps model-units to
+    servo-effective-units at send time.
+
+    At gain 1.0 this MUST be a pure identity: gripper sign/range conventions
+    vary by model (the sim models close with NEGATIVE proximal values, real
+    models with positive ones) — an unconditional clamp here silently broke
+    every sim close to "open" (regression found 2026-07-12 via the sim
+    re-eval of diffusion_grabette_simu_release). The clamp only applies to
+    gain-scaled values, symmetric so it is convention-agnostic.
+    """
+    if gain == 1.0:
+        return float(g1), float(g2)
+    g1 = ref[0] + gain * (g1 - ref[0])
+    g2 = ref[1] + gain * (g2 - ref[1])
+    return float(np.clip(g1, -1.6, 1.6)), float(np.clip(g2, -1.6, 1.6))
+
+
 logger = logging.getLogger(__name__)
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Evaluate Gripette policy on simulator")
-    p.add_argument("--checkpoint", type=str, required=True, help="Path to trained checkpoint")
+    p.add_argument("--checkpoint", type=str, default=None, help="Path to trained checkpoint")
+    p.add_argument("--policy_addr", type=str, default=None,
+                   help="HOST:PORT of a ficelle policy server (websocket transport) OR "
+                        "an iroh ticket (zero-config remote, printed by `serve.py "
+                        "--transport iroh`); replaces local policy inference at chunk "
+                        "granularity (sync cartesian mode only)")
+    p.add_argument("--jpeg_quality", type=int, default=None, help="encode images as JPEG at this quality (1-100) before sending")
+    p.add_argument("--resize", action="store_true", default=False, help="downscale images to the model's resize resolution before sending (transport-only; requires a server whose policy resizes internally, e.g. diffusion)")
     p.add_argument("--arm_addr", type=str, default="localhost:50052", help="ArmService gRPC address")
     p.add_argument("--gripper_addr", type=str, default="localhost:50051", help="GripperService gRPC address")
     p.add_argument("--device", type=str, default="cuda", help="Compute device")
@@ -179,6 +213,15 @@ def parse_args():
                         "until the live view matches a demo start frame, then reading "
                         "the joints (examples/read_arm_state.py). Default: the server's "
                         "built-in home.")
+    p.add_argument("--grip_gain", type=float, default=1.0,
+                   help="Actuator calibration for the gripper: scale the model's gripper "
+                        "commands around the open reference (--start_gripper), so open "
+                        "stays open and CLOSES DEEPEN. The recorded closes are positions "
+                        "of the Grabette's trigger linkage squeezing soft fingertips; the "
+                        "deployed Feetech servo chasing the same position numbers delivers "
+                        "less squeeze (no force feedback). Try 1.3-1.6 if grasps slip. "
+                        "Applied at send time, AFTER commit/latch logic (those thresholds "
+                        "stay in model units).")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -204,7 +247,10 @@ def parse_args():
         "— the dataset's task was 'grasp_and_lift_cube', which the Pi0Fast "
         "processor cleans to 'grasp and lift cube'.",
     )
-    return p.parse_args()
+    args = p.parse_args()
+    if args.checkpoint is None and args.policy_addr is None:
+        p.error("either --checkpoint or --policy_addr is required")
+    return args
 
 
 class CameraStream:
@@ -299,7 +345,8 @@ class ChunkExecutor:
 
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                  clamp_pos_m=None, clamp_rot_rad=None,
-                 start_pos=None, start_rot=None, latch_close=None):
+                 start_pos=None, start_rot=None, latch_close=None,
+                 grip_gain=1.0, grip_ref=(0.0, 0.0)):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -326,6 +373,8 @@ class ChunkExecutor:
         self._latch_close = latch_close
         self._grip_latch = None
         self.latched_at_tick = None
+        self._grip_gain = grip_gain
+        self._grip_ref = grip_ref
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -394,6 +443,9 @@ class ChunkExecutor:
                             self._grip_latch = [max(self._grip_latch[0], g1),
                                                 max(self._grip_latch[1], g2)]
                             g1, g2 = self._grip_latch
+                    # Gain AFTER latch: latch/commit thresholds are in model
+                    # units; the gain is actuator calibration at send time.
+                    g1, g2 = apply_grip_gain(g1, g2, self._grip_gain, self._grip_ref)
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
@@ -501,9 +553,33 @@ def run_episode(
     log_deltas=False,
     log_latency=False,
     dump_dir=None,
+    grip_gain=1.0,
+    grip_ref=(0.0, 0.0),
+    latch_close=None,
+    client=None,
+    remote_k=None,
+    remote_img_wh=None,
+    remote_frames=2,
 ) -> dict:
-    """Run a single evaluation episode. Returns dict with stats."""
+    """Run a single evaluation episode. Returns dict with stats.
+
+    client: if set, a ficelle PolicyClient replaces local policy inference at
+    CHUNK granularity (cartesian sync mode only) — see the remote branch in
+    the tick loop below. remote_k/remote_img_wh configure it (see main())."""
     n_clamped = 0
+    # Remote mode's local action queue (chunk from the last client.infer(),
+    # drained one action per tick — mirrors the local policy's own internal
+    # action queue, just kept client-side instead of inside `policy`).
+    action_queue = []
+    # Gripper close-latch (sync path). The gripper is an ABSOLUTE position
+    # target re-sent every cycle; successive diffusion draws disagree, so the
+    # servo chases a dancing target: visible hesitation, and the deep close
+    # commands never persist long enough for the fingers to physically get
+    # there (they sit near the time-average of the oscillation). Once any
+    # command crosses the threshold, hold the running max — legitimate for
+    # end-at-lift datasets where no demo reopens near the object.
+    grip_latch = None
+    latched_at_step = None
     n_rejected = 0  # arm commands refused by the server (IK-jump watchdog etc.)
     dt = 1.0 / fps
     episode_start = time.perf_counter()
@@ -568,19 +644,20 @@ def run_episode(
             with open(dump_dir / "state.jsonl", "a") as f:
                 f.write(_json.dumps({"step": step, "state": [float(v) for v in state]}) + "\n")
 
-        state_tensor = torch.from_numpy(state).float()
-        image_tensor = torch.from_numpy(camera_image).float() / 255.0
-        image_tensor = image_tensor.permute(2, 0, 1).contiguous()
+        if client is None:
+            state_tensor = torch.from_numpy(state).float()
+            image_tensor = torch.from_numpy(camera_image).float() / 255.0
+            image_tensor = image_tensor.permute(2, 0, 1).contiguous()
 
-        batch = {
-            "observation.state": state_tensor.unsqueeze(0).to(device),
-            "observation.images.cam0": image_tensor.unsqueeze(0).to(device),
-            # VLA policies (Pi0/Pi0Fast/Pi0.5) require a language task string;
-            # their preprocessor tokenizes it into the prompt. Classic policies
-            # (Diffusion/ACT) ignore it — exactly as during training, where the
-            # dataset always carried a `task` field. Harmless to always include.
-            "task": task,
-        }
+            batch = {
+                "observation.state": state_tensor.unsqueeze(0).to(device),
+                "observation.images.cam0": image_tensor.unsqueeze(0).to(device),
+                # VLA policies (Pi0/Pi0Fast/Pi0.5) require a language task string;
+                # their preprocessor tokenizes it into the prompt. Classic policies
+                # (Diffusion/ACT) ignore it — exactly as during training, where the
+                # dataset always carried a `task` field. Harmless to always include.
+                "task": task,
+            }
 
         # --- Inference + wallclock-consistent execution ---
         # The training data is 50 fps: one action = the motion of ONE 20 ms
@@ -591,7 +668,8 @@ def run_episode(
         # since the last iteration and send each as its own command (a replay
         # burst) — motion runs at demonstrated speed whatever the loop rate.
         t_inf = time.perf_counter()
-        batch = preprocessor(batch)
+        if client is None:
+            batch = preprocessor(batch)
 
         if joint_mode:
             with torch.no_grad():
@@ -634,7 +712,7 @@ def run_episode(
                 # k actions describe motion the arm has ALREADY done; executing
                 # them again overshoots (the "push through the object" failure).
                 # Discard them: k = staleness / measured loop period.
-                if skip_stale and loop_periods:
+                if client is None and skip_stale and loop_periods:
                     q = getattr(policy, "_queues", None)
                     q = q.get("action") if isinstance(q, dict) else None
                     if q is not None and len(q) == 0:
@@ -648,10 +726,40 @@ def run_episode(
                             print(f"  skip_stale: dropped {k} chunk-head action(s) "
                                   f"(staleness {frame_staleness:.0f}ms / period {period_ms:.0f}ms)",
                                   flush=True)
-                with torch.no_grad():
-                    a = policy.select_action(batch)
-                a = postprocessor(a)
-                a_np = a.squeeze(0).cpu().numpy()
+                if client is not None:
+                    # Remote CHUNK-granularity inference: refill the local
+                    # action queue with one ficelle round trip when it runs
+                    # dry, then pop one action per tick — the wire-protocol
+                    # equivalent of the local policy's own internal action
+                    # queue (policy.select_action, below).
+                    if not action_queue:
+                        if remote_frames == 2:
+                            (img_prev, grip_prev, _ts_prev), (img_now, grip_now, _ts_now) = camera.get_pair()
+                            img_prev_r = cv2.resize(img_prev, remote_img_wh, interpolation=cv2.INTER_AREA)
+                            img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
+                            obs = {
+                                "observation.images.cam0": np.stack([img_prev_r, img_now_r]),
+                                "observation.state": np.stack([grip_prev, grip_now]).astype(np.float32),
+                                "task": task,
+                            }
+                        else:
+                            # Single-frame policies (Pi0/Pi0.5): freshest frame
+                            # at replan time, unstacked wire shapes.
+                            img_now, grip_now, _ts_now = camera.get()
+                            img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
+                            obs = {
+                                "observation.images.cam0": img_now_r,
+                                "observation.state": np.asarray(grip_now, dtype=np.float32),
+                                "task": task,
+                            }
+                        reply = client.infer(obs)
+                        action_queue.extend(list(reply["actions"][:remote_k]))
+                    a_np = action_queue.pop(0)
+                else:
+                    with torch.no_grad():
+                        a = policy.select_action(batch)
+                    a = postprocessor(a)
+                    a_np = a.squeeze(0).cpu().numpy()
                 dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
                 if clamp_pos_m is not None or clamp_rot_rad is not None:
                     dp, dr6, was = clamp_delta(dp, dr6, clamp_pos_m, clamp_rot_rad)
@@ -714,11 +822,19 @@ def run_episode(
                 f" | ticks x{n_ticks} | loop target {dt * 1000:.0f}ms",
                 flush=True,
             )
+        gg1 = float(gripper_goal[0])
+        gg2 = float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0
+        if latch_close is not None:
+            if grip_latch is None and max(gg1, gg2) > latch_close:
+                grip_latch = [gg1, gg2]
+                latched_at_step = step
+                print(f"CLOSE LATCHED at step {step}", flush=True)
+            if grip_latch is not None:
+                grip_latch = [max(grip_latch[0], gg1), max(grip_latch[1], gg2)]
+                gg1, gg2 = grip_latch
+        gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
         gripper_stub.SendMotorCommand(
-            gripper_pb2.MotorCommand(
-                motor1_goal=float(gripper_goal[0]),
-                motor2_goal=float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0,
-            )
+            gripper_pb2.MotorCommand(motor1_goal=gg1, motor2_goal=gg2)
         )
 
         if log_deltas and not joint_mode:
@@ -839,6 +955,8 @@ def run_episode_async(
     log_deltas=False,
     log_latency=False,
     dump_dir=None,
+    grip_gain=1.0,
+    grip_ref=(0.0, 0.0),
 ) -> dict:
     """Async episode: ChunkExecutor streams actions at exactly `fps` (the demo
     clock) while this loop replans as fast as inference allows (~10 Hz), each
@@ -877,7 +995,8 @@ def run_episode_async(
                              clamp_pos_m=clamp_pos_m, clamp_rot_rad=clamp_rot_rad,
                              start_pos=ep_start_pos.astype(np.float64),
                              start_rot=ep_start_rot.astype(np.float64),
-                             latch_close=latch_close)
+                             latch_close=latch_close,
+                             grip_gain=grip_gain, grip_ref=grip_ref)
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
@@ -930,15 +1049,19 @@ def run_episode_async(
             # threshold, execute it TO THE END without replanning: the fingers
             # actually move, the state rises, and the next replan continues
             # the close instead of re-deciding it.
-            # Only the chunk HEAD (first 8 actions = the close is <=0.2s away)
-            # arms the commit: a tail-only close is "I'll close after
-            # advancing more" — committing on it executes that advance blind
-            # and closes while still moving (anchored8: pushed the object,
-            # skipped the trained pause). Head-crossing means the model itself
-            # schedules the close NOW.
+            # Trigger on a crossing ANYWHERE in the chunk. A head-only window
+            # (tried: first 8 actions) sounds cleaner — "commit only when the
+            # close is imminent" — but it silently re-creates the
+            # never-ignites failure for models that schedule their close
+            # further ahead than the window (measured: the mustard-200 model
+            # kept its close 9-13 steps out through 40+ replans; the commit
+            # never armed and the arm pressed into the workspace boundary).
+            # The cost of the full-chunk trigger is an occasional early
+            # commit that closes while still advancing (a push, sometimes a
+            # miss); the cost of the window is never grasping at all.
             if commit_close is not None and any(
                 float(max(a[9], a[10] if a.shape[0] > 10 else 0.0)) > commit_close
-                for a in chunk[k:k + 8]
+                for a in chunk[k:]
             ):
                 if n_commits == 0:
                     first_commit_tick = executor.sent_count
@@ -1035,35 +1158,92 @@ def main():
     logging.basicConfig(level=logging.INFO)
     device = torch.device(args.device)
 
-    # ---- Load policy (any type: diffusion / act / pi0_fast / ...) ----
-    logger.info(f"Loading policy from {args.checkpoint}")
-    policy = _load_policy_any(args.checkpoint)
-    logger.info(f"Loaded policy type: {policy.config.type}")
-    # Optional re-planning-cadence override. Smaller n_action_steps re-infers
-    # more often (tighter closed loop), which matters a lot for policies that
-    # drift off-distribution during open-loop chunk execution — ACT in
-    # particular is designed for very frequent re-planning / temporal
-    # ensembling, and executing long chunks (its trained default of 8+) can
-    # cause it to wander off the grasp manifold and never trigger the close.
-    if args.n_action_steps is not None:
-        logger.info(
-            f"Overriding n_action_steps: {policy.config.n_action_steps} -> {args.n_action_steps}"
-        )
-        policy.config.n_action_steps = args.n_action_steps
-    policy.to(device)
-    policy.eval()
-    preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+    remote = args.policy_addr is not None
+    if remote and args.async_exec:
+        raise SystemExit("--policy_addr supports sync mode only (not --async_exec).")
 
-    # Auto-detect state/action mode from the policy's feature shapes.
-    state_dim = policy.config.robot_state_feature.shape[0]
-    action_dim = policy.config.action_feature.shape[0]
-    joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
-    use_relative_proprio = (state_dim > 2) and not joint_mode
-    logger.info(
-        f"Policy: action_space={'joint' if joint_mode else 'cartesian'}, "
-        f"state_dim={state_dim}, action_dim={action_dim}, "
-        f"n_action_steps={policy.config.n_action_steps}"
-    )
+    policy = preprocessor = postprocessor = None
+    client = remote_k = remote_img_wh = None
+    remote_frames = 2
+
+    if remote:
+        # Lazy import: the whole point of remote mode is that the client
+        # machine needs no checkpoint (and, on a bare robot box, no ficelle
+        # client either unless this flag is actually used). open_client
+        # dispatches on the address shape: an iroh ticket (starts with
+        # "endpoint") gets IrohPolicyClient, anything else (HOST:PORT) gets
+        # PolicyClient (websocket) — so --policy_addr transparently accepts
+        # either, unchanged from the caller's point of view.
+        try:
+            from ficelle_client import open_client
+        except ImportError as e:
+            raise SystemExit(
+                "--policy_addr requires the ficelle_client package (uv pip install ./ficelle/client)"
+            ) from e
+        client_kw = {"jpeg_quality": args.jpeg_quality, "resize": args.resize}
+        if args.policy_addr.startswith("endpoint") and ":" not in args.policy_addr:
+            # iroh's default infer timeout (5 s) is tighter than a cold
+            # server's FIRST inference (model warm-up on the big VLA
+            # checkpoints: measured 30+ s for pi05 before the kernels are hot).
+            client_kw["infer_timeout"] = 60.0
+        client = open_client(args.policy_addr, **client_kw)
+        metadata = client.metadata
+        state_spec = metadata.get("observations", {}).get("observation.state", {})
+        if (metadata.get("action_dim") != 11
+                or list(state_spec.get("frame_shape", [])) != [2]
+                or metadata.get("n_obs_steps") not in (1, 2)):
+            raise SystemExit(
+                f"--policy_addr server at {args.policy_addr} reports action_dim="
+                f"{metadata.get('action_dim')}, state frame_shape="
+                f"{state_spec.get('frame_shape')}, n_obs_steps={metadata.get('n_obs_steps')} "
+                "— this eval only supports 11D-cartesian/2D-gripper-state policies "
+                "with n_obs_steps 1 (Pi0/Pi0.5 single frame) or 2 (Diffusion pair)."
+            )
+        joint_mode = False
+        use_relative_proprio = False
+        # 1 = single-frame policies (Pi0/Pi0.5): unstacked wire shapes;
+        # 2 = frame-history policies (Diffusion): stacked (2, ...) arrays.
+        remote_frames = int(metadata["n_obs_steps"])
+        server_n_action_steps = metadata["n_action_steps"]
+        remote_k = (min(args.n_action_steps, server_n_action_steps)
+                    if args.n_action_steps is not None else server_n_action_steps)
+        h, w, _c = metadata["observations"]["observation.images.cam0"]["frame_shape"]
+        remote_img_wh = (w, h)
+        logger.info(
+            f"Remote policy: {metadata.get('policy_type')} from {metadata.get('checkpoint')} "
+            f"@ {args.policy_addr} | n_action_steps used={remote_k} | "
+            f"image wire shape {(remote_frames, h, w, 3) if remote_frames > 1 else (h, w, 3)}"
+        )
+    else:
+        # ---- Load policy (any type: diffusion / act / pi0_fast / ...) ----
+        logger.info(f"Loading policy from {args.checkpoint}")
+        policy = _load_policy_any(args.checkpoint)
+        logger.info(f"Loaded policy type: {policy.config.type}")
+        # Optional re-planning-cadence override. Smaller n_action_steps re-infers
+        # more often (tighter closed loop), which matters a lot for policies that
+        # drift off-distribution during open-loop chunk execution — ACT in
+        # particular is designed for very frequent re-planning / temporal
+        # ensembling, and executing long chunks (its trained default of 8+) can
+        # cause it to wander off the grasp manifold and never trigger the close.
+        if args.n_action_steps is not None:
+            logger.info(
+                f"Overriding n_action_steps: {policy.config.n_action_steps} -> {args.n_action_steps}"
+            )
+            policy.config.n_action_steps = args.n_action_steps
+        policy.to(device)
+        policy.eval()
+        preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+
+        # Auto-detect state/action mode from the policy's feature shapes.
+        state_dim = policy.config.robot_state_feature.shape[0]
+        action_dim = policy.config.action_feature.shape[0]
+        joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
+        use_relative_proprio = (state_dim > 2) and not joint_mode
+        logger.info(
+            f"Policy: action_space={'joint' if joint_mode else 'cartesian'}, "
+            f"state_dim={state_dim}, action_dim={action_dim}, "
+            f"n_action_steps={policy.config.n_action_steps}"
+        )
 
     # ---- Connect to simulator ----
     from openarm_gripette_simu.proto import arm_pb2, arm_pb2_grpc, gripper_pb2, gripper_pb2_grpc
@@ -1117,8 +1297,11 @@ def main():
         gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
             motor1_goal=args.start_gripper[0], motor2_goal=args.start_gripper[1]))
 
-        # Reset policy action queue
-        policy.reset()
+        # Reset policy action queue (remote mode keeps its queue client-side —
+        # nothing to reset here, run_episode starts each episode with a fresh
+        # local action_queue).
+        if policy is not None:
+            policy.reset()
 
         # Small delay for physics to settle (and for gripper to actually open)
         time.sleep(0.5)
@@ -1157,6 +1340,8 @@ def main():
                 clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
                 latch_close=args.latch_close,
                 commit_close=args.commit_close,
+                grip_gain=args.grip_gain,
+                grip_ref=tuple(args.start_gripper),
                 log_deltas=args.log_deltas,
                 log_latency=args.log_latency,
                 dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1177,6 +1362,9 @@ def main():
             success_check_freq=args.success_check_freq,
             debug=args.debug,
             log_gripper=args.log_gripper,
+            grip_gain=args.grip_gain,
+            grip_ref=tuple(args.start_gripper),
+            latch_close=args.latch_close,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1189,6 +1377,10 @@ def main():
             clamp_rot_rad=(np.deg2rad(args.clamp_rot_deg)) if args.clamp_rot_deg else None,
             max_ticks=args.max_ticks,
             skip_stale=args.skip_stale,
+            client=client,
+            remote_k=remote_k,
+            remote_img_wh=remote_img_wh,
+            remote_frames=remote_frames,
         )
         # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
         # result["success"] is meaningless there: ask the operator instead and
