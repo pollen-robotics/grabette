@@ -3,6 +3,8 @@
 import logging
 import time
 
+import grpc
+
 from .hardware.camera import CameraCapture
 from .hardware.motors import MotorController
 from .hardware.sync import SyncManager
@@ -34,7 +36,15 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
 
         while context.is_active():
             # Capture JPEG then read motor positions in tight sequence
-            jpeg_data = self._camera.capture_jpeg()
+            try:
+                jpeg_data = self._camera.capture_jpeg()
+            except Exception as e:
+                # A dead camera must kill the stream LOUDLY — the client must
+                # never keep acting on a frozen or absent image. (Also frees
+                # this worker thread: a blocked capture used to pin it, and
+                # with max_workers=4 a few reconnects starved the server.)
+                logger.exception("StreamState: camera failure — aborting stream")
+                context.abort(grpc.StatusCode.INTERNAL, f"camera failure: {e}")
             pos1, pos2 = self._motors.read_positions()
             timestamp_ms = self._sync.get_timestamp_ms()
 

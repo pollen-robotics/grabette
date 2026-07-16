@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # StreamState target rate (frames/s). Actual rate is capped by what
     # capture+JPEG-encode achieves on the hardware (see camera_mode).
     stream_hz: float = 10.0
+    # Explicit mock camera (generated placeholder frames) for dev machines
+    # without picamera2/hardware. NEVER enabled implicitly: on the robot a
+    # broken camera must fail the boot self-check, not stream fake images
+    # the policy would silently act on.
+    mock_camera: bool = False
 
     # Motors (Feetech STS3215 on serial bus)
     motor_port: str = "/dev/serial0"
