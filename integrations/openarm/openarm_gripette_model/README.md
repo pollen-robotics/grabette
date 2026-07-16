@@ -28,3 +28,10 @@ uv run python postprocess_mujoco.py            # REQUIRED after every generation
 - **scene.xml** — adds `offwidth="1296" offheight="972"` to `<global>` for offscreen rendering.
 
 > A re-export can silently regress collision classes, gains, axes, and joint ranges. After regenerating, verify the model in the sim (a `cartesian_square` run + a grasp episode) before trusting it — don't assume the export is drop-in.
+
+## Attribution
+
+The arm description is derived from **OpenArm** (Enactic, Inc., Apache-2.0) —
+<https://github.com/enactic/openarm> — adapted to carry the Gripette end-effector
+and generated via [onshape-to-robot](https://github.com/Rhoban/onshape-to-robot)
+(MIT). See the repository-root [`THIRD_PARTY_NOTICES.md`](../../../THIRD_PARTY_NOTICES.md).
