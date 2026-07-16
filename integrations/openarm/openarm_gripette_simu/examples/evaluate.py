@@ -557,6 +557,7 @@ def run_episode(
     client=None,
     remote_k=None,
     remote_img_wh=None,
+    remote_frames=2,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats.
 
@@ -730,14 +731,25 @@ def run_episode(
                     # equivalent of the local policy's own internal action
                     # queue (policy.select_action, below).
                     if not action_queue:
-                        (img_prev, grip_prev, _ts_prev), (img_now, grip_now, _ts_now) = camera.get_pair()
-                        img_prev_r = cv2.resize(img_prev, remote_img_wh, interpolation=cv2.INTER_AREA)
-                        img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
-                        obs = {
-                            "observation.images.cam0": np.stack([img_prev_r, img_now_r]),
-                            "observation.state": np.stack([grip_prev, grip_now]).astype(np.float32),
-                            "task": task,
-                        }
+                        if remote_frames == 2:
+                            (img_prev, grip_prev, _ts_prev), (img_now, grip_now, _ts_now) = camera.get_pair()
+                            img_prev_r = cv2.resize(img_prev, remote_img_wh, interpolation=cv2.INTER_AREA)
+                            img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
+                            obs = {
+                                "observation.images.cam0": np.stack([img_prev_r, img_now_r]),
+                                "observation.state": np.stack([grip_prev, grip_now]).astype(np.float32),
+                                "task": task,
+                            }
+                        else:
+                            # Single-frame policies (Pi0/Pi0.5): freshest frame
+                            # at replan time, unstacked wire shapes.
+                            img_now, grip_now, _ts_now = camera.get()
+                            img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
+                            obs = {
+                                "observation.images.cam0": img_now_r,
+                                "observation.state": np.asarray(grip_now, dtype=np.float32),
+                                "task": task,
+                            }
                         reply = client.infer(obs)
                         action_queue.extend(list(reply["actions"][:remote_k]))
                     a_np = action_queue.pop(0)
@@ -1150,6 +1162,7 @@ def main():
 
     policy = preprocessor = postprocessor = None
     client = remote_k = remote_img_wh = None
+    remote_frames = 2
 
     if remote:
         # Lazy import: the whole point of remote mode is that the client
@@ -1165,20 +1178,30 @@ def main():
             raise SystemExit(
                 "--policy_addr requires the ficelle_client package (uv pip install ./ficelle/client)"
             ) from e
-        client = open_client(args.policy_addr, jpeg_quality=args.jpeg_quality, resize=args.resize)
+        client_kw = {"jpeg_quality": args.jpeg_quality, "resize": args.resize}
+        if args.policy_addr.startswith("endpoint") and ":" not in args.policy_addr:
+            # iroh's default infer timeout (5 s) is tighter than a cold
+            # server's FIRST inference (model warm-up on the big VLA
+            # checkpoints: measured 30+ s for pi05 before the kernels are hot).
+            client_kw["infer_timeout"] = 60.0
+        client = open_client(args.policy_addr, **client_kw)
         metadata = client.metadata
         state_spec = metadata.get("observations", {}).get("observation.state", {})
         if (metadata.get("action_dim") != 11
                 or list(state_spec.get("frame_shape", [])) != [2]
-                or metadata.get("n_obs_steps") != 2):
+                or metadata.get("n_obs_steps") not in (1, 2)):
             raise SystemExit(
                 f"--policy_addr server at {args.policy_addr} reports action_dim="
                 f"{metadata.get('action_dim')}, state frame_shape="
                 f"{state_spec.get('frame_shape')}, n_obs_steps={metadata.get('n_obs_steps')} "
-                "— this eval only supports the 11D-cartesian/2D-gripper-state diffusion case."
+                "— this eval only supports 11D-cartesian/2D-gripper-state policies "
+                "with n_obs_steps 1 (Pi0/Pi0.5 single frame) or 2 (Diffusion pair)."
             )
         joint_mode = False
         use_relative_proprio = False
+        # 1 = single-frame policies (Pi0/Pi0.5): unstacked wire shapes;
+        # 2 = frame-history policies (Diffusion): stacked (2, ...) arrays.
+        remote_frames = int(metadata["n_obs_steps"])
         server_n_action_steps = metadata["n_action_steps"]
         remote_k = (min(args.n_action_steps, server_n_action_steps)
                     if args.n_action_steps is not None else server_n_action_steps)
@@ -1187,7 +1210,7 @@ def main():
         logger.info(
             f"Remote policy: {metadata.get('policy_type')} from {metadata.get('checkpoint')} "
             f"@ {args.policy_addr} | n_action_steps used={remote_k} | "
-            f"image wire shape (2, {h}, {w}, 3)"
+            f"image wire shape {(remote_frames, h, w, 3) if remote_frames > 1 else (h, w, 3)}"
         )
     else:
         # ---- Load policy (any type: diffusion / act / pi0_fast / ...) ----
@@ -1355,6 +1378,7 @@ def main():
             client=client,
             remote_k=remote_k,
             remote_img_wh=remote_img_wh,
+            remote_frames=remote_frames,
         )
         # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
         # result["success"] is meaningless there: ask the operator instead and

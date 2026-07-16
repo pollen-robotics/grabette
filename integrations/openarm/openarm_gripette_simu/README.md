@@ -245,6 +245,38 @@ uv run python examples/evaluate.py \
 - `--debug` — show the camera feed; `--log_gripper` — print the gripper command vs observed state each step.
 - `--clamp_pos_mm` / `--clamp_rot_deg` — cap per-step Cartesian deltas (stability test).
 
+### Remote inference (big VLA checkpoints)
+
+Models too large for the robot machine (Pi0.5/Pi0Fast, ~10 GB in fp32) can run
+on a remote GPU through a [Ficelle](https://github.com/SteveNguyen/Ficelle)
+policy server — all pre/post-processing happens server-side through the
+checkpoint's own pipeline, this loop only ships raw observations and receives
+action chunks. Works for single-frame policies (Pi0/Pi0.5) and the two-frame
+Diffusion models (the server's `n_obs_steps` picks the wire format
+automatically); sync mode only.
+
+```bash
+# On the GPU machine (needs the ficelle repo). --transport iroh works through
+# NAT with no VPN/port-forwarding (QUIC hole-punching) and prints a ticket:
+uv run python serve.py --checkpoint <user>/<model> --dtype float32 --transport iroh
+# (--dtype float32: the lerobot pi05 port has a bf16 dtype clash in its flow path)
+#   -> iroh ticket: endpointv1...
+
+# On the robot machine — same eval loop, no local checkpoint; --policy_addr
+# takes the ticket (or a 'host:port' if the server is reachable directly):
+uv run python examples/evaluate.py \
+    --policy_addr endpointv1... --n_action_steps 15 \
+    --task "pick up the red can" --num_episodes 10
+```
+
+- The ficelle client must be installed in this environment
+  (`uv pip install -e '<ficelle>/client[iroh]'` — websockets + msgpack +
+  numpy, plus the iroh bindings for the ticket transport).
+- `--n_action_steps` matters: Pi0.5's native chunk is 50 actions = 5 s
+  open-loop at 10 fps; 10–25 re-plans often enough to stay closed-loop.
+- `--jpeg_quality 90` compresses frames for transport (use over WiFi/VPN;
+  raw is fine on a LAN).
+
 ### Eval safety gates (`arm_servicer`)
 
 `SendCartesianDelta` validates each IK solution before applying it (holding the
