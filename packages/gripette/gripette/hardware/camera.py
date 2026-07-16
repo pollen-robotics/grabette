@@ -109,10 +109,19 @@ class CameraCapture:
         return _encode_jpeg(array, self.quality)
 
     def stop(self) -> None:
-        if self._picam2 is not None:
-            self._picam2.stop()
-            self._picam2.close()
-            self._picam2 = None
+        if self._picam2 is None:
+            return
+        picam2, self._picam2 = self._picam2, None
+        # On a wedged pipeline stop()/close() can block forever, stalling
+        # shutdown until systemd's SIGKILL (observed as ~90 s service stops).
+        # Run them bounded and best-effort — process exit releases the device
+        # regardless.
+        t = threading.Thread(target=lambda: (picam2.stop(), picam2.close()), daemon=True)
+        t.start()
+        t.join(timeout=5.0)
+        if t.is_alive():
+            logger.error("Camera stop() wedged — abandoning cleanup, process exit will release it")
+        else:
             logger.info("Camera stopped")
 
 
