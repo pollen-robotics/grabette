@@ -1,4 +1,14 @@
-# Pi0-FAST for Grabette
+# Pi0-FAST for Grabette (historical — superseded by π0.5)
+
+> **⚠️ This path failed at our data scale — use [π0.5](../README.md)
+> instead.** Trained with the full recipe below (verified pipeline, healthy
+> loss curves, 20k steps, $105), the pi0fast fine-tune's autoregressive
+> action head **collapsed to a single constant, input-independent action**
+> for every observation — undetectable from the (teacher-forced) training
+> and eval losses. The same dataset grounds immediately with π0.5's flow
+> head. Full forensics: the `pi0fast-minimal-repro` companion project and
+> its FINETUNE_REPORT.md. This directory is kept for the tokenizer tooling
+> and as documentation of what to check before trusting any token-head VLA.
 
 Fine-tune [Pi0-FAST](https://www.physicalintelligence.company/research/fast)
 (`lerobot/pi0fast-base`, a 3B PaliGemma VLA with FAST action tokens) on
@@ -36,13 +46,13 @@ Consequences:
 |---|---|
 | `fit_fast_tokenizer.py` | Fit a FAST action tokenizer on YOUR converted dataset's actions (MEAN_STD-normalized chunks). The working libero fine-tune used a dataset-specific tokenizer — do the same. |
 | `verify_fast_tokenizer.py` | Round-trip encode→decode gate for the fitted tokenizer. Run before burning a training run. |
-| `smoke_generation.py` | Post-training generation health gate on real dataset frames: well-formed decode, input-dependent, tracks GT. Run before ANY robot session. |
+| `../smoke_generation.py` | (shared, one dir up) Post-training generation health gate on real dataset frames: well-formed decode, input-dependent, tracks GT. Run before ANY robot session. |
 
 ## Workflow
 
 ```bash
-# 0. Prepare the dataset with the shared pipeline (see ../DiffusionPolicy):
-#    ../DiffusionPolicy/run_pipeline.sh <user>/<raw_dataset> [--smooth-poses 9]
+# 0. Prepare the dataset with the shared pipeline (see ../../DiffusionPolicy):
+#    ../../DiffusionPolicy/run_pipeline.sh <user>/<raw_dataset> [--smooth-poses 9]
 
 # 1. Fit the action tokenizer on the converted dataset (chunk_size = policy's)
 uv run python fit_fast_tokenizer.py \
@@ -58,8 +68,8 @@ uv run python verify_fast_tokenizer.py \
 
 # 3. Train (see recipe below — needs a big GPU, A100/H100 class for batch 32)
 
-# 4. Generation gate on the fine-tune (BEFORE the robot)
-uv run python smoke_generation.py \
+# 4. Generation gate on the fine-tune (BEFORE the robot; script lives one dir up)
+uv run python ../smoke_generation.py \
     --checkpoint <user>/<model> \
     --dataset_repo_id local/<name>_cartesian --dataset_root ... --task pick
 
@@ -85,7 +95,7 @@ only pi0fast fine-tune verified to generate correctly:
 | steps / batch | **20 000** / 32 | bf16, gradient_checkpointing, compile |
 | image transforms | off | |
 
-Training goes through `train_pi0fast.py` — stock `lerobot-train` with one
+Training goes through `../train.py` — stock `lerobot-train` with one
 surgical fix (see its docstring: the base checkpoint's serialized processor
 pipeline pins the unloadable `physical-intelligence/fast` tokenizer and would
 ignore your fitted one; the launcher rebuilds the pipeline fresh from the
@@ -95,7 +105,7 @@ would also load the base checkpoint's config and demand its pretraining
 camera names.
 
 ```bash
-uv run python train_pi0fast.py \
+uv run python ../train.py \
   --policy.type=pi0_fast \
   --policy.pretrained_path=lerobot/pi0fast-base \
   --policy.chunk_size=10 --policy.n_action_steps=10 \
@@ -114,7 +124,7 @@ gradient accumulation, slowly.
 
 ## Why Pi0-FAST at all (vs the shipped Diffusion baseline)
 
-Same reason as in `docs/policy_comparison_gripette.md`: Grabette data is
+The original bet (before the collapse finding above): Grabette data is
 inherently Cartesian-delta (hand-held, no robot joints at demo time), which
 favors distributional/token-based policies over L1 regressors. Pi0-FAST adds
 a pretrained vision-language prior — the bet is better generalization

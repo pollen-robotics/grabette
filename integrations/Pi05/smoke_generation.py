@@ -1,20 +1,23 @@
-"""Generation health smoke for a Pi0-FAST checkpoint — run BEFORE any robot session.
+"""Generation health smoke for a VLA checkpoint (pi05 / pi0_fast / pi0) —
+run BEFORE any robot session.
 
-Pi0-FAST is autoregressive: a broken train/infer pipeline produces DEGENERATE
-decoding (unicode garbage, <bos> loops, or "Action" followed by endless
-padding) that teacher-forced training loss cannot detect — our June 2026
-fine-tunes had healthy losses and useless generation. This gate feeds the
-checkpoint REAL observations from its own training dataset and checks that:
+Training loss — even a clean held-out eval loss — cannot detect a policy
+whose generation ignores its observations: a pi0fast fine-tune of ours had
+healthy losses while emitting ONE constant action for every input, and
+autoregressive decoders can additionally produce degenerate text (unicode
+garbage, <bos> loops). This gate feeds the checkpoint REAL observations from
+its own training dataset and checks that:
 
-  1. decoding is WELL-FORMED (the "Action : <FAST tokens>" scaffold parses),
-  2. outputs are INPUT-DEPENDENT (different frames → different actions),
+  1. generation is WELL-FORMED (parses/decodes; finite, sane-scale actions),
+  2. outputs are INPUT-DEPENDENT (different frames → different actions;
+     the collapsed pi0fast reference measured a 0.000000 pairwise diff),
   3. predictions roughly track the dataset's ground-truth actions.
 
-Usage:
+Usage (pi05 — always use --fp32: the port has a bf16 flow-path dtype clash):
   uv run python smoke_generation.py \\
-      --checkpoint <user>/<pi0fast_model> \\
+      --checkpoint <user>/<model> --policy_type pi05 --fp32 \\
       --dataset_repo_id <user>/<dataset>_cartesian [--dataset_root DIR] \\
-      [--episodes 0 5] [--frame 10] [--task pick]
+      [--episodes 0 80] [--frame 60] [--task "pick up the red can"]
 """
 
 import argparse

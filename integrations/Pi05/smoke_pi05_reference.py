@@ -7,8 +7,9 @@ Healthy = both synthetic inputs produce finite, sane-scale action chunks that
 DIFFER from each other. Note pi05 is flow-matching: no token decode, so the
 failure modes to watch are NaNs, absurd scales, or input-independence.
 
-Needs ~7 GB GPU for the 2.3B-param bf16 model — run on the 5090 (the laptop
-4070 OOMs at load). Usage:  uv run python smoke_pi05_reference.py
+Needs a ~7 GB GPU for the 2.3B-param bf16 model (an 8 GB laptop card is too
+tight — use the training or inference GPU). Usage:
+  uv run python smoke_pi05_reference.py
 """
 import numpy as np
 import torch

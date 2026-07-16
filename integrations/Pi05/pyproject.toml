@@ -1,0 +1,30 @@
+[project]
+name = "grabette-pi05"
+version = "0.1.0"
+description = "Pi0.5 (and legacy Pi0-FAST) fine-tuning & gates for Grabette demonstrations, on lerobot main."
+# Same interpreter pin as the DiffusionPolicy integration (torch/torchcodec
+# stack validated on 3.12).
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # ONE lerobot revision everywhere: this exact rev must be shared by
+    # training, the offline gates, AND the Ficelle inference server —
+    # processor-pipeline parity between train and inference is what makes
+    # the fine-tunes deployable. The pi05 recipe was trained and certified
+    # against this commit; the Ficelle server pins the same one. Bump all
+    # of them together, deliberately. (Also: must be lerobot main, not a
+    # 0.5.x/0.6.x release — see pi0fast/README.md for the base-checkpoint
+    # consistency story that set this rule.)
+    "lerobot[pi,dataset] @ git+https://github.com/huggingface/lerobot@e40b58a8dfa9e7b86918c374791599d070518d11",
+    "scipy>=1.10",
+    "sentencepiece",
+    "num2words",
+    "accelerate",
+    "protobuf",
+]
+
+[project.optional-dependencies]
+wandb = ["wandb"]
+
+[tool.uv]
+# Scripts-only project: manage the dependency env, don't build/install this dir.
+package = false

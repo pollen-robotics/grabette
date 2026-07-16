@@ -29,6 +29,7 @@ The data-collection pipeline is **robot-agnostic**.
 | [`openarm_gripette_simu`](integrations/openarm/openarm_gripette_simu) | MuJoCo simulation of OpenArm + Gripette and synthetic data collection |
 | [`openarm_gripette_model`](integrations/openarm/openarm_gripette_model) | Robot description (URDF / MuJoCo XML) and mesh assets, generated from Onshape |
 | [`DiffusionPolicy`](integrations/DiffusionPolicy) | Diffusion Policy training code |
+| [`Pi05`](integrations/Pi05) | π0.5 VLA fine-tuning, gates, and remote-GPU deployment (shares the DiffusionPolicy dataset pipeline) |
 
 **Using GRABETTE with a different robot arm:**
 the core in `packages/` carries no
