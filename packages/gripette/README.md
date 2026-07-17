@@ -135,6 +135,35 @@ journalctl -u gripette -f             # main service logs
 journalctl -u gripette-bluetooth -f   # BT WiFi-setup service logs
 ```
 
+## Status web UI
+
+The quickest way to check that a gripette is healthy — and to restart the
+service or cleanly shut the device down — is its built-in status page:
+
+```bash
+make install-web      # once per device: sudoers drop-in + gripette-web.service
+```
+
+Then browse to `http://<gripette-hostname>.local:8080` (the install prints
+this device's exact URL; the device IP works too). The page shows:
+
+- an **OK / failure banner** — green means service up, gRPC answering, and a
+  fresh camera frame flowing through the real `StreamState` pipeline;
+- the **live camera view** (~1 Hz), motor positions, and the service's
+  auto-restart count (which counts camera-wedge self-heals);
+- system vitals (CPU temperature, throttling, WiFi signal, disk) and the
+  last journal lines with errors highlighted;
+- **Restart service** and **Shut down device** buttons. Both are gated by a
+  sudoers rule limited to those two exact commands; shutdown is the clean
+  way to power off a gripette (it has no power button).
+
+The UI is a separate process (`gripette-web.service`) and strictly
+pull-based: it does nothing while no browser is open, and costs the gripper
+service at most ~1 extra camera capture/s while a page is viewing — safe to
+leave enabled during data collection and evals. Port override:
+`GRIPPER_WEB_PORT` in `/etc/gripette/env`. Note there is no authentication:
+anyone on the local network can use the buttons.
+
 ## Documentation
 
 - [Configuration](docs/configuration.md) — environment variables and the robot-frame motor convention.

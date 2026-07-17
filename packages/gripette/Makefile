@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand write-env enable-uart harden-rpi install-systemd ensure-ble-only check help
+.PHONY: install-rpi check-hand write-env enable-uart harden-rpi install-systemd ensure-ble-only install-web check help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -10,6 +10,7 @@ help:
 	@echo "  enable-uart            Disable serial console + enable hardware UART (/dev/serial0)"
 	@echo "  harden-rpi             Persistent journal + fsck.mode=force (hard-shutdown safety)"
 	@echo "  install-systemd        Install + enable gripette.service and gripette-bluetooth.service"
+	@echo "  install-web            Install + enable the status web UI (gripette-web.service, port 8080)"
 	@echo "  ensure-ble-only        Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  check                  Run scripts/check_hardware.py against current install"
 	@echo ""
@@ -266,6 +267,27 @@ install-systemd: ensure-ble-only
 	@echo "Logs:"
 	@echo "  journalctl -u gripette -f"
 	@echo "  journalctl -u gripette-bluetooth -f"
+
+# Install the status web UI: sudoers drop-in (restart/poweroff only — the
+# exact command strings webui.py pre-checks and dispatches) + systemd unit.
+# The drop-in is validated with visudo before install: a bad sudoers file
+# can lock sudo out entirely.
+install-web:
+	@printf '%s\n' \
+	  '# Installed by gripette make install-web: lets the status page' \
+	  '# restart the gripette service and cleanly power off the device.' \
+	  'rasp ALL=(root) NOPASSWD: /usr/bin/systemctl restart gripette, /usr/bin/systemctl poweroff' \
+	  | sudo tee /etc/sudoers.d/gripette-web.tmp >/dev/null
+	@sudo visudo -cf /etc/sudoers.d/gripette-web.tmp \
+	  || { echo "*** sudoers validation FAILED — not installing ***"; sudo rm -f /etc/sudoers.d/gripette-web.tmp; exit 1; }
+	@sudo chmod 0440 /etc/sudoers.d/gripette-web.tmp
+	@sudo mv /etc/sudoers.d/gripette-web.tmp /etc/sudoers.d/gripette-web
+	@echo "[sudoers] /etc/sudoers.d/gripette-web installed"
+	sed 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' systemd/gripette-web.service \
+	  | sudo tee /etc/systemd/system/gripette-web.service >/dev/null
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now gripette-web
+	@echo "Status page: http://$$(hostname).local:8080  (logs: journalctl -u gripette-web -f)"
 
 check:
 	@if [ ! -x $(WORKSPACE_ROOT)/.venv/bin/python ]; then \
