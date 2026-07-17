@@ -9,6 +9,9 @@ WorkingDirectory=/home/rasp/Project/Repo/gripette
 ExecStart=/home/rasp/Project/Repo/gripette/.venv/bin/python -m gripette
 Restart=on-failure
 RestartSec=5
+# A wedged camera pipeline can hang shutdown paths; don't wait the default
+# 90 s before SIGKILL — the process holds nothing that survives it.
+TimeoutStopSec=15
 Environment=PYTHONUNBUFFERED=1
 # Don't write .pyc into the venv. Matches gripette-bluetooth.service so
 # whichever order the services hit a module first, neither leaves bytecode

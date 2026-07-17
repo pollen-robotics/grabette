@@ -27,6 +27,7 @@ def serve() -> None:
         # Ask the sensor for the stream's target rate (video mode only) —
         # otherwise the pipeline's ~30 fps default caps the stream.
         framerate=settings.stream_hz,
+        mock=settings.mock_camera,
     )
     motors = MotorController(
         port=settings.motor_port,
@@ -42,6 +43,19 @@ def serve() -> None:
     )
 
     camera.start()
+    # Boot self-check: the camera stack can start "successfully" yet never
+    # deliver a frame (libcamera boot race, field-observed). Fail with a
+    # nonzero exit BEFORE exposing the gRPC API, so systemd restarts the
+    # service (Restart=on-failure) — the validated cure — instead of serving
+    # motors alongside a silently frozen camera. No graceful camera.stop()
+    # here: on a wedged stack it can block, and process exit releases the
+    # device anyway.
+    try:
+        camera.capture_jpeg()
+    except Exception:
+        logger.exception("Camera self-check FAILED — exiting so systemd restarts the service")
+        raise SystemExit(1)
+    logger.info("Camera self-check passed")
     motors.start()
     sync.start()
 

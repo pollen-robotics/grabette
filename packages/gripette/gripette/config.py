@@ -16,19 +16,26 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 50051
 
-    # Camera
-    camera_resolution_w: int = 1296
-    camera_resolution_h: int = 972
+    # Camera — defaults match the validated deployment (previously carried
+    # per-device in /etc/gripette/env): video pipeline, binned half-res,
+    # 30 fps stream.
+    camera_resolution_w: int = 648
+    camera_resolution_h: int = 486
     jpeg_quality: int = 70
     # picamera2 pipeline: "still" = full-res sensor readout per frame (slow,
     # ~10 Hz ceiling on a Pi Zero); "video" = continuous binned sensor mode
     # (same full FOV on the RPi cameras, much faster capture). If you switch
-    # an already-trained deployment to "video", verify the streamed image
-    # still matches training with ood_check.py before trusting evals.
-    camera_mode: Literal["still", "video"] = "still"
+    # an already-trained deployment's mode or resolution, verify the streamed
+    # image still matches training with ood_check.py before trusting evals.
+    camera_mode: Literal["still", "video"] = "video"
     # StreamState target rate (frames/s). Actual rate is capped by what
     # capture+JPEG-encode achieves on the hardware (see camera_mode).
-    stream_hz: float = 10.0
+    stream_hz: float = 30.0
+    # Explicit mock camera (generated placeholder frames) for dev machines
+    # without picamera2/hardware. NEVER enabled implicitly: on the robot a
+    # broken camera must fail the boot self-check, not stream fake images
+    # the policy would silently act on.
+    mock_camera: bool = False
 
     # Motors (Feetech STS3215 on serial bus)
     motor_port: str = "/dev/serial0"
