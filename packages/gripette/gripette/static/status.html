@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gripette status</title>
+<style>
+  :root { --ok:#2e7d32; --bad:#c62828; --warn:#f9a825; --bg:#14171a; --card:#1e2328; --fg:#e8eaed; --dim:#9aa0a6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,sans-serif; }
+  .wrap { max-width:760px; margin:0 auto; padding:12px; }
+  #banner { padding:14px 16px; border-radius:10px; font-size:20px; font-weight:700; text-align:center; margin-bottom:12px; }
+  .ok  { background:var(--ok); }  .bad { background:var(--bad); }  .warn { background:var(--warn); color:#14171a; }
+  .card { background:var(--card); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
+  .card h2 { margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px 16px; }
+  .kv b { display:block; font-size:12px; color:var(--dim); font-weight:500; }
+  #cam { width:100%; border-radius:8px; display:block; background:#000; min-height:120px; }
+  #camerr { color:var(--bad); font-family:monospace; font-size:13px; white-space:pre-wrap; }
+  pre { margin:0; font-size:11.5px; overflow-x:auto; color:var(--dim); max-height:260px; overflow-y:auto; }
+  pre .err { color:#ef9a9a; }
+  .btns { display:flex; gap:10px; }
+  button { flex:1; padding:12px; border:0; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; color:#fff; }
+  #restart { background:#37474f; } #shutdown { background:var(--bad); }
+  button:disabled { opacity:.5; }
+  #actionmsg { color:var(--dim); font-size:13px; margin-top:8px; min-height:1em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="banner" class="warn">connecting…</div>
+
+  <div class="card">
+    <h2>Camera <span id="camage" style="text-transform:none;font-weight:400"></span></h2>
+    <img id="cam" alt="camera">
+    <div id="camerr"></div>
+  </div>
+
+  <div class="card">
+    <h2>Gripette service</h2>
+    <div class="grid">
+      <div class="kv"><b>state</b><span id="svc"></span></div>
+      <div class="kv"><b>auto-restarts since boot</b><span id="nrestarts"></span></div>
+      <div class="kv"><b>gRPC uptime</b><span id="uptime"></span></div>
+      <div class="kv"><b>motor 1 / 2 (rad)</b><span id="motors"></span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>System</h2>
+    <div class="grid">
+      <div class="kv"><b>host</b><span id="host"></span></div>
+      <div class="kv"><b>CPU temp</b><span id="temp"></span></div>
+      <div class="kv"><b>throttled</b><span id="throttled"></span></div>
+      <div class="kv"><b>WiFi</b><span id="wifi"></span></div>
+      <div class="kv"><b>disk free</b><span id="disk"></span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Journal (gripette, last lines)</h2>
+    <pre id="journal"></pre>
+  </div>
+
+  <div class="card">
+    <div class="btns">
+      <button id="restart">Restart service</button>
+      <button id="shutdown">Shut down device</button>
+    </div>
+    <div id="actionmsg"></div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = (v, suffix="") => v === null || v === undefined ? "—" : v + suffix;
+
+function setBanner(cls, text) { const b = $("banner"); b.className = cls; b.textContent = text; }
+
+async function poll() {
+  let s;
+  try {
+    s = await (await fetch("/api/status")).json();
+  } catch (e) {
+    setBanner("bad", "status page unreachable");
+    return;
+  }
+  const svcOk = s.service.active_state === "active";
+  const camOk = s.camera.ok;
+  const grpcOk = s.grpc.ok;
+  if (svcOk && grpcOk && camOk) setBanner("ok", "GRIPETTE OK");
+  else if (!svcOk)  setBanner("bad", "SERVICE " + (s.service.active_state || "unknown").toUpperCase());
+  else if (!grpcOk) setBanner("bad", "SERVICE UP, gRPC UNREACHABLE");
+  else              setBanner("bad", "CAMERA FAILURE");
+
+  $("svc").textContent = fmt(s.service.active_state) + " (" + fmt(s.service.sub_state) + ")";
+  $("nrestarts").textContent = fmt(s.service.n_restarts);
+  $("uptime").textContent = s.grpc.uptime_s === null ? "—" : s.grpc.uptime_s + " s";
+  $("motors").textContent = s.motors.ok ? s.motors.motor1 + " / " + s.motors.motor2 : "—";
+  $("host").textContent = fmt(s.system.hostname) + (s.system.ip ? " (" + s.system.ip + ")" : "");
+  $("temp").textContent = fmt(s.system.cpu_temp_c, " °C");
+  $("throttled").textContent = fmt(s.system.throttled);
+  $("wifi").textContent = fmt(s.system.wifi_signal_dbm, " dBm");
+  $("disk").textContent = fmt(s.system.disk_free_gb, " GB");
+  $("camerr").textContent = s.camera.error || "";
+  $("journal").innerHTML = s.journal.map(l => {
+    const esc = l.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+    return /ERROR|CRITICAL|FAILED/.test(l) ? '<span class="err">'+esc+'</span>' : esc;
+  }).join("\n");
+  const j = $("journal"); j.scrollTop = j.scrollHeight;
+}
+
+function refreshImage() {
+  const img = $("cam");
+  const next = new Image();
+  next.onload = () => { img.src = next.src; $("camage").textContent = "(live)"; };
+  next.onerror = () => { $("camage").textContent = "(no image)"; };
+  next.src = "/api/frame.jpg?t=" + Date.now();
+}
+
+async function action(path, confirmMsg, btn) {
+  if (!confirm(confirmMsg)) return;
+  btn.disabled = true;
+  try {
+    const r = await fetch(path, {method: "POST"});
+    const body = await r.json();
+    $("actionmsg").textContent = r.ok ? "Command dispatched." : (body.detail || body.error || "failed");
+  } catch (e) {
+    $("actionmsg").textContent = "request failed: " + e;
+  }
+  setTimeout(() => { btn.disabled = false; }, 3000);
+}
+
+$("restart").onclick  = () => action("/api/restart-service", "Restart the gripette service?", $("restart"));
+$("shutdown").onclick = () => action("/api/shutdown", "Shut down the gripette device?", $("shutdown"));
+
+poll(); refreshImage();
+setInterval(poll, 1500);
+setInterval(refreshImage, 1000);
+</script>
+</body>
+</html>
