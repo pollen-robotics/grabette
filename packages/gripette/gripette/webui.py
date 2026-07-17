@@ -204,13 +204,24 @@ def system_info() -> dict:
 
 
 def full_status() -> dict:
-    frame = get_frame()  # shares the cache with /api/frame.jpg polls
+    g = grpc_status()
+    if g["ok"]:
+        frame = get_frame()  # shares the cache with /api/frame.jpg polls
+        camera = {"ok": frame["jpeg"] is not None, "error": frame["error"],
+                  "age_s": frame["age_s"]}
+        motors = motors_status()
+    else:
+        # Ping already failed — don't also attempt a frame grab through the
+        # dead channel; keeps status polls fast during a service outage and
+        # avoids repeating the same raw gRPC error three times.
+        camera = {"ok": False, "error": f"service unreachable ({g['error']})",
+                  "age_s": None}
+        motors = {"ok": False, "motor1": None, "motor2": None, "error": g["error"]}
     return {
         "service": service_status(),
-        "grpc": grpc_status(),
-        "motors": motors_status(),
-        "camera": {"ok": frame["jpeg"] is not None, "error": frame["error"],
-                   "age_s": frame["age_s"]},
+        "grpc": g,
+        "motors": motors,
+        "camera": camera,
         "system": system_info(),
         "journal": journal_tail(),
     }

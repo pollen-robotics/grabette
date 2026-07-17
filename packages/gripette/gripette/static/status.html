@@ -85,7 +85,9 @@ async function poll() {
     setBanner("bad", "status page unreachable");
     return;
   }
-  const svcOk = s.service.active_state === "active";
+  // Missing systemd info (dev machine / manual run) doesn't block a green
+  // banner — gRPC + camera are the real health signals.
+  const svcOk = s.service.active_state === "active" || s.service.active_state == null;
   const camOk = s.camera.ok;
   const grpcOk = s.grpc.ok;
   if (svcOk && grpcOk && camOk) setBanner("ok", "GRIPETTE OK");
@@ -113,8 +115,9 @@ async function poll() {
 function refreshImage() {
   const img = $("cam");
   const next = new Image();
-  next.onload = () => { img.src = next.src; $("camage").textContent = "(live)"; };
-  next.onerror = () => { $("camage").textContent = "(no image)"; };
+  next.onload = () => { img.src = next.src; img.style.opacity = 1; $("camage").textContent = "(live)"; };
+  // Dim the stale image on failure — a frozen frame must never look live.
+  next.onerror = () => { img.style.opacity = 0.25; $("camage").textContent = "(no image — showing last frame)"; };
   next.src = "/api/frame.jpg?t=" + Date.now();
 }
 
