@@ -50,3 +50,16 @@ jobs:
                   failed.append(m)
           sys.exit(1 if failed else 0)
           PY
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Device-package unit tests
+        # Behavioural regression tests (grabette SessionManager, ...), run
+        # against a temp-dir/mock path — no hardware. Extend per package.
+        run: uv run --package grabette --extra test pytest packages/grabette/tests -q
