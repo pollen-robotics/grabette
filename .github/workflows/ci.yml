@@ -1,13 +1,17 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  push:
+    branches:
+      - main
+      - develop
 
 jobs:
-  workspace:
-    runs-on: ubuntu-latest
+  # Real gate that the single workspace lock resolves and installs end to end
+  # on a clean machine, and that every service package imports.
+  build:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,8 +30,6 @@ jobs:
         run: uv lock --check
 
       - name: Build the full workspace environment
-        # Resolves and installs every member on a clean machine — the real
-        # gate that the single workspace lock works end to end.
         run: uv sync --all-packages
 
       - name: Import smoke test
@@ -50,3 +52,25 @@ jobs:
                   failed.append(m)
           sys.exit(1 if failed else 0)
           PY
+
+  # Pure-logic unit tests under tests/ (see [tool.pytest.ini_options]). Kept as a
+  # separate job so a test failure is distinct from a build/resolve failure.
+  tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Install system dependencies
+        run: sudo apt-get install -y libcap-dev
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build the workspace environment
+        # Includes the root [dependency-groups] dev group (pytest) by default.
+        run: uv sync --all-packages
+
+      - name: Unit tests
+        run: uv run pytest

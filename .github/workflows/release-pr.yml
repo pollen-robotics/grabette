@@ -1,0 +1,49 @@
+name: Open release PR
+
+# Convenience for the release flow: main only ever advances via a develop -> main
+# pull request, merged by hand after review. Trigger this manually (Actions tab ->
+# "Open release PR" -> Run workflow) to open that PR. You still review the commit
+# list and merge it yourself — this only saves opening the compare page.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.2.0), used in the PR title.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-release-pr:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update the develop -> main PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          title="Release${VERSION:+ $VERSION}: develop -> main"
+          body=$(printf '%s\n\n%s\n' \
+            "Automated release PR. Review the commit list below, then merge to cut the release." \
+            "Merging this promotes the current develop to main. Tag the release on main afterwards if you version with tags.")
+          # Reuse an existing open PR if one is already targeting main from develop.
+          existing=$(gh pr list --base main --head develop --state open \
+            --json number --jq '.[0].number' || true)
+          if [ -n "$existing" ]; then
+            echo "Release PR #$existing already open; leaving it in place."
+            gh pr edit "$existing" --title "$title"
+            exit 0
+          fi
+          gh pr create \
+            --base main --head develop \
+            --title "$title" \
+            --body "$body"

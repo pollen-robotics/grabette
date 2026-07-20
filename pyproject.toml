@@ -19,3 +19,18 @@ members = ["packages/*", "integrations/openarm/*"]
 name = "python-prctl"
 version = "1.8.1"
 requires-dist = []
+
+# Workspace-wide dev tooling. `uv sync` installs the `dev` group by default, so
+# CI's `uv sync --all-packages` already pulls pytest onto the runner.
+[dependency-groups]
+dev = ["pytest>=8"]
+
+# Unit tests live in the top-level tests/ tree, mirroring the package layout
+# (tests/grabette_postprocess/...). Scripts named *_test.py inside packages are
+# manual hardware bring-up scripts, NOT unit tests — keep them out of collection.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# importlib mode lets test files share a basename across package subtrees
+# (tests/grabette/test_sync.py and tests/gripette/test_sync.py) without the
+# sys.path collisions the legacy prepend mode hits.
+addopts = "-ra --import-mode=importlib"

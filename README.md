@@ -101,6 +101,27 @@ backend). Follow the package's own README for the exact steps:
 services run fine on 3.11. The OpenArm sim also needs the system `liburdfdom`
 package for `placo`.
 
+## Contribution
+
+Two branches:
+- **`develop`** takes every PR
+- **`main`** is releases only and advances *only* via a `develop → main` PR.
+
+```bash
+# feature / fix
+git checkout develop && git pull
+git checkout -b <issue>     # work, commit, then PR into develop
+
+# release: open a develop → main PR (Actions ▸ "Open release PR"), review, merge
+```
+
+CI runs on every PR and on pushes to `main`/`develop`: 
+- a `build` job (`uv lock --check`, workspace build, import smoke test)
+- a `tests` job.
+
+_Run tests locally with `uv run pytest` — unit tests live in `tests/` (`*_test.py` scripts inside `packages/` are manual bring-up tools, not tests)._
+
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).
