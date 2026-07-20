@@ -63,3 +63,12 @@ jobs:
         # Behavioural regression tests (grabette SessionManager, ...), run
         # against a temp-dir/mock path — no hardware. Extend per package.
         run: uv run --package grabette --extra test pytest packages/grabette/tests -q
+
+      - name: Postprocess unit tests
+        # Trajectory math + SLAM-quality / recording checks + episode tags.
+        # Pure Python (numpy/scipy/pandas/av), no Docker/SLAM. lerobot (torch)
+        # is skipped: the __init__ is empty so these modules don't import it,
+        # and leaving it out keeps the job fast.
+        run: |
+          uv sync --package grabette-postprocess --extra test --no-install-package lerobot
+          uv run --no-sync --package grabette-postprocess pytest packages/grabette-postprocess/tests -q

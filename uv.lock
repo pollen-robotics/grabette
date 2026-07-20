@@ -1713,6 +1713,11 @@ dependencies = [
     { name = "tqdm" },
 ]
 
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "av" },
@@ -1721,9 +1726,11 @@ requires-dist = [
     { name = "numpy" },
     { name = "opencv-python" },
     { name = "pandas" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "scipy" },
     { name = "tqdm" },
 ]
+provides-extras = ["test"]
 
 [[package]]
 name = "gradio"
