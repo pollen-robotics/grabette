@@ -1301,7 +1301,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 sess_btn = gr.update(value="▶ Start Session", variant="secondary")
                 cap_title = gr.skip()
                 banner = gr.update(value="")
-                task_update = gr.skip() if (active is None or active == current_task) else gr.update(value=active)
+                # The active task can change out-of-band — e.g. a fleet-driven
+                # (physical-button) recording creates a task locally via
+                # get_or_create_task. Pointing the dropdown at it WITHOUT also
+                # refreshing its choices makes Gradio raise "Value ... not in
+                # the list of choices" every tick until reload. So when the
+                # active task changed, refresh the choices in the same update
+                # (and never set a value that isn't among them).
+                if active and active != current_task:
+                    choices = _task_choices(_get_sessions())
+                    if any(cid == active for _n, cid in choices):
+                        task_update = gr.update(choices=choices, value=active)
+                    else:
+                        task_update = gr.skip()
+                else:
+                    task_update = gr.skip()
 
             return status, task_update, sess_btn, cap_title, banner, toggle_btn_update, table_update, move_dd_update, desc_update
 
