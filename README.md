@@ -96,10 +96,10 @@ backend). Follow the package's own README for the exact steps:
 [grabette](packages/grabette), [gripette](packages/gripette),
 [casquette](packages/casquette) *(WIP)*.
 
-**Note — `lerobot` / Python 3.12:** `grabette-postprocess` and the sim's
-`dataset` extra require Python ≥ 3.12 (gated by an env marker); the on-device
-services run fine on 3.11. The OpenArm sim also needs the system `liburdfdom`
-package for `placo`.
+**Note — `lerobot` / Python 3.12:** `grabette-postprocess`'s LeRobot commands,
+the real OpenArm driver, and the sim's `dataset`/`eval` extras require Python
+≥ 3.12 (gated by env markers so the device packages remain installable on
+3.11). The OpenArm sim also needs the system `liburdfdom` package for `placo`.
 
 ## License
 
