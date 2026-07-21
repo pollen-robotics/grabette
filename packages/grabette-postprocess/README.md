@@ -38,7 +38,9 @@ LeRobot v3 dataset/
 
 ## Setup
 
-Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires [uv](https://docs.astral.sh/uv/). The non-LeRobot conversion and SLAM
+tools support Python >= 3.11; dataset generation, publishing, and visualization
+require Python >= 3.12 because that is LeRobot 0.6's minimum.
 
 > Part of the uv **workspace**: a bare `uv sync` here would build the *entire
 > monorepo* environment. Always pass `--package` (root README → Development).
