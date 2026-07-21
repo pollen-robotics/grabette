@@ -146,9 +146,7 @@ class MockBackend(Backend):
     @staticmethod
     def _generate_test_pattern() -> bytes:
         """Generate a minimal test pattern as JPEG bytes."""
-        import io
         import struct
-        import zlib
 
         # Generate a 160x120 PPM image (color bars), then convert to JPEG-like
         # For simplicity, create a minimal valid JPEG using raw encoding

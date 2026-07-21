@@ -74,7 +74,7 @@ def main():
     errs = np.stack(errs)  # [n_chunks, H, D]
     mae = errs.mean()
     p95 = np.percentile(errs, 95)
-    print(f"\nRound-trip reconstruction error (normalized space):")
+    print("\nRound-trip reconstruction error (normalized space):")
     print(f"  mean abs err : {mae:.5f}")
     print(f"  p95  abs err : {p95:.5f}")
     print(f"  per-dim MAE  : {np.round(errs.mean(axis=(0, 1)), 5)}")

@@ -19,3 +19,18 @@ members = ["packages/*", "integrations/openarm/*"]
 name = "python-prctl"
 version = "1.8.1"
 requires-dist = []
+
+# ── Linting ──────────────────────────────────────────────────────────────
+# Workspace-wide ruff config. Uses ruff's default rule set (pyflakes F +
+# pycodestyle E4/E7/E9); E501 line-length is intentionally left off.
+[tool.ruff]
+# Generated gRPC stubs are not ours to lint.
+extend-exclude = ["**/*_pb2.py", "**/*_pb2_grpc.py", "**/*_pb2.pyi"]
+
+[tool.ruff.lint]
+# Deferred (lean gate — tighten later): E402 imports-not-at-top and F841
+# unused-locals are common-and-often-intentional in scripts/examples; the
+# rest are pure style. Keeping them off lets the gate start green with no
+# churn in unrelated files. Correctness rules (F401 unused-import, F811
+# redefinition, F821 undefined-name, F-string, E711/E712) stay ON.
+ignore = ["E402", "E701", "E702", "E731", "E741", "F841"]

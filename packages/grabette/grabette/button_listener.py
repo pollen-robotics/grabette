@@ -17,7 +17,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from pathlib import Path
 
 from grabette.session import UNASSIGNED_ID
 

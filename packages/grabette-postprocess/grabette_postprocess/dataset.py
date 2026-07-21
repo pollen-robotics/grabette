@@ -220,7 +220,7 @@ def build_dataset(
         # Find trajectory file
         traj_path = find_trajectory_csv(ep_dir)
         if traj_path is None:
-            print(f"  Skipping: no trajectory CSV found")
+            print("  Skipping: no trajectory CSV found")
             continue
 
         # Trajectory timestamps in seconds, relative to recording start (t=0),

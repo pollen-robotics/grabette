@@ -4,7 +4,6 @@ import asyncio
 import os
 import platform
 import socket
-import subprocess
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 

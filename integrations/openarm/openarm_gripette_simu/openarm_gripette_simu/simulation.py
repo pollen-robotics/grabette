@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 import mujoco
 import mujoco.viewer
-from openarm_gripette_model import OPENARM_RIGHT_DIR, OPENARM_RIGHT_SCENE
+from openarm_gripette_model import OPENARM_RIGHT_SCENE
 from .camera import FisheyeCamera
 from .kinematics import ARM_JOINT_NAMES
 
