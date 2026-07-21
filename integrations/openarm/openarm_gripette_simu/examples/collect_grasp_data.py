@@ -37,7 +37,7 @@ from openarm_gripette_simu.rotation import rotation_matrix_to_6d, rotation_6d_to
 # LeRobot dataset API + rotation helper to convert rotation matrix -> axis-angle (rotvec).
 # We re-use LeRobot's Rotation class (numpy-based, scipy-compatible API) instead of
 # pulling in scipy directly, since lerobot is already a dependency for this script.
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.rotation import Rotation as LeRobotRotation
 
 logger = logging.getLogger(__name__)

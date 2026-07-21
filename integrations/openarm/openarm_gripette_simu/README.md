@@ -19,6 +19,8 @@ Then sync the Python environment:
 
 > Part of the uv **workspace**: a bare `uv sync` here would build the *entire
 > monorepo* environment. Always pass `--package` (root README → Development).
+> The base simulator supports Python 3.11; the `dataset` and `eval` extras
+> require Python 3.12 because they install LeRobot 0.6.x.
 
 ```bash
 uv sync --package openarm-gripette-simu                  # base install
@@ -230,7 +232,7 @@ camera-local delta format produced by the `DiffusionPolicy` integration's
 `convert_dataset.py` (2D gripper state, 11D delta action).
 
 ```bash
-uv sync --package openarm-gripette-simu --extra eval   # adds lerobot + scipy
+uv sync --package openarm-gripette-simu --extra eval   # adds LeRobot Diffusion/Pi policy deps + scipy
 
 # Terminal 1 — arm grasp scene, headless
 uv run python -m openarm_gripette_simu --scene scenes/table_grasp.xml --headless

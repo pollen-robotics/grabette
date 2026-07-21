@@ -76,7 +76,8 @@ from openarm_gripette_simu.pedestal import PedestalClearance, PEDESTAL_MARGIN
 from openarm_gripette_simu.simulation import _load_model
 
 # LeRobot dataset writer + axis-angle helper (same imports as Stage 0).
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.configs import RGBEncoderConfig
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.rotation import Rotation as LeRobotRotation
 
 logger = logging.getLogger(__name__)
@@ -889,7 +890,7 @@ def main():
         root=output_root,
         robot_type="openarm_gripette_sim",
         use_videos=True,
-        vcodec=args.vcodec,
+        rgb_encoder=RGBEncoderConfig(vcodec=args.vcodec),
     )
     logger.info(f"Created LeRobotDataset at {dataset.root} (vcodec={args.vcodec}, {FPS} fps, "
                 f"{IMG_WIDTH}x{IMG_HEIGHT})")
