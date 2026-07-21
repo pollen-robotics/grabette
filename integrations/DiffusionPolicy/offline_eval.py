@@ -34,7 +34,7 @@ import numpy as np
 import torch
 
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+from lerobot.policies import get_policy_class, make_pre_post_processors
 
 from rotation import rotation_6d_to_rotation_matrix_numpy
 

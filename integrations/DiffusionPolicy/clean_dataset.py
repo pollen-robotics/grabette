@@ -38,8 +38,7 @@ from pathlib import Path
 
 import numpy as np
 
-from lerobot.datasets import LeRobotDataset
-from lerobot.datasets.dataset_tools import delete_episodes, remove_feature
+from lerobot.datasets import LeRobotDataset, delete_episodes, remove_feature
 
 
 logger = logging.getLogger(__name__)
@@ -226,7 +225,7 @@ def main():
         shutil.rmtree(dst_root)
 
     # Order: reject episodes FIRST, strip cameras SECOND. This is the only order
-    # lerobot 0.5.1 supports: delete_episodes cannot consume remove_feature's
+    # lerobot 0.6.0 supports: delete_episodes cannot consume remove_feature's
     # output (its per-episode image-stats quantiles come back (3,) where
     # aggregate_stats requires (3,1,1) → ValueError). The reverse chaining is
     # also the historically proven path. Costs a re-encode of the soon-to-be-
