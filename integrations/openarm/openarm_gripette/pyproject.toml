@@ -8,7 +8,9 @@ dependencies = [
     # Upstream LeRobot: provides the OpenArmFollower base class + Damiao motor
     # bus that we subclass in openarm7_follower.py. The [damiao] extra pulls in
     # python-can and Damiao SDK bits used by the CAN driver.
-    "lerobot[damiao]>=0.5.1 ; python_version >= '3.12'",
+    # The marker preserves the workspace's Python 3.11 device installs;
+    # running this real-hardware driver itself requires Python 3.12+.
+    "lerobot[damiao]==0.6.0 ; python_version >= '3.12'",
 
     # Kinematics + proto stubs + rotation utils. Bit-for-bit shared with the
     # simulator so the same eval script targets sim or real interchangeably.
