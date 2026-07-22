@@ -152,13 +152,21 @@ class ButtonListener:
         # the fleet "start group recording" button: the GROUP's task (assigned
         # on the fleet) wins and the start is synchronized at the shared T0. So
         # we don't impose our local active task — fleet returns the group's
-        # task in the sync response. Solo (no group) → local active task, now.
+        # task in the sync response.
         sync = await request_group_start("")
-        if sync and sync.get("status") == "scheduled":
+        status = sync.get("status")
+        if status == "scheduled":
             gname = sync.get("task_name") or ""
             task_id = sm.get_or_create_task(gname) if gname else sm.active_task_id
             target = datetime.fromisoformat(sync["scheduled_start_utc"])
+        elif status == "refused":
+            # Fleet says we're in a group session but can't start it now (e.g.
+            # a peer is offline). Do NOT silently record a half-rig solo
+            # episode — abort so the operator retries once the group is whole.
+            raise RuntimeError(f"group start refused by fleet: {sync.get('detail', '')}")
         else:
+            # "solo" (not in a session) or "unreachable" (standalone) → local
+            # active task, immediate.
             task_id = sm.active_task_id
             target = None
 

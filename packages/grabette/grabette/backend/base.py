@@ -19,6 +19,19 @@ class Backend(ABC):
     @abstractmethod
     async def start_capture(self, episode_dir: Path) -> None: ...
 
+    async def prepare_capture(self) -> None:
+        """Warm the hardware (init + wait until it produces valid frames)
+        WITHOUT starting a recording, so a later start_capture can begin the
+        recording clock immediately.
+
+        This exists for synchronized multi-device starts: if each device only
+        warms up at the shared T0 (inside start_capture), the recording clock
+        lands at T0 + a VARIABLE warmup, so devices drift apart (the OAK-D
+        cold-boot alone is several seconds). Calling this before T0 removes
+        that variance from the start. Idempotent, fast when already warm.
+        Default: no-op (backends with no slow init)."""
+        return None
+
     @abstractmethod
     async def stop_capture(self) -> CaptureStatus: ...
 
