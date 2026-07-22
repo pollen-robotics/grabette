@@ -35,16 +35,25 @@ def _auth_headers() -> Optional[dict[str, str]]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def request_group_start(task_name: str | None) -> Optional[dict[str, Any]]:
-    """Returns the fleet response dict on success, or None to start solo.
+async def request_group_start(task_name: str | None) -> dict[str, Any]:
+    """Ask the fleet to orchestrate a group start. Always returns a dict with
+    an explicit "status" so the caller never confuses these cases:
 
-    Response is {"status": "solo"} when the device has no group (or is the
-    only member), or {"status": "scheduled", "scheduled_start_utc": ...,
-    "task_name": ..., "peers": [...]} when peers were notified.
+      * "solo"       — fleet says this device is in no open session; record
+                       locally (legitimate standalone episode).
+      * "scheduled"  — group start scheduled: {scheduled_start_utc, task_name,
+                       peers}. Record at the shared T0.
+      * "refused"    — fleet was REACHED but declined (e.g. a peer is offline,
+                       HTTP 409). The device IS in a group session, so the
+                       caller must NOT silently record a half-rig solo episode
+                       — it should abort. Carries {http, detail}.
+      * "unreachable"— no token / relay disabled / network error. Fleet's view
+                       is unknown, so fall back to a local solo recording
+                       (device stays useful standalone).
     """
     headers = _auth_headers()
     if headers is None:
-        return None
+        return {"status": "unreachable"}
     import aiohttp
 
     url = f"{settings.relay_url.rstrip('/')}/api/devices/{settings.device_id}/sync/start"
@@ -52,13 +61,14 @@ async def request_group_start(task_name: str | None) -> Optional[dict[str, Any]]
         timeout = aiohttp.ClientTimeout(total=_START_TIMEOUT_S)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, json={"task_name": task_name or ""}, headers=headers) as r:
-                if r.status != 200:
-                    logger.warning("fleet sync/start failed: HTTP %d — %s", r.status, await r.text())
-                    return None
-                return await r.json()
-    except Exception as e:  # noqa: BLE001 — any network failure degrades to solo start
-        logger.info("fleet sync/start unavailable (%s) — starting solo", e)
-        return None
+                if r.status == 200:
+                    return await r.json()
+                detail = await r.text()
+                logger.warning("fleet sync/start refused: HTTP %d — %s", r.status, detail)
+                return {"status": "refused", "http": r.status, "detail": detail}
+    except Exception as e:  # noqa: BLE001 — network failure → standalone solo
+        logger.info("fleet sync/start unreachable (%s) — recording solo", e)
+        return {"status": "unreachable"}
 
 
 async def notify_group_stop() -> None:

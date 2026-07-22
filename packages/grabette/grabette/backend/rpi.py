@@ -356,6 +356,29 @@ class RpiBackend(Backend):
 
         return SensorState(imu=imu, angle=angle, capture=self.get_capture_status())
 
+    async def prepare_capture(self) -> None:
+        """Warm the OAK-D (init if needed + wait until it produces valid,
+        post-warmup frames) without starting a recording. Called before a
+        synchronized T0 so start_capture at T0 only starts the recording clock
+        — the multi-second, variable OAK-D bring-up no longer sits between T0
+        and the first frame. Idempotent; fast no-op when already warm."""
+        if self._capturing:
+            return
+        import asyncio
+        loop = asyncio.get_event_loop()
+        # Keep it warm for the imminent capture (don't let a keep-alive power
+        # it down between now and T0).
+        self._cancel_oakd_keepalive()
+        if not self.is_oakd_initialized:
+            await self.set_oakd_enabled(True)
+            self._oakd_auto_enabled = True
+        if self._needs_reinit:
+            self._reinit_hardware()
+        if self._oakd and self._oakd.is_initialized:
+            await loop.run_in_executor(
+                None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
+            )
+
     async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")

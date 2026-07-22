@@ -163,8 +163,16 @@ async def start_capture(
     # task. Solo (no group) → the requested/active local task, immediately.
     target_task_id = req.task_id or tm.active_task_id
     sync = await request_group_start("")
+    status = sync.get("status")
+    if status == "refused":
+        # Fleet knows this device is in a group session but declined (e.g. a
+        # peer is offline). Refuse rather than silently record a half-rig
+        # solo episode.
+        raise HTTPException(status_code=409,
+                            detail={"message": "group start refused (a peer may be offline)",
+                                    "detail": sync.get("detail")})
     target = None
-    if sync and sync.get("status") == "scheduled":
+    if status == "scheduled":
         gname = sync.get("task_name") or ""
         if gname:
             target_task_id = tm.get_or_create_task(gname)

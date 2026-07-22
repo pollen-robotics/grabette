@@ -52,6 +52,16 @@ class CaptureScheduler:
 
     async def _wait_and_start(self, backend, sm, episode_dir: Path, target_utc: datetime) -> None:
         try:
+            # Warm the hardware DURING the lead window (before T0), so the slow,
+            # variable OAK-D bring-up doesn't sit between T0 and the first frame
+            # — that variance is what makes two devices' recordings drift apart
+            # by ~1s. At T0, start_capture then only starts the recording clock.
+            # Best-effort: a warmup failure shouldn't cancel the start.
+            try:
+                await backend.prepare_capture()
+            except Exception:
+                logger.warning("prepare_capture (pre-T0 warmup) failed", exc_info=True)
+            # Recompute the wait AFTER warmup — warmup ate part of the lead.
             wait_s = (target_utc - datetime.now(timezone.utc)).total_seconds()
             if wait_s > 0:
                 await asyncio.sleep(wait_s)

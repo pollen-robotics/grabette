@@ -97,6 +97,11 @@ async def _handle_relay_command(cmd: dict) -> dict:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
 
     backend = daemon.backend
+    if ctype == "prepare_capture":
+        # Warm the hardware ahead of a synchronized start (fleet dispatches
+        # this when a session opens). No-op/fast when already warm.
+        await backend.prepare_capture()
+        return {"status": "ok"}
     if ctype == "start_capture":
         if backend.is_capturing:
             return {"status": "error", "message": "already capturing"}
