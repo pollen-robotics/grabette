@@ -67,8 +67,21 @@ class CaptureScheduler:
                 await asyncio.sleep(wait_s)
             self._starting = True
             try:
+                wake = datetime.now(timezone.utc)
                 await backend.start_capture(episode_dir)
+                started = datetime.now(timezone.utc)
                 logger.info("Scheduled start fired (target %s)", target_utc.isoformat())
+                # Record multi-device sync info into the episode's metadata.json
+                # (folded in at stop): the shared target lets a workstation PAIR
+                # the per-device episodes; capture_started_utc lets it convert
+                # each stream to absolute UTC and align them. wake_skew/start_ms
+                # expose the residual timing for diagnostics.
+                backend.set_sync_metadata({
+                    "scheduled_start_utc": target_utc.isoformat(),
+                    "capture_started_utc": started.isoformat(),
+                    "wake_skew_ms": round((wake - target_utc).total_seconds() * 1000, 1),
+                    "start_capture_ms": round((started - wake).total_seconds() * 1000, 1),
+                })
             finally:
                 self._starting = False
         except asyncio.CancelledError:

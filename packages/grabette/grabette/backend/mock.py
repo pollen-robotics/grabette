@@ -239,4 +239,7 @@ class MockBackend(Backend):
             "angle_convention": "positive_closing",
             "device_id": settings.device_id,
         }
+        sync_meta = self._take_sync_metadata()
+        if sync_meta:
+            meta["sync"] = sync_meta
         (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))

@@ -19,6 +19,23 @@ class Backend(ABC):
     @abstractmethod
     async def start_capture(self, episode_dir: Path) -> None: ...
 
+    def set_sync_metadata(self, meta: dict) -> None:
+        """Attach multi-device sync info to the NEXT episode's metadata.json.
+
+        Set by the CaptureScheduler around a synchronized start (the shared
+        scheduled_start_utc, the actual capture-start instant, skew). stop_capture
+        folds it into metadata.json so a workstation can (a) pair the per-device
+        episodes by the common scheduled_start_utc and (b) convert each stream to
+        absolute UTC to align them. Consumed once (cleared after)."""
+        self._sync_metadata = dict(meta or {})
+
+    def _take_sync_metadata(self) -> dict:
+        """Return and clear the pending sync metadata (so a later solo capture
+        never inherits a previous synchronized episode's data)."""
+        meta = getattr(self, "_sync_metadata", {})
+        self._sync_metadata = {}
+        return meta
+
     async def prepare_capture(self) -> None:
         """Warm the hardware (init + wait until it produces valid frames)
         WITHOUT starting a recording, so a later start_capture can begin the
