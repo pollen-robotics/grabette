@@ -95,16 +95,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - name: Install FFmpeg
+        # lerobot[dataset]'s video path uses torchcodec, which dlopens the system
+        # FFmpeg libraries (libavutil.so.* / libavcodec.so.* …) at runtime. A bare
+        # ubuntu-latest runner has none, so build_dataset fails at video encode.
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Lerobot-dependent tests (CPU torch)
         # CPU-only torch via `uv pip install --torch-backend=cpu` (~200 MB); a
         # plain workspace sync installs the CUDA wheel (~2.5 GB) — the tests use
         # no GPU. The lerobot spec is read from the postprocess pyproject so the
-        # tested version tracks the pin automatically (no drift).
+        # tested version tracks the pin automatically (no drift). cv2 comes from
+        # lerobot's opencv-python-headless — all the tests need (no GUI); no
+        # separate opencv-python.
         run: |
           SPEC=$(grep -oE "lerobot\[[a-z,]*\]==[0-9.]+" packages/grabette-postprocess/pyproject.toml | head -1)
           echo "Testing against: $SPEC"
           uv venv .venv-lerobot --python 3.12
-          VIRTUAL_ENV=.venv-lerobot uv pip install --torch-backend=cpu "$SPEC" pytest opencv-python pandas scipy av
+          VIRTUAL_ENV=.venv-lerobot uv pip install --torch-backend=cpu "$SPEC" pytest pandas scipy av
           PYTHONPATH=packages/grabette-postprocess .venv-lerobot/bin/python -m pytest \
             packages/grabette-postprocess/tests/test_lerobot_api.py \
             packages/grabette-postprocess/tests/test_dataset_build.py -v
