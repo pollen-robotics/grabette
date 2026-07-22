@@ -222,6 +222,16 @@ def parse_args():
                         "less squeeze (no force feedback). Try 1.3-1.6 if grasps slip. "
                         "Applied at send time, AFTER commit/latch logic (those thresholds "
                         "stay in model units).")
+    p.add_argument("--grip_torque_limit", type=float, default=0.0,
+                   help="Per-grasp GRIP FORCE CAP as a fraction 0..1 of the servo's max "
+                        "torque, applied to BOTH gripper DOFs. 0 (default) = unset = full "
+                        "torque = exactly today's behavior. The policy's per-DOF position "
+                        "targets are unchanged (they encode grasp SHAPE); the DOF driven "
+                        "into the object stalls at this cap, giving an object-size-"
+                        "independent, consistent grip force without a shape classifier. "
+                        "Force is now the cap, not Kp x position-overshoot — so --grip_gain "
+                        "only needs to push the closing target past contact. Real hardware "
+                        "only (no-op in sim). Try 0.2-0.4; watch motor{1,2}_load telemetry.")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -279,6 +289,9 @@ class CameraStream:
         self._pb2 = gripper_pb2
         self._lock = threading.Lock()
         self._latest = None
+        # Decoded present_load telemetry, kept separate from the policy state
+        # tuple (must NOT enter the observation — it would change obs dim).
+        self._latest_load = (0.0, 0.0)
         self._last_frame_wall = None  # local monotonic time of the last frame
         self._bad_frames = 0  # undecodable-payload counter (rate-limits the log)
         # Short history of recent frames (newest last) so consumers can build
@@ -320,6 +333,8 @@ class CameraStream:
                     )
                     with self._lock:
                         self._latest = (img_rgb, gripper, float(frame.timestamp_ms))
+                        self._latest_load = (float(frame.motor_state.motor1_load),
+                                             float(frame.motor_state.motor2_load))
                         self._last_frame_wall = time.monotonic()
                         self._history.append(self._latest)
                         if len(self._history) > 8:
@@ -356,6 +371,12 @@ class CameraStream:
         with self._lock:
             return self._latest
 
+    def get_load(self):
+        """Latest decoded gripper present_load (motor1, motor2). Telemetry
+        only — 0 in sim, real effort on hardware."""
+        with self._lock:
+            return self._latest_load
+
     def get_pair(self, timeout: float = 5.0):
         """Return (previous_frame, latest_frame) — the two most recent DISTINCT
         camera frames, each (img_rgb, gripper, ts_ms). The closest available
@@ -388,7 +409,7 @@ class ChunkExecutor:
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                  clamp_pos_m=None, clamp_rot_rad=None,
                  start_pos=None, start_rot=None, latch_close=None,
-                 grip_gain=1.0, grip_ref=(0.0, 0.0)):
+                 grip_gain=1.0, grip_ref=(0.0, 0.0), grip_torque_limit=0.0):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -417,6 +438,7 @@ class ChunkExecutor:
         self.latched_at_tick = None
         self._grip_gain = grip_gain
         self._grip_ref = grip_ref
+        self._grip_torque_limit = grip_torque_limit
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -491,7 +513,11 @@ class ChunkExecutor:
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
-                        self._gripper_pb2.MotorCommand(motor1_goal=g1, motor2_goal=g2)
+                        self._gripper_pb2.MotorCommand(
+                            motor1_goal=g1, motor2_goal=g2,
+                            motor1_torque_limit=self._grip_torque_limit,
+                            motor2_torque_limit=self._grip_torque_limit,
+                        )
                     )
                 except Exception as e:  # noqa: BLE001 — surface, don't die silently
                     logger.warning(f"Executor send failed: {e}")
@@ -597,6 +623,7 @@ def run_episode(
     dump_dir=None,
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
+    grip_torque_limit=0.0,
     latch_close=None,
     client=None,
     remote_k=None,
@@ -876,7 +903,11 @@ def run_episode(
                 gg1, gg2 = grip_latch
         gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
         gripper_stub.SendMotorCommand(
-            gripper_pb2.MotorCommand(motor1_goal=gg1, motor2_goal=gg2)
+            gripper_pb2.MotorCommand(
+                motor1_goal=gg1, motor2_goal=gg2,
+                motor1_torque_limit=grip_torque_limit,
+                motor2_torque_limit=grip_torque_limit,
+            )
         )
 
         if log_deltas and not joint_mode:
@@ -899,9 +930,11 @@ def run_episode(
             obs_g = state[-2:]
             cmd_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             obs_dist = obs_g[1] if len(obs_g) > 1 else 0.0
+            load1, load2 = camera.get_load()
             print(
                 f"step {step:3d} | gripper cmd: prox={gripper_goal[0]:+.4f} dist={cmd_dist:+.4f}"
-                f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}",
+                f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
+                f" | load: prox={load1:+.0f} dist={load2:+.0f}",
                 flush=True,
             )
 
@@ -999,6 +1032,7 @@ def run_episode_async(
     dump_dir=None,
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
+    grip_torque_limit=0.0,
 ) -> dict:
     """Async episode: ChunkExecutor streams actions at exactly `fps` (the demo
     clock) while this loop replans as fast as inference allows (~10 Hz), each
@@ -1038,7 +1072,8 @@ def run_episode_async(
                              start_pos=ep_start_pos.astype(np.float64),
                              start_rot=ep_start_rot.astype(np.float64),
                              latch_close=latch_close,
-                             grip_gain=grip_gain, grip_ref=grip_ref)
+                             grip_gain=grip_gain, grip_ref=grip_ref,
+                             grip_torque_limit=grip_torque_limit)
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
@@ -1384,6 +1419,7 @@ def main():
                 commit_close=args.commit_close,
                 grip_gain=args.grip_gain,
                 grip_ref=tuple(args.start_gripper),
+                grip_torque_limit=args.grip_torque_limit,
                 log_deltas=args.log_deltas,
                 log_latency=args.log_latency,
                 dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1406,6 +1442,7 @@ def main():
             log_gripper=args.log_gripper,
             grip_gain=args.grip_gain,
             grip_ref=tuple(args.start_gripper),
+            grip_torque_limit=args.grip_torque_limit,
             latch_close=args.latch_close,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
