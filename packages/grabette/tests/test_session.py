@@ -7,7 +7,7 @@ oakd_imu.json), not only for legacy/mock episodes (imu_data.json).
 import json
 from pathlib import Path
 
-from grabette.session import SessionManager
+from grabette.session import UNASSIGNED_ID, SessionManager
 
 
 def _make_episode(data_dir: Path, episode_id: str, files, meta=None) -> Path:
@@ -52,3 +52,31 @@ def test_imu_sample_count_from_metadata(tmp_path):
     _make_episode(tmp_path, "ep_cnt", ["oakd_imu.json"], meta={"oakd": {"imu_samples": 2115}})
     info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_cnt")
     assert info.imu_sample_count == 2115
+
+
+def test_delete_session_keeps_episodes(tmp_path):
+    # #98: deleting a task with delete_episodes=False preserves the episodes,
+    # reassigning them to Unassigned (the default, non-destructive path).
+    _make_episode(tmp_path, "ep_a", ["oakd_imu.json"])
+    sm = SessionManager(data_dir=tmp_path)
+    sid = sm.create_session("Task A")
+    sm.move_episodes(["ep_a"], sid)
+
+    sm.delete_session(sid, delete_episodes=False)
+
+    assert (tmp_path / "episodes" / "ep_a").exists()
+    assert "ep_a" in sm.get_session_detail(UNASSIGNED_ID).episode_ids
+
+
+def test_delete_session_purges_episodes(tmp_path):
+    # #98: deleting a task with delete_episodes=True removes the episode dirs
+    # from disk and does not leak them into Unassigned.
+    _make_episode(tmp_path, "ep_b", ["oakd_imu.json"])
+    sm = SessionManager(data_dir=tmp_path)
+    sid = sm.create_session("Task B")
+    sm.move_episodes(["ep_b"], sid)
+
+    sm.delete_session(sid, delete_episodes=True)
+
+    assert not (tmp_path / "episodes" / "ep_b").exists()
+    assert "ep_b" not in sm.get_session_detail(UNASSIGNED_ID).episode_ids

@@ -607,13 +607,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Edit Task helpers ─────────────────────────────────────────────
 
     def on_open_edit_form(session_id):
+        # Always collapse the delete-confirm box: it may have been left open
+        # from a previous edit, and re-opening Edit should start clean.
         if not session_id:
-            return gr.update(visible=False), "", ""
+            return gr.update(visible=False), "", "", gr.update(visible=False)
         sessions = _get_sessions()
         for s in sessions:
             if s["id"] == session_id:
-                return gr.update(visible=True), s.get("name", ""), s.get("description", "")
-        return gr.update(visible=True), "", ""
+                return gr.update(visible=True), s.get("name", ""), s.get("description", ""), gr.update(visible=False)
+        return gr.update(visible=True), "", "", gr.update(visible=False)
 
     def on_save_task(session_id, new_name, new_desc):
         if not session_id or not new_name.strip():
@@ -1246,7 +1248,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # Edit Task
         edit_task_btn.click(
             fn=on_open_edit_form, inputs=task_list,
-            outputs=[edit_task_form, rename_input, desc_edit_input],
+            outputs=[edit_task_form, rename_input, desc_edit_input, delete_confirm],
         )
         cancel_edit_btn.click(
             fn=lambda: gr.update(visible=False), outputs=edit_task_form,
