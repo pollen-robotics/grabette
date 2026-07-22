@@ -111,4 +111,11 @@ class RelayClient:
                     self.status, registered = "unreachable", False
                     logger.debug("relay unreachable: %s", e)
                     await asyncio.sleep(self.poll_interval * 2)
+                except Exception:
+                    # Anything unexpected (e.g. a non-serializable command
+                    # result) must NOT kill the loop — the relay is meant to run
+                    # forever. Log, re-register, and keep going.
+                    self.status, registered = "error", False
+                    logger.exception("relay loop error; continuing")
+                    await asyncio.sleep(self.poll_interval)
                 await asyncio.sleep(self.poll_interval)
