@@ -592,9 +592,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         result = client.create_session(name, description or "")
         if "error" in result:
             return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+        new_id = result["id"]
+        # Point the server-side active session at the new task (unless a capture
+        # session owns it). Otherwise the 0.5s capture timer reads the stale
+        # active session and snaps the radio back to the previously-selected
+        # task, so the episode list would keep showing the old task's episodes.
+        if not client.get_capture_session_status().get("active", False):
+            client.set_active_session(new_id)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
-        new_id = result["id"]
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(new_id, sessions)
         return gr.update(choices=choices, value=new_id), task_header, cap_title, desc, ep_title, rows, move_dd, gr.update(visible=False)
 
@@ -622,13 +628,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.update(visible=False),
         )
 
-    def on_delete_task(session_id):
+    def _delete_task(session_id, delete_episodes):
         if not session_id:
             return (gr.update(),) * 9
-        client.delete_session(session_id)
+        client.delete_session(session_id, delete_episodes=delete_episodes)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
+        # Sync the server-side active session to the task we land on, so the
+        # 0.5s capture timer doesn't try to restore the just-deleted task.
+        if value and not client.get_capture_session_status().get("active", False):
+            client.set_active_session(value)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
         return (
             gr.update(choices=choices, value=value),
@@ -636,6 +646,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.update(visible=False),
             gr.update(visible=False),
         )
+
+    def on_delete_task_keep(session_id):
+        # Delete the task but keep its episodes (they fall back to Unassigned).
+        return _delete_task(session_id, delete_episodes=False)
+
+    def on_delete_task_purge(session_id):
+        # Delete the task AND permanently remove all of its episodes from disk.
+        return _delete_task(session_id, delete_episodes=True)
 
     def _get_selected_ids(table_data) -> list[str]:
         if table_data is None:
@@ -659,28 +677,34 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_delete_episode(table_data, session_id):
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return "No episode selected", gr.update(), gr.update()
+            return "No episode selected", gr.update(), gr.update(), gr.update()
         errors = []
         for eid in episode_ids:
             result = client.delete_episode(eid)
             if "error" in result:
                 errors.append(f"{eid}: {result['error']}")
-        rows, move_dd, *_ = _refresh_episode_table(session_id)
+        rows, move_dd, _th, desc, *_ = _refresh_episode_table(session_id)
+        # Force the interactive dataframe to re-render: after the user ticks
+        # rows it holds "dirty" client-side state that a bare list won't
+        # overwrite, so the deleted rows (and their checkboxes) would linger.
+        table_upd = gr.update(value=rows)
         if errors:
-            return "Errors: " + "; ".join(errors), rows, move_dd
-        return f"Deleted {len(episode_ids)} episode(s)", rows, move_dd
+            return "Errors: " + "; ".join(errors), table_upd, move_dd, desc
+        return f"Deleted {len(episode_ids)} episode(s)", table_upd, move_dd, desc
 
     def on_move_episodes(table_data, target_session_id, current_session_id):
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return "No episode selected", gr.update(), gr.update()
+            return "No episode selected", gr.update(), gr.update(), gr.update()
         if not target_session_id:
-            return "No target task", gr.update(), gr.update()
+            return "No target task", gr.update(), gr.update(), gr.update()
         result = client.move_episodes(episode_ids, target_session_id)
         if "error" in result:
-            return f"Error: {result['error']}", gr.update(), gr.update()
-        rows, move_dd, *_ = _refresh_episode_table(current_session_id)
-        return f"Moved {len(episode_ids)} episode(s)", rows, move_dd
+            return f"Error: {result['error']}", gr.update(), gr.update(), gr.update()
+        rows, move_dd, _th, desc, *_ = _refresh_episode_table(current_session_id)
+        # gr.update(value=...) forces the interactive dataframe to drop its
+        # dirty checkbox state so the moved rows actually disappear.
+        return f"Moved {len(episode_ids)} episode(s)", gr.update(value=rows), move_dd, desc
 
     # ── SLAM ──────────────────────────────────────────────────────────
 
@@ -1104,12 +1128,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         save_task_btn = gr.Button("Save changes", variant="primary", size="sm")
                     with gr.Group(visible=False) as delete_confirm:
                         gr.Markdown(
-                            "⚠ **This will permanently delete the task and ALL its episodes. "
-                            "This action cannot be undone.**"
+                            "⚠ **Delete this task — what about its episodes?**\n\n"
+                            "- **Keep episodes**: the task is removed and its episodes "
+                            "move to *Unassigned*.\n"
+                            "- **Delete everything**: the task *and* all its episodes "
+                            "are permanently deleted. This cannot be undone."
                         )
                         with gr.Row():
+                            delete_keep_btn = gr.Button(
+                                "Delete task, keep episodes", variant="secondary", size="sm",
+                            )
                             confirm_delete_btn = gr.Button(
-                                "Yes, delete everything", variant="stop", size="sm",
+                                "Delete everything", variant="stop", size="sm",
                             )
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
 
@@ -1232,10 +1262,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cancel_delete_btn.click(
             fn=lambda: gr.update(visible=False), outputs=delete_confirm,
         )
+        _delete_outputs = [task_list, task_header_md, capture_title, task_desc_md, episodes_title,
+                           episodes_table, move_target_dd, edit_task_form, delete_confirm]
+        delete_keep_btn.click(
+            fn=on_delete_task_keep, inputs=task_list, outputs=_delete_outputs,
+        )
         confirm_delete_btn.click(
-            fn=on_delete_task, inputs=task_list,
-            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title,
-                     episodes_table, move_target_dd, edit_task_form, delete_confirm],
+            fn=on_delete_task_purge, inputs=task_list, outputs=_delete_outputs,
         )
 
         session_btn.click(
@@ -1253,11 +1286,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         dl_btn.click(fn=on_download_episodes, inputs=episodes_table, outputs=dl_file)
         del_episode_btn.click(
             fn=on_delete_episode, inputs=[episodes_table, task_list],
-            outputs=[episode_msg, episodes_table, move_target_dd],
+            outputs=[episode_msg, episodes_table, move_target_dd, task_desc_md],
         )
         move_btn.click(
             fn=on_move_episodes, inputs=[episodes_table, move_target_dd, task_list],
-            outputs=[episode_msg, episodes_table, move_target_dd],
+            outputs=[episode_msg, episodes_table, move_target_dd, task_desc_md],
         )
 
         replay_btn.click(
