@@ -22,6 +22,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Maximum tolerated start lateness for a scheduled (group) start. If T0 has
+# already passed by less than this when the command is processed, we start
+# immediately (best-effort) — a tiny delivery delay shouldn't drop the episode.
+# Beyond it we REFUSE: a start later than this is too desynced to be usable for
+# multi-device data, and keeping it would produce an episode that's still paired
+# by episode_id but misaligned (a false pair) — worse than an honest miss.
+MAX_START_LATENESS_S = 1.0
+
 _daemon: Daemon | None = None
 
 
@@ -127,8 +135,16 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 return {"status": "error", "message": f"invalid start_at_utc: {start_at_utc!r}"}
             if target.tzinfo is None:
                 target = target.replace(tzinfo=timezone.utc)
-            if target <= datetime.now(timezone.utc):
-                return {"status": "error", "message": "start_at_utc is in the past"}
+            late_s = (datetime.now(timezone.utc) - target).total_seconds()
+            if late_s > MAX_START_LATENESS_S:
+                # Too late to be usable for multi-device data — refuse rather
+                # than keep a desynced episode. (Common when the relay was busy
+                # muxing the previous stop and delivered this command late.)
+                return {"status": "error", "message": f"start_at_utc is {late_s:.1f}s late (> {MAX_START_LATENESS_S}s); refusing"}
+            if late_s > 0:
+                # Within tolerance: start immediately (the scheduler fires now
+                # when T0 has just passed); sync metadata records the real start.
+                logger.warning("scheduled start %.2fs late; starting best-effort", late_s)
 
         episode_id = tm.create_episode(task_id, episode_id=episode_id_for(target) if target else None)
         episode_dir = tm.episode_dir(episode_id)
