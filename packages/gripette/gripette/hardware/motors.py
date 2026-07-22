@@ -50,6 +50,16 @@ LOAD_READ_DECIMATION = 2
 # register — the running one is safe to write repeatedly.
 TORQUE_LIMIT_MAX = 1000
 
+# present_load's direction bit gives the hardware effort sign. We map it to the
+# robot convention — positive = CLOSING effort, matching "positive angle closes"
+# (true for both left and right gripette) — by applying the per-motor position
+# `sign` (so left/right read consistently, exactly like the angle handling)
+# plus this calibrated polarity. The sign is PRESERVED (no abs): an external
+# force driving the joint the other way flips it, which is meaningful.
+# Calibrated on a RIGHT unit (commanded close drives decoded load negative, so
+# we flip). VERIFY this polarity on a LEFT unit before trusting its load sign.
+LOAD_CLOSING_SIGN = -1
+
 try:
     from rustypot import Sts3215PyController
 
@@ -290,16 +300,24 @@ class MotorController:
 
     @staticmethod
     def _decode_load(raw: int) -> float:
-        """Decode Feetech present_load: bit 10 = direction, bits 0–9 =
-        magnitude (0–1000, ~PWM effort, clamped at the running torque_limit).
-        Returns a plain signed value so nothing downstream sees the register
-        quirk."""
+        """Decode Feetech present_load's register layout: bit 10 = direction,
+        bits 0–9 = magnitude (0–1000, ~PWM effort, clamped at torque_limit).
+        Returns the hardware-frame signed value; robot-frame mapping (sign
+        convention) is applied by _load_to_robot."""
         mag = raw & 0x3FF
         return float(-mag if (raw & 0x400) else mag)
 
+    def _load_to_robot(self, raw: int, idx: int) -> float:
+        """Decode present_load and map to ROBOT FRAME: positive = closing
+        effort (matching the angle convention), left/right-consistent via the
+        per-motor `sign`. Sign preserved — a force driving the joint the other
+        way flips it. See LOAD_CLOSING_SIGN."""
+        return self._decode_load(raw) * self.signs[idx] * LOAD_CLOSING_SIGN
+
     def get_present_load(self) -> list[float]:
-        """Most recent decoded present-load per motor (signed effort units).
-        Non-blocking; refreshed by the bus thread at a decimated rate."""
+        """Most recent present-load per motor, ROBOT FRAME (positive = closing
+        effort, left/right consistent; sign preserved). Non-blocking; refreshed
+        by the bus thread at a decimated rate."""
         if self._mock:
             return [0.0] * len(self.ids)
         with self._load_lock:
@@ -340,8 +358,8 @@ class MotorController:
                     raw = self._controller.sync_read_present_load(self.ids)
                     with self._load_lock:
                         self._cached_load = (
-                            self._decode_load(raw[0]),
-                            self._decode_load(raw[1]),
+                            self._load_to_robot(raw[0], 0),
+                            self._load_to_robot(raw[1], 1),
                         )
                 except Exception:
                     pass
