@@ -19,8 +19,7 @@ Usage:
 
 import argparse
 import numpy as np
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from lerobot.datasets.io_utils import load_episodes
+from lerobot.datasets import LeRobotDataset, load_episodes
 from scipy.spatial.transform import Rotation
 
 from rotation import rotation_6d_to_rotation_matrix_numpy

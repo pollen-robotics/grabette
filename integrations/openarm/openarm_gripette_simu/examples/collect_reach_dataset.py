@@ -446,7 +446,7 @@ def main():
 
     if args.push and ds is not None:
         logger.info(f"Pushing to HuggingFace Hub as {args.repo_id}...")
-        ds.push_to_hub()
+        ds.push_to_hub(private=False)
         logger.info("Push complete.")
 
     if viewer:

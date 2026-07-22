@@ -34,11 +34,14 @@ for the MuJoCo sim.
 ```bash
 cd integrations/DiffusionPolicy
 uv sync                     # creates the env from pyproject.toml (lerobot + scipy)
-uv sync --extra wandb       # add this if you want --wandb_project logging
 ```
 
+The pinned LeRobot `training` extra includes Accelerate and WandB, so both the
+stock `lerobot-train` command and `train.py --wandb_project ...` work in this
+environment (including through the script's HF Jobs/PEP-723 path).
+
 Everything runs through `uv run`. Pin `lerobot` in `pyproject.toml` to the exact
-version you validate against (the recipe was validated on lerobot 0.5.x).
+version you validate against (the recipe was validated on lerobot 0.6.0).
 
 ---
 
@@ -324,7 +327,7 @@ the class that produces "ignores the scene" failures.
 | `--cameras` | `observation.images.cam0` | Camera feature keys to use (others excluded). |
 | `--push_to_hub` | `None` | Push final + `<repo>-best` to the Hub. ⚠️ conflicts with `HF_HUB_OFFLINE=1`. |
 | `--hub_private` | off | Make the Hub repo private. |
-| `--wandb_project` / `--wandb_run_name` | `None` | wandb logging (needs `uv sync --extra wandb`). |
+| `--wandb_project` / `--wandb_run_name` | `None` | WandB logging (included by the pinned LeRobot `training` extra). |
 | `--resume_from` | `None` | Resume model + optimizer + step + best-val + rng from a checkpoint dir. |
 | `--wandb_resume_id` | `None` | Resume into an existing wandb run. |
 
@@ -370,17 +373,20 @@ uv run lerobot-train \
     --dataset.repo_id=<user>/<dataset>_cartesian \
     --policy.type=diffusion --policy.device=cuda \
     --policy.resize_shape="[236,236]" --policy.crop_ratio=0.95 \
+    --policy.use_separate_rgb_encoder_per_camera=false \
+    --policy.push_to_hub=true \
     --policy.down_dims="[256,512,1024]" --policy.noise_scheduler_type=DDIM \
     --policy.num_train_timesteps=50 --policy.num_inference_steps=16 \
     --policy.optimizer_lr=3e-4 --policy.optimizer_betas="[0.95,0.999]" \
-    --policy.scheduler_warmup_steps=2000 --policy.use_amp=true \
+    --policy.scheduler_warmup_steps=2000 \
     --batch_size=64 --steps=50000 --num_workers=8
 ```
 
 Trade-offs vs `train.py`:
 
 - ✅ Official, less code to maintain.
-- ❌ No best-by-val-loss checkpoint, no periodic val-loss eval, no `state_noise`.
+- ❌ Periodic val loss is logged, but there is no best-by-val-loss checkpoint
+  and no custom `state_noise`/resize-first color jitter.
 - ⚠️ **Do not** use `--dataset.image_transforms.enable=true` on synthetic data — its full-resolution jitter runs in the dataloader workers and is a severe throughput bottleneck (a different, far heavier path than `train.py`'s resize-first `--color_jitter`).
 - ⚠️ Runs through `accelerate` + the processor pipeline, i.e. more per-step overhead than `train.py`'s lean loop.
 
@@ -432,7 +438,7 @@ library · `0`/`1` = read the log.
 | `unable to allocate shared memory(shm) for file </torch_…>` mid-training | `$TMPDIR` is RAM-backed tmpfs; worker shm files filled it (train.py warns about this at startup) | `mkdir -p ~/tmp && TMPDIR=~/tmp uv run python train.py …` |
 | `Could not push packet to decoder: Invalid data …` | A corrupt video segment in the dataset (often written to a full tmpfs) | `check_dataset_videos.py` names the episodes → `--exclude_episodes <list>`, or re-run the pipeline with `--work` on real disk |
 | Same decode error appearing only after HOURS of training that previously read the same episodes fine | Bad bytes reached the disk but the page cache served the good copy until eviction (write-path/RAM issue on that machine) | Re-run `check_dataset_videos.py` after a reboot (cold cache = true disk reads); if corruption recurs across datasets, memtest the machine |
-| Instant exit, empty log, or import-time segfault | Broken venv (interrupted sync) or Python ≠ 3.12 | `rm -rf .venv && uv sync` (the pyproject pins Python 3.12 and lerobot 0.5.x) |
+| Instant exit, empty log, or import-time segfault | Broken venv (interrupted sync) or Python ≠ 3.12 | `rm -rf .venv && uv sync` (the pyproject pins Python 3.12 and lerobot 0.6.0) |
 | `AttributeError: 'NoneType' … shape` at policy init | Pointed at the RAW dataset instead of the converted one (train.py now explains this itself) | Train on the `*_cartesian` output; the exact command is in `<work>/train_command.txt` |
 | `HFValidationError: Repo id must be in the form…` on `--resume_from` | Checkpoint path didn't exist so it was treated as a Hub id (now guarded) | Pass the **absolute** path; dirs are zero-padded (`checkpoint_015000`) |
 | Datasets vanished after a reboot | They were in `/tmp` (tmpfs) | Keep work dirs on disk (`run_pipeline.sh` now defaults to `~/.cache/grabette_pipeline` and warns on tmpfs); raw datasets belong on the Hub |
@@ -446,7 +452,7 @@ library · `0`/`1` = read the log.
 - **lerobot API surface used:** `make_pre_post_processors`,
   `DiffusionConfig`/`DiffusionPolicy`, `LeRobotDataset(Metadata)`,
   `dataset_to_policy_features`, `DiffusionConfig.get_optimizer_preset`, and (in
-  `convert_dataset.py`) `lerobot.datasets.dataset_tools.recompute_stats`. Stable
-  across lerobot 0.5.x; if you bump lerobot and a call moves, that's where to look.
+  `convert_dataset.py`) `lerobot.datasets.recompute_stats`. These are the
+  canonical public entry points in lerobot 0.6.0; re-check them on every bump.
 - **Reproducing the certified model:** keep `--color_jitter --state_noise_std
   0.01`, batch 64, 50k steps, and the default (random) crop.

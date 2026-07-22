@@ -23,8 +23,8 @@ handle the 7 arm joints).
 
 from dataclasses import dataclass, field
 
-from lerobot.robots.config import RobotConfig
-from lerobot.robots.openarm_follower.config_openarm_follower import OpenArmFollowerConfigBase
+from lerobot.robots import RobotConfig
+from lerobot.robots.openarm_follower import OpenArmFollowerConfigBase
 
 # Default arm joint limits (degrees). These match the standard OpenArm arm.
 RIGHT_DEFAULT_JOINTS_LIMITS: dict[str, tuple[float, float]] = {
@@ -55,6 +55,13 @@ class OpenArm7FollowerConfigBase(OpenArmFollowerConfigBase):
     No gripper motor on the CAN bus — the gripper is expected to be controlled
     via a separate interface (gRPC, USB, etc.).
     """
+
+    # lerobot 0.6.0 gates per-motor .vel/.torque observations behind this flag,
+    # defaulting to False (position-only, for the openarm_mini teleoperator).
+    # Keep the 0.5.x OBSERVATION shape: datasets recorded with this robot keep
+    # their velocity/torque columns. OpenArm7Follower.action_features overrides
+    # the upstream shared feature map so actions remain position-only.
+    use_velocity_and_torque: bool = True
 
     # 7 arm joints, no gripper. Same CAN IDs and motor types as the standard OpenArm.
     motor_config: dict[str, tuple[int, int, str]] = field(
