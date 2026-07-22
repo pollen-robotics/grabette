@@ -127,7 +127,7 @@ def analyze(repo_id: str, root: str | None = None):
           f"ep length min/mean/max: {lens.min()}/{lens.mean():.0f}/{lens.max()}")
 
     # --- Action deltas (position) ---
-    print(f"\n  POSITION DELTAS (per-step, mm)")
+    print("\n  POSITION DELTAS (per-step, mm)")
     print(f"    |Δpos| mean {dpos_mm.mean():.2f}  p50 {np.median(dpos_mm):.2f}  "
           f"p95 {np.percentile(dpos_mm,95):.2f}  max {dpos_mm.max():.2f}")
 
@@ -147,13 +147,13 @@ def analyze(repo_id: str, root: str | None = None):
         resid = d[k // 2: k // 2 + len(smooth)] - smooth
         snr.append(np.linalg.norm(smooth, axis=1).mean()
                    / max(np.linalg.norm(resid, axis=1).mean(), 1e-9))
-    print(f"\n  SUPERVISION SNR (smooth-motion : noise, 5-frame window; ≥3 is healthy)")
+    print("\n  SUPERVISION SNR (smooth-motion : noise, 5-frame window; ≥3 is healthy)")
     print(f"    median over episodes: {np.median(snr):.2f}" if snr else
           "    n/a (episodes too short)")
 
     # --- Action deltas (rotation) ---
     drot_deg = per_step_rotation_deg(A, ep, eps, is_delta)
-    print(f"\n  ROTATION DELTAS (per-step, deg)")
+    print("\n  ROTATION DELTAS (per-step, deg)")
     print(f"    |Δrot| mean {drot_deg.mean():.2f}  p50 {np.median(drot_deg):.2f}  "
           f"p95 {np.percentile(drot_deg,95):.2f}  p99 {np.percentile(drot_deg,99):.2f}  "
           f"max {drot_deg.max():.2f}")
@@ -171,7 +171,7 @@ def analyze(repo_id: str, root: str | None = None):
             rot_glitchy.append((int(e), round(float(drot_deg[m].max()), 1)))
         if m.sum() < SHORT_FRAMES:
             short.append((int(e), int(m.sum())))
-    print(f"\n  ANOMALIES (candidates to drop before training)")
+    print("\n  ANOMALIES (candidates to drop before training)")
     print(f"    glitchy (Δpos spike >{SPIKE_MM}mm): {len(glitchy)} eps  "
           f"{glitchy[:12]}{' ...' if len(glitchy)>12 else ''}")
     print(f"    rot-glitchy (Δrot spike >{SPIKE_DEG}°): {len(rot_glitchy)} eps  "

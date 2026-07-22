@@ -45,7 +45,7 @@ def main():
         fps = NUM_FRAMES / elapsed
         avg_size = sum(sizes) / len(sizes)
 
-        print(f"\nResults:")
+        print("\nResults:")
         print(f"  Frames: {NUM_FRAMES}")
         print(f"  Elapsed: {elapsed:.2f}s")
         print(f"  FPS: {fps:.1f}")

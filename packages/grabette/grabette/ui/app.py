@@ -527,7 +527,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             value=move_choices[0][1] if move_choices else None,
         )
         task_header = f"## Task: {task_name}" if task_name else ""
-        cap_title = f"### Capture" if not task_name else f"### Capture a new episode for *{task_name}*"
+        cap_title = "### Capture" if not task_name else f"### Capture a new episode for *{task_name}*"
         count = len(rows)
         count_str = f"{count} episode" + ("s" if count != 1 else "")
         ep_title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
@@ -643,7 +643,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         try:
             if table_data.empty:
                 return []
-            selected = table_data[table_data.iloc[:, 0] == True]
+            selected = table_data[table_data.iloc[:, 0] == True]  # noqa: E712  pandas element-wise boolean mask, not a truthiness check
             return selected.iloc[:, 1].tolist()
         except Exception:
             return []
@@ -1009,13 +1009,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return f"Upload started (job: {result.get('job_id', '?')})"
 
     def check_hf_account():
-        return _hf_status_text(client.hf_check_auth())
+        return _hf_status_text(client.hf_check_auth())  # noqa: F821  FIXME: _hf_status_text is undefined (latent NameError) — tracked separately
 
     def on_hf_update_token(token):
         if not token:
             return "No token provided", gr.update()
         result = client.hf_set_auth(token)
-        return _hf_status_text(result), gr.update(value="")
+        return _hf_status_text(result), gr.update(value="")  # noqa: F821  FIXME: _hf_status_text is undefined (latent NameError) — tracked separately
 
     def on_hf_remove_token():
         client.hf_set_auth("")

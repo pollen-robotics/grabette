@@ -160,7 +160,7 @@ def change_id(ctrl: Sts3215PyController, current_id: int, new_id: int) -> bool:
         readback = ctrl.read_id(new_id)[0]
     except RuntimeError as e:
         print(f"  ERROR: motor does not respond at new id {new_id}: {e}")
-        print(f"         The ID write did not take effect. Power-cycle the motor")
+        print("         The ID write did not take effect. Power-cycle the motor")
         print(f"         and re-run; if it persists at id {current_id}, EEPROM may still be locked.")
         return False
     if readback != new_id:
@@ -173,8 +173,8 @@ def change_id(ctrl: Sts3215PyController, current_id: int, new_id: int) -> bool:
         ctrl.write_lock(new_id, True)
     except RuntimeError as e:
         print(f"  WARNING: could not lock EEPROM at id {new_id}: {e}")
-        print(f"           ID change succeeded; EEPROM left unlocked (harmless,")
-        print(f"           but other EEPROM regs will be writable until next power cycle).")
+        print("           ID change succeeded; EEPROM left unlocked (harmless,")
+        print("           but other EEPROM regs will be writable until next power cycle).")
 
     return True
 

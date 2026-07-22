@@ -66,7 +66,7 @@ class Daemon:
         self._error: str | None = None
         self.sample_ring = SampleRing()
         self._poll_task: asyncio.Task | None = None
-        self._replay: "ReplayEngine | None" = None
+        self._replay: "ReplayEngine | None" = None  # noqa: F821  forward ref; real import is deferred (see below) to avoid a cycle
         self._generation: int = 0
 
     async def start(self) -> None:

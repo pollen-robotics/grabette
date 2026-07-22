@@ -27,7 +27,6 @@ import logging
 import time
 from pathlib import Path
 
-import cv2
 import mujoco
 import numpy as np
 from PIL import Image
