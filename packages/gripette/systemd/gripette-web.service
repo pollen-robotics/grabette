@@ -1,0 +1,18 @@
+[Unit]
+Description=Gripette - status web UI
+After=network.target
+
+[Service]
+Type=simple
+User=rasp
+WorkingDirectory=/home/rasp/Project/Repo/gripette
+ExecStart=/home/rasp/Project/Repo/gripette/.venv/bin/python -m gripette.webui
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Same per-device config as the main service (GRIPPER_WEB_PORT, GRIPPER_PORT).
+EnvironmentFile=-/etc/gripette/env
+
+[Install]
+WantedBy=multi-user.target

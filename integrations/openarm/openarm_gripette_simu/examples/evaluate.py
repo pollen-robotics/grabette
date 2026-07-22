@@ -268,11 +268,19 @@ class CameraStream:
     marks a stale (already-consumed) frame.
     """
 
+    # A live camera delivers 15-30 Hz with hiccups <0.5 s; a frame older than
+    # this is a DEAD/FROZEN stream. A policy fed a frozen frame runs open-loop
+    # while the arm keeps integrating deltas ("crazy arm", 2026-07-16) — that
+    # must be a hard stop, not a log line.
+    STALE_LIMIT_S = 2.0
+
     def __init__(self, gripper_stub, gripper_pb2):
         self._stub = gripper_stub
         self._pb2 = gripper_pb2
         self._lock = threading.Lock()
         self._latest = None
+        self._last_frame_wall = None  # local monotonic time of the last frame
+        self._bad_frames = 0  # undecodable-payload counter (rate-limits the log)
         # Short history of recent frames (newest last) so consumers can build
         # a 2-observation pair (the policy is n_obs_steps=2: it conditions on
         # inter-frame motion). 8 frames ≈ 0.4 s at 20 Hz.
@@ -288,8 +296,22 @@ class CameraStream:
                 for frame in self._stub.StreamState(self._pb2.StreamRequest()):
                     if self._stop:
                         return
-                    img_bgr = cv2.imdecode(
+                    img_bgr = (cv2.imdecode(
                         np.frombuffer(frame.jpeg_data, np.uint8), cv2.IMREAD_COLOR)
+                        if len(frame.jpeg_data) else None)
+                    if img_bgr is None:
+                        # Service up but camera not producing images (empty or
+                        # corrupt JPEG payload). Do NOT crash-reconnect-churn:
+                        # keep reading motor state messages; the staleness
+                        # watchdog in get()/get_pair() turns this into a hard,
+                        # explained stop on the consumer side.
+                        self._bad_frames += 1
+                        if self._bad_frames % 30 == 1:  # ~1 log/s at 30 Hz
+                            logger.error(
+                                "Camera frame has no decodable image (empty/"
+                                "corrupt JPEG) — is the Gripette camera actually "
+                                "streaming? (GRIPPER_CAMERA_MODE, service logs)")
+                        continue
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
                     gripper = np.array(
                         [frame.motor_state.motor1_position,
@@ -298,6 +320,7 @@ class CameraStream:
                     )
                     with self._lock:
                         self._latest = (img_rgb, gripper, float(frame.timestamp_ms))
+                        self._last_frame_wall = time.monotonic()
                         self._history.append(self._latest)
                         if len(self._history) > 8:
                             self._history.pop(0)
@@ -307,9 +330,29 @@ class CameraStream:
                     logger.warning(f"Camera stream dropped ({e}); reconnecting...")
                     time.sleep(0.2)
 
-    def get(self, timeout: float = 5.0):
+    def _check_fresh(self, timeout: float):
+        """Hard safety gate for every frame handed to the policy: raise with an
+        actionable message if the camera never streamed, or streamed once and
+        FROZE (the classic failure: gripper service up, camera module not
+        started — the old code silently served the last frame forever and the
+        policy ran open-loop)."""
         if not self._ready.wait(timeout):
-            raise RuntimeError("No frame received from camera stream")
+            raise RuntimeError(
+                f"No frame from the Gripette camera within {timeout:.0f}s — the "
+                "service answered but the camera is not streaming. Check the "
+                "gripette service: GRIPPER_CAMERA_MODE=video, camera cable, "
+                "service logs (journalctl -u gripette).")
+        with self._lock:
+            age = time.monotonic() - self._last_frame_wall
+        if age > self.STALE_LIMIT_S:
+            raise RuntimeError(
+                f"Camera stream FROZEN: newest frame is {age:.1f}s old "
+                f"(limit {self.STALE_LIMIT_S:.0f}s). Refusing to feed a stale "
+                "image to the policy — the arm would run open-loop. Check the "
+                "gripette camera service, then restart the episode.")
+
+    def get(self, timeout: float = 5.0):
+        self._check_fresh(timeout)
         with self._lock:
             return self._latest
 
@@ -319,8 +362,7 @@ class CameraStream:
         approximation of the 20 ms-spaced observation pair the policy was
         trained on (camera period sets the floor). Duplicates latest if only
         one frame exists yet."""
-        if not self._ready.wait(timeout):
-            raise RuntimeError("No frame received from camera stream")
+        self._check_fresh(timeout)
         with self._lock:
             now = self._history[-1]
             prev = self._history[-2] if len(self._history) >= 2 else now
