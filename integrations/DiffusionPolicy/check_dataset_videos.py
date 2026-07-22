@@ -19,8 +19,7 @@ Usage:
 
 import argparse
 
-from lerobot.datasets.dataset_metadata import LeRobotDatasetMetadata
-from lerobot.datasets.io_utils import load_episodes
+from lerobot.datasets import LeRobotDatasetMetadata, load_episodes
 from lerobot.datasets.video_utils import decode_video_frames
 from tqdm import tqdm
 

@@ -11,13 +11,17 @@ dependencies = [
     "click",
     "pandas",
     "tqdm",
-    # Pinned: the build path relies on LeRobotDataset.create(vcodec=, streaming_encoding=)
-    # and on `datasets` being a core dep — both true in 0.5.1. A later release moved
-    # `datasets` to an extra and dropped the `vcodec` kwarg, so an unpinned rebuild
-    # broke the pipeline. Bump deliberately after checking dataset.py against the API.
-    "lerobot==0.5.1 ; python_version >= '3.12'",
+    "lerobot[dataset,viz]==0.6.0 ; python_version >= '3.12'",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

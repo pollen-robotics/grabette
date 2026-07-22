@@ -25,11 +25,11 @@ import grpc
 import numpy as np
 import torch
 
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors
 import json as _json
 from pathlib import Path as _Path
 
-from lerobot.policies.factory import get_policy_class
+from lerobot.policies import get_policy_class
 
 
 def _load_policy_any(checkpoint: str):
@@ -43,7 +43,7 @@ def _load_policy_any(checkpoint: str):
     float32 — their checkpoints are saved bf16, and the pi05 port's flow
     path has a bf16 dtype clash at inference.
     """
-    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.configs import PreTrainedConfig
 
     cfg = PreTrainedConfig.from_pretrained(checkpoint)
     if hasattr(cfg, "compile_model"):

@@ -30,7 +30,8 @@ openarm_gripette/
 
 ## Install
 
-The package is part of the monorepo `uv` workspace:
+The package is part of the monorepo `uv` workspace. Running the real-hardware
+driver requires Python >= 3.12, LeRobot 0.6's minimum:
 
 ```bash
 cd /path/to/grabette
@@ -257,6 +258,12 @@ import openarm_gripette  # registers OpenArm7Follower with draccus
 ```
 
 Alternatively, LeRobot's plugin auto-discovery (`register_third_party_plugins`) will find this package if it's installed under a distribution name starting with `lerobot_robot_`. We chose the plain `openarm_gripette` name for readable direct imports; if you need auto-discovery in a shared install, publish under `lerobot_robot_openarm_gripette` or add a shim distribution.
+
+Note: on lerobot 0.6.x the recording CLI requires the `core-scripts` extra
+(dataset + hardware + visualization dependencies). Install
+`lerobot[core-scripts,damiao]` on recording machines, plus any extra required
+by the chosen teleoperator. This driver package itself only needs
+`lerobot[damiao]`.
 
 ## Design notes
 

@@ -6,6 +6,16 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Ruff
+        # Config in the root pyproject.toml ([tool.ruff]). Default rule set
+        # (pyflakes + pycodestyle E4/E7/E9); generated proto stubs excluded.
+        run: uvx ruff check packages integrations
+
   workspace:
     runs-on: ubuntu-latest
     steps:
@@ -50,3 +60,25 @@ jobs:
                   failed.append(m)
           sys.exit(1 if failed else 0)
           PY
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Device-package unit tests
+        # Behavioural regression tests (grabette SessionManager, ...), run
+        # against a temp-dir/mock path — no hardware. Extend per package.
+        run: uv run --package grabette --extra test pytest packages/grabette/tests -q
+
+      - name: Postprocess unit tests
+        # Trajectory math + SLAM-quality / recording checks + episode tags.
+        # Pure Python (numpy/scipy/pandas/av), no Docker/SLAM. lerobot (torch)
+        # is skipped: the __init__ is empty so these modules don't import it,
+        # and leaving it out keeps the job fast.
+        run: |
+          uv sync --package grabette-postprocess --extra test --no-install-package lerobot
+          uv run --no-sync --package grabette-postprocess pytest packages/grabette-postprocess/tests -q
