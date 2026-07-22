@@ -22,20 +22,28 @@ class GripperFrame(_message.Message):
     def __init__(self, jpeg_data: _Optional[bytes] = ..., motor_state: _Optional[_Union[MotorState, _Mapping]] = ..., timestamp_ms: _Optional[float] = ..., sequence: _Optional[int] = ...) -> None: ...
 
 class MotorState(_message.Message):
-    __slots__ = ("motor1_position", "motor2_position")
+    __slots__ = ("motor1_position", "motor2_position", "motor1_load", "motor2_load")
     MOTOR1_POSITION_FIELD_NUMBER: _ClassVar[int]
     MOTOR2_POSITION_FIELD_NUMBER: _ClassVar[int]
+    MOTOR1_LOAD_FIELD_NUMBER: _ClassVar[int]
+    MOTOR2_LOAD_FIELD_NUMBER: _ClassVar[int]
     motor1_position: float
     motor2_position: float
-    def __init__(self, motor1_position: _Optional[float] = ..., motor2_position: _Optional[float] = ...) -> None: ...
+    motor1_load: float
+    motor2_load: float
+    def __init__(self, motor1_position: _Optional[float] = ..., motor2_position: _Optional[float] = ..., motor1_load: _Optional[float] = ..., motor2_load: _Optional[float] = ...) -> None: ...
 
 class MotorCommand(_message.Message):
-    __slots__ = ("motor1_goal", "motor2_goal")
+    __slots__ = ("motor1_goal", "motor2_goal", "motor1_torque_limit", "motor2_torque_limit")
     MOTOR1_GOAL_FIELD_NUMBER: _ClassVar[int]
     MOTOR2_GOAL_FIELD_NUMBER: _ClassVar[int]
+    MOTOR1_TORQUE_LIMIT_FIELD_NUMBER: _ClassVar[int]
+    MOTOR2_TORQUE_LIMIT_FIELD_NUMBER: _ClassVar[int]
     motor1_goal: float
     motor2_goal: float
-    def __init__(self, motor1_goal: _Optional[float] = ..., motor2_goal: _Optional[float] = ...) -> None: ...
+    motor1_torque_limit: float
+    motor2_torque_limit: float
+    def __init__(self, motor1_goal: _Optional[float] = ..., motor2_goal: _Optional[float] = ..., motor1_torque_limit: _Optional[float] = ..., motor2_torque_limit: _Optional[float] = ...) -> None: ...
 
 class MotorCommandResponse(_message.Message):
     __slots__ = ("success", "error")
@@ -43,13 +51,13 @@ class MotorCommandResponse(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ...) -> None: ...
 
 class TorqueCommand(_message.Message):
     __slots__ = ("enable",)
     ENABLE_FIELD_NUMBER: _ClassVar[int]
     enable: bool
-    def __init__(self, enable: bool = ...) -> None: ...
+    def __init__(self, enable: _Optional[bool] = ...) -> None: ...
 
 class TorqueResponse(_message.Message):
     __slots__ = ("success", "error")
@@ -57,7 +65,7 @@ class TorqueResponse(_message.Message):
     ERROR_FIELD_NUMBER: _ClassVar[int]
     success: bool
     error: str
-    def __init__(self, success: bool = ..., error: _Optional[str] = ...) -> None: ...
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ...) -> None: ...
 
 class ReadMotorsRequest(_message.Message):
     __slots__ = ()

@@ -34,6 +34,8 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         self._sync = sync
         self._stream_interval = 1.0 / stream_hz
         self._camera_failures = 0
+        # Last torque-limit fractions applied, to dedup the per-command write.
+        self._last_torque_limit: tuple[float, float] | None = None
 
     def StreamState(self, request, context):
         """Server-streaming: yields GripperFrame at the configured rate."""
@@ -71,11 +73,14 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
             pos1, pos2 = self._motors.read_positions()
             timestamp_ms = self._sync.get_timestamp_ms()
 
+            load1, load2 = self._motors.get_present_load()
             frame = gripper_pb2.GripperFrame(
                 jpeg_data=jpeg_data,
                 motor_state=gripper_pb2.MotorState(
                     motor1_position=pos1,
                     motor2_position=pos2,
+                    motor1_load=load1,
+                    motor2_load=load2,
                 ),
                 timestamp_ms=timestamp_ms,
                 sequence=sequence,
@@ -92,20 +97,37 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         logger.info("StreamState: client disconnected after %d frames", sequence)
 
     def SendMotorCommand(self, request, context):
-        """Unary: send goal positions to motors."""
+        """Unary: send goal positions to motors (and optional torque limit)."""
         try:
+            self._apply_torque_limit(request)
             self._motors.write_goal_positions(request.motor1_goal, request.motor2_goal)
             return gripper_pb2.MotorCommandResponse(success=True)
         except Exception as e:
             logger.exception("Motor command failed")
             return gripper_pb2.MotorCommandResponse(success=False, error=str(e))
 
+    def _apply_torque_limit(self, request):
+        """Deposit a torque-limit write only when the command sets it and it
+        changed. A value of 0 means "unset" (proto default) — left untouched,
+        so a client that never sets it keeps full torque (backward-compatible).
+        Deduped here so a constant per-command value isn't re-deposited at
+        stream rate."""
+        tl = (request.motor1_torque_limit, request.motor2_torque_limit)
+        if tl[0] <= 0.0 and tl[1] <= 0.0:
+            return  # unset — leave the current limit alone
+        if tl != self._last_torque_limit:
+            self._motors.set_torque_limit([tl[0], tl[1]])
+            self._last_torque_limit = tl
+
     def ReadMotors(self, request, context):
-        """Unary: read motor positions (lightweight, no camera)."""
+        """Unary: read motor positions + load (lightweight, no camera)."""
         pos1, pos2 = self._motors.read_positions()
+        load1, load2 = self._motors.get_present_load()
         return gripper_pb2.MotorState(
             motor1_position=pos1,
             motor2_position=pos2,
+            motor1_load=load1,
+            motor2_load=load2,
         )
 
     def SetTorque(self, request, context):

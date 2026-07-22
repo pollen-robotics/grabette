@@ -40,6 +40,26 @@ DEFAULT_SERIAL_TIMEOUT = 0.05
 # consumer, so clients never see stale data.
 DEFAULT_BUS_HZ = 100.0
 
+# present_load is force telemetry / feedback, not the position control signal,
+# so it doesn't need the full bus rate. Reading it costs one extra sync round
+# trip; do it every Nth tick to keep the position read on the hot path.
+LOAD_READ_DECIMATION = 2
+
+# STS3215 running (RAM) torque-limit register range: 0..1000 = 0..100% of the
+# servo's max torque. This is the *running* limit, NOT the EEPROM max-torque
+# register — the running one is safe to write repeatedly.
+TORQUE_LIMIT_MAX = 1000
+
+# present_load's direction bit gives the hardware effort sign. We map it to the
+# robot convention — positive = CLOSING effort, matching "positive angle closes"
+# (true for both left and right gripette) — by applying the per-motor position
+# `sign` (so left/right read consistently, exactly like the angle handling)
+# plus this calibrated polarity. The sign is PRESERVED (no abs): an external
+# force driving the joint the other way flips it, which is meaningful.
+# Calibrated on a RIGHT unit (commanded close drives decoded load negative, so
+# we flip). VERIFY this polarity on a LEFT unit before trusting its load sign.
+LOAD_CLOSING_SIGN = -1
+
 try:
     from rustypot import Sts3215PyController
 
@@ -103,10 +123,21 @@ class MotorController:
         self._pos_lock = threading.Lock()
         self._cached_positions: tuple[float, float] = (0.0, 0.0)
 
+        # Cached present-load (decoded signed effort), refreshed by the bus
+        # thread at a decimated rate. Separate lock so a load read never
+        # contends with the higher-rate position read.
+        self._load_lock = threading.Lock()
+        self._cached_load: tuple[float, float] = (0.0, 0.0)
+        self._load_tick = 0
+
         # Pending write slots (written by RPC threads, consumed by bus thread).
         self._slot_lock = threading.Lock()
         self._pending_goal: tuple[float, float] | None = None
         self._pending_torque: bool | None = None
+        # Torque-limit is a per-grasp write: deposit as raw register units,
+        # applied only when it changed (dedup) so we never write per-tick.
+        self._pending_torque_limit: tuple[int, int] | None = None
+        self._last_torque_limit: tuple[int, int] | None = None
 
         # Bus thread lifecycle.
         self._running = False
@@ -245,6 +276,53 @@ class MotorController:
         with self._slot_lock:
             self._pending_torque = enable
 
+    def set_torque_limit(self, values: list[float]) -> None:
+        """Queue a RUNNING (RAM) torque-limit write. Non-blocking, last-wins.
+
+        `values` are fractions 0.0–1.0 of the servo's max torque, one per
+        motor. The bus thread applies it only when it changed (dedup), so this
+        is a per-grasp write, never per-tick. The fraction→register mapping
+        lives here so callers never see raw units. Hits the RAM running-torque
+        register (safe to rewrite), NOT the EEPROM max-torque register.
+        """
+        if len(values) != len(self.ids):
+            raise ValueError(
+                f"expected {len(self.ids)} torque-limit values, got {len(values)}"
+            )
+        raw = tuple(
+            int(round(max(0.0, min(1.0, v)) * TORQUE_LIMIT_MAX)) for v in values
+        )
+        if self._mock:
+            logger.debug("Mock motors → torque_limit %s", raw)
+            return
+        with self._slot_lock:
+            self._pending_torque_limit = raw
+
+    @staticmethod
+    def _decode_load(raw: int) -> float:
+        """Decode Feetech present_load's register layout: bit 10 = direction,
+        bits 0–9 = magnitude (0–1000, ~PWM effort, clamped at torque_limit).
+        Returns the hardware-frame signed value; robot-frame mapping (sign
+        convention) is applied by _load_to_robot."""
+        mag = raw & 0x3FF
+        return float(-mag if (raw & 0x400) else mag)
+
+    def _load_to_robot(self, raw: int, idx: int) -> float:
+        """Decode present_load and map to ROBOT FRAME: positive = closing
+        effort (matching the angle convention), left/right-consistent via the
+        per-motor `sign`. Sign preserved — a force driving the joint the other
+        way flips it. See LOAD_CLOSING_SIGN."""
+        return self._decode_load(raw) * self.signs[idx] * LOAD_CLOSING_SIGN
+
+    def get_present_load(self) -> list[float]:
+        """Most recent present-load per motor, ROBOT FRAME (positive = closing
+        effort, left/right consistent; sign preserved). Non-blocking; refreshed
+        by the bus thread at a decimated rate."""
+        if self._mock:
+            return [0.0] * len(self.ids)
+        with self._load_lock:
+            return list(self._cached_load)
+
     def _bus_loop(self) -> None:
         """Single owner of the serial bus. Reads positions, applies pending writes."""
         while self._running:
@@ -271,12 +349,29 @@ class MotorController:
                         e,
                     )
 
+            # 1b. Read present_load at a decimated rate (force telemetry, not
+            #     the position control signal). A dropped load read is
+            #     non-critical — just skip it.
+            self._load_tick += 1
+            if self._load_tick % LOAD_READ_DECIMATION == 0:
+                try:
+                    raw = self._controller.sync_read_present_load(self.ids)
+                    with self._load_lock:
+                        self._cached_load = (
+                            self._load_to_robot(raw[0], 0),
+                            self._load_to_robot(raw[1], 1),
+                        )
+                except Exception:
+                    pass
+
             # 2. Drain pending write slots under the lock, then apply outside it.
             with self._slot_lock:
                 goal = self._pending_goal
                 self._pending_goal = None
                 torque_req = self._pending_torque
                 self._pending_torque = None
+                tl_req = self._pending_torque_limit
+                self._pending_torque_limit = None
 
             if goal is not None:
                 try:
@@ -296,6 +391,19 @@ class MotorController:
                     )
                 except Exception as e:
                     logger.warning("Motor torque write failed: %s", e)
+
+            # Apply torque-limit only when it changed (per-grasp, not per-tick).
+            if tl_req is not None and tl_req != self._last_torque_limit:
+                try:
+                    self._controller.sync_write_torque_limit(
+                        self.ids, [tl_req[0], tl_req[1]]
+                    )
+                    self._last_torque_limit = tl_req
+                    logger.info(
+                        "Motors torque_limit set to %s /%d", tl_req, TORQUE_LIMIT_MAX
+                    )
+                except Exception as e:
+                    logger.warning("Torque-limit write failed: %s", e)
 
             # 3. Sleep to the next tick.
             elapsed = time.monotonic() - tick
