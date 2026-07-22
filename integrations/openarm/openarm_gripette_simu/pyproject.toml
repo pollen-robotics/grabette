@@ -18,11 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.60"]
-dataset = ["lerobot>=0.5 ; python_version >= '3.12'"]
+dataset = ["lerobot[dataset]==0.6.0 ; python_version >= '3.12'"]
 # Policy evaluation client (examples/evaluate.py): loads a trained policy and
-# drives the sim over gRPC. lerobot for the policy, scipy for rotation math.
+# drives the sim over gRPC. [diffusion] supplies diffusers; [pi] supplies the
+# transformers stack for the Pi0/Pi0.5/Pi0Fast checkpoints this client supports.
+# scipy is also used directly for rotation math.
 eval = [
-    "lerobot>=0.5.1 ; python_version >= '3.12'",
+    "lerobot[diffusion,pi]==0.6.0 ; python_version >= '3.12'",
     "scipy>=1.10",
 ]
 

@@ -49,7 +49,7 @@ import numpy as np
 import torch
 
 from lerobot.datasets import LeRobotDataset
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors
 
 from offline_eval import load_policy
 

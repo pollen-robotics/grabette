@@ -24,11 +24,12 @@ motors (7 here vs. 8 for the standard OpenArm).
 """
 
 import logging
+from functools import cached_property
 
 from lerobot.types import RobotAction, RobotObservation
-from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils import check_if_already_connected, check_if_not_connected
 
-from lerobot.robots.openarm_follower.openarm_follower import OpenArmFollower
+from lerobot.robots.openarm_follower import OpenArmFollower
 from lerobot.robots.utils import ensure_safe_goal_position
 from .config_openarm7_follower import (
     LEFT_DEFAULT_JOINTS_LIMITS,
@@ -58,6 +59,19 @@ class OpenArm7Follower(OpenArmFollower):
         config.side = None
         super().__init__(config)
         config.side = original_side
+
+    @cached_property
+    def action_features(self) -> dict[str, type]:
+        """Position-only action schema expected by the teleoperator and bus.
+
+        LeRobot 0.6 uses ``use_velocity_and_torque`` for the upstream
+        ``_motors_ft`` map shared by observations and actions. We keep those
+        channels in observations for dataset compatibility, but neither the
+        teleoperator nor ``send_action`` produces velocity/torque commands.
+        Advertising them here makes ``lerobot-record`` index missing action
+        keys. Keep the command surface aligned with what is actually sent.
+        """
+        return {f"{motor}.pos": float for motor in self.bus.motors}
 
     # -- Calibration bypass -------------------------------------------------
     # OpenArm motor zeros live in the Damiao motor firmware (set externally
@@ -117,12 +131,11 @@ class OpenArm7Follower(OpenArmFollower):
         appear in the URDF convention upstream.
         """
         obs = super().get_observation()
-        # Only the `.pos` channels carry signed angle. Velocities/torques are
-        # left alone — they get their direction from the position derivative,
-        # not from an absolute sign convention.
+        # Position, its derivative, and generalized torque all change sign
+        # when mapping a reversed motor coordinate into the URDF coordinate.
         for key in list(obs.keys()):
-            if key.endswith(".pos"):
-                motor = key.removesuffix(".pos")
+            motor, separator, quantity = key.rpartition(".")
+            if separator and quantity in {"pos", "vel", "torque"}:
                 sign = self._joint_sign(motor)
                 if sign != 1.0:
                     obs[key] = obs[key] * sign
