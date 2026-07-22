@@ -78,7 +78,33 @@ jobs:
         # Trajectory math + SLAM-quality / recording checks + episode tags.
         # Pure Python (numpy/scipy/pandas/av), no Docker/SLAM. lerobot (torch)
         # is skipped: the __init__ is empty so these modules don't import it,
-        # and leaving it out keeps the job fast.
+        # and leaving it out keeps the job fast. The lerobot-dependent tests in
+        # this dir self-skip here (pytest.importorskip) and run in the 'lerobot'
+        # job below.
         run: |
           uv sync --package grabette-postprocess --extra test --no-install-package lerobot
           uv run --no-sync --package grabette-postprocess pytest packages/grabette-postprocess/tests -q
+
+  lerobot:
+    # Guards the lerobot boundary so a dependency bump can't silently regress it
+    # (e.g. the vcodec->rgb_encoder break). Runs the tests that need lerobot
+    # actually installed — Tier A API-surface tripwires + Tier B synthetic
+    # build_dataset round-trip — which the fast 'tests' job skips via
+    # pytest.importorskip("lerobot").
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Lerobot-dependent tests (CPU torch)
+        # CPU-only torch via `uv pip install --torch-backend=cpu` (~200 MB); a
+        # plain workspace sync installs the CUDA wheel (~2.5 GB) — the tests use
+        # no GPU. The lerobot spec is read from the postprocess pyproject so the
+        # tested version tracks the pin automatically (no drift).
+        run: |
+          SPEC=$(grep -oE "lerobot\[[a-z,]*\]==[0-9.]+" packages/grabette-postprocess/pyproject.toml | head -1)
+          echo "Testing against: $SPEC"
+          uv venv .venv-lerobot --python 3.12
+          VIRTUAL_ENV=.venv-lerobot uv pip install --torch-backend=cpu "$SPEC" pytest opencv-python pandas scipy av
+          PYTHONPATH=packages/grabette-postprocess .venv-lerobot/bin/python -m pytest \
+            packages/grabette-postprocess/tests/test_lerobot_api.py \
+            packages/grabette-postprocess/tests/test_dataset_build.py -v
