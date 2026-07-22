@@ -90,8 +90,23 @@ uv run python -m grabette
   - `--system-site-packages` makes the apt-installed `libcamera` and `numpy` visible to the venv.
 - Runs `uv sync --package grabette --extra rpi --extra ui --extra hf` and verifies all imports succeed.
 - Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
+- Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
 
 Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
+
+### Clock sync for multi-device recording (`make install-ntp`)
+
+Synchronized group recording starts every device at a shared UTC instant that
+each waits out on **its own clock**, so any clock offset *between* two grabettes
+becomes an offset between their recordings. `make install-ntp` (also run by
+`install-rpi`) drops `config/timesyncd-grabette.conf` into
+`/etc/systemd/timesyncd.conf.d/grabette.conf`, pinning `systemd-timesyncd` to a
+single coordinated anycast service (`time.cloudflare.com`) shared by all
+devices — instead of the default `*.pool.ntp.org`, which resolves to a
+**different physical server per device** (independent offsets → tens of ms of
+relative skew). Verify with `timedatectl timesync-status` (look at `Server:` /
+`Offset:`). For the tightest sync (sub-ms), run a local NTP server on the LAN
+and point `NTP=` at it (see the comments in `config/timesyncd-grabette.conf`).
 
 If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the venv setup didn't take — `make install-rpi` will fix it on a re-run.
 
