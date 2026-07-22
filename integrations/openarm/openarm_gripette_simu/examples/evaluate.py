@@ -59,6 +59,35 @@ from openarm_gripette_simu.rotation import (
 )
 
 
+# --- Debug frame display (headless-safe) -------------------------------------
+# cv2.imshow needs a GUI-enabled OpenCV. The workspace often resolves to
+# opencv-python-headless (pulled by lerobot; same cv2 namespace), whose imshow
+# raises cv2.error. So --debug shows a live window when a GUI build is present,
+# and otherwise falls back to writing numbered frames to disk — either way it
+# never crashes the eval.
+_DEBUG_GUI = None       # None = untried, True = window works, False = headless
+_DEBUG_N = 0
+_DEBUG_DIR = _Path("eval_debug_frames")
+
+
+def debug_display(img_bgr):
+    """Show one eval frame in a window, or save it if OpenCV has no GUI. Warns once."""
+    global _DEBUG_GUI, _DEBUG_N
+    if _DEBUG_GUI is not False:
+        try:
+            cv2.imshow("Evaluation", img_bgr)
+            cv2.waitKey(1)
+            _DEBUG_GUI = True
+            return
+        except cv2.error:
+            _DEBUG_GUI = False
+            _DEBUG_DIR.mkdir(exist_ok=True)
+            print(f"[--debug] OpenCV has no GUI (headless build); saving frames "
+                  f"to {_DEBUG_DIR}/ instead of a live window.", flush=True)
+    cv2.imwrite(str(_DEBUG_DIR / f"frame_{_DEBUG_N:05d}.png"), img_bgr)
+    _DEBUG_N += 1
+
+
 def clamp_delta(delta_pos, delta_rot_6d, clamp_pos_m, clamp_rot_rad):
     """Clip a Cartesian-delta action's magnitude (safety test for outlier samples).
 
@@ -919,8 +948,7 @@ def run_episode(
                 (0, 255, 0),
                 2,
             )
-            cv2.imshow("Evaluation", cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            debug_display(cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR))
 
         # --- Check success ---
         if step > 0 and step % success_check_freq == 0:
@@ -1199,6 +1227,9 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
     device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested (--device cuda) but unavailable — falling back to CPU.")
+        device = torch.device("cpu")
 
     remote = args.policy_addr is not None
     if remote and args.async_exec:
@@ -1274,7 +1305,16 @@ def main():
             policy.config.n_action_steps = args.n_action_steps
         policy.to(device)
         policy.eval()
-        preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+        # The preprocessor's DeviceProcessorStep is restored from the checkpoint's
+        # saved processor config (device baked in as "cuda"), which overrides
+        # policy.config.device. Override it explicitly so observations land on the
+        # same device as the weights — otherwise --device cpu crashes with an
+        # input(cuda)/weight(cpu) mismatch. (The postprocessor already targets cpu.)
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy.config,
+            pretrained_path=args.checkpoint,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
 
         # Auto-detect state/action mode from the policy's feature shapes.
         state_dim = policy.config.robot_state_feature.shape[0]
@@ -1470,7 +1510,7 @@ def main():
               f"({total_clamped} steps clamped across {num_total} eps)")
     print(f"{'=' * 60}")
 
-    if args.debug:
+    if args.debug and _DEBUG_GUI:
         cv2.destroyAllWindows()
     camera.stop()
     arm_channel.close()

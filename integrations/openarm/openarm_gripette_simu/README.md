@@ -245,8 +245,16 @@ uv run python examples/evaluate.py \
 
 - `--checkpoint` — local path or HF repo id.
 - `--n_action_steps 8` — committed grasp (lower = more reactive approach, but can hesitate on the trigger).
-- `--debug` — show the camera feed; `--log_gripper` — print the gripper command vs observed state each step.
+- `--debug` — preview the camera feed; `--log_gripper` — print the gripper command vs observed state each step.
 - `--clamp_pos_mm` / `--clamp_rot_deg` — cap per-step Cartesian deltas (stability test).
+
+**OpenCV: headless by default, GUI window opt-in.** The workspace installs **`opencv-python-headless`** — lerobot depends on it and the on-device services (grabette on the Pi) need it, and a single venv can hold only one `cv2`. In this default, `--debug` **saves annotated frames to `eval_debug_frames/`** (and warns once) instead of opening a window. To get a **live preview window** on a GUI workstation, install the full build over the headless one:
+
+```bash
+uv pip install --force-reinstall opencv-python
+```
+
+Workstation-only (don't do this for a Pi deployment), and re-run it after any `uv sync` — sync restores the headless build.
 
 ### Remote inference (big VLA checkpoints)
 
