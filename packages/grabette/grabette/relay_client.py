@@ -80,42 +80,81 @@ class RelayClient:
             r.raise_for_status()
 
     async def run(self, handler: CommandHandler) -> None:
-        """Register + poll + dispatch + report, forever. Resilient to errors."""
+        """Register + poll + dispatch + report, forever. Resilient to errors.
+
+        The poll loop and command EXECUTION are decoupled: the loop only
+        registers, polls, and enqueues commands, then keeps polling. A separate
+        worker executes commands and reports results. This matters because some
+        handlers block for seconds (stop_capture muxes the mp4 + tears down the
+        OAK-D). If the poll loop awaited them inline, the device would stop
+        heartbeating AND stop receiving commands for the whole muxing window —
+        so it'd flap offline and the NEXT episode's start_capture would arrive
+        late (past its T0). Decoupled, the loop keeps the device online and
+        delivers commands promptly; the worker runs them (in order, one at a
+        time — the backend can't record two captures at once) as it frees up."""
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            registered = False
-            while True:
-                token = self.token_provider()
-                if not token:
-                    self.status, registered = "no-token", False
-                    await asyncio.sleep(self.poll_interval)
-                    continue
-                try:
-                    if not registered:
-                        await self._register(session, token)
-                        registered = True
-                    commands = await self._poll(session, token)
-                    for cmd in commands:
+            queue: "asyncio.Queue[dict]" = asyncio.Queue()
+            inflight: set[str] = set()  # command ids queued/running (dedup)
+
+            async def worker() -> None:
+                while True:
+                    cmd = await queue.get()
+                    try:
                         try:
                             res = await handler(cmd)
                         except Exception as e:  # noqa: BLE001
                             res = {"status": "error", "message": str(e)}
-                        await self._report(session, token, cmd["id"], res)
-                    self.status = "online"
-                except aiohttp.ClientResponseError as e:
-                    # 401/403 (token) or 404 (state lost on Space restart) → re-register
-                    self.status, registered = f"http {e.status}", False
-                    logger.warning("relay error %s; will re-register", e.status)
+                        token = self.token_provider()
+                        if token:
+                            try:
+                                await self._report(session, token, cmd["id"], res)
+                            except Exception:
+                                logger.warning("relay report failed for %s", cmd.get("id"), exc_info=True)
+                    finally:
+                        inflight.discard(cmd.get("id"))
+                        queue.task_done()
+
+            worker_task = asyncio.create_task(worker())
+            registered = False
+            try:
+                while True:
+                    token = self.token_provider()
+                    if not token:
+                        self.status, registered = "no-token", False
+                        await asyncio.sleep(self.poll_interval)
+                        continue
+                    try:
+                        if not registered:
+                            await self._register(session, token)
+                            registered = True
+                        commands = await self._poll(session, token)
+                        for cmd in commands:
+                            cid = cmd.get("id")
+                            if cid in inflight:
+                                continue  # already queued/running — don't double-dispatch
+                            inflight.add(cid)
+                            queue.put_nowait(cmd)
+                        self.status = "online"
+                    except aiohttp.ClientResponseError as e:
+                        # 401/403 (token) or 404 (state lost on Space restart) → re-register
+                        self.status, registered = f"http {e.status}", False
+                        logger.warning("relay error %s; will re-register", e.status)
+                        await asyncio.sleep(self.poll_interval)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                        self.status, registered = "unreachable", False
+                        logger.debug("relay unreachable: %s", e)
+                        await asyncio.sleep(self.poll_interval * 2)
+                    except Exception:
+                        # Anything unexpected must NOT kill the loop — the relay
+                        # is meant to run forever. Log, re-register, keep going.
+                        self.status, registered = "error", False
+                        logger.exception("relay loop error; continuing")
+                        await asyncio.sleep(self.poll_interval)
                     await asyncio.sleep(self.poll_interval)
-                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    self.status, registered = "unreachable", False
-                    logger.debug("relay unreachable: %s", e)
-                    await asyncio.sleep(self.poll_interval * 2)
-                except Exception:
-                    # Anything unexpected (e.g. a non-serializable command
-                    # result) must NOT kill the loop — the relay is meant to run
-                    # forever. Log, re-register, and keep going.
-                    self.status, registered = "error", False
-                    logger.exception("relay loop error; continuing")
-                    await asyncio.sleep(self.poll_interval)
-                await asyncio.sleep(self.poll_interval)
+            finally:
+                worker_task.cancel()
+                try:
+                    await worker_task
+                except asyncio.CancelledError:
+                    pass
