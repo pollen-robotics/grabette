@@ -159,7 +159,11 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "not capturing"}
         result = await backend.stop_capture()
         tm.register_episode(getattr(result, "episode_id", None))
-        return {"status": "ok", "result": result}
+        # Return a plain dict, not the CaptureStatus model: the relay POSTs this
+        # result as JSON, and json.dumps can't serialize a pydantic object — the
+        # TypeError would escape the relay loop and kill it (the device then
+        # vanishes from the fleet until its service is restarted).
+        return {"status": "ok", "result": result.model_dump() if hasattr(result, "model_dump") else result}
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 
 
