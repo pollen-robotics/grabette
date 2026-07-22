@@ -24,7 +24,7 @@ Part of the [GRABETTE project](../../README.md).
 
 📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
 🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD. 
-**[Assembly instructions](assembly/)** — step-by-step build guide.
+🔩 **Assembly:** [Assembly guide](assembly/Grabette_Assembly.pdf) · [3D-print guide](assembly/Grabette_3DPrint_Guide.pdf) — step-by-step build instructions.
 
 ## Install
 
