@@ -41,7 +41,6 @@ build-backend = "hatchling.build"
 openarm-gripette-simu = { workspace = true }
 openarm-can = { git = "https://github.com/enactic/openarm_can", subdirectory = "python", tag = "1.2.8" }
 
-# See openarm_gripette_simu/pyproject.toml — lerobot pulls opencv-python-headless
-# which clobbers our opencv-python. Override cascades to any consumer of this pkg.
-[tool.uv]
-override-dependencies = ["opencv-python-headless ; sys_platform == 'never'"]
+# OpenCV is headless by default (see openarm_gripette_simu/pyproject.toml + README).
+# A member-level [tool.uv] override-dependencies is a no-op (uv honors it only at
+# the workspace root), so the previous override here was removed.
