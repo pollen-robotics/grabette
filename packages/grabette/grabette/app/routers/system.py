@@ -4,6 +4,7 @@ import asyncio
 import os
 import platform
 import socket
+import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -31,6 +32,15 @@ _PISUGAR_POWER_PLUGGED_BIT = 1 << 7  # CTRL1 bit 7: external power present (VBUS
 
 
 _battery_ema: float | None = None
+
+# The battery % is slow-moving (and already median+EMA smoothed), so we only
+# hit the I2C fuel gauge every _BATTERY_READ_INTERVAL_S and serve a cached value
+# in between — /api/system/info is polled far more often than that (e.g. the
+# Episodes status strip). Charging state is read separately and stays live so
+# the low-battery alert still clears the instant Grabette is plugged in.
+_BATTERY_READ_INTERVAL_S = 30.0
+_battery_cached: float | None = None
+_battery_last_read: float | None = None
 
 
 def _pisugar_cut_power(delay_s: int = 30) -> bool:
@@ -68,8 +78,20 @@ def _pisugar_battery() -> float | None:
     Takes the median of 3 rapid reads to discard I2C glitches, then applies
     an EMA (α=0.2) to prevent the displayed percentage from bouncing up and
     down due to fuel-gauge noise or transient load changes.
+
+    Throttled: the actual I2C read runs at most once per
+    _BATTERY_READ_INTERVAL_S; more frequent calls return the cached value.
     """
-    global _battery_ema
+    global _battery_ema, _battery_cached, _battery_last_read
+
+    now = time.monotonic()
+    if (
+        _battery_cached is not None
+        and _battery_last_read is not None
+        and now - _battery_last_read < _BATTERY_READ_INTERVAL_S
+    ):
+        return _battery_cached
+
     try:
         import smbus2
         bus = smbus2.SMBus(1)
@@ -77,14 +99,18 @@ def _pisugar_battery() -> float | None:
         bus.close()
         sample = float(readings[1])  # median of 3
     except Exception:
-        return None
+        # Read failed — keep the previous value (if any) rather than blinking to
+        # N/A, and don't arm the throttle so the next call retries immediately.
+        return _battery_cached
 
     if _battery_ema is None:
         _battery_ema = sample
     else:
         _battery_ema = 0.2 * sample + 0.8 * _battery_ema
 
-    return round(_battery_ema)
+    _battery_cached = round(_battery_ema)
+    _battery_last_read = now
+    return _battery_cached
 
 
 def _pisugar_charging() -> bool | None:
