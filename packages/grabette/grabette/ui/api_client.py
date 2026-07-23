@@ -250,9 +250,12 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def delete_session(self, session_id: str) -> dict:
+    def delete_session(self, session_id: str, delete_episodes: bool = False) -> dict:
         try:
-            r = self._http.delete(f"/api/sessions/{session_id}")
+            r = self._http.delete(
+                f"/api/sessions/{session_id}",
+                params={"delete_episodes": delete_episodes},
+            )
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
