@@ -223,6 +223,12 @@ class ButtonListener:
         if not self._backend.is_capturing:
             logger.warning("Button stop ignored — not capturing")
             return
+
+        # Stop THIS device immediately — a button press must feel instant. Then
+        # tell the fleet (fire-and-forget) to fan the stop out to the group's
+        # peers, which stop within ~1 poll interval. No scheduled lead: the
+        # pressed device is instant and peers trail by the short delivery
+        # latency only. (Fleet unreachable / solo → just the local stop.)
         status = await self._backend.stop_capture()
         sm.register_episode(getattr(status, "episode_id", None))
         logger.info(

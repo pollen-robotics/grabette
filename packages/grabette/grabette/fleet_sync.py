@@ -72,10 +72,12 @@ async def request_group_start(task_name: str | None) -> dict[str, Any]:
 
 
 async def notify_group_stop() -> None:
-    """Best-effort, fire-and-forget: tell fleet to fan a stop out to peers.
+    """Best-effort, fire-and-forget: tell the fleet to fan a stop out to the
+    group's peers. Called AFTER the pressed device has already stopped locally,
+    so a button press feels instant; the peers stop within ~1 poll interval.
 
-    Never raises — a failure here must not affect the local stop that
-    already happened.
+    Never raises — a failure here must not affect the local stop that already
+    happened (solo / unreachable → the peers simply aren't told, which is fine).
     """
     headers = _auth_headers()
     if headers is None:
