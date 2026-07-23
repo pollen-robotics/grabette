@@ -279,22 +279,6 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     )
 
 
-def _hf_status_text(result: dict | None) -> str:
-    """Human-readable HuggingFace auth status.
-
-    Accepts an ``hf_check_auth`` / ``hf_set_auth`` result
-    (``{"authenticated": bool, "user": {"username", ...}, "error": ...}``) and
-    returns a short status line, matching the "Not authenticated" wording used
-    elsewhere on the datasets page.
-    """
-    result = result or {}
-    if result.get("authenticated"):
-        username = (result.get("user") or {}).get("username")
-        return f"✅ Authenticated as {username}" if username else "✅ Authenticated"
-    error = result.get("error")
-    return f"❌ {error}" if error else "Not authenticated"
-
-
 def _text_bar(pct: float, width: int = 22) -> str:
     """Render a fixed-width text progress bar like ██████░░░░ for markdown."""
     pct = max(0.0, min(100.0, pct))
@@ -1010,11 +994,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Episodes status strip (battery + camera connections) ─────────
 
     def get_episode_status_bar():
-        return _status_bar_html(
-            client.get_system_info(),
+        """(status_bar_html, battery_popup, beep_signal) from ONE system-info read.
+
+        The battery warning piggybacks on this 3 s poll rather than a dedicated
+        timer, so a single get_system_info() feeds both the strip and the popup
+        (no redundant I2C read).
+        """
+        info = client.get_system_info()
+        bar = _status_bar_html(
+            info,
             client.get_oakd_status(),
             client.get_camera_status(),
         )
+        popup_update, beep_signal = _battery_popup_html(info)
+        return bar, popup_update, beep_signal
 
     # ── WiFi network info (Settings page) ────────────────────────────
 
@@ -1161,19 +1154,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if "error" in result:
             return f"Error: {result['error']}"
         return f"Upload started (job: {result.get('job_id', '?')})"
-
-    def check_hf_account():
-        return _hf_status_text(client.hf_check_auth())
-
-    def on_hf_update_token(token):
-        if not token:
-            return "No token provided", gr.update()
-        result = client.hf_set_auth(token)
-        return _hf_status_text(result), gr.update(value="")
-
-    def on_hf_remove_token():
-        client.hf_set_auth("")
-        return "Not authenticated"
 
     # ── Power off ─────────────────────────────────────────────────────
 
@@ -1509,17 +1489,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         batt_popup_ep = gr.HTML(visible=False)
         batt_beep_ep = gr.Textbox(visible=False)
-        batt_timer_ep = gr.Timer(15.0)
-        batt_timer_ep.tick(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
         demo.load(fn=None, js=_BATTERY_INIT_JS)
 
+        # Battery warning rides on the status-bar poll (one system-info read
+        # feeds both the strip and the popup) — no dedicated battery timer.
+        status_bar_outputs = [episode_status_bar, batt_popup_ep, batt_beep_ep]
         status_bar_timer = gr.Timer(3.0)
-        status_bar_timer.tick(fn=get_episode_status_bar, outputs=episode_status_bar)
+        status_bar_timer.tick(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
         demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
-        demo.load(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
-        demo.load(fn=get_episode_status_bar, outputs=episode_status_bar)
+        demo.load(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Datasets (HF auth popup + upload)
@@ -1612,12 +1592,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
-        ds_auth_timer = gr.Timer(3.0)
+        # HF auth state changes rarely — poll gently (was 3 s, unnecessarily hot).
+        ds_auth_timer = gr.Timer(15.0)
         ds_auth_timer.tick(fn=check_hf_auth_on_load, inputs=[ds_namespace], outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         batt_popup_ds = gr.HTML(visible=False)
         batt_beep_ds = gr.Textbox(visible=False)
-        batt_timer_ds = gr.Timer(15.0)
+        # No status strip on this page to piggyback on; poll gently on its own.
+        batt_timer_ds = gr.Timer(30.0)
         batt_timer_ds.tick(fn=check_battery_warning, outputs=[batt_popup_ds, batt_beep_ds])
         batt_beep_ds.change(fn=None, inputs=batt_beep_ds, outputs=None, js=_BATTERY_BEEP_JS)
         datasets_demo.load(fn=check_battery_warning, outputs=[batt_popup_ds, batt_beep_ds])
@@ -1725,7 +1707,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         batt_popup_st = gr.HTML(visible=False)
         batt_beep_st = gr.Textbox(visible=False)
-        batt_timer_st = gr.Timer(15.0)
+        # No status strip on this page to piggyback on; poll gently on its own.
+        batt_timer_st = gr.Timer(30.0)
         batt_timer_st.tick(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
         batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
         settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
