@@ -1,9 +1,15 @@
 """Device-side relay client — talks to the Docker fleet Space over HTTP.
 
 The device connects OUTBOUND to the Space (NAT-friendly), authenticating with
-its locally-stored HF token, and short-polls (~1s) for commands. Short-polling
-is deliberately simple (no WebSocket reconnect/heartbeat edge cases) and its
-steady request traffic keeps a free-tier Space awake.
+its locally-stored HF token, and polls for commands. NAT-friendly outbound
+polling avoids WebSocket reconnect/heartbeat edge cases, and the request
+traffic keeps a free-tier Space awake.
+
+The transport auto-adapts to the server: if the fleet long-polls (holds the
+GET open until a command is queued), delivery is a network round-trip and the
+client re-polls immediately; if the fleet short-polls (answers instantly), the
+client throttles to poll_interval. No client config needed — the server's
+LONG_POLL_S alone decides, so it can be flipped without touching devices.
 
 Loop: register (also acts as heartbeat) → poll → execute → report results.
 """
@@ -12,11 +18,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
 
 from grabette.wifi import get_route_ip
+
+# Per-request timeout for the poll GET. Must exceed the fleet's LONG_POLL_S hold
+# (server-side, ~25s) so a legitimately held poll isn't cut short and mistaken
+# for a network failure. Register/result keep the shorter session default.
+_POLL_TIMEOUT_S = 60.0
+# If a poll returned no commands but took at least this long, the server held it
+# open (long-poll) → re-poll immediately. A near-instant empty response means
+# the server is short-polling → throttle to poll_interval. Above normal
+# short-poll latency (tens of ms), well below LONG_POLL_S.
+_LONGPOLL_HOLD_HINT_S = 1.5
 
 logger = logging.getLogger("grabette.relay_client")
 
@@ -72,6 +89,7 @@ class RelayClient:
             f"{self.base_url}/api/devices/poll",
             params={"device_id": self.device_id},
             headers=self._headers(token),
+            timeout=aiohttp.ClientTimeout(total=_POLL_TIMEOUT_S),
         ) as r:
             r.raise_for_status()
             return (await r.json()).get("commands", [])
@@ -130,11 +148,19 @@ class RelayClient:
                         self.status, registered = "no-token", False
                         await asyncio.sleep(self.poll_interval)
                         continue
+                    # Delay before the NEXT poll. Default = throttle by
+                    # poll_interval (short-poll server, or after an error). Set
+                    # to 0 to re-poll immediately when the server long-polled
+                    # (held the connection) or handed us work — no throttling
+                    # needed, the hold itself paced us.
+                    delay = self.poll_interval
                     try:
                         if not registered:
                             await self._register(session, token)
                             registered = True
+                        t0 = time.monotonic()
                         commands = await self._poll(session, token)
+                        elapsed = time.monotonic() - t0
                         for cmd in commands:
                             cid = cmd.get("id")
                             if cid in inflight:
@@ -142,22 +168,26 @@ class RelayClient:
                             inflight.add(cid)
                             queue.put_nowait(cmd)
                         self.status = "online"
+                        # Auto-detect the server's mode: work returned, or the
+                        # server held the poll open (long-poll) → re-poll now.
+                        # An instant empty response means short-poll → throttle.
+                        if commands or elapsed >= _LONGPOLL_HOLD_HINT_S:
+                            delay = 0.0
                     except aiohttp.ClientResponseError as e:
                         # 401/403 (token) or 404 (state lost on Space restart) → re-register
                         self.status, registered = f"http {e.status}", False
                         logger.warning("relay error %s; will re-register", e.status)
-                        await asyncio.sleep(self.poll_interval)
                     except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         self.status, registered = "unreachable", False
                         logger.debug("relay unreachable: %s", e)
-                        await asyncio.sleep(self.poll_interval * 2)
+                        delay = self.poll_interval * 2
                     except Exception:
                         # Anything unexpected must NOT kill the loop — the relay
                         # is meant to run forever. Log, re-register, keep going.
                         self.status, registered = "error", False
                         logger.exception("relay loop error; continuing")
-                        await asyncio.sleep(self.poll_interval)
-                    await asyncio.sleep(self.poll_interval)
+                    if delay:
+                        await asyncio.sleep(delay)
             finally:
                 worker_task.cancel()
                 try:
