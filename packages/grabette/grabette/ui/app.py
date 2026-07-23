@@ -183,7 +183,7 @@ _BATTERY_INIT_JS = """
     if ('Notification' in window && Notification.permission === 'granted') {
       try {
         new Notification('Grabette — battery low', {
-          body: (pct != null ? pct + ' % ' : '') + '— please charge soon.',
+          body: 'Please charge soon.',
           tag: 'grabette-battery',
           renotify: true,
         });
@@ -277,6 +277,22 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
         + batt_badge + rgb_badge + oakd_badge
         + "</div>"
     )
+
+
+def _hf_status_text(result: dict | None) -> str:
+    """Human-readable HuggingFace auth status.
+
+    Accepts an ``hf_check_auth`` / ``hf_set_auth`` result
+    (``{"authenticated": bool, "user": {"username", ...}, "error": ...}``) and
+    returns a short status line, matching the "Not authenticated" wording used
+    elsewhere on the datasets page.
+    """
+    result = result or {}
+    if result.get("authenticated"):
+        username = (result.get("user") or {}).get("username")
+        return f"✅ Authenticated as {username}" if username else "✅ Authenticated"
+    error = result.get("error")
+    return f"❌ {error}" if error else "Not authenticated"
 
 
 def _text_bar(pct: float, width: int = 22) -> str:
@@ -1147,13 +1163,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return f"Upload started (job: {result.get('job_id', '?')})"
 
     def check_hf_account():
-        return _hf_status_text(client.hf_check_auth())  # noqa: F821  FIXME: _hf_status_text is undefined (latent NameError) — tracked separately
+        return _hf_status_text(client.hf_check_auth())
 
     def on_hf_update_token(token):
         if not token:
             return "No token provided", gr.update()
         result = client.hf_set_auth(token)
-        return _hf_status_text(result), gr.update(value="")  # noqa: F821  FIXME: _hf_status_text is undefined (latent NameError) — tracked separately
+        return _hf_status_text(result), gr.update(value="")
 
     def on_hf_remove_token():
         client.hf_set_auth("")
