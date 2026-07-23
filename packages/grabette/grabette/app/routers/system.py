@@ -27,6 +27,7 @@ _PISUGAR_UNLOCK = 0x29
 _PISUGAR_COUNTDOWN = 0x09
 _PISUGAR_CTRL1 = 0x02
 _PISUGAR_OUTPUT_BIT = 1 << 5
+_PISUGAR_POWER_PLUGGED_BIT = 1 << 7  # CTRL1 bit 7: external power present (VBUS)
 
 
 _battery_ema: float | None = None
@@ -86,6 +87,29 @@ def _pisugar_battery() -> float | None:
     return round(_battery_ema)
 
 
+def _pisugar_charging() -> bool | None:
+    """Whether external power is plugged into the PiSugar 3 (CTRL1 0x02, bit 7).
+
+    We report the "power plugged" bit rather than the stricter charging state
+    (bit 7 AND the allow-charging bit 6) so the low-battery warning clears the
+    instant Grabette is reconnected — even if, near full charge, the pack has
+    momentarily stopped drawing current. Below the warning threshold a plugged
+    pack is always actively charging, so the two are equivalent there.
+
+    Returns None when there is no PiSugar / I2C is unavailable.
+    """
+    try:
+        import smbus2
+        bus = smbus2.SMBus(1)
+        try:
+            ctrl1 = bus.read_byte_data(_PISUGAR_ADDR, _PISUGAR_CTRL1)
+        finally:
+            bus.close()
+        return bool(ctrl1 & _PISUGAR_POWER_PLUGGED_BIT)
+    except Exception:
+        return None
+
+
 @router.get("/info")
 def system_info():
     info = {
@@ -124,6 +148,9 @@ def system_info():
     battery = _pisugar_battery()
     if battery is not None:
         info["battery_pct"] = battery
+        charging = _pisugar_charging()
+        if charging is not None:
+            info["battery_charging"] = charging
 
     return info
 
