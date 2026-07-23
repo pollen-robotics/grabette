@@ -224,15 +224,19 @@ class ButtonListener:
             logger.warning("Button stop ignored — not capturing")
             return
 
-        # Stop THIS device immediately — a button press must feel instant. Then
-        # tell the fleet (fire-and-forget) to fan the stop out to the group's
-        # peers, which stop within ~1 poll interval. No scheduled lead: the
-        # pressed device is instant and peers trail by the short delivery
-        # latency only. (Fleet unreachable / solo → just the local stop.)
+        # Tell the fleet to stop the group's peers FIRST, then stop locally.
+        # Order is critical: backend.stop_capture() muxes the mp4 synchronously,
+        # blocking the event loop for ~1-2s, so anything we send AFTER it only
+        # leaves the box once the mux is done — the peers would then keep
+        # recording for our whole mux (observed as ~4s longer peer episodes).
+        # Notifying first (the fleet is warm during a session → sub-second) lets
+        # the peers stop within ~1 poll interval of us, keeping the group's stop
+        # spread small. notify_group_stop never raises and returns fast when
+        # solo/unreachable, so this doesn't meaningfully delay a standalone stop.
+        await notify_group_stop()
         status = await self._backend.stop_capture()
         sm.register_episode(getattr(status, "episode_id", None))
         logger.info(
             "Button capture stopped: %.1fs, %d frames",
             status.duration_seconds, status.frame_count,
         )
-        asyncio.create_task(notify_group_stop())  # best-effort; don't block on it
