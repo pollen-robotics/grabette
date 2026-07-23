@@ -31,9 +31,17 @@ class CaptureScheduler:
         # Distinguishes "safe to cancel" (still waiting) from "must let it
         # finish" (hardware init in progress) when a stop races the start.
         self._starting: bool = False
+        # Background task for a synchronized stop (wait until a shared T_stop,
+        # then stop_capture). Mirrors the start: all group members stop at the
+        # same instant instead of the pressed device stopping instantly and
+        # peers lagging by the command round-trip.
+        self._stop_task: asyncio.Task | None = None
 
     def is_scheduled(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def is_stop_scheduled(self) -> bool:
+        return self._stop_task is not None and not self._stop_task.done()
 
     @property
     def is_starting(self) -> bool:
@@ -92,6 +100,30 @@ class CaptureScheduler:
         finally:
             self._task = None
             self._start_at_utc = None
+
+    async def schedule_stop(self, backend, sm, stop_at_utc: datetime) -> None:
+        """Wait until the shared T_stop, then stop the recording. All group
+        members schedule the same T_stop, so their recordings END together
+        (like the synchronized start ends the drift at the beginning). A
+        T_stop already in the past just stops immediately (best-effort: you
+        always want to stop — a slightly late stop only adds a trimmed tail)."""
+        self._stop_task = asyncio.create_task(self._wait_and_stop(backend, sm, stop_at_utc))
+
+    async def _wait_and_stop(self, backend, sm, stop_at_utc: datetime) -> None:
+        try:
+            wait_s = (stop_at_utc - datetime.now(timezone.utc)).total_seconds()
+            if wait_s > 0:
+                await asyncio.sleep(wait_s)
+            if backend.is_capturing:
+                result = await backend.stop_capture()
+                sm.register_episode(getattr(result, "episode_id", None))
+                logger.info("Scheduled stop fired (target %s)", stop_at_utc.isoformat())
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Scheduled stop failed")
+        finally:
+            self._stop_task = None
 
     async def cancel_or_wait(self, backend) -> str:
         """Resolve a stop request against any pending scheduled start.

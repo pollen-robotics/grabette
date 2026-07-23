@@ -173,6 +173,23 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "cancelled"}
         if not backend.is_capturing:
             return {"status": "error", "message": "not capturing"}
+
+        # Synchronized (group) stop: wait out a shared T_stop in the background
+        # and ack immediately, so every member ends its recording at the same
+        # instant instead of the pressed device stopping now and peers lagging
+        # by the fleet round-trip. Mirror of the scheduled start.
+        args = cmd.get("args", {})
+        stop_at_utc = args.get("stop_at_utc")
+        if stop_at_utc:
+            try:
+                stop_target = datetime.fromisoformat(stop_at_utc)
+            except ValueError:
+                return {"status": "error", "message": f"invalid stop_at_utc: {stop_at_utc!r}"}
+            if stop_target.tzinfo is None:
+                stop_target = stop_target.replace(tzinfo=timezone.utc)
+            await scheduler.schedule_stop(backend, tm, stop_target)
+            return {"status": "scheduled_stop", "stop_at_utc": stop_target.isoformat()}
+
         result = await backend.stop_capture()
         tm.register_episode(getattr(result, "episode_id", None))
         # Return a plain dict, not the CaptureStatus model: the relay POSTs this

@@ -1,8 +1,8 @@
 """Device-side relay client — talks to the Docker fleet Space over HTTP.
 
 The device connects OUTBOUND to the Space (NAT-friendly), authenticating with
-its locally-stored HF token, and short-polls for commands. Short-polling is
-deliberately simple (no WebSocket reconnect/heartbeat edge cases) and its
+its locally-stored HF token, and short-polls (~1s) for commands. Short-polling
+is deliberately simple (no WebSocket reconnect/heartbeat edge cases) and its
 steady request traffic keeps a free-tier Space awake.
 
 Loop: register (also acts as heartbeat) → poll → execute → report results.
@@ -34,7 +34,13 @@ class RelayClient:
         name: Optional[str] = None,
         capabilities: Optional[list[str]] = None,
         hand: Optional[str] = None,
-        poll_interval: float = 2.5,
+        # Short poll interval so a peer receives a fanned-out command (notably a
+        # group STOP) within ~1s of the acting device, keeping the group's stop
+        # spread small without any scheduled lead. This is the short-polling
+        # ceiling on delivery latency; long-polling (planned) would cut it to a
+        # network round-trip. Trade-off: more HTTP requests to the fleet Space
+        # (cheap, and it keeps a free-tier Space awake).
+        poll_interval: float = 1.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
