@@ -244,7 +244,7 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
         if sys_info.get("battery_charging"):
             batt_badge = _badge("Battery", f"⚡ {pct} %", GREEN)
         else:
-            colors = GREEN if pct > 60 else ORANGE if pct > 20 else RED
+            colors = GREEN if pct > 40 else ORANGE if pct > 20 else RED
             batt_badge = _badge("Battery", f"{pct} %", colors)
     else:
         batt_badge = _badge("Battery", "N/A", GRAY)
@@ -964,7 +964,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if "battery_pct" in info:
             pct = info["battery_pct"]
             charging = info.get("battery_charging")
-            if charging or pct > 60:
+            if charging or pct > 40:
                 batt_color = "#22c55e"
                 batt_border = "#166534"
             elif pct > 20:
