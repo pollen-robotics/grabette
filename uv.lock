@@ -493,6 +493,7 @@ source = { editable = "packages/casquette" }
 dependencies = [
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "opencv-contrib-python" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -511,6 +512,7 @@ requires-dist = [
     { name = "adafruit-extended-bus", marker = "extra == 'rpi'" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "opencv-contrib-python", specifier = ">=4.13.0.92" },
     { name = "picamera2", marker = "extra == 'rpi'" },
     { name = "pydantic", specifier = ">=2.0.0" },
