@@ -12,12 +12,15 @@ References:
 import time
 from struct import unpack
 
-# Default I2C addresses match the BMI088 integrated on the Grabette/Casquette
-# HAT, which straps SDO0 high (accel at 0x19) and SDO2 low (gyro at 0x68).
-# A standalone BMI088 breakout with both SDO pins high would be at
-# 0x19 / 0x69 — override via the BMI088 / BMI088Capture constructors.
+# Default I2C addresses for the BMI088 wired on top of the Casquette HAT
+# stack. SDO0 strapped high → accel at 0x19; SDO2 strapped high → gyro at
+# 0x69. The default-low gyro address (0x68) collides with the PiSugar
+# battery board's DS3231 RTC on this stack (reads back the RTC's chip id,
+# not the gyro's), so the gyro MUST be on 0x69. Standalone BMI088 breakouts
+# that hardwire SDO2 low can override via the BMI088 / BMI088Capture
+# constructors' gyro_addr parameter.
 DEFAULT_ACCEL_ADDR = 0x19
-DEFAULT_GYRO_ADDR = 0x68
+DEFAULT_GYRO_ADDR = 0x69
 
 # Accelerometer registers
 ACC_CHIP_ID = 0x00
