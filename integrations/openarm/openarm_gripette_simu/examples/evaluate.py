@@ -1037,11 +1037,16 @@ def run_episode(
             # state[-2:] is always the observed gripper (2D-only, relative, and
             # joint-space states all end with [proximal, distal]).
             obs_g = state[-2:]
-            cmd_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             obs_dist = obs_g[1] if len(obs_g) > 1 else 0.0
+            model_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             load1, load2 = camera.get_load()
+            # `cmd` is what was actually SENT (gg1,gg2 — post commit/latch/gain
+            # override); the model's raw goal follows in parens so a committed
+            # override is visible (cmd pinned at commit_target while model drifts).
             print(
-                f"step {step:3d} | gripper cmd: prox={gripper_goal[0]:+.4f} dist={cmd_dist:+.4f}"
+                f"step {step:3d} | gripper cmd: prox={gg1:+.4f} dist={gg2:+.4f}"
+                f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
+                f"{' COMMITTED' if commit_full is not None and committed else ''}"
                 f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
                 f" | load: prox={load1:+.0f} dist={load2:+.0f}",
                 flush=True,
