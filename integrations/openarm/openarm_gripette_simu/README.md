@@ -19,6 +19,8 @@ Then sync the Python environment:
 
 > Part of the uv **workspace**: a bare `uv sync` here would build the *entire
 > monorepo* environment. Always pass `--package` (root README → Development).
+> The base simulator supports Python 3.11; the `dataset` and `eval` extras
+> require Python 3.12 because they install LeRobot 0.6.x.
 
 ```bash
 uv sync --package openarm-gripette-simu                  # base install
@@ -57,9 +59,9 @@ Identical to the real [Gripette](../../../packages/gripette) gRPC API.
 
 | RPC | Description |
 |-----|-------------|
-| `StreamState` | 30Hz JPEG camera frames + motor positions + timestamp |
-| `SendMotorCommand(m1, m2)` | Set gripper joint goals (rad) |
-| `ReadMotors` | Read gripper joint positions (rad) |
+| `StreamState` | 30Hz JPEG camera frames + motor positions + load + timestamp |
+| `SendMotorCommand(m1, m2[, torque_limit])` | Set gripper joint goals (rad); optional grip force cap (0..1, 0 = unset) |
+| `ReadMotors` | Read gripper joint positions (rad) + load |
 | `SetTorque(enable)` | No-op in simulation |
 | `Ping` | Health check |
 
@@ -230,7 +232,7 @@ camera-local delta format produced by the `DiffusionPolicy` integration's
 `convert_dataset.py` (2D gripper state, 11D delta action).
 
 ```bash
-uv sync --package openarm-gripette-simu --extra eval   # adds lerobot + scipy
+uv sync --package openarm-gripette-simu --extra eval   # adds LeRobot Diffusion/Pi policy deps + scipy
 
 # Terminal 1 — arm grasp scene, headless
 uv run python -m openarm_gripette_simu --scene scenes/table_grasp.xml --headless
@@ -243,8 +245,17 @@ uv run python examples/evaluate.py \
 
 - `--checkpoint` — local path or HF repo id.
 - `--n_action_steps 8` — committed grasp (lower = more reactive approach, but can hesitate on the trigger).
-- `--debug` — show the camera feed; `--log_gripper` — print the gripper command vs observed state each step.
+- `--debug` — preview the camera feed; `--log_gripper` — print the gripper command vs observed state (and `present_load`) each step.
 - `--clamp_pos_mm` / `--clamp_rot_deg` — cap per-step Cartesian deltas (stability test).
+- `--grip_torque_limit` — **grip force cap** as a fraction `0..1` of the servo's max torque, applied to both gripper DOFs. `0` (default) = full torque = the pre-existing behavior, so **existing policies are unaffected unless you opt in**. With a cap set, the DOF driven into the object stalls at the cap → a consistent, object-size-independent grip force, while the policy's position targets (grasp *shape*) are untouched — no shape classifier needed. Force is then the cap, not `--grip_gain`×overshoot, so `--grip_gain` only needs to push the closing target past contact. Real hardware only (no-op in sim, which has no torque cap). Start around `0.25` (field-validated: "medium" grip, ample for grasping, and thermally safe to hold indefinitely — no overload-protection fade); watch the `motor{1,2}_load` telemetry via `--log_gripper`. Load clamps at `cap×1000`; `present_current` keeps rising past the cap if you need to sense firmer grasps.
+
+**OpenCV: headless by default, GUI window opt-in.** The workspace installs **`opencv-python-headless`** — lerobot depends on it and the on-device services (grabette on the Pi) need it, and a single venv can hold only one `cv2`. In this default, `--debug` **saves annotated frames to `eval_debug_frames/`** (and warns once) instead of opening a window. To get a **live preview window** on a GUI workstation, install the full build over the headless one:
+
+```bash
+uv pip install --force-reinstall opencv-python
+```
+
+Workstation-only (don't do this for a Pi deployment), and re-run it after any `uv sync` — sync restores the headless build.
 
 ### Remote inference (big VLA checkpoints)
 

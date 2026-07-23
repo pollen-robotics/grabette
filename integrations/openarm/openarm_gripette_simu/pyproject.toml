@@ -18,11 +18,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["grpcio-tools>=1.60"]
-dataset = ["lerobot>=0.5 ; python_version >= '3.12'"]
+dataset = ["lerobot[dataset]==0.6.0 ; python_version >= '3.12'"]
 # Policy evaluation client (examples/evaluate.py): loads a trained policy and
-# drives the sim over gRPC. lerobot for the policy, scipy for rotation math.
+# drives the sim over gRPC. [diffusion] supplies diffusers; [pi] supplies the
+# transformers stack for the Pi0/Pi0.5/Pi0Fast checkpoints this client supports.
+# scipy is also used directly for rotation math.
 eval = [
-    "lerobot>=0.5.1 ; python_version >= '3.12'",
+    "lerobot[diffusion,pi]==0.6.0 ; python_version >= '3.12'",
     "scipy>=1.10",
 ]
 
@@ -35,7 +37,10 @@ build-backend = "hatchling.build"
 # not PyPI. Was a local `../` path dep in the standalone repo.
 openarm-gripette-model = { workspace = true }
 
-# lerobot pulls opencv-python-headless which clobbers our opencv-python (same cv2 namespace).
-# Override to use the full opencv-python everywhere.
-[tool.uv]
-override-dependencies = ["opencv-python-headless ; sys_platform == 'never'"]
+# OpenCV is intentionally headless by default: lerobot depends on
+# opencv-python-headless and the on-device services (grabette/Pi) need it, and
+# one workspace venv holds a single cv2. `evaluate.py --debug` saves frames to
+# disk in this mode; for a live GUI window on a workstation, see the README
+# ("Evaluate a trained policy" → OpenCV opt-in). NOTE: a member-level [tool.uv]
+# override-dependencies is a no-op — uv honors it only at the workspace root —
+# so the previous override here (which never took effect) was removed.

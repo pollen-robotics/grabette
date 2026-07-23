@@ -78,6 +78,10 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
                 motor_state=gripper_pb2.MotorState(
                     motor1_position=pos1,
                     motor2_position=pos2,
+                    # Sim has no load sensor — report 0 (the real device fills
+                    # this with decoded present_load).
+                    motor1_load=0.0,
+                    motor2_load=0.0,
                 ),
                 timestamp_ms=(time.monotonic() - self._start_time) * 1000.0,
                 sequence=sequence,
@@ -109,6 +113,9 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
                                                   ["proximal", "distal"])
                 return gripper_pb2.MotorCommandResponse(success=True)
             with self._lock:
+                # request.motor{1,2}_torque_limit is accepted but not modeled:
+                # the sim has no torque cap. Grasp force in sim comes from the
+                # actuator gains; the cap is a real-hardware behavior.
                 self._sim.set_joint_commands(
                     np.array([PROXIMAL_CMD_SIGN * request.motor1_goal,
                               request.motor2_goal]),
@@ -122,7 +129,8 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
     def ReadMotors(self, request, context):
         with self._lock:
             pos1, pos2 = self._get_motor_positions()
-        return gripper_pb2.MotorState(motor1_position=pos1, motor2_position=pos2)
+        return gripper_pb2.MotorState(motor1_position=pos1, motor2_position=pos2,
+                                      motor1_load=0.0, motor2_load=0.0)
 
     def SetTorque(self, request, context):
         return gripper_pb2.TorqueResponse(success=True)

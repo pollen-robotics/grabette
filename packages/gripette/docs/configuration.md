@@ -12,6 +12,14 @@ All motor positions in the API (gRPC, client, scripts, limits) are in **robot fr
 
 Commands outside these bounds are rejected with `ValueError` before reaching the bus. `MotorController` bridges robot frame ↔ encoder frame via per-motor `sign` (from `hand`) and `offset` (from calibration); callers never deal with the encoder values directly.
 
+## Grip force cap & load feedback
+
+`SendMotorCommand` accepts an optional per-motor **torque limit** (`motor{1,2}_torque_limit`, a fraction `0..1` of the servo's max torque). It writes the servo's *running* (RAM) torque-limit register — **not** the EEPROM max-torque register — so it is safe to set every grasp; the value is deduplicated and only written when it changes. A value of `0` means *unset*: the limit is left untouched (full torque), so this is fully backward-compatible — a client that never sets it behaves exactly as before.
+
+Capping the torque turns grip force into a bounded, object-size-independent quantity: the closing joint stalls at the cap instead of pushing to a position error. See the eval-side `--grip_torque_limit` flag in the [simulator/eval README](../../../integrations/openarm/openarm_gripette_simu/README.md).
+
+`MotorState` reports `motor{1,2}_load` — the servo's decoded `present_load` (control effort, ~PWM) in **robot frame: positive = closing effort** (matching the angle convention), consistent across left/right via the per-motor `sign`. The sign is preserved, so an external force driving a joint the *other* way reads negative. Load magnitude clamps at the active torque limit; `present_load` is ~0 whenever torque is disabled. (Sign polarity was calibrated on a right-hand unit — verify on a left unit before trusting its load sign.)
+
 ## Environment variables
 
 All settings via environment variables with `GRIPPER_` prefix. Persistent per-device config lives in `/etc/gripette/env`, sourced by `gripette.service`.

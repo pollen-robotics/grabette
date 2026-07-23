@@ -25,11 +25,11 @@ import grpc
 import numpy as np
 import torch
 
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors
 import json as _json
 from pathlib import Path as _Path
 
-from lerobot.policies.factory import get_policy_class
+from lerobot.policies import get_policy_class
 
 
 def _load_policy_any(checkpoint: str):
@@ -43,7 +43,7 @@ def _load_policy_any(checkpoint: str):
     float32 — their checkpoints are saved bf16, and the pi05 port's flow
     path has a bf16 dtype clash at inference.
     """
-    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.configs import PreTrainedConfig
 
     cfg = PreTrainedConfig.from_pretrained(checkpoint)
     if hasattr(cfg, "compile_model"):
@@ -57,6 +57,35 @@ from openarm_gripette_simu.rotation import (
     rotation_6d_to_matrix as rotation_6d_to_rotation_matrix_numpy,
     rotation_matrix_to_6d as rotation_matrix_to_rotation_6d_numpy,
 )
+
+
+# --- Debug frame display (headless-safe) -------------------------------------
+# cv2.imshow needs a GUI-enabled OpenCV. The workspace often resolves to
+# opencv-python-headless (pulled by lerobot; same cv2 namespace), whose imshow
+# raises cv2.error. So --debug shows a live window when a GUI build is present,
+# and otherwise falls back to writing numbered frames to disk — either way it
+# never crashes the eval.
+_DEBUG_GUI = None       # None = untried, True = window works, False = headless
+_DEBUG_N = 0
+_DEBUG_DIR = _Path("eval_debug_frames")
+
+
+def debug_display(img_bgr):
+    """Show one eval frame in a window, or save it if OpenCV has no GUI. Warns once."""
+    global _DEBUG_GUI, _DEBUG_N
+    if _DEBUG_GUI is not False:
+        try:
+            cv2.imshow("Evaluation", img_bgr)
+            cv2.waitKey(1)
+            _DEBUG_GUI = True
+            return
+        except cv2.error:
+            _DEBUG_GUI = False
+            _DEBUG_DIR.mkdir(exist_ok=True)
+            print(f"[--debug] OpenCV has no GUI (headless build); saving frames "
+                  f"to {_DEBUG_DIR}/ instead of a live window.", flush=True)
+    cv2.imwrite(str(_DEBUG_DIR / f"frame_{_DEBUG_N:05d}.png"), img_bgr)
+    _DEBUG_N += 1
 
 
 def clamp_delta(delta_pos, delta_rot_6d, clamp_pos_m, clamp_rot_rad):
@@ -222,6 +251,16 @@ def parse_args():
                         "less squeeze (no force feedback). Try 1.3-1.6 if grasps slip. "
                         "Applied at send time, AFTER commit/latch logic (those thresholds "
                         "stay in model units).")
+    p.add_argument("--grip_torque_limit", type=float, default=0.0,
+                   help="Per-grasp GRIP FORCE CAP as a fraction 0..1 of the servo's max "
+                        "torque, applied to BOTH gripper DOFs. 0 (default) = unset = full "
+                        "torque = exactly today's behavior. The policy's per-DOF position "
+                        "targets are unchanged (they encode grasp SHAPE); the DOF driven "
+                        "into the object stalls at this cap, giving an object-size-"
+                        "independent, consistent grip force without a shape classifier. "
+                        "Force is now the cap, not Kp x position-overshoot — so --grip_gain "
+                        "only needs to push the closing target past contact. Real hardware "
+                        "only (no-op in sim). Try 0.2-0.4; watch motor{1,2}_load telemetry.")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -279,6 +318,9 @@ class CameraStream:
         self._pb2 = gripper_pb2
         self._lock = threading.Lock()
         self._latest = None
+        # Decoded present_load telemetry, kept separate from the policy state
+        # tuple (must NOT enter the observation — it would change obs dim).
+        self._latest_load = (0.0, 0.0)
         self._last_frame_wall = None  # local monotonic time of the last frame
         self._bad_frames = 0  # undecodable-payload counter (rate-limits the log)
         # Short history of recent frames (newest last) so consumers can build
@@ -320,6 +362,8 @@ class CameraStream:
                     )
                     with self._lock:
                         self._latest = (img_rgb, gripper, float(frame.timestamp_ms))
+                        self._latest_load = (float(frame.motor_state.motor1_load),
+                                             float(frame.motor_state.motor2_load))
                         self._last_frame_wall = time.monotonic()
                         self._history.append(self._latest)
                         if len(self._history) > 8:
@@ -356,6 +400,12 @@ class CameraStream:
         with self._lock:
             return self._latest
 
+    def get_load(self):
+        """Latest decoded gripper present_load (motor1, motor2). Telemetry
+        only — 0 in sim, real effort on hardware."""
+        with self._lock:
+            return self._latest_load
+
     def get_pair(self, timeout: float = 5.0):
         """Return (previous_frame, latest_frame) — the two most recent DISTINCT
         camera frames, each (img_rgb, gripper, ts_ms). The closest available
@@ -388,7 +438,7 @@ class ChunkExecutor:
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                  clamp_pos_m=None, clamp_rot_rad=None,
                  start_pos=None, start_rot=None, latch_close=None,
-                 grip_gain=1.0, grip_ref=(0.0, 0.0)):
+                 grip_gain=1.0, grip_ref=(0.0, 0.0), grip_torque_limit=0.0):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -417,6 +467,7 @@ class ChunkExecutor:
         self.latched_at_tick = None
         self._grip_gain = grip_gain
         self._grip_ref = grip_ref
+        self._grip_torque_limit = grip_torque_limit
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -491,7 +542,11 @@ class ChunkExecutor:
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
-                        self._gripper_pb2.MotorCommand(motor1_goal=g1, motor2_goal=g2)
+                        self._gripper_pb2.MotorCommand(
+                            motor1_goal=g1, motor2_goal=g2,
+                            motor1_torque_limit=self._grip_torque_limit,
+                            motor2_torque_limit=self._grip_torque_limit,
+                        )
                     )
                 except Exception as e:  # noqa: BLE001 — surface, don't die silently
                     logger.warning(f"Executor send failed: {e}")
@@ -597,6 +652,7 @@ def run_episode(
     dump_dir=None,
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
+    grip_torque_limit=0.0,
     latch_close=None,
     client=None,
     remote_k=None,
@@ -876,7 +932,11 @@ def run_episode(
                 gg1, gg2 = grip_latch
         gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
         gripper_stub.SendMotorCommand(
-            gripper_pb2.MotorCommand(motor1_goal=gg1, motor2_goal=gg2)
+            gripper_pb2.MotorCommand(
+                motor1_goal=gg1, motor2_goal=gg2,
+                motor1_torque_limit=grip_torque_limit,
+                motor2_torque_limit=grip_torque_limit,
+            )
         )
 
         if log_deltas and not joint_mode:
@@ -899,9 +959,11 @@ def run_episode(
             obs_g = state[-2:]
             cmd_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             obs_dist = obs_g[1] if len(obs_g) > 1 else 0.0
+            load1, load2 = camera.get_load()
             print(
                 f"step {step:3d} | gripper cmd: prox={gripper_goal[0]:+.4f} dist={cmd_dist:+.4f}"
-                f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}",
+                f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
+                f" | load: prox={load1:+.0f} dist={load2:+.0f}",
                 flush=True,
             )
 
@@ -919,8 +981,7 @@ def run_episode(
                 (0, 255, 0),
                 2,
             )
-            cv2.imshow("Evaluation", cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            debug_display(cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR))
 
         # --- Check success ---
         if step > 0 and step % success_check_freq == 0:
@@ -999,6 +1060,7 @@ def run_episode_async(
     dump_dir=None,
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
+    grip_torque_limit=0.0,
 ) -> dict:
     """Async episode: ChunkExecutor streams actions at exactly `fps` (the demo
     clock) while this loop replans as fast as inference allows (~10 Hz), each
@@ -1038,7 +1100,8 @@ def run_episode_async(
                              start_pos=ep_start_pos.astype(np.float64),
                              start_rot=ep_start_rot.astype(np.float64),
                              latch_close=latch_close,
-                             grip_gain=grip_gain, grip_ref=grip_ref)
+                             grip_gain=grip_gain, grip_ref=grip_ref,
+                             grip_torque_limit=grip_torque_limit)
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
@@ -1199,6 +1262,9 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
     device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested (--device cuda) but unavailable — falling back to CPU.")
+        device = torch.device("cpu")
 
     remote = args.policy_addr is not None
     if remote and args.async_exec:
@@ -1274,7 +1340,16 @@ def main():
             policy.config.n_action_steps = args.n_action_steps
         policy.to(device)
         policy.eval()
-        preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+        # The preprocessor's DeviceProcessorStep is restored from the checkpoint's
+        # saved processor config (device baked in as "cuda"), which overrides
+        # policy.config.device. Override it explicitly so observations land on the
+        # same device as the weights — otherwise --device cpu crashes with an
+        # input(cuda)/weight(cpu) mismatch. (The postprocessor already targets cpu.)
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy.config,
+            pretrained_path=args.checkpoint,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
 
         # Auto-detect state/action mode from the policy's feature shapes.
         state_dim = policy.config.robot_state_feature.shape[0]
@@ -1384,6 +1459,7 @@ def main():
                 commit_close=args.commit_close,
                 grip_gain=args.grip_gain,
                 grip_ref=tuple(args.start_gripper),
+                grip_torque_limit=args.grip_torque_limit,
                 log_deltas=args.log_deltas,
                 log_latency=args.log_latency,
                 dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1406,6 +1482,7 @@ def main():
             log_gripper=args.log_gripper,
             grip_gain=args.grip_gain,
             grip_ref=tuple(args.start_gripper),
+            grip_torque_limit=args.grip_torque_limit,
             latch_close=args.latch_close,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
@@ -1470,7 +1547,7 @@ def main():
               f"({total_clamped} steps clamped across {num_total} eps)")
     print(f"{'=' * 60}")
 
-    if args.debug:
+    if args.debug and _DEBUG_GUI:
         cv2.destroyAllWindows()
     camera.stop()
     arm_channel.close()

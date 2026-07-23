@@ -26,11 +26,17 @@ message GripperFrame {
 message MotorState {
   float motor1_position = 1;     // radians
   float motor2_position = 2;     // radians
+  float motor1_load = 3;         // decoded present_load (signed effort, ~PWM)
+  float motor2_load = 4;         // decoded present_load (signed effort, ~PWM)
 }
 
 message MotorCommand {
   float motor1_goal = 1;         // radians
   float motor2_goal = 2;         // radians
+  // Running torque limit, fraction 0..1 of max torque. 0 = unset = full
+  // torque (backward-compatible default; identical to pre-torque-limit behavior).
+  float motor1_torque_limit = 3;
+  float motor2_torque_limit = 4;
 }
 
 message MotorCommandResponse {

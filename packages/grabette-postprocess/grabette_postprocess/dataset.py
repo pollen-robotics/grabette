@@ -176,8 +176,8 @@ def build_dataset(
             metadata so downstream training can filter by tag (see
             _write_episode_tags). Episodes with no entry get an empty list.
     """
-    # Lazy import — lerobot is a heavy dependency
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.configs import RGBEncoderConfig
+    from lerobot.datasets import LeRobotDataset
 
     if fps is None:
         fps = 50.0
@@ -202,7 +202,8 @@ def build_dataset(
         root=root,
         robot_type="grabette",
         use_videos=True,
-        vcodec="h264",  # kept over the libsvtav1 default so the LeRobot web visualizer can play it
+        # h264 kept over the libsvtav1 default so the LeRobot web visualizer can play it
+        rgb_encoder=RGBEncoderConfig(vcodec="h264"),
         # Encode frames straight to MP4 as they're added, instead of writing every
         # frame to disk as PNG and re-reading + re-encoding at save_episode(). The
         # PNG round-trip is the main cost of the "building dataset" step on CPU.
@@ -344,7 +345,7 @@ def push_dataset(repo_id: str, root: Path, *, private: bool = False,
     directly. The HF Space keeps its own push_lerobot for the branch/PR-fallback
     flow, which this intentionally does not cover.
     """
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets import LeRobotDataset
 
     root = Path(root)
     log(f"Loading dataset {repo_id} from {root}...")

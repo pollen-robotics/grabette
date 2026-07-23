@@ -28,7 +28,7 @@ training with HF Jobs"):
 
 # /// script
 # requires-python = ">=3.12,<3.13"
-# dependencies = ["lerobot>=0.5.1,<0.6"]
+# dependencies = ["lerobot[training,diffusion]==0.6.0"]
 # ///
 
 import argparse
@@ -40,12 +40,11 @@ from pathlib import Path
 import torch
 import torchvision.transforms as T
 
-from lerobot.configs.types import FeatureType, NormalizationMode
+from lerobot.configs import FeatureType, NormalizationMode
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
-from lerobot.datasets.feature_utils import dataset_to_policy_features
+from lerobot.policies import DiffusionConfig, make_pre_post_processors
+from lerobot.policies.diffusion import DiffusionPolicy
+from lerobot.utils.feature_utils import dataset_to_policy_features
 
 # DataLoader-worker tensor sharing: default to $TMPDIR-file-backed shm, so a
 # small /dev/shm (common on servers/containers) doesn't cause "RuntimeError:
@@ -495,6 +494,7 @@ def main():
         crop_is_random=not args.no_random_crop,  # default True (UMI); pass --no_random_crop to disable
         pretrained_backbone_weights=None,
         use_group_norm=True,
+        use_separate_rgb_encoder_per_camera=False,
         spatial_softmax_num_keypoints=32,
         # -- U-Net (same as UMI) --
         down_dims=(256, 512, 1024),

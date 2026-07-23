@@ -15,9 +15,11 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 - Two Feetech STS3215 servos on `/dev/serial0` (baudrate 1000000, IDs 1 and 2)
 - *Optional:* an OAK-D SR RGB-D camera — add it if you want depth/SLAM on the gripper; **not required** for the standard motor + camera service (unlike Grabette, where the OAK-D is mandatory for SLAM)
 
-📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
-🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD.
- **[Assembly instructions](assembly/)** — step-by-step build guide.
+**Build the hardware:**
+
+- 📋 **[Full Bill of Materials (BOM)](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — complete parts list (shared for Grabette + Gripette).
+- 🧩 **[CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — full Grabette + Gripette CAD.
+- 🔩 **Assembly:** [Assembly guide](assembly/Gripette_Assembly.pdf) · [3D-print guide](assembly/Gripette_3DPrint_Guide.pdf) — step-by-step build instructions.
 
 ## Install
 
