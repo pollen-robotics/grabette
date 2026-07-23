@@ -187,6 +187,12 @@ class RpiBackend(Backend):
                 "device_id": settings.device_id,
                 "wall_clock_start_utc": self._wall_clock_start,
             }
+            # Attach sync metadata (T₀, peers, sleep skew, start cost) if
+            # the EpisodeScheduler populated it. Lets workstation analysis
+            # group multi-device episodes without an external manifest.
+            sync_meta = self.get_sync_metadata()
+            if sync_meta:
+                meta["sync"] = sync_meta
             (self._capture_session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
 
         self._sync.reset()

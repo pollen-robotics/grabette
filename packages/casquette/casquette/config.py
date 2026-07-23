@@ -8,7 +8,14 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "CASQUETTE_", "env_file": ".env"}
+    # extra="ignore" so that a stray / mis-prefixed entry in .env doesn't
+    # kill startup. Pydantic-settings otherwise treats every .env key as a
+    # candidate field and errors out on anything not declared here.
+    model_config = {
+        "env_prefix": "CASQUETTE_",
+        "env_file": ".env",
+        "extra": "ignore",
+    }
 
     # Server
     host: str = "0.0.0.0"
@@ -37,6 +44,13 @@ class Settings(BaseSettings):
 
     # Device identification (for multi-device sync)
     device_id: str = ""
+
+    # Peer list for /api/sync/{start,stop} fan-out. Comma-separated
+    # device_id=url pairs, e.g.
+    #     CASQUETTE_PEERS=grabette-1=http://rgrabette2.local:8000
+    # On casquette use CASQUETTE_PEERS; on grabette use GRABETTE_PEERS.
+    # Empty (default) → no peers, sync endpoints degrade to local-only.
+    peers: str = ""
 
     # Logging
     log_level: str = "INFO"

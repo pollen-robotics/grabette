@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
     from casquette.app.routers.daemon import router as daemon_router
     from casquette.app.routers.sessions import router as sessions_router
     from casquette.app.routers.state import router as state_router
+    from casquette.app.routers.sync import router as sync_router
     from casquette.app.routers.system import router as system_router
 
     app = FastAPI(
@@ -95,5 +96,6 @@ def create_app() -> FastAPI:
     app.include_router(sessions_router)
     app.include_router(camera_router)
     app.include_router(system_router)
+    app.include_router(sync_router)
 
     return app

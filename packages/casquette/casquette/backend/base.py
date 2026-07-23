@@ -7,6 +7,20 @@ from casquette.models import CaptureStatus, SensorState
 
 
 class Backend(ABC):
+    # Optional sync metadata attached by the EpisodeScheduler after a
+    # successful start. Backends merge this into metadata.json at
+    # stop_capture so each device's episode is self-describing — no
+    # external manifest needed. Empty for local-only captures.
+    #
+    # Subclasses don't need to initialise the attribute explicitly:
+    # get_sync_metadata() defaults to an empty dict via getattr.
+
+    def set_sync_metadata(self, meta: dict) -> None:
+        self._sync_metadata = dict(meta or {})
+
+    def get_sync_metadata(self) -> dict:
+        return getattr(self, "_sync_metadata", {}) or {}
+
     @abstractmethod
     async def start(self) -> None: ...
 
