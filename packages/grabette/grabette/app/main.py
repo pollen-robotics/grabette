@@ -101,6 +101,36 @@ async def _handle_relay_command(cmd: dict) -> dict:
         hf_logout()
         return {"status": "ok"}
 
+    if ctype == "upload_episodes":
+        # Fleet-orchestrated dataset build: push THIS device's recorded streams
+        # for the given episodes into a shared raw dataset, each under
+        # "{episode_id}/{role}" so peers' streams for the same episode don't
+        # collide. Needs no capture hardware, so it runs regardless of daemon
+        # state. Uploads run in a thread so the relay keeps heartbeating.
+        from grabette.app.routers.huggingface import get_hf_client
+
+        args = cmd.get("args", {})
+        raw_repo = args.get("raw_repo")
+        role = args.get("role")
+        episode_ids = args.get("episode_ids") or []
+        if not raw_repo or not role:
+            return {"status": "error", "message": "raw_repo and role are required"}
+        tm = get_task_manager()
+        hf = get_hf_client()
+        uploaded, missing = [], []
+        for eid in episode_ids:
+            ep_dir = tm.episode_dir(eid)
+            if not ep_dir.exists():
+                missing.append(eid)
+                continue
+            try:
+                await asyncio.to_thread(hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}")
+                uploaded.append(eid)
+            except Exception as e:  # noqa: BLE001
+                return {"status": "error", "message": f"upload failed for {eid}: {e}",
+                        "uploaded": uploaded, "missing": missing, "role": role}
+        return {"status": "ok", "role": role, "uploaded": uploaded, "missing": missing}
+
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
 
@@ -232,7 +262,7 @@ async def lifespan(app: FastAPI):
             token_provider=get_token,
             device_id=settings.device_id,
             name=settings.device_name,
-            capabilities=["get_state", "start_capture", "stop_capture", "logout"],
+            capabilities=["get_state", "start_capture", "stop_capture", "logout", "upload_episodes"],
             hand=settings.hand,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
