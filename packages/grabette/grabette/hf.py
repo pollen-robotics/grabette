@@ -76,6 +76,7 @@ class HuggingFaceClient:
         repo_id: str,
         progress_callback=None,
         path_in_repo: str | None = None,
+        private: bool = False,
     ) -> str:
         """Upload an episode directory to HuggingFace Hub.
 
@@ -97,8 +98,11 @@ class HuggingFaceClient:
         if progress_callback:
             progress_callback(0.0, "Creating repository...")
 
-        # Create repo if it doesn't exist
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True)
+        # Create repo if it doesn't exist. `private` takes effect only on the
+        # FIRST create (exist_ok=True won't flip an existing repo's visibility);
+        # since all of a job's devices pass the same value, whichever creates it
+        # first sets it correctly.
+        api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
 
         if progress_callback:
             progress_callback(10.0, "Uploading files...")

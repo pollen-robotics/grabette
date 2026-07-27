@@ -113,6 +113,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
         raw_repo = args.get("raw_repo")
         role = args.get("role")
         episode_ids = args.get("episode_ids") or []
+        private = bool(args.get("private", False))
         if not raw_repo or not role:
             return {"status": "error", "message": "raw_repo and role are required"}
         tm = get_task_manager()
@@ -124,7 +125,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 missing.append(eid)
                 continue
             try:
-                await asyncio.to_thread(hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}")
+                await asyncio.to_thread(hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}", private)
                 uploaded.append(eid)
             except Exception as e:  # noqa: BLE001
                 return {"status": "error", "message": f"upload failed for {eid}: {e}",
