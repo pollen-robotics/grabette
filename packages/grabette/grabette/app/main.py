@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,6 +132,58 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 return {"status": "error", "message": f"upload failed for {eid}: {e}",
                         "uploaded": uploaded, "missing": missing, "role": role}
         return {"status": "ok", "role": role, "uploaded": uploaded, "missing": missing}
+
+    if ctype == "process_dataset":
+        # Fleet-orchestrated dataset build, processing step. THIS device triggers
+        # the processing Space with ITS OWN long-lived HF token and polls it to
+        # completion, then reports the result. Done device-side (not by the
+        # fleet) so no HF token is ever cached on or forwarded through the fleet
+        # — same device→Space trust boundary the SLAM flow already uses. Needs no
+        # capture hardware. The command completes only when the Space is done.
+        import aiohttp
+        from huggingface_hub import get_token
+
+        args = cmd.get("args", {})
+        space_url = (args.get("space_url") or "").rstrip("/")
+        source_repo = args.get("source_repo")
+        target_repo = args.get("target_repo")
+        if not space_url or not source_repo or not target_repo:
+            return {"status": "error", "message": "space_url, source_repo, target_repo are required"}
+        token = get_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        payload = {
+            "source_repo": source_repo, "target_repo": target_repo,
+            "task": args.get("task") or target_repo.split("/")[-1],
+            "roles": args.get("roles") or [], "private": bool(args.get("private", False)),
+        }
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as s:
+                async with s.post(f"{space_url}/api/process", json=payload, headers=headers) as r:
+                    if r.status != 200:
+                        return {"status": "error",
+                                "message": f"Space /api/process HTTP {r.status}: {(await r.text())[:200]}"}
+                    space_jid = (await r.json()).get("job_id")
+                if not space_jid:
+                    return {"status": "error", "message": "Space returned no job_id"}
+                deadline = time.monotonic() + 3600.0  # 60-min cap
+                while True:
+                    if time.monotonic() > deadline:
+                        return {"status": "error", "message": "processing timed out"}
+                    await asyncio.sleep(5.0)
+                    try:
+                        async with s.get(f"{space_url}/api/status/{space_jid}", headers=headers) as r:
+                            if r.status != 200:
+                                continue
+                            st = await r.json()
+                    except Exception:  # noqa: BLE001 — transient poll error, retry
+                        continue
+                    sstatus = st.get("status", "running")
+                    if sstatus == "done":
+                        return {"status": "ok", "result_url": st.get("result")}
+                    if sstatus in ("error", "not_found"):
+                        return {"status": "error", "message": st.get("error") or f"processing {sstatus}"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": f"processing failed: {e}"}
 
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
@@ -263,7 +316,8 @@ async def lifespan(app: FastAPI):
             token_provider=get_token,
             device_id=settings.device_id,
             name=settings.device_name,
-            capabilities=["get_state", "start_capture", "stop_capture", "logout", "upload_episodes"],
+            capabilities=["get_state", "start_capture", "stop_capture", "logout",
+                          "upload_episodes", "process_dataset"],
             hand=settings.hand,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
