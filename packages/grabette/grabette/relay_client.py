@@ -34,6 +34,11 @@ _POLL_TIMEOUT_S = 60.0
 # the server is short-polling → throttle to poll_interval. Above normal
 # short-poll latency (tens of ms), well below LONG_POLL_S.
 _LONGPOLL_HOLD_HINT_S = 1.5
+# Lightweight liveness ping cadence, INDEPENDENT of the (long-held) command poll:
+# it keeps the fleet's last_seen fresh so a disconnect is detected within the
+# fleet's ONLINE_WINDOW instead of waiting out the long-poll hold. Keep in step
+# with the fleet's DEVICE_HEARTBEAT_S.
+_HEARTBEAT_INTERVAL_S = 5.0
 
 logger = logging.getLogger("grabette.relay_client")
 
@@ -139,7 +144,29 @@ class RelayClient:
                         inflight.discard(cmd.get("id"))
                         queue.task_done()
 
+            async def heartbeat_loop() -> None:
+                """Ping /api/devices/heartbeat every few seconds, independently of
+                the held command poll, so the fleet sees us as alive and detects a
+                real disconnect fast. Best-effort: a missed beat only delays
+                detection slightly; a 404 (not yet registered) is ignored."""
+                while True:
+                    await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
+                    token = self.token_provider()
+                    if not token:
+                        continue
+                    try:
+                        async with session.post(
+                            f"{self.base_url}/api/devices/heartbeat",
+                            params={"device_id": self.device_id},
+                            headers=self._headers(token),
+                            timeout=aiohttp.ClientTimeout(total=10),
+                        ):
+                            pass
+                    except Exception:
+                        pass
+
             worker_task = asyncio.create_task(worker())
+            heartbeat_task = asyncio.create_task(heartbeat_loop())
             registered = False
             try:
                 while True:
@@ -190,7 +217,9 @@ class RelayClient:
                         await asyncio.sleep(delay)
             finally:
                 worker_task.cancel()
-                try:
-                    await worker_task
-                except asyncio.CancelledError:
-                    pass
+                heartbeat_task.cancel()
+                for t in (worker_task, heartbeat_task):
+                    try:
+                        await t
+                    except asyncio.CancelledError:
+                        pass
