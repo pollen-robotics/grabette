@@ -39,6 +39,12 @@ _LONGPOLL_HOLD_HINT_S = 1.5
 # fleet's ONLINE_WINDOW instead of waiting out the long-poll hold. Keep in step
 # with the fleet's DEVICE_HEARTBEAT_S.
 _HEARTBEAT_INTERVAL_S = 5.0
+# Battery is read on its OWN slow cadence, NOT inside the heartbeat: the read is
+# I2C (PiSugar) and I2C is contended during capture, so a read can stall for
+# seconds. Doing it in the heartbeat would stall liveness → the fleet would mark
+# the device offline mid-recording and drop its queued start/stop commands. So
+# we cache the last value here and the heartbeat just ships the cache (instant).
+_BATTERY_INTERVAL_S = 30.0
 
 logger = logging.getLogger("grabette.relay_client")
 
@@ -76,6 +82,7 @@ class RelayClient:
         self.hand = hand or ""
         self.poll_interval = poll_interval
         self.battery_provider = battery_provider
+        self._battery: Optional[float] = None  # cached; refreshed off the heartbeat path
         self.status = "offline"
 
     def _headers(self, token: str) -> dict[str, str]:
@@ -160,13 +167,8 @@ class RelayClient:
                     if not token:
                         continue
                     params = {"device_id": self.device_id}
-                    if self.battery_provider is not None:
-                        try:
-                            batt = await asyncio.to_thread(self.battery_provider)
-                            if batt is not None:
-                                params["battery"] = batt
-                        except Exception:
-                            pass
+                    if self._battery is not None:  # cached value only — never I2C here
+                        params["battery"] = self._battery
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",
@@ -178,8 +180,22 @@ class RelayClient:
                     except Exception:
                         pass
 
+            async def battery_loop() -> None:
+                """Refresh the cached battery % on a slow cadence, isolated from
+                the heartbeat: the I2C read can stall under capture contention,
+                but that only makes the reading stale — it never delays liveness."""
+                if self.battery_provider is None:
+                    return
+                while True:
+                    try:
+                        self._battery = await asyncio.to_thread(self.battery_provider)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(_BATTERY_INTERVAL_S)
+
             worker_task = asyncio.create_task(worker())
             heartbeat_task = asyncio.create_task(heartbeat_loop())
+            battery_task = asyncio.create_task(battery_loop())
             registered = False
             try:
                 while True:
@@ -231,7 +247,8 @@ class RelayClient:
             finally:
                 worker_task.cancel()
                 heartbeat_task.cancel()
-                for t in (worker_task, heartbeat_task):
+                battery_task.cancel()
+                for t in (worker_task, heartbeat_task, battery_task):
                     try:
                         await t
                     except asyncio.CancelledError:
