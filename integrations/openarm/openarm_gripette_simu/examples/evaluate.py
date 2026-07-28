@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import atexit
 import logging
 import threading
 import time
@@ -391,13 +392,24 @@ class GripAssist:
         n = float(np.linalg.norm(d))
         return d / n if n > 1e-6 else np.zeros_like(d)
 
+    # Stay just INSIDE the joint limit. The limits below are the DOCUMENTED
+    # rounded values (85 deg / 116 deg), but the service enforces the exact
+    # radians: 85 deg = 1.4835298 < 1.484 and 116 deg = 2.0245819 < 2.025. So
+    # clamping to our own rounded numbers already OVERSHOOTS the real limit and
+    # the goal is rejected — seen on the real gripper 2026-07-28, where the
+    # error even LOOKS like a no-op because it prints the limit rounded:
+    # "Motor 1 goal 1.484 rad outside limits [0.000, 1.484]".
+    _LIMIT_MARGIN = 1e-3
+
     def _clamp(self, v):
         """Bound travel by MAGNITUDE, preserving sign — so this works for both
         the current positive-closing convention and legacy negative-closing
         models. (The gripette service is the real authority on limits and
         rejects out-of-range goals itself; this only stops the assist from
         driving past the mechanical range.)"""
-        return tuple(float(np.clip(v[i], -self._limits[i][1], self._limits[i][1]))
+        return tuple(float(np.clip(v[i],
+                                   -(self._limits[i][1] - self._LIMIT_MARGIN),
+                                   self._limits[i][1] - self._LIMIT_MARGIN))
                      for i in (0, 1))
 
 
@@ -1829,6 +1841,30 @@ def main():
     camera = CameraStream(gripper_stub, gripper_pb2)
     camera.get()  # block until the first frame arrives
     logger.info("Camera stream up")
+
+    # ---- SAFETY: never leave the gripper clamped on exit ----------------
+    # The servo holds its last commanded goal, so a run that ends while the
+    # gripper is closed (normal end, Ctrl-C, or a crash) leaves it squeezing at
+    # the torque cap indefinitely. Observed on the real gripper 2026-07-28:
+    # found at prox 1.387 with load pinned at 250 long after a killed run —
+    # hard on the motor, and the NEXT episode then starts with the policy
+    # observing a CLOSED gripper, which is out of distribution (every demo
+    # starts open) and makes it predict lift/hold instead of approach/close.
+    # atexit covers normal return, KeyboardInterrupt and exceptions; a SIGKILL
+    # (kill -9) cannot be caught, so after one of those, reopen manually.
+    def _reopen_gripper():
+        try:
+            gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
+                motor1_goal=float(args.start_gripper[0]),
+                motor2_goal=float(args.start_gripper[1]),
+                motor1_torque_limit=float(args.grip_torque_limit),
+                motor2_torque_limit=float(args.grip_torque_limit),
+            ))
+            print(f"gripper reopened to {tuple(args.start_gripper)} on exit", flush=True)
+        except Exception as e:  # noqa: BLE001 — best-effort teardown
+            print(f"WARNING: could not reopen the gripper on exit: {e}", flush=True)
+
+    atexit.register(_reopen_gripper)
 
     # ---- Evaluation loop ----
     results = []
