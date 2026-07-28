@@ -24,6 +24,8 @@ Needs the `eval` extra (evaluate.py imports lerobot/torch):
     uv run pytest integrations/openarm/openarm_gripette_simu/tests
 """
 import importlib.util
+import math
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -193,13 +195,20 @@ def test_moving_close_never_engages(GripAssist):
     assert all(abs(s[0][0] - c[0][0]) < 1e-9 for s, c in zip(r, moving))
 
 
-def test_joint_limits_are_clamped(GripAssist):
+def test_goals_stay_within_the_services_joint_limits(GripAssist):
+    """Even pushed hard against the limit, every goal must survive the float32
+    wire conversion and still be inside what the gripette service accepts.
+    Limits are checked against the SERVICE's own values, not our copy: clamping
+    to the docs' rounded 1.484/2.025 (both LARGER than radians(85)/radians(116))
+    got commands rejected on the real gripper."""
+    m1_max, m2_max = math.radians(85), math.radians(116)
     a = GripAssist(THRESH, ref=REF, min_close=0.15, stable_ticks=1,
-                   stable_eps=0.01, step=0.5, max_extra=5.0, dwell_ticks=0,
+                   stable_eps=0.01, step=0.9, max_extra=9.0, dwell_ticks=0,
                    confirm_ticks=2, lag=0.010)
     for sent, _, _ in drive(a, [((1.45, 2.0), FREE)] * 6):
-        assert -1.484 - 1e-9 <= sent[0] <= 1.484 + 1e-9
-        assert -2.025 - 1e-9 <= sent[1] <= 2.025 + 1e-9
+        for value, limit in ((sent[0], m1_max), (sent[1], m2_max)):
+            on_wire = struct.unpack("f", struct.pack("f", value))[0]
+            assert -limit <= on_wire <= limit, f"{on_wire!r} outside ±{limit!r}"
 
 
 def test_legacy_negative_closing_model(GripAssist):

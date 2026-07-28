@@ -18,6 +18,7 @@ Usage:
 import argparse
 import atexit
 import logging
+import math
 import threading
 import time
 
@@ -139,6 +140,17 @@ def apply_grip_gain(g1, g2, gain, ref):
     return float(np.clip(g1, -1.6, 1.6)), float(np.clip(g2, -1.6, 1.6))
 
 
+# Gripper joint limits in ROBOT FRAME, mirroring the AUTHORITY —
+# gripette.config.Settings.motor{1,2}_max. Use the same radians expression, not
+# the rounded values the docs quote (1.484 / 2.025): those are LARGER than the
+# real limits, so commands clamped to them are rejected by the service, and the
+# error message hides it by printing the limit rounded ("Motor 1 goal 1.484 rad
+# outside limits [0.000, 1.484]" — seen on the real gripper 2026-07-28).
+# A device may narrow these via GRIPPER_MOTOR*_MIN/MAX; the service remains the
+# authority and rejects anything out of range, so this is only a sanity bound.
+GRIPPER_LIMITS = ((0.0, math.radians(85)), (0.0, math.radians(116)))
+
+
 class GripAssist:
     """Load-triggered grip assist for the UNDER-CLOSE failure.
 
@@ -207,35 +219,36 @@ class GripAssist:
     def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
                  stable_eps=0.01, step=0.02, max_extra=0.4,
                  dwell_ticks=2, confirm_ticks=2, lag=0.010, settle_eps=0.004,
-                 squeeze=0.05,
-                 limits=((0.0, 1.484), (0.0, 2.025))):
-        self._thresh = float(load_thresh)
-        self._lag = float(lag)
-        self._settle_eps = float(settle_eps)
-        self._squeeze = float(squeeze)
-        self._squeeze_to = 0.0
-        self._meas = None          # previous measured position (settle test)
-        self.lag = self.advance = float("nan")
-        self.why = "init"
-        self._dwell_ticks = int(dwell_ticks)
-        self._confirm_ticks = int(confirm_ticks)
-        self._dwell = 0
-        self._confirm = 0
-        self._sent = None          # last pose we actually commanded
-        self._ref = np.asarray(ref, dtype=float)
-        self._min_close = float(min_close)
-        self._stable_ticks = int(stable_ticks)
-        self._stable_eps = float(stable_eps)
-        self._step = float(step)
-        self._max_extra = float(max_extra)
+                 squeeze=0.05, limits=GRIPPER_LIMITS):
+        # --- tunables -----------------------------------------------------
+        self._thresh = float(load_thresh)          # load floor for "pushing"
+        self._ref = np.asarray(ref, dtype=float)   # open pose (--start_gripper)
+        self._min_close = float(min_close)         # displacement counting as closing
+        self._stable_ticks = int(stable_ticks)     # ticks the CMD must hold steady
+        self._stable_eps = float(stable_eps)       # per-tick cmd change = steady
+        self._step = float(step)                   # extra closure per increment
+        self._max_extra = float(max_extra)         # cap on total extra closure
+        self._dwell_ticks = int(dwell_ticks)       # settle ticks after an increment
+        self._confirm_ticks = int(confirm_ticks)   # debounce on contact / slip
+        self._lag = float(lag)                     # cmd-vs-measured = blocked
+        self._settle_eps = float(settle_eps)       # per-tick motion = settled
+        self._squeeze = float(squeeze)             # press past contact before latching
         self._limits = limits
+        # --- state --------------------------------------------------------
         self.state = "IDLE"
         self.offset = 0.0          # extra closure along the policy's posture
         self.trigger_step = None   # step at which the assist last engaged
         self.n_gripped = 0         # contacts found (telemetry)
         self.n_exhausted = 0       # top-ups that found nothing (telemetry)
+        self.lag = self.advance = float("nan")   # last measurements (logging)
+        self.why = "init"          # reason for the current state (logging)
+        self._squeeze_to = 0.0     # offset to reach while SQUEEZING
+        self._dwell = 0
+        self._confirm = 0
         self._stable = 0
-        self._prev = None
+        self._prev = None          # previous policy command (steadiness test)
+        self._meas = None          # previous measured position (settle test)
+        self._sent = None          # last pose we actually commanded
         self._armed = True         # cleared after EXHAUSTED until re-open
 
     def update(self, cmd, load, step=None, meas=None):
@@ -392,14 +405,9 @@ class GripAssist:
         n = float(np.linalg.norm(d))
         return d / n if n > 1e-6 else np.zeros_like(d)
 
-    # Stay just INSIDE the joint limit. The limits below are the DOCUMENTED
-    # rounded values (85 deg / 116 deg), but the service enforces the exact
-    # radians: 85 deg = 1.4835298 < 1.484 and 116 deg = 2.0245819 < 2.025. So
-    # clamping to our own rounded numbers already OVERSHOOTS the real limit and
-    # the goal is rejected — seen on the real gripper 2026-07-28, where the
-    # error even LOOKS like a no-op because it prints the limit rounded:
-    # "Motor 1 goal 1.484 rad outside limits [0.000, 1.484]".
-    _LIMIT_MARGIN = 1e-3
+    # Stay a hair INSIDE the limit even so: the goal crosses the wire as
+    # float32, and a value exactly at the boundary can round up over it.
+    _LIMIT_MARGIN = 1e-4
 
     def _clamp(self, v):
         """Bound travel by MAGNITUDE, preserving sign — so this works for both
@@ -1323,6 +1331,11 @@ def run_episode(
                 # Structured per-tick trace: everything needed to reconstruct a
                 # grasp attempt offline (why it engaged or didn't, what it sent,
                 # what the fingers and the load actually did).
+                # Re-opened in append mode per tick ON PURPOSE: each line is
+                # flushed and closed immediately, so the trace survives the run
+                # being killed — which is how these runs usually end. The cost
+                # (tens of microseconds) is noise next to the loop's gRPC round
+                # trips, and this is opt-in debug output.
                 with open(assist_log, "a") as f:
                     f.write(_json.dumps({
                         "step": step, "t": time.perf_counter() - episode_start,
