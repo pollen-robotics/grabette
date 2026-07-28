@@ -165,6 +165,15 @@ class GripAssist:
     signal: then BOTH cases stall at the cap. Hence "extend gradually", never
     "drive to max".)
 
+    CRITICAL: that only holds AT REST. These servos have no torque sensor —
+    "load" is a PWM/current proxy, so a MOVING finger always reads a nonzero
+    motion load (measured: median ~26, spikes to ~88 on this gripper) whether
+    or not it is touching anything. So after each increment we DWELL
+    (assist_dwell_ticks) to let the finger settle before trusting the reading,
+    and require the reading to repeat (assist_confirm_ticks) before latching —
+    a single noisy tick above threshold would otherwise latch GRIPPED and
+    leave exactly the under-grip this is meant to fix.
+
     States: IDLE → ASSISTING → GRIPPED (contact found; offset latched, and
     re-assists if the load later drops = slip) or EXHAUSTED (no contact within
     max_extra → assist released; re-arms only once the policy opens again, so
@@ -174,8 +183,13 @@ class GripAssist:
 
     def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
                  stable_eps=0.01, step=0.02, max_extra=0.4,
+                 dwell_ticks=2, confirm_ticks=2,
                  limits=((0.0, 1.484), (0.0, 2.025))):
         self._thresh = float(load_thresh)
+        self._dwell_ticks = int(dwell_ticks)
+        self._confirm_ticks = int(confirm_ticks)
+        self._dwell = 0
+        self._confirm = 0
         self._ref = np.asarray(ref, dtype=float)
         self._min_close = float(min_close)
         self._stable_ticks = int(stable_ticks)
@@ -230,20 +244,35 @@ class GripAssist:
                 else:
                     self.state = "ASSISTING"    # settled but empty — top up
                     self.trigger_step = step
+                    self._dwell = self._confirm = 0
         elif self.state == "ASSISTING":
-            if peak >= self._thresh:
-                self.state = "GRIPPED"          # contact: latch this offset
-                self.n_gripped += 1
+            # Dwell after each increment: a MOVING finger reads a nonzero motion
+            # load regardless of contact, so only a settled reading is trusted.
+            if self._dwell < self._dwell_ticks:
+                self._dwell += 1
+            elif peak >= self._thresh:
+                self._confirm += 1
+                if self._confirm >= self._confirm_ticks:
+                    self.state = "GRIPPED"      # contact: latch this offset
+                    self.n_gripped += 1
             elif self.offset + self._step <= self._max_extra:
+                self._confirm = 0
                 self.offset += self._step
+                self._dwell = 0                 # settle again before re-reading
             else:
                 # Nothing within reach: release and wait for the policy to
                 # re-approach (it must open first, so this cannot chatter).
                 self.state, self.offset, self._armed = "EXHAUSTED", 0.0, False
                 self.n_exhausted += 1
         elif self.state == "GRIPPED":
+            # Slip detection is debounced too — a single noisy low reading must
+            # not restart a top-up on a perfectly good grasp.
             if peak < self._thresh:
-                self.state = "ASSISTING"        # load dropped = slip: re-close
+                self._confirm += 1
+                if self._confirm >= self._confirm_ticks:
+                    self.state, self._dwell, self._confirm = "ASSISTING", 0, 0
+            else:
+                self._confirm = 0
         # EXHAUSTED: hold at the policy's own command until it opens.
 
         return self._clamp(cmd + self._direction(d) * self.offset)
@@ -416,6 +445,16 @@ def parse_args():
     p.add_argument("--assist_step", type=float, default=0.02,
                    help="--grip_assist: extra closure added per tick (rad) while topping up. "
                         "Smaller = gentler approach to contact.")
+    p.add_argument("--assist_dwell_ticks", type=int, default=2,
+                   help="--grip_assist: ticks to WAIT after each increment before trusting "
+                        "the load reading. These servos have no torque sensor — a MOVING "
+                        "finger reads a nonzero motion load whether or not it touches "
+                        "anything, so the reading is only meaningful once settled.")
+    p.add_argument("--assist_confirm_ticks", type=int, default=2,
+                   help="--grip_assist: consecutive settled readings needed to accept "
+                        "contact (and, once gripped, to accept a slip). Debounces the noisy "
+                        "load register — one spurious tick would otherwise latch a grasp "
+                        "that isn't there.")
     p.add_argument("--assist_max_extra", type=float, default=0.4,
                    help="--grip_assist: max total extra closure (rad) beyond the policy's "
                         "command. Reaching it without contact = nothing in the jaws → the "
@@ -1704,6 +1743,8 @@ def main():
             stable_ticks=args.assist_stable_ticks,
             stable_eps=args.assist_stable_eps,
             step=args.assist_step, max_extra=args.assist_max_extra,
+            dwell_ticks=args.assist_dwell_ticks,
+            confirm_ticks=args.assist_confirm_ticks,
         ) if args.grip_assist is not None else None)
 
         if args.async_exec:
