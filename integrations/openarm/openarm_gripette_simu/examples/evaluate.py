@@ -359,9 +359,15 @@ class GripAssist:
                 self._confirm = 0
                 self.why = f"latched at {self.offset:.3f} (load {peak:.0f})"
         elif self.state == "GRIPPED":
-            # Slip detection is debounced too — a single noisy reading must not
-            # restart a top-up on a perfectly good grasp.
-            if not stalled:
+            # Slip = the fingers stopped PUSHING (load fell). Deliberately does
+            # NOT reuse the `stalled` test: that requires the fingers to be
+            # settled, but a gripped finger legitimately keeps creeping while
+            # the policy raises its own command or the object beds in. Treating
+            # that motion as slip made the assist re-close on a grasp already
+            # pushing at the cap, ratcheting the offset 0.18 -> 0.24 -> 0.30 on
+            # the real arm (2026-07-28) and tripping the arm's lead guard.
+            # Debounced so one noisy reading cannot restart a top-up.
+            if peak < self._thresh:
                 self._confirm += 1
                 self.why = f"grip lost? {self._confirm}/{self._confirm_ticks} (load {peak:.0f})"
                 if self._confirm >= self._confirm_ticks:
@@ -369,7 +375,7 @@ class GripAssist:
                     self.why = "slip — re-closing"
             else:
                 self._confirm = 0
-                self.why = f"holding (lag {self.lag:.4f}, load {peak:.0f})"
+                self.why = f"holding (load {peak:.0f}, lag {self.lag:.4f})"
         elif self.state == "EXHAUSTED":
             # Hold at the policy's own command until it opens (kept explicit so
             # the diagnostic never goes stale while disarmed).
