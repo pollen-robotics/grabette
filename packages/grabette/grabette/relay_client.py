@@ -63,6 +63,10 @@ class RelayClient:
         # network round-trip. Trade-off: more HTTP requests to the fleet Space
         # (cheap, and it keeps a free-tier Space awake).
         poll_interval: float = 1.0,
+        # Optional callable returning the battery percentage (0-100) or None.
+        # Piggy-backed on the heartbeat so the fleet can show each device's
+        # charge without polling. Called off the event loop (may do I2C).
+        battery_provider: Optional[Callable[[], Optional[float]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -71,6 +75,7 @@ class RelayClient:
         self.capabilities = capabilities or []
         self.hand = hand or ""
         self.poll_interval = poll_interval
+        self.battery_provider = battery_provider
         self.status = "offline"
 
     def _headers(self, token: str) -> dict[str, str]:
@@ -154,10 +159,18 @@ class RelayClient:
                     token = self.token_provider()
                     if not token:
                         continue
+                    params = {"device_id": self.device_id}
+                    if self.battery_provider is not None:
+                        try:
+                            batt = await asyncio.to_thread(self.battery_provider)
+                            if batt is not None:
+                                params["battery"] = batt
+                        except Exception:
+                            pass
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",
-                            params={"device_id": self.device_id},
+                            params=params,
                             headers=self._headers(token),
                             timeout=aiohttp.ClientTimeout(total=10),
                         ):

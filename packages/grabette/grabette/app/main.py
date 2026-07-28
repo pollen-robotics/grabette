@@ -327,6 +327,7 @@ async def lifespan(app: FastAPI):
     if settings.relay_enabled:
         from huggingface_hub import get_token
         from grabette.relay_client import RelayClient
+        from grabette.app.routers.system import _pisugar_battery
 
         relay = RelayClient(
             base_url=settings.relay_url,
@@ -336,6 +337,7 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "delete_episode"],
             hand=settings.hand,
+            battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
