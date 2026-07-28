@@ -3,10 +3,13 @@
 Runs in a daemon thread, polls the Grove LED Button, and triggers
 capture start/stop through the same code path as the REST API.
 
-LED feedback:
-  - Blink: daemon starting / sensors initializing
-  - Off:   idle, ready for capture
+LED feedback is driven by the device's ACTUAL capture state (a separate monitor
+thread), not by which button was pressed — so in a group/bimanual recording
+BOTH grabettes reflect their own status, even the peer started via the fleet:
+  - Blink: a start is scheduled (waiting for the shared T0)
   - Solid: recording in progress
+  - Off:   idle
+(Teleop mode reuses the LED: solid = sending, off = repositioning.)
 """
 
 from __future__ import annotations
@@ -34,6 +37,7 @@ class ButtonListener:
         self._task_manager = task_manager
         self._button = None
         self._thread: threading.Thread | None = None
+        self._led_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -52,6 +56,13 @@ class ButtonListener:
             target=self._run, daemon=True, name="button-listener",
         )
         self._thread.start()
+        # Separate thread that keeps the LED in sync with the capture state,
+        # regardless of how the recording was triggered (button, dashboard, or
+        # group fan-out) — so a peer grabette lights up too.
+        self._led_thread = threading.Thread(
+            target=self._led_monitor, daemon=True, name="button-led",
+        )
+        self._led_thread.start()
         logger.info("Button listener started")
 
     def stop(self) -> None:
@@ -59,6 +70,9 @@ class ButtonListener:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
+        if self._led_thread is not None:
+            self._led_thread.join(timeout=2.0)
+            self._led_thread = None
         if self._button is not None:
             self._button.led_off()
             self._button.cleanup()
@@ -85,6 +99,39 @@ class ButtonListener:
         finally:
             if btn is not None:
                 btn.led_off()
+
+    # -- LED state monitor (runs in its own thread) --
+
+    def _desired_led(self) -> str:
+        """The LED state that reflects what this device is doing right now:
+        'on' | 'blink' | 'off'. State-driven (not press-driven) so every group
+        member shows its own status."""
+        from grabette.capture_scheduler import get_capture_scheduler
+        b = self._backend
+        if b.is_teleop_active:
+            return "on" if b.is_teleop_sending else "off"
+        if b.is_capturing:
+            return "on"          # recording
+        if get_capture_scheduler().is_scheduled():
+            return "blink"       # start scheduled, waiting for the shared T0
+        return "off"             # idle
+
+    def _led_monitor(self) -> None:
+        """Apply _desired_led() to the LED whenever it changes. Applying only on
+        change avoids re-issuing led_blink() (which would restart its phase) and
+        needless GPIO writes."""
+        btn = self._button
+        last = None
+        while not self._stop_event.is_set():
+            try:
+                want = self._desired_led()
+                if want != last:
+                    (btn.led_on if want == "on" else
+                     btn.led_blink if want == "blink" else btn.led_off)()
+                    last = want
+            except Exception:
+                logger.debug("LED monitor tick failed", exc_info=True)
+            self._stop_event.wait(0.2)
 
     # -- Blocking wait (runs in the button thread) --
 
@@ -114,30 +161,22 @@ class ButtonListener:
             self._do_start_capture()
 
     def _toggle_teleop_send(self) -> None:
+        # LED follows is_teleop_sending via the monitor.
         new_state = not self._backend.is_teleop_sending
         self._backend.set_teleop_send(new_state)
-        if new_state:
-            self._button.led_on()
-            logger.info("Button — teleop sending ON")
-        else:
-            self._button.led_off()
-            logger.info("Button — teleop sending OFF (reposition)")
+        logger.info("Button — teleop sending %s", "ON" if new_state else "OFF (reposition)")
 
     # -- Capture actions (scheduled on the async event loop) --
 
     def _do_start_capture(self) -> None:
-        # Blink while the start coroutine runs — it may spend several seconds
-        # waiting for a fleet group-sync T0 and/or warming up the OAK-D. Go
-        # solid only once the recording is genuinely live.
-        self._button.led_blink()
+        # LED (blink → solid) is driven by the state monitor; here we just run
+        # the start and log the outcome.
         future = asyncio.run_coroutine_threadsafe(self._start_capture_coro(), self._loop)
         try:
             future.result(timeout=RECORDING_WAIT_TIMEOUT_S)
-            self._button.led_on()
             logger.info("Button capture started")
         except Exception:
             logger.exception("Button start_capture failed")
-            self._button.led_off()
 
     async def _start_capture_coro(self) -> None:
         """Runs on the event loop: request group sync, then start (scheduled
@@ -192,18 +231,12 @@ class ButtonListener:
             raise
 
     def _do_stop_capture(self) -> None:
-        # Acknowledge the press immediately: capture stops at once, but
-        # stop_capture then spends a few seconds muxing the mp4s. Blink to
-        # show "saving" instead of leaving the LED solid (looks like it's
-        # still recording), then go off when the save completes.
-        self._button.led_blink()
+        # LED goes off once is_capturing clears (driven by the state monitor).
         future = asyncio.run_coroutine_threadsafe(self._stop_capture_coro(), self._loop)
         try:
             future.result(timeout=30.0)
         except Exception:
             logger.exception("Button stop_capture failed")
-        finally:
-            self._button.led_off()
 
     async def _stop_capture_coro(self) -> None:
         from grabette.capture_scheduler import get_capture_scheduler
