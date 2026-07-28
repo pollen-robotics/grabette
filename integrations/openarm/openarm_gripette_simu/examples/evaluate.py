@@ -199,7 +199,14 @@ class GripAssist:
         cmd = np.asarray(cmd, dtype=float)
         peak = max(abs(float(x)) for x in load) if load is not None else 0.0
         d = cmd - self._ref
-        closing = float(np.max(d)) >= self._min_close
+        # CONVENTION-AGNOSTIC: "closing" = displaced from the open reference by
+        # this much in ANY direction, measured as a magnitude. Current models
+        # close POSITIVE, but legacy pre-flip datasets/models close NEGATIVE
+        # proximal (the PROXIMAL_CMD_SIGN=-1 server bridge covers the sim side
+        # only — it never reaches this client-side logic). Signed tests here
+        # would silently never fire for those, and hardcoded sign conventions
+        # in shared paths are this project's most recurrent bug class.
+        closing = float(np.linalg.norm(d)) >= self._min_close
 
         # Track "the policy's close has settled" on the COMMAND (its intent),
         # not the position — a blocked finger's position settles even while the
@@ -248,8 +255,13 @@ class GripAssist:
         return d / n if n > 1e-6 else np.zeros_like(d)
 
     def _clamp(self, v):
-        return (float(np.clip(v[0], *self._limits[0])),
-                float(np.clip(v[1], *self._limits[1])))
+        """Bound travel by MAGNITUDE, preserving sign — so this works for both
+        the current positive-closing convention and legacy negative-closing
+        models. (The gripette service is the real authority on limits and
+        rejects out-of-range goals itself; this only stops the assist from
+        driving past the mechanical range.)"""
+        return tuple(float(np.clip(v[i], -self._limits[i][1], self._limits[i][1]))
+                     for i in (0, 1))
 
 
 logger = logging.getLogger(__name__)
