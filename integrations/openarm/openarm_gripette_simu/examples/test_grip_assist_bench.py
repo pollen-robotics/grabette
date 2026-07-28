@@ -41,6 +41,14 @@ def main():
     p.add_argument("--probe_to", type=float, nargs=2, default=[1.2, 1.2],
                    metavar=("PROX", "DIST"),
                    help="Direction of the stand-in policy's close (posture)")
+    p.add_argument("--probe_from", type=float, default=0.30,
+                   help="Travel at which to start probing for contact. Must clear the open "
+                        "pose, which reads as a stall itself (fingers resting off the "
+                        "commanded 0, servo pushing into the open stop).")
+    p.add_argument("--probe_dwell", type=float, default=0.45,
+                   help="Seconds to hold each probe step before judging contact. Must be "
+                        "long enough for the fingers to ARRIVE — a short dwell reads motion "
+                        "lag/load and reports contact on the first step.")
     p.add_argument("--under_close", type=float, default=0.12,
                    help="How far SHORT of contact the stand-in policy stops (rad of "
                         "travel). The assist must make up this much.")
@@ -83,10 +91,19 @@ def main():
         print("probing for contact to place the stand-in policy command...")
         send(ref); time.sleep(1.0)
         contact_travel = None
-        travel = 0.0
+        # Start past the open pose: commanding the open reference while the
+        # fingers rest slightly off it IS a stall (persistent lag + the servo
+        # pushing into the open stop, measured |load| up to ~96), so probing
+        # from 0 reports contact immediately. The assist never sees this because
+        # it only acts once the command is >= min_close from the reference.
+        travel = args.probe_from
+        # NOTE: dwell long enough for the fingers to actually ARRIVE before
+        # judging. A short dwell reads motion lag + motion load and reports
+        # "contact" on the very first step (the trap this script fell into).
         while travel < float(np.linalg.norm(np.asarray(args.probe_to, float) - ref)):
             goal = ref + direction * travel
-            for _ in range(6):
+            t0 = time.perf_counter()
+            while time.perf_counter() - t0 < args.probe_dwell:
                 send(goal); time.sleep(0.02)
             pos, load = read()
             lag = float(np.max(np.abs(goal - np.asarray(pos))))
@@ -102,7 +119,19 @@ def main():
         else:
             print(f"  contact at travel {contact_travel:.3f}")
 
-        policy_travel = max(0.0, contact_travel - args.under_close)
+        policy_travel = contact_travel - args.under_close
+        if policy_travel < 0.20:
+            # A stand-in command that barely leaves the open pose is not a
+            # "close" at all: the assist would (correctly) never engage, and the
+            # run would look like a failure of the assist rather than of the
+            # setup. Refuse instead of producing a meaningless result.
+            raise SystemExit(
+                f"probe put contact at travel {contact_travel:.3f}, so a "
+                f"{args.under_close:.3f} under-close leaves only "
+                f"{policy_travel:.3f} of closure — too little to count as a "
+                f"close.\nPlace the object deeper in the jaws, or reduce "
+                f"--under_close. (If contact was reported implausibly early, "
+                f"raise --probe_dwell: a short dwell reads motion lag as contact.)")
         policy_cmd = tuple(ref + direction * policy_travel)
         print(f"stand-in policy will hold ({policy_cmd[0]:+.3f}, {policy_cmd[1]:+.3f}) "
               f"= {args.under_close:.3f} rad short of contact\n")
