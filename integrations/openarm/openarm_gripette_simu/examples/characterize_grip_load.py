@@ -1,34 +1,36 @@
-"""Bench characterization of the Gripette grabbed-vs-empty signal.
+"""Measure the Gripette's load-vs-closure curve — sets `--grip_assist LOAD_THRESH`.
 
-GRIPPER ONLY — no arm, no policy. Decides how the committed-close primitive's
-grasp confirmation (evaluate.py --grasp_confirm_load) should work, which sim
-could not tell us (present_load is 0 in sim).
+GRIPPER ONLY: no arm, no policy. Talks to the Gripette gRPC service (real
+hardware, or the sim where load comes from MuJoCo actuator_force — units differ,
+never reuse a threshold across them).
 
-The question: after driving a full close at a torque cap, can we tell a real
-grasp from a close-on-air? Two candidate signals, and the point of this tool
-is to measure which actually separates them on THIS hardware:
-  - present_load: rises on contact — BUT a torque-capped empty close may also
-    load up against the gripper's own mechanical stop, so load might saturate
-    in BOTH cases;
-  - final position: a grabbed close stops SHORT at the object's width; an
-    empty close reaches (near) full closure — so position may be the cleaner
-    discriminator.
+WHAT IT MEASURES, AND WHY THIS WAY
+`--grip_assist` advances the closure in small increments (--assist_step) and
+watches present_load to detect contact. So the number that matters is not the
+load of a big slam — it is the load produced by a SMALL press past contact,
+which depends on object STIFFNESS:
+  - rigid object: a 0.02 rad press reacts hard -> load jumps, easy detection;
+  - soft object (e.g. a squeezable bottle): the object just deforms -> weaker
+    load, and the finger can creep instead of stalling. This is the WORST CASE
+    and the one the threshold must catch.
+This tool therefore sweeps the closure in assist-sized steps along a posture
+direction, dwelling at each step, and logs the load at each — giving the
+load-vs-closure curve per object. Read off: the free-motion floor (from an
+'air' trial), where load rises (contact), and how fast it rises after contact.
 
-Procedure (interactive): for each labelled trial it opens the gripper, waits
-for you to place the object (or clear the jaws for an 'air' trial), drives the
-close at the torque cap, and logs the load + position trajectory. At the end
-it prints a table so you can read off the separation and set the threshold.
+TWO HARDWARE LESSONS BAKED IN (learned the hard way 2026-07-27):
+  1. Torque is enabled ONCE at start, never per command. Enabling torque in the
+     same bus tick as a goal makes the servo reset its goal to the present
+     position, and the goal is silently dropped.
+  2. Goals are re-commanded CONTINUOUSLY, never written once. A single write can
+     fail to take on one motor, which looks exactly like "that motor is stuck".
 
-Talks to the Gripette gRPC service (real hardware :50051, or the sim — where
-load is 0, useful only to check the plumbing). Wire protocol is identical, so
-the sim-generated stubs drive the real service.
-
-Usage:
+Usage (see the eval README):
   uv run python examples/characterize_grip_load.py \\
       --gripper_addr <pi-ip>:50051 --torque 0.25 \\
-      --closed 1.2 1.0 --open 0.0 0.0 --out grip_char.jsonl
-Then, at the prompts, run 'air' plus one trial per object (e.g. mustard, can,
-thin). Ctrl-C or 'quit' to finish (torque is released on exit).
+      --from 0.0 0.0 --to 1.2 1.2 --step 0.02
+Then run one trial per object at the prompt: 'air' first (the floor), then e.g.
+'mustard' (soft), 'rigid', 'thin'. Ctrl-C or blank input to finish.
 """
 import argparse
 import json
@@ -40,118 +42,150 @@ import numpy as np
 from openarm_gripette_simu.proto import gripper_pb2, gripper_pb2_grpc
 
 
-def poll(stub, duration_s, hz):
-    """Poll ReadMotors for duration_s, returning the recorded trajectory as a
-    list of (t_rel, p1, p2, l1, l2)."""
-    traj = []
-    t0 = time.perf_counter()
-    period = 1.0 / hz
-    while True:
-        t = time.perf_counter() - t0
-        if t >= duration_s:
+class Gripper:
+    """Thin client applying the two hardware lessons above."""
+
+    def __init__(self, addr, torque):
+        self._stub = gripper_pb2_grpc.GripperServiceStub(grpc.insecure_channel(addr))
+        self._torque = float(torque)
+        self._stub.Ping(gripper_pb2.PingRequest())
+        # ONCE — never per command (see lesson 1).
+        self._stub.SetTorque(gripper_pb2.TorqueCommand(enable=True))
+
+    def read(self):
+        ms = self._stub.ReadMotors(gripper_pb2.ReadMotorsRequest())
+        return (ms.motor1_position, ms.motor2_position,
+                ms.motor1_load, ms.motor2_load)
+
+    def hold(self, goal, seconds, hz=50.0):
+        """Command `goal` CONTINUOUSLY for `seconds` (see lesson 2); return the
+        samples recorded while holding it."""
+        rows, t0, period = [], time.perf_counter(), 1.0 / hz
+        while time.perf_counter() - t0 < seconds:
+            resp = self._stub.SendMotorCommand(gripper_pb2.MotorCommand(
+                motor1_goal=float(goal[0]), motor2_goal=float(goal[1]),
+                motor1_torque_limit=self._torque, motor2_torque_limit=self._torque))
+            if not resp.success:
+                raise RuntimeError(f"gripper rejected goal {goal}: {resp.error}")
+            rows.append(self.read())
+            time.sleep(period)
+        return rows
+
+    def release(self, open_pose):
+        self.hold(open_pose, 1.0)
+        self._stub.SetTorque(gripper_pb2.TorqueCommand(enable=False))
+
+
+def sweep(g, start, end, step, dwell, stop_frac):
+    """Step from `start` toward `end` in `step`-sized increments along that
+    direction (the same posture-preserving extension --grip_assist does),
+    dwelling at each. Returns [(travel, cmd, meas_pos, load)]."""
+    start, end = np.asarray(start, float), np.asarray(end, float)
+    d = end - start
+    total = float(np.linalg.norm(d))
+    n = d / total
+    out = []
+    travel = 0.0
+    while travel <= total + 1e-9:
+        cmd = start + n * travel
+        rows = g.hold(cmd, dwell)
+        tail = rows[max(1, len(rows) // 2):]          # settled part of the dwell
+        meas = (float(np.median([r[0] for r in tail])),
+                float(np.median([r[1] for r in tail])))
+        load = (float(np.median([r[2] for r in tail])),
+                float(np.median([r[3] for r in tail])))
+        out.append((travel, tuple(cmd), meas, load))
+        peak = max(abs(load[0]), abs(load[1]))
+        # Stop once clearly stalled at the cap — the curve past that is flat and
+        # there is no reason to keep pressing.
+        if stop_frac and peak >= stop_frac * 1000.0 * g._torque:
+            print(f"    (stalled at cap: |load| {peak:.0f} — stopping sweep)")
             break
-        ms = stub.ReadMotors(gripper_pb2.ReadMotorsRequest())
-        traj.append((t, ms.motor1_position, ms.motor2_position,
-                     ms.motor1_load, ms.motor2_load))
-        time.sleep(period)
-    return traj
-
-
-def send(stub, prox, dist, torque):
-    resp = stub.SendMotorCommand(gripper_pb2.MotorCommand(
-        motor1_goal=float(prox), motor2_goal=float(dist),
-        motor1_torque_limit=float(torque), motor2_torque_limit=float(torque)))
-    if not resp.success:
-        print(f"  WARNING: SendMotorCommand rejected: {resp.error}")
-
-
-def summarize(traj):
-    """Settled position (median of last 25%) + peak/settled |load| per motor."""
-    a = np.array(traj)  # (N,5): t,p1,p2,l1,l2
-    tail = a[max(1, int(0.75 * len(a))):]
-    return {
-        "settled_pos": [float(np.median(tail[:, 1])), float(np.median(tail[:, 2]))],
-        "peak_load": [float(np.max(np.abs(a[:, 3]))), float(np.max(np.abs(a[:, 4])))],
-        "settled_load": [float(np.median(np.abs(tail[:, 3]))),
-                         float(np.median(np.abs(tail[:, 4])))],
-    }
+        travel += step
+    return out
 
 
 def main():
-    p = argparse.ArgumentParser(description="Gripette grabbed-vs-empty load/position characterization")
-    p.add_argument("--gripper_addr", default="localhost:50051")
+    p = argparse.ArgumentParser(description="Gripette load-vs-closure curve")
+    p.add_argument("--gripper_addr", default="localhost:50051",
+                   help="Real hardware: <pi-ip>:50051. Default is the sim.")
     p.add_argument("--torque", type=float, default=0.25,
-                   help="Torque cap (fraction 0..1) for the close — match the eval's --grip_torque_limit")
-    p.add_argument("--closed", type=float, nargs=2, required=True, metavar=("PROX", "DIST"),
-                   help="Fully-closed goal to drive to (your gripper's closed pose)")
-    p.add_argument("--open", type=float, nargs=2, default=[0.0, 0.0], metavar=("PROX", "DIST"),
-                   help="Open/start pose")
-    p.add_argument("--settle_s", type=float, default=2.5,
-                   help="Seconds to poll/record after commanding the close")
-    p.add_argument("--poll_hz", type=float, default=50.0)
-    p.add_argument("--out", default="grip_char.jsonl", help="JSONL trajectory + summary log")
+                   help="Torque cap (0..1) — use the SAME value the eval will run with")
+    p.add_argument("--from", dest="start", type=float, nargs=2, default=[0.0, 0.0],
+                   metavar=("PROX", "DIST"), help="Open/start pose")
+    p.add_argument("--to", dest="end", type=float, nargs=2, default=[1.2, 1.2],
+                   metavar=("PROX", "DIST"),
+                   help="Sweep target — the direction defines the posture swept")
+    p.add_argument("--step", type=float, default=0.02,
+                   help="Increment per step (rad). Match --assist_step.")
+    p.add_argument("--dwell", type=float, default=0.15, help="Seconds held per step")
+    p.add_argument("--stop_frac", type=float, default=0.95,
+                   help="Stop the sweep once |load| reaches this fraction of the cap "
+                        "(0 disables)")
+    p.add_argument("--out", default="grip_load_curve.jsonl")
     args = p.parse_args()
 
-    ch = grpc.insecure_channel(args.gripper_addr)
-    stub = gripper_pb2_grpc.GripperServiceStub(ch)
-    stub.Ping(gripper_pb2.PingRequest())
-    print(f"connected to gripper at {args.gripper_addr} | torque cap {args.torque} | "
-          f"closed {args.closed} open {args.open}")
-    stub.SetTorque(gripper_pb2.TorqueCommand(enable=True))
+    g = Gripper(args.gripper_addr, args.torque)
+    print(f"connected {args.gripper_addr} | torque cap {args.torque} | "
+          f"sweep {args.start} -> {args.end} in {args.step} rad steps")
+    print(f"at rest: pos/load {g.read()}")
 
-    trials = []
+    trials = {}
     try:
         while True:
-            label = input("\nlabel for this trial (e.g. air/mustard/can/thin, or 'quit'): ").strip()
-            if label.lower() in ("quit", "q", ""):
+            label = input("\nlabel ('air' first, then object name; blank to finish): ").strip()
+            if not label:
                 break
-            # Open and let it settle, so every trial starts from the same pose.
-            send(stub, args.open[0], args.open[1], args.torque)
-            time.sleep(1.5)
-            input(f"  place '{label}' in the jaws (or clear them for an air trial), then Enter to close...")
-            send(stub, args.closed[0], args.closed[1], args.torque)
-            traj = poll(stub, args.settle_s, args.poll_hz)
-            s = summarize(traj)
-            trials.append({"label": label, **s})
-            print(f"  settled pos {np.round(s['settled_pos'], 4)} | "
-                  f"peak |load| {np.round(s['peak_load'], 1)} | "
-                  f"settled |load| {np.round(s['settled_load'], 1)}")
+            g.hold(args.start, 1.0)
+            input(f"  place '{label}' in the jaws (clear them for 'air'), Enter to sweep...")
+            rows = sweep(g, args.start, args.end, args.step, args.dwell, args.stop_frac)
+            trials[label] = rows
+            print(f"  {'travel':>7} {'cmd_prox':>9} {'meas_prox':>9} {'load_prox':>9} {'load_dist':>9}")
+            for travel, cmd, meas, load in rows:
+                print(f"  {travel:7.3f} {cmd[0]:9.3f} {meas[0]:9.3f} "
+                      f"{load[0]:9.0f} {load[1]:9.0f}")
+            g.hold(args.start, 0.8)   # reopen between trials
             with open(args.out, "a") as f:
-                f.write(json.dumps({"label": label, "summary": s, "traj": traj}) + "\n")
+                f.write(json.dumps({"label": label, "torque": args.torque,
+                                    "step": args.step, "rows": rows}) + "\n")
     except (KeyboardInterrupt, EOFError):
         print("\ninterrupted")
     finally:
-        send(stub, args.open[0], args.open[1], args.torque)  # reopen
-        time.sleep(0.5)
-        stub.SetTorque(gripper_pb2.TorqueCommand(enable=False))  # release motors
+        g.release(args.start)
         print("gripper reopened, torque released")
 
-    # --- separation report: grabbed (object) trials vs the 'air' baseline ---
-    air = [t for t in trials if t["label"].lower() == "air"]
-    obj = [t for t in trials if t["label"].lower() != "air"]
-    print("\n" + "=" * 70)
-    print("  GRABBED vs EMPTY SEPARATION")
-    print("=" * 70)
-    hdr = f"  {'trial':<10} {'pos(P,D)':>16} {'peak|load|(P,D)':>18} {'settled|load|':>16}"
-    print(hdr)
-    for t in trials:
-        print(f"  {t['label']:<10} {str(np.round(t['settled_pos'],3)):>16} "
-              f"{str(np.round(t['peak_load'],0)):>18} {str(np.round(t['settled_load'],0)):>16}")
-    if air and obj:
-        ap = np.array([a["settled_pos"] for a in air]).mean(0)
-        op = np.array([o["settled_pos"] for o in obj]).mean(0)
-        al = np.array([a["settled_load"] for a in air]).mean(0)
-        ol = np.array([o["settled_load"] for o in obj]).mean(0)
-        print("\n  DISCRIMINATOR:")
-        print(f"    position: air closes to {np.round(ap,3)}, objects stop at {np.round(op,3)} "
-              f"→ {'SEPARABLE (object stops short)' if np.max(np.abs(ap-op))>0.02 else 'NOT separable'}")
-        print(f"    load:     air {np.round(al,0)} vs objects {np.round(ol,0)} "
-              f"→ {'SEPARABLE' if np.max(np.abs(al-ol))>5 else 'saturates in both / NOT separable'}")
-        print("  → set evaluate.py --grasp_confirm on whichever SEPARATES; if only "
-              "position does, the confirm should key on position, not load.")
+    # ---- threshold guidance -------------------------------------------------
+    if not trials:
+        return
+    print("\n" + "=" * 72)
+    print("  LOAD-VS-CLOSURE SUMMARY  (peak |load| per trial)")
+    print("=" * 72)
+    floor = None
+    for label, rows in trials.items():
+        peaks = [max(abs(l[0]), abs(l[1])) for _, _, _, l in rows]
+        free = float(np.median(peaks[:max(1, len(peaks) // 3)]))   # early = free motion
+        print(f"  {label:<10} early/free |load| {free:6.0f} | max |load| {max(peaks):6.0f}")
+        if label.lower() == "air":
+            floor = max(peaks)
+    if floor is not None:
+        objs = {k: max(max(abs(l[0]), abs(l[1])) for _, _, _, l in v)
+                for k, v in trials.items() if k.lower() != "air"}
+        if objs:
+            weakest = min(objs.values())
+            print(f"\n  air floor (max)      : {floor:.0f}")
+            print(f"  weakest object peak  : {weakest:.0f}  ({min(objs, key=objs.get)})")
+            if weakest > 2.5 * max(floor, 1.0):
+                thr = round((floor + weakest) / 2.0 / 10.0) * 10
+                print(f"  --> suggested --grip_assist {thr:.0f}   "
+                      f"(comfortably above the floor, reached by every object)")
+            else:
+                print("  --> MARGIN TOO SMALL: the softest object barely clears the "
+                      "air floor.\n      Increase --assist_step (a bigger press gives a "
+                      "stronger signal) rather\n      than lowering the threshold into "
+                      "the noise, and re-measure.")
     else:
-        print("\n  (run at least one 'air' trial and one object trial to get the separation)")
-    print(f"\n  full trajectories logged to {args.out}")
+        print("\n  (no 'air' trial — run one: it defines the floor the threshold must clear)")
+    print(f"\n  curves logged to {args.out}")
 
 
 if __name__ == "__main__":
