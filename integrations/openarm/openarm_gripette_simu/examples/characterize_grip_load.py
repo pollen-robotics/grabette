@@ -89,7 +89,10 @@ def sweep(g, start, end, step, dwell, stop_frac):
     while travel <= total + 1e-9:
         cmd = start + n * travel
         rows = g.hold(cmd, dwell)
-        tail = rows[max(1, len(rows) // 2):]          # settled part of the dwell
+        # Settled part of the dwell — but NEVER an empty slice: over a slow link
+        # a dwell can yield a single sample (each step costs 2 network round
+        # trips), and an empty tail silently poisoned the whole summary with nan.
+        tail = rows[len(rows) // 2:] or rows
         meas = (float(np.median([r[0] for r in tail])),
                 float(np.median([r[1] for r in tail])))
         load = (float(np.median([r[2] for r in tail])),
@@ -155,6 +158,15 @@ def main():
         print("gripper reopened, torque released")
 
     # ---- threshold guidance -------------------------------------------------
+    # Aggregate from the LOG, not just this invocation: trials are often run one
+    # object per run (place object, sweep, repeat), and the guidance needs the
+    # 'air' floor and the objects together to mean anything.
+    try:
+        for line in open(args.out):
+            rec = json.loads(line)
+            trials.setdefault(rec["label"], rec["rows"])
+    except FileNotFoundError:
+        pass
     if not trials:
         return
     print("\n" + "=" * 72)
