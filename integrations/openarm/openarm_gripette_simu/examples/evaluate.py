@@ -1852,7 +1852,14 @@ def main():
     # starts open) and makes it predict lift/hold instead of approach/close.
     # atexit covers normal return, KeyboardInterrupt and exceptions; a SIGKILL
     # (kill -9) cannot be caught, so after one of those, reopen manually.
-    def _reopen_gripper():
+    # Ordering matters: the reopen is an RPC, so it must happen BEFORE the
+    # channels are closed. Hence ONE idempotent teardown that reopens and then
+    # releases resources, called explicitly at the end of main() and registered
+    # with atexit for the abnormal paths.
+    def _teardown():
+        if getattr(_teardown, "done", False):
+            return
+        _teardown.done = True
         try:
             gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
                 motor1_goal=float(args.start_gripper[0]),
@@ -1863,8 +1870,13 @@ def main():
             print(f"gripper reopened to {tuple(args.start_gripper)} on exit", flush=True)
         except Exception as e:  # noqa: BLE001 — best-effort teardown
             print(f"WARNING: could not reopen the gripper on exit: {e}", flush=True)
+        for close in (camera.stop, arm_channel.close, gripper_channel.close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — already going away
+                pass
 
-    atexit.register(_reopen_gripper)
+    atexit.register(_teardown)
 
     # ---- Evaluation loop ----
     results = []
@@ -2063,9 +2075,9 @@ def main():
 
     if args.debug and _DEBUG_GUI:
         cv2.destroyAllWindows()
-    camera.stop()
-    arm_channel.close()
-    gripper_channel.close()
+    # Reopens the gripper, then stops the camera and closes the channels (also
+    # registered with atexit, and idempotent, so abnormal exits are covered).
+    _teardown()
 
 
 if __name__ == "__main__":
