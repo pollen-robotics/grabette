@@ -982,22 +982,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
                 replay_timer = gr.Timer(0.5, active=False)
 
-        gr.HTML("""
-            <div style="margin-top:2rem;padding:1.25rem 1.5rem;
-                        background:#1e3a5f;border-radius:10px;
-                        border:1px solid #2563eb;display:flex;
-                        align-items:center;justify-content:space-between;gap:1rem;">
-                <span style="color:#e2e8f0;font-size:0.95rem;">
-                    Ready to push your episodes to HuggingFace?
-                </span>
-                <a href="/datasets" style="background:#2563eb;color:#fff;
-                           padding:8px 18px;border-radius:6px;font-weight:600;
-                           font-size:0.9rem;text-decoration:none;white-space:nowrap;">
-                    Create a dataset &#8594;
-                </a>
-            </div>
-        """)
-
         # ── Wire events ───────────────────────────────────────────────
 
         task_list.change(
