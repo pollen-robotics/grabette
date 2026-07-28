@@ -165,14 +165,28 @@ class GripAssist:
     signal: then BOTH cases stall at the cap. Hence "extend gradually", never
     "drive to max".)
 
-    CRITICAL: that only holds AT REST. These servos have no torque sensor —
-    "load" is a PWM/current proxy, so a MOVING finger always reads a nonzero
-    motion load (measured: median ~26, spikes to ~88 on this gripper) whether
-    or not it is touching anything. So after each increment we DWELL
-    (assist_dwell_ticks) to let the finger settle before trusting the reading,
-    and require the reading to repeat (assist_confirm_ticks) before latching —
-    a single noisy tick above threshold would otherwise latch GRIPPED and
-    leave exactly the under-grip this is meant to fix.
+    CRITICAL: load ALONE is a weak test, because there is no torque sensor —
+    "load" is a PWM/current proxy, so a MOVING finger reads a nonzero motion
+    load whether or not it touches anything (measured while stepping: up to
+    ~88; at rest with the jaws free: ~0-24).
+
+    So contact is detected as a STALL — commanded to advance, but not
+    advancing, while drawing effort:
+
+        lag = |commanded - measured|  >  assist_lag  AND  load >= threshold
+
+    Bench numbers backing that (rigid object, 25% cap, 0.02 rad steps): free
+    motion lag 0.002-0.004 rad with load 0-24; from first contact lag jumps to
+    0.014 and GROWS (0.022, 0.031, 0.041, 0.052) while load climbs 72 -> 250.
+    Lag is used rather than a raw velocity/ratio because it is rate-robust: a
+    blocked finger's lag grows by the commanded increment every tick no matter
+    how much time the servo had, whereas an absolute velocity threshold shifts
+    with the control-loop rate. The load term keeps the degenerate case honest:
+    a limp/disabled servo is also "not moving", but draws nothing, and must NOT
+    read as a grasp.
+
+    Readings are debounced (assist_confirm_ticks): one noisy tick must not
+    latch GRIPPED, which would leave exactly the under-grip this fixes.
 
     States: IDLE → ASSISTING → GRIPPED (contact found; offset latched, and
     re-assists if the load later drops = slip) or EXHAUSTED (no contact within
@@ -183,13 +197,15 @@ class GripAssist:
 
     def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
                  stable_eps=0.01, step=0.02, max_extra=0.4,
-                 dwell_ticks=2, confirm_ticks=2,
+                 dwell_ticks=2, confirm_ticks=2, lag=0.010,
                  limits=((0.0, 1.484), (0.0, 2.025))):
         self._thresh = float(load_thresh)
+        self._lag = float(lag)
         self._dwell_ticks = int(dwell_ticks)
         self._confirm_ticks = int(confirm_ticks)
         self._dwell = 0
         self._confirm = 0
+        self._sent = None          # last pose we actually commanded
         self._ref = np.asarray(ref, dtype=float)
         self._min_close = float(min_close)
         self._stable_ticks = int(stable_ticks)
@@ -206,12 +222,24 @@ class GripAssist:
         self._prev = None
         self._armed = True         # cleared after EXHAUSTED until re-open
 
-    def update(self, cmd, load, step=None):
+    def update(self, cmd, load, step=None, meas=None):
         """One tick. cmd = the policy's (prox, distal) goal, load = the
-        gripper's (prox, distal) present_load. Returns the (prox, distal) to
-        actually SEND."""
+        gripper's (prox, distal) present_load, meas = its measured (prox,
+        distal) position (for the stall test; if omitted, falls back to a
+        load-only test). Returns the (prox, distal) to actually SEND."""
         cmd = np.asarray(cmd, dtype=float)
         peak = max(abs(float(x)) for x in load) if load is not None else 0.0
+        # STALL = we commanded a pose the fingers are not reaching, while the
+        # motor draws effort. Lag is measured against what WE sent last tick
+        # (cmd + assist offset), not the policy's raw command.
+        if meas is not None and self._sent is not None:
+            lag = float(np.max(np.abs(np.asarray(self._sent, dtype=float)
+                                      - np.asarray(meas, dtype=float))))
+            self.lag = lag
+            stalled = (lag > self._lag) and (peak >= self._thresh)
+        else:
+            self.lag = float("nan")
+            stalled = peak >= self._thresh      # no position feedback: load only
         d = cmd - self._ref
         # CONVENTION-AGNOSTIC: "closing" = displaced from the open reference by
         # this much in ANY direction, measured as a magnitude. Current models
@@ -234,11 +262,13 @@ class GripAssist:
         if not closing:
             # Policy opened (or never closed): release everything, re-arm.
             self.state, self.offset, self._armed = "IDLE", 0.0, True
-            return self._clamp(cmd)
+            self._confirm = self._dwell = 0
+            self._sent = self._clamp(cmd)
+            return self._sent
 
         if self.state == "IDLE":
             if self._armed and self._stable >= self._stable_ticks:
-                if peak >= self._thresh:
+                if stalled:
                     self.state = "GRIPPED"      # already gripping — hands off
                     self.n_gripped += 1
                 else:
@@ -246,11 +276,12 @@ class GripAssist:
                     self.trigger_step = step
                     self._dwell = self._confirm = 0
         elif self.state == "ASSISTING":
-            # Dwell after each increment: a MOVING finger reads a nonzero motion
-            # load regardless of contact, so only a settled reading is trusted.
+            # Brief dwell after each increment so the fingers have a chance to
+            # move before we judge whether they are stuck (kept small: the stall
+            # test already tolerates motion, unlike a bare load threshold).
             if self._dwell < self._dwell_ticks:
                 self._dwell += 1
-            elif peak >= self._thresh:
+            elif stalled:
                 self._confirm += 1
                 if self._confirm >= self._confirm_ticks:
                     self.state = "GRIPPED"      # contact: latch this offset
@@ -258,16 +289,16 @@ class GripAssist:
             elif self.offset + self._step <= self._max_extra:
                 self._confirm = 0
                 self.offset += self._step
-                self._dwell = 0                 # settle again before re-reading
+                self._dwell = 0
             else:
                 # Nothing within reach: release and wait for the policy to
                 # re-approach (it must open first, so this cannot chatter).
                 self.state, self.offset, self._armed = "EXHAUSTED", 0.0, False
                 self.n_exhausted += 1
         elif self.state == "GRIPPED":
-            # Slip detection is debounced too — a single noisy low reading must
-            # not restart a top-up on a perfectly good grasp.
-            if peak < self._thresh:
+            # Slip detection is debounced too — a single noisy reading must not
+            # restart a top-up on a perfectly good grasp.
+            if not stalled:
                 self._confirm += 1
                 if self._confirm >= self._confirm_ticks:
                     self.state, self._dwell, self._confirm = "ASSISTING", 0, 0
@@ -275,7 +306,9 @@ class GripAssist:
                 self._confirm = 0
         # EXHAUSTED: hold at the policy's own command until it opens.
 
-        return self._clamp(cmd + self._direction(d) * self.offset)
+        out = self._clamp(cmd + self._direction(d) * self.offset)
+        self._sent = out            # lag next tick is measured against this
+        return out
 
     def _direction(self, d):
         """Unit vector along the policy's commanded closing posture, so extra
@@ -445,6 +478,8 @@ def parse_args():
     p.add_argument("--assist_step", type=float, default=0.02,
                    help="--grip_assist: extra closure added per tick (rad) while topping up. "
                         "Smaller = gentler approach to contact.")
+    p.add_argument("--assist_lag", type=float, default=0.010,
+                   help="--grip_assist: STALL threshold (rad). Contact = the fingers lag the\n                        commanded pose by more than this WHILE drawing load (>= LOAD_THRESH).\n                        Measured on the real gripper at 25%% cap: free motion lags\n                        0.002-0.004 rad, first contact 0.014 and growing — so ~0.010 sits\n                        mid-gap. Rate-robust (a blocked finger's lag grows every tick),\n                        unlike an absolute velocity threshold.")
     p.add_argument("--assist_dwell_ticks", type=int, default=2,
                    help="--grip_assist: ticks to WAIT after each increment before trusting "
                         "the load reading. These servos have no torque sensor — a MOVING "
@@ -1175,7 +1210,8 @@ def run_episode(
             # settled closed WITHOUT load (see GripAssist). Outside that state
             # the policy's gripper command passes through untouched, so the
             # approach and any already-good grasp are never perturbed.
-            gg1, gg2 = grip_assist.update((gg1, gg2), camera.get_load(), step)
+            gg1, gg2 = grip_assist.update((gg1, gg2), camera.get_load(), step,
+                                          meas=tuple(state[-2:]))
         elif commit_full is not None:
             # Committed-close primitive (supersedes latch/commit/grip_gain when
             # set). The model under-CLOSES — it starts a close but stops short
@@ -1255,7 +1291,8 @@ def run_episode(
             # override is visible (cmd pinned at commit_target while model drifts).
             assist_tag = ""
             if grip_assist is not None and grip_assist.state != "IDLE":
-                assist_tag = f" {grip_assist.state}+{grip_assist.offset:.3f}"
+                assist_tag = (f" {grip_assist.state}+{grip_assist.offset:.3f}"
+                              f" lag={getattr(grip_assist, 'lag', float('nan')):.4f}")
             print(
                 f"step {step:3d} | gripper cmd: prox={gg1:+.4f} dist={gg2:+.4f}"
                 f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
@@ -1745,6 +1782,7 @@ def main():
             step=args.assist_step, max_extra=args.assist_max_extra,
             dwell_ticks=args.assist_dwell_ticks,
             confirm_ticks=args.assist_confirm_ticks,
+            lag=args.assist_lag,
         ) if args.grip_assist is not None else None)
 
         if args.async_exec:
