@@ -743,8 +743,16 @@ def main():
     logger.info("Kinematics loaded")
 
     # ---- gRPC server ----
+    # SINGLE-INSTANCE GUARD. gRPC enables SO_REUSEPORT by default on Linux, so a
+    # SECOND server binds the same port WITHOUT any error — and two instances of
+    # this process each run their own interpolator/integrator while writing to
+    # the same CAN bus and motors. They fight, and the arm shakes violently
+    # (observed on the real robot 2026-07-28: two servers on :50052, 17:02-17:04).
+    # Disabling so_reuseport makes the second bind FAIL, and we check the return
+    # value (add_insecure_port returns 0 on failure) instead of ignoring it.
     start_time = time.monotonic()
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=4),
+                         options=[("grpc.so_reuseport", 0)])
     servicer = ArmServicer(
         arm_iface,
         kin,
@@ -756,7 +764,22 @@ def main():
         max_target_lead_mm=args.max_target_lead_mm,
     )
     arm_pb2_grpc.add_ArmServiceServicer_to_server(servicer, server)
-    server.add_insecure_port(f"[::]:{args.arm_port}")
+    # grpcio signals a failed bind either by returning 0 (older) or by raising
+    # RuntimeError (current) — handle both so the refusal is always explained.
+    try:
+        _bound = server.add_insecure_port(f"[::]:{args.arm_port}")
+    except RuntimeError:
+        _bound = 0
+    if _bound == 0:
+        raise SystemExit(
+            f"REFUSING TO START: port {args.arm_port} is already in use — another "
+            f"arm server is almost certainly running and driving the motors.\n"
+            f"Two servers on one arm each hold their own target and fight, which "
+            f"shakes the arm violently.\n"
+            f"Check with:  ss -tlnp | grep {args.arm_port}   and   "
+            f"pgrep -af grpc_server_real\n"
+            f"Stop the existing one before starting this."
+        )
     server.start()
     logger.info(f"ArmService listening on port {args.arm_port}")
     logger.info("Press Ctrl+C to stop")
