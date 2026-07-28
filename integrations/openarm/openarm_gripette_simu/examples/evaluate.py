@@ -188,20 +188,31 @@ class GripAssist:
     Readings are debounced (assist_confirm_ticks): one noisy tick must not
     latch GRIPPED, which would leave exactly the under-grip this fixes.
 
-    States: IDLE → ASSISTING → GRIPPED (contact found; offset latched, and
-    re-assists if the load later drops = slip) or EXHAUSTED (no contact within
-    max_extra → assist released; re-arms only once the policy opens again, so
-    it cannot chatter). A policy command back toward open always releases the
-    assist — a deliberate release is honored.
+    Detecting contact is not the same as HOLDING: the stall fires at light
+    touch (measured on the bench: lag 0.0114, load 64, both barely over
+    threshold), and grip force only persists while commanding PAST the object.
+    So on contact we press a further `squeeze` before latching — pressing
+    0.04-0.08 rad past contact took load 72 -> 250 (the cap) on the bench, and
+    the torque cap bounds the force, so this is where a light touch becomes a
+    grip that survives a lift.
+
+    States: IDLE → ASSISTING → SQUEEZING → GRIPPED (offset latched; re-assists
+    if the load later drops = slip) or EXHAUSTED (no contact within max_extra →
+    assist released; re-arms only once the policy opens again, so it cannot
+    chatter). A policy command back toward open always releases the assist —
+    a deliberate release is honored.
     """
 
     def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
                  stable_eps=0.01, step=0.02, max_extra=0.4,
                  dwell_ticks=2, confirm_ticks=2, lag=0.010, settle_eps=0.004,
+                 squeeze=0.05,
                  limits=((0.0, 1.484), (0.0, 2.025))):
         self._thresh = float(load_thresh)
         self._lag = float(lag)
         self._settle_eps = float(settle_eps)
+        self._squeeze = float(squeeze)
+        self._squeeze_to = 0.0
         self._meas = None          # previous measured position (settle test)
         self._dwell_ticks = int(dwell_ticks)
         self._confirm_ticks = int(confirm_ticks)
@@ -299,8 +310,16 @@ class GripAssist:
             elif stalled:
                 self._confirm += 1
                 if self._confirm >= self._confirm_ticks:
-                    self.state = "GRIPPED"      # contact: latch this offset
-                    self.n_gripped += 1
+                    # Contact found — but that is only a TOUCH. Press on for
+                    # `squeeze` more to develop actual grip force before
+                    # latching (bounded by the torque cap and max_extra).
+                    self._squeeze_to = min(self.offset + self._squeeze,
+                                           self._max_extra)
+                    self.state = ("SQUEEZING" if self._squeeze_to > self.offset
+                                  else "GRIPPED")
+                    if self.state == "GRIPPED":
+                        self.n_gripped += 1
+                    self._confirm = 0
             elif self.offset + self._step <= self._max_extra:
                 self._confirm = 0
                 self.offset += self._step
@@ -310,6 +329,16 @@ class GripAssist:
                 # re-approach (it must open first, so this cannot chatter).
                 self.state, self.offset, self._armed = "EXHAUSTED", 0.0, False
                 self.n_exhausted += 1
+        elif self.state == "SQUEEZING":
+            # Press past contact to build grip force, then latch. No load check
+            # here: we are deliberately pushing into a known object, and the
+            # torque cap is what limits the force.
+            if self.offset + self._step <= self._squeeze_to:
+                self.offset += self._step
+            else:
+                self.state = "GRIPPED"
+                self.n_gripped += 1
+                self._confirm = 0
         elif self.state == "GRIPPED":
             # Slip detection is debounced too — a single noisy reading must not
             # restart a top-up on a perfectly good grasp.
@@ -495,6 +524,12 @@ def parse_args():
                         "Smaller = gentler approach to contact.")
     p.add_argument("--assist_lag", type=float, default=0.010,
                    help="--grip_assist: STALL threshold (rad). Contact = the fingers lag the\n                        commanded pose by more than this WHILE drawing load (>= LOAD_THRESH).\n                        Measured on the real gripper at 25%% cap: free motion lags\n                        0.002-0.004 rad, first contact 0.014 and growing — so ~0.010 sits\n                        mid-gap. Rate-robust (a blocked finger's lag grows every tick),\n                        unlike an absolute velocity threshold.")
+    p.add_argument("--assist_squeeze", type=float, default=0.05,
+                   help="--grip_assist: extra closure (rad) to press PAST contact before "
+                        "latching. Contact fires at a light touch, and grip force only "
+                        "persists while commanding past the object — measured on the bench, "
+                        "pressing 0.04-0.08 past contact took load 72 -> 250 (cap). The "
+                        "torque cap bounds the force. 0 = latch at first touch.")
     p.add_argument("--assist_settle_eps", type=float, default=0.004,
                    help="--grip_assist: per-tick measured movement (rad) below which the "
                         "fingers count as SETTLED. Contact is only judged once settled — a "
@@ -1803,6 +1838,7 @@ def main():
             dwell_ticks=args.assist_dwell_ticks,
             confirm_ticks=args.assist_confirm_ticks,
             lag=args.assist_lag, settle_eps=args.assist_settle_eps,
+            squeeze=args.assist_squeeze,
         ) if args.grip_assist is not None else None)
 
         if args.async_exec:
