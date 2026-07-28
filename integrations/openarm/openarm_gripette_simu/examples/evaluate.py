@@ -197,10 +197,12 @@ class GripAssist:
 
     def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
                  stable_eps=0.01, step=0.02, max_extra=0.4,
-                 dwell_ticks=2, confirm_ticks=2, lag=0.010,
+                 dwell_ticks=2, confirm_ticks=2, lag=0.010, settle_eps=0.004,
                  limits=((0.0, 1.484), (0.0, 2.025))):
         self._thresh = float(load_thresh)
         self._lag = float(lag)
+        self._settle_eps = float(settle_eps)
+        self._meas = None          # previous measured position (settle test)
         self._dwell_ticks = int(dwell_ticks)
         self._confirm_ticks = int(confirm_ticks)
         self._dwell = 0
@@ -229,17 +231,30 @@ class GripAssist:
         load-only test). Returns the (prox, distal) to actually SEND."""
         cmd = np.asarray(cmd, dtype=float)
         peak = max(abs(float(x)) for x in load) if load is not None else 0.0
-        # STALL = we commanded a pose the fingers are not reaching, while the
-        # motor draws effort. Lag is measured against what WE sent last tick
-        # (cmd + assist offset), not the policy's raw command.
-        if meas is not None and self._sent is not None:
-            lag = float(np.max(np.abs(np.asarray(self._sent, dtype=float)
-                                      - np.asarray(meas, dtype=float))))
-            self.lag = lag
-            stalled = (lag > self._lag) and (peak >= self._thresh)
+        # STALL = the fingers have STOPPED MOVING, short of the pose we
+        # commanded, while the motor draws effort. All three terms are needed:
+        #   - SETTLED: a finger still travelling to a freshly-commanded pose
+        #     legitimately lags a lot and draws cap-level current. Without this
+        #     term the transit to the policy's own close reads as contact
+        #     (observed on the bench: lag 0.09, load 250, 3 ticks in, zero
+        #     top-up). Command-stable is NOT the same as fingers-settled.
+        #   - LAG: settled short of the commanded pose = something is in the way
+        #     (a finger that simply arrived has ~no lag).
+        #   - LOAD: rejects a limp/disabled servo, which is also settled+lagging
+        #     but pushing nothing.
+        meas_arr = None if meas is None else np.asarray(meas, dtype=float)
+        if meas_arr is not None and self._sent is not None and self._meas is not None:
+            lag = float(np.max(np.abs(np.asarray(self._sent, dtype=float) - meas_arr)))
+            advance = float(np.max(np.abs(meas_arr - self._meas)))
+            self.lag, self.advance = lag, advance
+            stalled = (advance < self._settle_eps
+                       and lag > self._lag
+                       and peak >= self._thresh)
         else:
-            self.lag = float("nan")
-            stalled = peak >= self._thresh      # no position feedback: load only
+            self.lag = self.advance = float("nan")
+            stalled = False if meas_arr is not None else peak >= self._thresh
+        if meas_arr is not None:
+            self._meas = meas_arr.copy()
         d = cmd - self._ref
         # CONVENTION-AGNOSTIC: "closing" = displaced from the open reference by
         # this much in ANY direction, measured as a magnitude. Current models
@@ -480,6 +495,11 @@ def parse_args():
                         "Smaller = gentler approach to contact.")
     p.add_argument("--assist_lag", type=float, default=0.010,
                    help="--grip_assist: STALL threshold (rad). Contact = the fingers lag the\n                        commanded pose by more than this WHILE drawing load (>= LOAD_THRESH).\n                        Measured on the real gripper at 25%% cap: free motion lags\n                        0.002-0.004 rad, first contact 0.014 and growing — so ~0.010 sits\n                        mid-gap. Rate-robust (a blocked finger's lag grows every tick),\n                        unlike an absolute velocity threshold.")
+    p.add_argument("--assist_settle_eps", type=float, default=0.004,
+                   help="--grip_assist: per-tick measured movement (rad) below which the "
+                        "fingers count as SETTLED. Contact is only judged once settled — a "
+                        "finger still travelling to a new commanded pose lags a lot and "
+                        "draws cap current, which would otherwise read as contact.")
     p.add_argument("--assist_dwell_ticks", type=int, default=2,
                    help="--grip_assist: ticks to WAIT after each increment before trusting "
                         "the load reading. These servos have no torque sensor — a MOVING "
@@ -1782,7 +1802,7 @@ def main():
             step=args.assist_step, max_extra=args.assist_max_extra,
             dwell_ticks=args.assist_dwell_ticks,
             confirm_ticks=args.assist_confirm_ticks,
-            lag=args.assist_lag,
+            lag=args.assist_lag, settle_eps=args.assist_settle_eps,
         ) if args.grip_assist is not None else None)
 
         if args.async_exec:
