@@ -185,6 +185,23 @@ async def _handle_relay_command(cmd: dict) -> dict:
         except Exception as e:  # noqa: BLE001
             return {"status": "error", "message": f"processing failed: {e}"}
 
+    if ctype == "delete_episode":
+        # Fleet "delete last episode": remove this device's local files + registry
+        # entry for the given episode. Needs no capture hardware. Absent locally
+        # (never recorded here / already gone) → treated as success (idempotent).
+        from grabette.app.routers.tasks import get_task_manager
+
+        eid = (cmd.get("args") or {}).get("episode_id")
+        if not eid:
+            return {"status": "error", "message": "episode_id is required"}
+        try:
+            get_task_manager().delete_episode(eid)
+            return {"status": "ok", "deleted": eid}
+        except FileNotFoundError:
+            return {"status": "ok", "deleted": None, "note": "not present on this device"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": str(e)}
+
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
 
@@ -317,7 +334,7 @@ async def lifespan(app: FastAPI):
             device_id=settings.device_id,
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
-                          "upload_episodes", "process_dataset"],
+                          "upload_episodes", "process_dataset", "delete_episode"],
             hand=settings.hand,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
