@@ -546,8 +546,8 @@ def parse_args():
                         "only (no-op in sim). Try 0.2-0.4; watch motor{1,2}_load telemetry.")
     p.add_argument("--grip_assist", type=float, default=None, metavar="LOAD_THRESH",
                    help="Load-triggered GRIP ASSIST (sync cartesian mode; the recommended "
-                        "fix for the under-close failure — supersedes --commit_full/"
-                        "--latch_close/--grip_gain when set; pair with --grip_torque_limit). "
+                        "fix for the under-close failure — supersedes --latch_close/"
+                        "--commit_close/--grip_gain when set; pair with --grip_torque_limit). "
                         "The policy replays the demonstrated closing ANGLE, which is where "
                         "the human's fingers sat while PRESSING the object — on a force-blind "
                         "position servo that can stop just short, touching nothing. This "
@@ -606,36 +606,6 @@ def parse_args():
                    help="--grip_assist: max total extra closure (rad) beyond the policy's "
                         "command. Reaching it without contact = nothing in the jaws → the "
                         "assist releases until the policy re-approaches.")
-    p.add_argument("--commit_full", type=float, default=None, metavar="THRESH",
-                   help="Committed-close primitive (sync cartesian mode; supersedes "
-                        "--latch_close/--commit_close/--grip_gain when set — pair it with "
-                        "--grip_torque_limit). Fixes the UNDER-CLOSE failure: the model "
-                        "starts a close but stops short of the object. When the model's "
-                        "gripper command first crosses this LOW threshold (intent), take "
-                        "over the gripper channel and drive it to --commit_target (a full "
-                        "close), latched; the torque cap stops the fingers firmly on the "
-                        "object. Keep it low (the model under-initiates, so a weak close "
-                        "command is a trustworthy 'I'm at the object'); too low fires "
-                        "mid-approach. The arm keeps replanning from the model. Suggested "
-                        "0.3-0.4.")
-    p.add_argument("--commit_target", type=float, nargs=2, default=None,
-                   metavar=("PROX", "DIST"),
-                   help="The fully-closed gripper pose --commit_full drives to (your "
-                        "gripper's closed command, e.g. proximal-dominant for a power "
-                        "wrap). Drive PAST where the model/demos stop; the --grip_torque_limit "
-                        "cap makes over-driving safe (fingers stop on the object). Required "
-                        "with --commit_full.")
-    p.add_argument("--grasp_confirm_load", type=float, default=None, metavar="LOAD",
-                   help="Post-commit grasp confirmation (REAL HARDWARE only — present_load "
-                        "reads 0 in sim, so leave unset there or every close reads empty). "
-                        "--commit_settle_steps after committing, read gripper present_load: "
-                        "if peak |load| is below this, the close caught nothing (closed on "
-                        "air) → reopen to --start_gripper and un-commit so the model "
-                        "re-approaches (prevents an empty lift and resets the observed "
-                        "gripper state). Unset = stay committed regardless (sim / open-loop).")
-    p.add_argument("--commit_settle_steps", type=int, default=10,
-                   help="Ticks to wait after committing before the --grasp_confirm_load "
-                        "check (let the fingers reach the object first).")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -664,15 +634,8 @@ def parse_args():
     args = p.parse_args()
     if args.checkpoint is None and args.policy_addr is None:
         p.error("either --checkpoint or --policy_addr is required")
-    if args.commit_full is not None and args.commit_target is None:
-        p.error("--commit_full requires --commit_target (the fully-closed pose to drive to)")
-    if args.commit_full is not None and args.async_exec:
-        p.error("--commit_full is sync-mode only (not --async_exec)")
     if args.grip_assist is not None and args.async_exec:
         p.error("--grip_assist is sync-mode only (not --async_exec)")
-    if args.grip_assist is not None and args.commit_full is not None:
-        p.error("--grip_assist and --commit_full are alternative fixes for the same "
-                "failure — use one (grip_assist is the recommended one)")
     return args
 
 
@@ -1040,10 +1003,6 @@ def run_episode(
     latch_close=None,
     grip_assist=None,
     assist_log=None,
-    commit_full=None,
-    commit_target=None,
-    grasp_confirm_load=None,
-    commit_settle_steps=10,
     client=None,
     remote_k=None,
     remote_img_wh=None,
@@ -1068,12 +1027,6 @@ def run_episode(
     # end-at-lift datasets where no demo reopens near the object.
     grip_latch = None
     latched_at_step = None
-    # --commit_full state machine (see the gripper-send block below): once the
-    # model signals a close (crosses the low intent threshold), we drive the
-    # gripper to a full close at the torque cap and latch it — the model's job
-    # shrinks to signalling intent; the primitive completes the clamp.
-    committed = False
-    commit_step = None
     n_rejected = 0  # arm commands refused by the server (IK-jump watchdog etc.)
     dt = 1.0 / fps
     episode_start = time.perf_counter()
@@ -1349,41 +1302,6 @@ def run_episode(
                         "advance": round(float(grip_assist.advance), 5),
                         "why": grip_assist.why,
                     }) + "\n")
-        elif commit_full is not None:
-            # Committed-close primitive (supersedes latch/commit/grip_gain when
-            # set). The model under-CLOSES — it starts a close but stops short
-            # of the object. So we don't ask it to produce the full closure:
-            # once its command crosses a LOW intent threshold, we take over the
-            # gripper channel and drive it to `commit_target` (the fully-closed
-            # pose), relying on the fixed torque cap to stop the fingers firmly
-            # on the object (or shut safely if there's nothing there). The arm
-            # keeps replanning from the model throughout.
-            if not committed and max(gg1, gg2) > commit_full:
-                committed = True
-                commit_step = step
-                print(f"CLOSE COMMITTED at step {step} (intent {max(gg1, gg2):.3f} "
-                      f"> {commit_full:.3f}) → driving to {commit_target} "
-                      f"@ torque {grip_torque_limit:.2f}", flush=True)
-            if committed:
-                gg1, gg2 = commit_target
-                # Post-commit load confirmation (hardware only — present_load is
-                # 0 in sim, so leave --grasp_confirm_load unset there). After a
-                # settle, a low load means we closed on air: reopen and un-commit
-                # so the model re-approaches, and so it never dwells on a false
-                # closed-on-object proprioceptive state.
-                if (grasp_confirm_load is not None and commit_step is not None
-                        and step - commit_step == commit_settle_steps):
-                    load = camera.get_load()
-                    peak = max(abs(load[0]), abs(load[1])) if load is not None else 0.0
-                    if peak >= grasp_confirm_load:
-                        print(f"GRASP CONFIRMED at step {step}: |load| {peak:.1f} "
-                              f">= {grasp_confirm_load:.1f}", flush=True)
-                    else:
-                        print(f"EMPTY CLOSE at step {step}: |load| {peak:.1f} "
-                              f"< {grasp_confirm_load:.1f} → reopening", flush=True)
-                        committed = False
-                        commit_step = None
-                        gg1, gg2 = grip_ref
         else:
             if latch_close is not None:
                 if grip_latch is None and max(gg1, gg2) > latch_close:
@@ -1424,8 +1342,8 @@ def run_episode(
             model_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             load1, load2 = camera.get_load()
             # `cmd` is what was actually SENT (gg1,gg2 — post commit/latch/gain
-            # override); the model's raw goal follows in parens so a committed
-            # override is visible (cmd pinned at commit_target while model drifts).
+            # override); the model's raw goal follows in parens so an assist
+            # override is visible (cmd pinned while the model's own goal drifts).
             assist_tag = ""
             if grip_assist is not None:
                 assist_tag = (f" | {grip_assist.state}+{grip_assist.offset:.3f}"
@@ -1434,7 +1352,6 @@ def run_episode(
             print(
                 f"step {step:3d} | gripper cmd: prox={gg1:+.4f} dist={gg2:+.4f}"
                 f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
-                f"{' COMMITTED' if commit_full is not None and committed else ''}"
                 f"{assist_tag}"
                 f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
                 f" | load: prox={load1:+.0f} dist={load2:+.0f}",
@@ -2010,10 +1927,6 @@ def main():
             latch_close=args.latch_close,
             grip_assist=assist,
             assist_log=args.assist_log,
-            commit_full=args.commit_full,
-            commit_target=tuple(args.commit_target) if args.commit_target else None,
-            grasp_confirm_load=args.grasp_confirm_load,
-            commit_settle_steps=args.commit_settle_steps,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),

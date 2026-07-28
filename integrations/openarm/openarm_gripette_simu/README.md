@@ -265,8 +265,8 @@ Workstation-only (don't do this for a Pi deployment), and re-run it after any `u
 
 **Try this first when a policy approaches correctly but fails to actually grip.**
 It is the primary remedy for the most common grasp failure on this hardware, and
-it **supersedes `--latch_close` / `--commit_close` / `--grip_gain`** (it is
-mutually exclusive with `--commit_full`).
+it **supersedes `--latch_close` / `--commit_close` / `--grip_gain`** — set it
+instead of those, not alongside them.
 
 **The failure.** The policy replays the closing *angle* it was shown, which is
 where the human demonstrator's fingers sat **while pressing the object**. Replayed
