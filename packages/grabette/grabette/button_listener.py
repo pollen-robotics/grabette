@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # plus worst-case hardware init (OAK-D cold boot ~5-8s).
 RECORDING_WAIT_TIMEOUT_S = 20.0
 
+# How long the pressed device blinks right after a STOP press, as an
+# acknowledgment that the command registered (the state monitor would otherwise
+# just switch it off). Local to the pressed device — the peer isn't affected.
+STOP_ACK_S = 1.2
+
 
 class ButtonListener:
     """Watches the physical button and drives capture start/stop."""
@@ -40,6 +45,7 @@ class ButtonListener:
         self._led_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop_ack_until = 0.0  # monotonic deadline: blink to ack a stop press
 
     def start(self, loop: asyncio.AbstractEventLoop) -> None:
         """Start listening. Must be called from the async event loop thread."""
@@ -110,6 +116,8 @@ class ButtonListener:
         b = self._backend
         if b.is_teleop_active:
             return "on" if b.is_teleop_sending else "off"
+        if time.monotonic() < self._stop_ack_until:
+            return "blink"       # just pressed stop here → acknowledge the press
         if b.is_capturing:
             return "on"          # recording
         if get_capture_scheduler().is_scheduled():
@@ -231,7 +239,9 @@ class ButtonListener:
             raise
 
     def _do_stop_capture(self) -> None:
-        # LED goes off once is_capturing clears (driven by the state monitor).
+        # Blink briefly right here to acknowledge the press on THIS device (the
+        # monitor would otherwise just switch off); then it follows state again.
+        self._stop_ack_until = time.monotonic() + STOP_ACK_S
         future = asyncio.run_coroutine_threadsafe(self._stop_capture_coro(), self._loop)
         try:
             future.result(timeout=30.0)
