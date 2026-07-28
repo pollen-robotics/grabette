@@ -27,6 +27,9 @@ eval = [
     "lerobot[diffusion,pi]==0.6.0 ; python_version >= '3.12'",
     "scipy>=1.10",
 ]
+# tests/ — needs the `eval` extra as well: the GripAssist regression tests load
+# examples/evaluate.py, which imports the policy stack.
+test = ["pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]
