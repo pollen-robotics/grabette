@@ -3057,6 +3057,9 @@ eval = [
     { name = "lerobot", extra = ["diffusion", "pi"], marker = "python_full_version >= '3.12'" },
     { name = "scipy" },
 ]
+test = [
+    { name = "pytest" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -3070,9 +3073,10 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.9" },
     { name = "placo", specifier = ">=0.9" },
     { name = "protobuf", specifier = ">=4.25" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8" },
     { name = "scipy", marker = "extra == 'eval'", specifier = ">=1.10" },
 ]
-provides-extras = ["dev", "dataset", "eval"]
+provides-extras = ["dev", "dataset", "eval", "test"]
 
 [[package]]
 name = "opencv-contrib-python"
