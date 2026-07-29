@@ -91,6 +91,9 @@ class TaskManager:
         # members/signature (from the fleet at start) let this device be the
         # durable source of truth for who recorded each episode.
         self._pending_episode: tuple[str, str | None, dict | None, list | None] | None = None
+        # Bumped on every _save (i.e. every mutation). The relay watches it to
+        # know when to re-report this device's tasks to the fleet.
+        self._revision: int = 0
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -118,6 +121,10 @@ class TaskManager:
             self._tasks = []
 
     def _save(self) -> None:
+        # Every mutation goes through _save, so bumping here gives a cheap
+        # change-signal: the relay reports tasks to the fleet only when this
+        # revision moves (see RelayClient), instead of resending on every beat.
+        self._revision += 1
         data = {"tasks": self._tasks}
         tmp = self._registry_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2))
@@ -352,6 +359,11 @@ class TaskManager:
             has_video=video_path.exists(),
             has_imu=imu_path.exists(),
         )
+
+    def revision(self) -> int:
+        """Monotonic counter bumped on every task-registry change. The relay
+        re-reports tasks to the fleet only when this moves (cheap change-signal)."""
+        return self._revision
 
     def report_tasks(self) -> list[dict]:
         """Snapshot of this device's recorded tasks for the fleet to aggregate.

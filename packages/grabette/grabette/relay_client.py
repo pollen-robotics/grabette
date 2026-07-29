@@ -78,6 +78,11 @@ class RelayClient:
         # of which HF account it runs under — can surface the device's tasks and
         # name each episode's peers. The device is the durable source of truth.
         tasks_provider: Optional[Callable[[], list[dict]]] = None,
+        # Optional callable returning a monotonic revision that changes whenever
+        # this device's tasks change (see TaskManager.revision). Watched on the
+        # heartbeat so a freshly-recorded episode is re-reported to the fleet
+        # within one beat, instead of only on the next reconnect.
+        tasks_rev_provider: Optional[Callable[[], int]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -88,6 +93,8 @@ class RelayClient:
         self.poll_interval = poll_interval
         self.battery_provider = battery_provider
         self.tasks_provider = tasks_provider
+        self.tasks_rev_provider = tasks_rev_provider
+        self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
         self._battery: Optional[float] = None  # cached; refreshed off the heartbeat path
         self.status = "offline"
 
@@ -190,6 +197,20 @@ class RelayClient:
                             pass
                     except Exception:
                         pass
+                    # Re-report tasks when they've changed since the last report
+                    # (e.g. a just-recorded episode), so the fleet's aggregated
+                    # view stays fresh without resending the full list every beat.
+                    if self.tasks_rev_provider is not None:
+                        try:
+                            rev = self.tasks_rev_provider()
+                        except Exception:
+                            rev = self._last_reported_rev
+                        if rev != self._last_reported_rev:
+                            try:
+                                await self._register(session, token)
+                                self._last_reported_rev = rev
+                            except Exception:
+                                pass  # retry on the next beat
 
             async def battery_loop() -> None:
                 """Refresh the cached battery % on a slow cadence, isolated from
@@ -225,6 +246,13 @@ class RelayClient:
                         if not registered:
                             await self._register(session, token)
                             registered = True
+                            # Mark the just-sent task revision so the heartbeat
+                            # only re-reports on subsequent changes.
+                            if self.tasks_rev_provider is not None:
+                                try:
+                                    self._last_reported_rev = self.tasks_rev_provider()
+                                except Exception:
+                                    pass
                         t0 = time.monotonic()
                         commands = await self._poll(session, token)
                         elapsed = time.monotonic() - t0

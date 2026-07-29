@@ -350,6 +350,7 @@ async def lifespan(app: FastAPI):
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
+            tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
