@@ -182,7 +182,12 @@ async def start_capture(
     # (not from local wall-clock creation time), so every device's episode
     # folder for this recording ends up with the SAME name even though each
     # one actually creates its directory at a different real-world moment.
-    episode_id = tm.create_episode(target_task_id, episode_id=episode_id_for(target) if target else None)
+    episode_id = tm.create_episode(
+        target_task_id,
+        episode_id=episode_id_for(target) if target else None,
+        members=sync.get("members"),
+        signature=sync.get("signature"),
+    )
     episode_dir = tm.episode_dir(episode_id)
 
     if target is not None:

@@ -73,6 +73,11 @@ class RelayClient:
         # Piggy-backed on the heartbeat so the fleet can show each device's
         # charge without polling. Called off the event loop (may do I2C).
         battery_provider: Optional[Callable[[], Optional[float]]] = None,
+        # Optional callable returning this device's recorded tasks (see
+        # TaskManager.report_tasks). Sent on register so the fleet — regardless
+        # of which HF account it runs under — can surface the device's tasks and
+        # name each episode's peers. The device is the durable source of truth.
+        tasks_provider: Optional[Callable[[], list[dict]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -82,6 +87,7 @@ class RelayClient:
         self.hand = hand or ""
         self.poll_interval = poll_interval
         self.battery_provider = battery_provider
+        self.tasks_provider = tasks_provider
         self._battery: Optional[float] = None  # cached; refreshed off the heartbeat path
         self.status = "offline"
 
@@ -96,6 +102,11 @@ class RelayClient:
             "hand": self.hand,
             "ip": get_route_ip(),  # recomputed each register so IP changes are caught
         }
+        if self.tasks_provider is not None:
+            try:
+                body["tasks"] = self.tasks_provider()
+            except Exception:
+                logger.debug("tasks_provider failed", exc_info=True)
         async with session.post(
             f"{self.base_url}/api/devices/register", json=body, headers=self._headers(token)
         ) as r:

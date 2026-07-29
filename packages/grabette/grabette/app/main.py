@@ -221,6 +221,11 @@ async def _handle_relay_command(cmd: dict) -> dict:
         task_name = args.get("task_name")
         task_id = tm.get_or_create_task(task_name) if task_name else args.get("task_id")
         start_at_utc = args.get("start_at_utc")
+        # Who's recording this episode (role → {device_id, name}) and the task's
+        # device signature, sent by the fleet. Persisted with the episode so this
+        # device can later name its peers even when they're offline.
+        members = args.get("members")
+        signature = args.get("signature")
 
         # Resolve T0 BEFORE creating the episode: a group-synchronized start
         # derives the episode id from the shared T0 (see episode_id_for), not
@@ -247,7 +252,12 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 # when T0 has just passed); sync metadata records the real start.
                 logger.warning("scheduled start %.2fs late; starting best-effort", late_s)
 
-        episode_id = tm.create_episode(task_id, episode_id=episode_id_for(target) if target else None)
+        episode_id = tm.create_episode(
+            task_id,
+            episode_id=episode_id_for(target) if target else None,
+            members=members,
+            signature=signature,
+        )
         episode_dir = tm.episode_dir(episode_id)
 
         if target is None:
@@ -328,6 +338,7 @@ async def lifespan(app: FastAPI):
         from huggingface_hub import get_token
         from grabette.relay_client import RelayClient
         from grabette.app.routers.system import _pisugar_battery
+        from grabette.app.routers.tasks import get_task_manager
 
         relay = RelayClient(
             base_url=settings.relay_url,
@@ -338,6 +349,7 @@ async def lifespan(app: FastAPI):
                           "upload_episodes", "process_dataset", "delete_episode"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
+            tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

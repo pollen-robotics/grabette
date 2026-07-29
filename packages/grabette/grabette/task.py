@@ -85,10 +85,12 @@ class TaskManager:
         self._session_task_id: str | None = None
         self._session_count: int = 0
         # Episode whose directory exists but which hasn't been filed into a
-        # task yet — i.e. a capture in progress. (episode_id, task_id).
-        # It's registered on stop, so a half-started/aborted capture never
-        # shows up in the task or its count.
-        self._pending_episode: tuple[str, str | None] | None = None
+        # task yet — i.e. a capture in progress.
+        # (episode_id, task_id, members, signature). It's registered on stop, so
+        # a half-started/aborted capture never shows up in the task or its count.
+        # members/signature (from the fleet at start) let this device be the
+        # durable source of truth for who recorded each episode.
+        self._pending_episode: tuple[str, str | None, dict | None, list | None] | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -178,7 +180,13 @@ class TaskManager:
     def episode_dir(self, episode_id: str) -> Path:
         return self.episodes_dir / episode_id
 
-    def create_episode(self, task_id: str | None = None, episode_id: str | None = None) -> str:
+    def create_episode(
+        self,
+        task_id: str | None = None,
+        episode_id: str | None = None,
+        members: dict | None = None,
+        signature: list | None = None,
+    ) -> str:
         """Create a new episode directory for a capture about to start.
 
         episode_id defaults to the current wall-clock time, but a caller
@@ -198,7 +206,7 @@ class TaskManager:
         episode_id = episode_id or episode_id_for(datetime.now(timezone.utc))
         ep_dir = self.episode_dir(episode_id)
         ep_dir.mkdir(parents=True, exist_ok=True)
-        self._pending_episode = (episode_id, task_id)
+        self._pending_episode = (episode_id, task_id, members, signature)
         return episode_id
 
     def register_episode(self, episode_id: str | None = None) -> None:
@@ -213,7 +221,7 @@ class TaskManager:
         self._pending_episode = None
         if pending is None:
             return
-        eid, task_id = pending
+        eid, task_id, members, signature = pending
         if episode_id is not None and episode_id != eid:
             eid = episode_id
 
@@ -224,6 +232,14 @@ class TaskManager:
         target = self._find_task(target_id) or self._find_task(UNASSIGNED_ID)
         if eid not in target["episode_ids"]:
             target["episode_ids"].append(eid)
+        # Persist who recorded this episode (role → {device_id, name}) and the
+        # task's device signature, captured from the fleet at start. This makes
+        # the device the durable source of truth: relogging it under a new HF
+        # account still surfaces the task and names its (possibly offline) peers.
+        if signature:
+            target["device_signature"] = list(signature)
+        if members:
+            target.setdefault("episode_members", {})[eid] = members
         self.active_task_id = target["id"]
         if self._session_active:
             self._session_count += 1
@@ -285,6 +301,7 @@ class TaskManager:
         for t in self._tasks:
             if episode_id in t["episode_ids"]:
                 t["episode_ids"].remove(episode_id)
+                t.get("episode_members", {}).pop(episode_id, None)
                 break
 
         shutil.rmtree(ep_dir)
@@ -335,6 +352,33 @@ class TaskManager:
             has_video=video_path.exists(),
             has_imu=imu_path.exists(),
         )
+
+    def report_tasks(self) -> list[dict]:
+        """Snapshot of this device's recorded tasks for the fleet to aggregate.
+
+        The device is the durable source of truth for tasks and who recorded
+        each episode. On connect it hands this to the fleet, which merges the
+        reports from all connected devices by task name — so any operator sees
+        the tasks and can name each episode's peers, even ones now offline.
+
+        Skips Unassigned and empty tasks (a task with no episodes has no reason
+        to exist). Each episode carries the members captured at record time.
+        """
+        out: list[dict] = []
+        for t in self._tasks:
+            if t["id"] == UNASSIGNED_ID or not t.get("episode_ids"):
+                continue
+            members = t.get("episode_members", {})
+            out.append({
+                "name": t["name"],
+                "description": t.get("description", ""),
+                "device_signature": t.get("device_signature", []),
+                "episodes": [
+                    {"episode_id": eid, "members": members.get(eid, {})}
+                    for eid in t["episode_ids"]
+                ],
+            })
+        return out
 
     # ── Task operations ────────────────────────────────────────────────
 

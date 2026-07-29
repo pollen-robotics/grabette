@@ -202,6 +202,8 @@ class ButtonListener:
         # task in the sync response.
         sync = await request_group_start("")
         status = sync.get("status")
+        members = sync.get("members")
+        signature = sync.get("signature")
         if status == "scheduled":
             gname = sync.get("task_name") or ""
             task_id = sm.get_or_create_task(gname) if gname else sm.active_task_id
@@ -219,7 +221,12 @@ class ButtonListener:
 
         # Derive the episode id from the shared T0 (not local creation time)
         # so this device's episode folder matches its peers' exactly.
-        episode_id = sm.create_episode(task_id, episode_id=episode_id_for(target) if target else None)
+        episode_id = sm.create_episode(
+            task_id,
+            episode_id=episode_id_for(target) if target else None,
+            members=members,
+            signature=signature,
+        )
         episode_dir = sm.episode_dir(episode_id)
 
         if target is not None:
