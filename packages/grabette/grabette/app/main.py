@@ -31,6 +31,11 @@ logger = logging.getLogger(__name__)
 # by episode_id but misaligned (a false pair) — worse than an honest miss.
 MAX_START_LATENESS_S = 1.0
 
+# How often to refresh the HF OAuth access token from the stored refresh token.
+# Must stay below the token's ~1h lifetime and below auth._REFRESH_MARGIN_S so a
+# tick always lands inside the pre-expiry refresh window.
+_TOKEN_REFRESH_INTERVAL_S = 600  # 10 min
+
 _daemon: Daemon | None = None
 
 
@@ -332,6 +337,30 @@ async def lifespan(app: FastAPI):
             logger.debug("Button listener not started: %s", e)
             _button_listener = None
 
+    # Keep the device logged in as the last account without the operator redoing
+    # OAuth: the HF OAuth access token is short-lived, so refresh it from the
+    # stored refresh token at startup (covers a reboot) and periodically before
+    # it expires (covers long uptimes). No-op if login was a manual PAT.
+    refresh_task = None
+    if settings.relay_enabled:
+        from grabette.auth import get_hf_auth
+
+        _hf_auth = get_hf_auth()
+        try:
+            await _hf_auth.ensure_authenticated()
+        except Exception:
+            logger.debug("startup HF token refresh failed", exc_info=True)
+
+        async def _token_refresh_loop():
+            while True:
+                await asyncio.sleep(_TOKEN_REFRESH_INTERVAL_S)
+                try:
+                    await _hf_auth.ensure_authenticated()
+                except Exception:
+                    logger.debug("periodic HF token refresh failed", exc_info=True)
+
+        refresh_task = asyncio.create_task(_token_refresh_loop())
+
     # Start fleet relay loop
     relay_task = None
     if settings.relay_enabled:
@@ -357,11 +386,16 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    import contextlib
     if relay_task is not None:
         relay_task.cancel()
-        import contextlib
         with contextlib.suppress(asyncio.CancelledError):
             await relay_task
+
+    if refresh_task is not None:
+        refresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await refresh_task
 
     if _button_listener is not None:
         _button_listener.stop()
@@ -430,11 +464,10 @@ def create_app() -> FastAPI:
         logger.info("URDF assets mounted at /urdf from %s", _urdf_dir)
 
     # Auth router (OAuth PKCE + manual token) — must be registered before Gradio
-    from grabette.auth import HFAuth
+    from grabette.auth import get_hf_auth
     from grabette.webauth import build_auth_router
 
-    _hf_auth = HFAuth()
-    app.include_router(build_auth_router(_hf_auth))
+    app.include_router(build_auth_router(get_hf_auth()))
 
     # Mount Gradio UI if enabled and installed
     if settings.ui_enabled:

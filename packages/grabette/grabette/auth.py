@@ -25,6 +25,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import secrets
 import socket
@@ -41,6 +42,8 @@ from huggingface_hub.errors import HfHubHTTPError
 # --- configuration ----------------------------------------------------------
 # The hostname is encoded into the OAuth state when using the relay, so the
 # relay knows which grabette to forward the callback to.
+logger = logging.getLogger(__name__)
+
 _HOSTNAME = socket.gethostname()
 
 _DEFAULT_RELAY_URL = "https://glannuzel-fleet-test.hf.space"
@@ -68,6 +71,11 @@ OAUTH_SCOPES = os.environ.get(
 )
 
 _OAUTH_SESSION_TTL = 600  # 10 minutes
+_TOKEN_ENDPOINT = "https://huggingface.co/oauth/token"
+# Renew this many seconds before the access token's stated expiry, so a call
+# never rides an about-to-expire token. Kept larger than the device's periodic
+# refresh interval so at least one tick lands inside the window before expiry.
+_REFRESH_MARGIN_S = 900
 
 
 @dataclass
@@ -127,9 +135,121 @@ class HFAuth:
     def delete_token(self) -> bool:
         try:
             logout()
-            return True
         except Exception:  # noqa: BLE001
             return False
+        # Forget the refresh token too — an explicit logout must not silently
+        # re-authenticate the device on the next start.
+        try:
+            self._oauth_store_path().unlink(missing_ok=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return True
+
+    # ---- refresh token (stay logged in across restarts / past expiry) -------
+
+    @staticmethod
+    def _oauth_store_path() -> Path:
+        """Sidecar file (next to the HF token) holding the refresh token +
+        access-token expiry. Kept beside HF_TOKEN_PATH so it honors HF_HOME."""
+        from huggingface_hub.constants import HF_TOKEN_PATH
+
+        return Path(HF_TOKEN_PATH).with_name("grabette-oauth.json")
+
+    def _load_oauth_store(self) -> dict[str, Any]:
+        try:
+            return json.loads(self._oauth_store_path().read_text())
+        except Exception:  # noqa: BLE001 — missing/corrupt → treated as empty
+            return {}
+
+    def _save_oauth_store(self, token_data: dict[str, Any]) -> None:
+        """Persist the refresh token + computed access-token expiry from an HF
+        token response. No-op (leaves any existing store) if HF returned no
+        refresh token, so we never lose a good one."""
+        refresh = token_data.get("refresh_token")
+        if not refresh:
+            logger.warning("HF token response had no refresh_token; device will "
+                           "need a manual re-login once the access token expires")
+            return
+        expires_in = token_data.get("expires_in")
+        store = {
+            "refresh_token": refresh,
+            "expires_at": time.time() + float(expires_in) if expires_in else None,
+        }
+        try:
+            path = self._oauth_store_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(store))
+        except Exception:  # noqa: BLE001
+            logger.warning("failed to persist OAuth refresh store", exc_info=True)
+
+    async def refresh_access_token(self) -> dict[str, Any]:
+        """Mint a fresh access token from the stored refresh token and persist
+        it (rotating the refresh token, which HF may replace on each use)."""
+        store = self._load_oauth_store()
+        refresh = store.get("refresh_token")
+        if not refresh:
+            return {"status": "error", "message": "no refresh token"}
+        if not self.client_id:
+            return {"status": "error", "message": "OAuth not configured"}
+        data = {
+            "grant_type": "refresh_token",
+            "client_id": self.client_id,
+            "refresh_token": refresh,
+        }
+        try:
+            async with aiohttp.ClientSession() as http:
+                async with http.post(_TOKEN_ENDPOINT, data=data) as resp:
+                    body = await resp.text()
+                    if resp.status != 200:
+                        # A 400/401 means the refresh token is dead (revoked or
+                        # expired) — drop it so we stop retrying and fall back to
+                        # a manual login.
+                        if resp.status in (400, 401):
+                            self._oauth_store_path().unlink(missing_ok=True)
+                        return {"status": "error", "message": f"refresh failed (HTTP {resp.status})"}
+                    token_data = json.loads(body)
+            access_token = token_data.get("access_token") or token_data.get("accessToken")
+            if not access_token:
+                return {"status": "error", "message": "no access token in refresh response"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": f"{type(e).__name__}: {e}"}
+
+        from huggingface_hub.constants import HF_TOKEN_PATH
+
+        token_path = Path(HF_TOKEN_PATH)
+        token_path.parent.mkdir(parents=True, exist_ok=True)
+        token_path.write_text(access_token)
+        # HF rotates the refresh token; keep the newest. token_data carries the
+        # new refresh_token + expires_in, so reuse the same persistence path.
+        self._save_oauth_store(token_data)
+        logger.info("refreshed HF access token from stored refresh token")
+        return {"status": "success"}
+
+    async def ensure_authenticated(self) -> bool:
+        """Best-effort: make sure a usable access token is in place, refreshing
+        it from the stored refresh token when it's missing or (near-)expired.
+        Called at startup and periodically so the device stays logged in as the
+        last account without the operator re-doing OAuth. Returns True if a
+        valid token is available afterwards."""
+        store = self._load_oauth_store()
+        exp = store.get("expires_at")
+        near_expiry = exp is not None and time.time() >= exp - _REFRESH_MARGIN_S
+        # Refresh when we have no token, or the one we have is about to expire.
+        if store.get("refresh_token") and (not self.get_token() or near_expiry):
+            if (await self.refresh_access_token()).get("status") == "success":
+                return True
+        token = self.get_token()
+        if not token:
+            return False
+        # A manual PAT (no refresh token) is long-lived — trust it without a
+        # network round-trip. Only validate/refresh OAuth tokens.
+        if not store.get("refresh_token"):
+            return True
+        try:
+            whoami(token=token)
+            return True
+        except Exception:  # noqa: BLE001 — token rejected → try one refresh
+            return (await self.refresh_access_token()).get("status") == "success"
 
     def status(self) -> dict[str, Any]:
         token = self.get_token()
@@ -256,6 +376,12 @@ class HFAuth:
             session.error_message = f"Failed to save token: {type(e).__name__}: {e}"
             return {"status": "error", "message": session.error_message}
 
+        # Persist the refresh token so the device can renew the (short-lived)
+        # access token on its own — staying logged in as this account across
+        # restarts and past expiry, without the operator re-doing OAuth. HF may
+        # rotate the refresh token on each use, so we always store the latest.
+        self._save_oauth_store(token_data)
+
         username = ""
         try:
             info = whoami(token=access_token)
@@ -268,3 +394,16 @@ class HFAuth:
         session.access_token = access_token
         session.username = username
         return {"status": "success", "username": username}
+
+
+# Process-wide singleton so the app factory (auth router) and the startup
+# lifespan (token refresh) share the same HFAuth — in particular the same
+# in-progress OAuth sessions and refresh-token handling.
+_hf_auth_singleton: Optional[HFAuth] = None
+
+
+def get_hf_auth() -> HFAuth:
+    global _hf_auth_singleton
+    if _hf_auth_singleton is None:
+        _hf_auth_singleton = HFAuth()
+    return _hf_auth_singleton
