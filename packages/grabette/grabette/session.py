@@ -396,18 +396,25 @@ class SessionManager:
         self._save()
         return self._to_session_info(s)
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_session(self, session_id: str, delete_episodes: bool = False) -> None:
         if session_id == UNASSIGNED_ID:
             raise ValueError("Cannot delete the Unassigned session")
         s = self._find_session(session_id)
         if s is None:
             raise FileNotFoundError(f"Session {session_id} not found")
 
-        # Move episodes back to Unassigned
-        unassigned = self._find_session(UNASSIGNED_ID)
-        for eid in s["episode_ids"]:
-            if eid not in unassigned["episode_ids"]:
-                unassigned["episode_ids"].append(eid)
+        if delete_episodes:
+            # Permanently remove the episode directories from disk.
+            for eid in list(s["episode_ids"]):
+                ep_dir = self.episode_dir(eid)
+                if ep_dir.exists():
+                    shutil.rmtree(ep_dir)
+        else:
+            # Keep the episodes: move them back to Unassigned.
+            unassigned = self._find_session(UNASSIGNED_ID)
+            for eid in s["episode_ids"]:
+                if eid not in unassigned["episode_ids"]:
+                    unassigned["episode_ids"].append(eid)
 
         self._sessions.remove(s)
         self._save()

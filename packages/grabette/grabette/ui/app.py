@@ -114,6 +114,95 @@ _TITLE_HTML = (
     "margin:var(--spacing-xxl) 0 var(--spacing-lg);\">GRABETTE</h1>"
 )
 
+# Battery percentage at/below which the low-battery warning popup + sound fire.
+_BATTERY_WARN_PCT = 25
+
+# Run once per page load via `<page>.load(js=...)`. Gradio executes `js` load
+# handlers on the client (unlike the `head=` param, whose inline <script> is
+# injected via innerHTML and never runs). Defines window.__grabetteBatteryBeep()
+# — a two-tone Web Audio chime + system notification — and, because browser
+# autoplay policy blocks audio until the user interacts with the page, resumes
+# the AudioContext / requests Notification permission on the first user gesture.
+# A hidden/background tab (screen asleep, tab not focused) can still beep and
+# notify as long as the machine itself is not fully suspended — a real OS
+# suspend halts all JS and no local page can work around that.
+_BATTERY_INIT_JS = """
+() => {
+  if (window.__grabetteBatteryBeep) { return; }
+  var ctx = null;
+  var lastBeep = 0;
+
+  function ensureCtx() {
+    if (!ctx) {
+      try { ctx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch (e) { ctx = null; }
+    }
+    return ctx;
+  }
+
+  function unlock() {
+    var c = ensureCtx();
+    if (c && c.state === 'suspended') { c.resume(); }
+    if ('Notification' in window && Notification.permission === 'default') {
+      try { Notification.requestPermission(); } catch (e) {}
+    }
+  }
+  ['pointerdown', 'keydown', 'touchstart'].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { passive: true });
+  });
+
+  function chime(c) {
+    function tone(freq, start, dur) {
+      var osc = c.createOscillator();
+      var gain = c.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      var t = c.currentTime + start;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.35, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(gain).connect(c.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    }
+    tone(880, 0.0, 0.25);
+    tone(660, 0.30, 0.35);
+  }
+
+  window.__grabetteBatteryBeep = function (pct) {
+    // Throttle so a fast popup poll doesn't over-beep: at most once per 60 s.
+    var now = Date.now();
+    if (now - lastBeep < 60000) { return; }
+    lastBeep = now;
+
+    var c = ensureCtx();
+    if (c) {
+      if (c.state === 'suspended') { c.resume(); }
+      try { chime(c); } catch (e) {}
+    }
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        new Notification('Grabette — battery low', {
+          body: 'Please charge soon.',
+          tag: 'grabette-battery',
+          renotify: true,
+        });
+      } catch (e) {}
+    }
+  };
+}
+"""
+
+# Frontend handler bound to the (hidden) battery-beep signal's `change` event.
+# Runs client-side — unlike HTML-component content, it is never sanitized and
+# fires reliably. The signal carries "<pct>|<nonce>"; the nonce changes every
+# poll so `change` keeps firing while the battery stays low (throttled to one
+# chime per 60 s inside __grabetteBatteryBeep).
+_BATTERY_BEEP_JS = (
+    "(v) => { if (v && window.__grabetteBatteryBeep) "
+    "{ window.__grabetteBatteryBeep(String(v).split('|')[0]); } }"
+)
+
 
 def _section_label(text: str) -> str:
     """Small uppercase gray column header used across the Live View page."""
@@ -149,11 +238,14 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
             f"</div>"
         )
 
-    # Battery
+    # Battery (⚡ + green while charging, regardless of level)
     if sys_info and "battery_pct" in sys_info:
         pct = sys_info["battery_pct"]
-        colors = GREEN if pct > 60 else ORANGE if pct > 20 else RED
-        batt_badge = _badge("Battery", f"{pct} %", colors)
+        if sys_info.get("battery_charging"):
+            batt_badge = _badge("Battery", f"⚡ {pct} %", GREEN)
+        else:
+            colors = GREEN if pct > 40 else ORANGE if pct > 20 else RED
+            batt_badge = _badge("Battery", f"{pct} %", colors)
     else:
         batt_badge = _badge("Battery", "N/A", GRAY)
 
@@ -592,22 +684,30 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         result = client.create_session(name, description or "")
         if "error" in result:
             return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
+        new_id = result["id"]
+        # Point the server-side active session at the new task (unless a capture
+        # session owns it). Otherwise the 0.5s capture timer reads the stale
+        # active session and snaps the radio back to the previously-selected
+        # task, so the episode list would keep showing the old task's episodes.
+        if not client.get_capture_session_status().get("active", False):
+            client.set_active_session(new_id)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
-        new_id = result["id"]
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(new_id, sessions)
         return gr.update(choices=choices, value=new_id), task_header, cap_title, desc, ep_title, rows, move_dd, gr.update(visible=False)
 
     # ── Edit Task helpers ─────────────────────────────────────────────
 
     def on_open_edit_form(session_id):
+        # Always collapse the delete-confirm box: it may have been left open
+        # from a previous edit, and re-opening Edit should start clean.
         if not session_id:
-            return gr.update(visible=False), "", ""
+            return gr.update(visible=False), "", "", gr.update(visible=False)
         sessions = _get_sessions()
         for s in sessions:
             if s["id"] == session_id:
-                return gr.update(visible=True), s.get("name", ""), s.get("description", "")
-        return gr.update(visible=True), "", ""
+                return gr.update(visible=True), s.get("name", ""), s.get("description", ""), gr.update(visible=False)
+        return gr.update(visible=True), "", "", gr.update(visible=False)
 
     def on_save_task(session_id, new_name, new_desc):
         if not session_id or not new_name.strip():
@@ -622,13 +722,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.update(visible=False),
         )
 
-    def on_delete_task(session_id):
+    def _delete_task(session_id, delete_episodes):
         if not session_id:
             return (gr.update(),) * 9
-        client.delete_session(session_id)
+        client.delete_session(session_id, delete_episodes=delete_episodes)
         sessions = _get_sessions()
         choices = _task_choices(sessions)
         value = choices[0][1] if choices else None
+        # Sync the server-side active session to the task we land on, so the
+        # 0.5s capture timer doesn't try to restore the just-deleted task.
+        if value and not client.get_capture_session_status().get("active", False):
+            client.set_active_session(value)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
         return (
             gr.update(choices=choices, value=value),
@@ -636,6 +740,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.update(visible=False),
             gr.update(visible=False),
         )
+
+    def on_delete_task_keep(session_id):
+        # Delete the task but keep its episodes (they fall back to Unassigned).
+        return _delete_task(session_id, delete_episodes=False)
+
+    def on_delete_task_purge(session_id):
+        # Delete the task AND permanently remove all of its episodes from disk.
+        return _delete_task(session_id, delete_episodes=True)
 
     def _get_selected_ids(table_data) -> list[str]:
         if table_data is None:
@@ -659,28 +771,34 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_delete_episode(table_data, session_id):
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return "No episode selected", gr.update(), gr.update()
+            return "No episode selected", gr.update(), gr.update(), gr.update()
         errors = []
         for eid in episode_ids:
             result = client.delete_episode(eid)
             if "error" in result:
                 errors.append(f"{eid}: {result['error']}")
-        rows, move_dd, *_ = _refresh_episode_table(session_id)
+        rows, move_dd, _th, desc, *_ = _refresh_episode_table(session_id)
+        # Force the interactive dataframe to re-render: after the user ticks
+        # rows it holds "dirty" client-side state that a bare list won't
+        # overwrite, so the deleted rows (and their checkboxes) would linger.
+        table_upd = gr.update(value=rows)
         if errors:
-            return "Errors: " + "; ".join(errors), rows, move_dd
-        return f"Deleted {len(episode_ids)} episode(s)", rows, move_dd
+            return "Errors: " + "; ".join(errors), table_upd, move_dd, desc
+        return f"Deleted {len(episode_ids)} episode(s)", table_upd, move_dd, desc
 
     def on_move_episodes(table_data, target_session_id, current_session_id):
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return "No episode selected", gr.update(), gr.update()
+            return "No episode selected", gr.update(), gr.update(), gr.update()
         if not target_session_id:
-            return "No target task", gr.update(), gr.update()
+            return "No target task", gr.update(), gr.update(), gr.update()
         result = client.move_episodes(episode_ids, target_session_id)
         if "error" in result:
-            return f"Error: {result['error']}", gr.update(), gr.update()
-        rows, move_dd, *_ = _refresh_episode_table(current_session_id)
-        return f"Moved {len(episode_ids)} episode(s)", rows, move_dd
+            return f"Error: {result['error']}", gr.update(), gr.update(), gr.update()
+        rows, move_dd, _th, desc, *_ = _refresh_episode_table(current_session_id)
+        # gr.update(value=...) forces the interactive dataframe to drop its
+        # dirty checkbox state so the moved rows actually disappear.
+        return f"Moved {len(episode_ids)} episode(s)", gr.update(value=rows), move_dd, desc
 
     # ── SLAM ──────────────────────────────────────────────────────────
 
@@ -777,15 +895,32 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Battery warning popup ─────────────────────────────────────────
 
+    # Monotonic nonce so the hidden beep signal changes value on every low poll,
+    # which re-fires the signal's `change` handler (recurring chime reminder).
+    _batt_beep = {"n": 0}
+
     def check_battery_warning():
+        """(popup_update, beep_signal) — bound to the battery timers/loads."""
         return _battery_popup_html(client.get_system_info())
 
     # ── System bar ────────────────────────────────────────────────────
 
     def _battery_popup_html(info: dict | None):
-        """Return (visible, html) for the battery popup from a system info dict."""
-        if info and "battery_pct" in info and info["battery_pct"] <= 30:
+        """Return (popup_update, beep_signal) from a system info dict.
+
+        beep_signal is "<pct>|<nonce>" while the battery is low (nonce bumps each
+        call so the frontend `change` handler keeps firing) and "" otherwise.
+        The warning is suppressed while charging, so plugging Grabette back in
+        clears the popup + chime even below the threshold.
+        """
+        if (
+            info
+            and "battery_pct" in info
+            and info["battery_pct"] <= _BATTERY_WARN_PCT
+            and not info.get("battery_charging")
+        ):
             pct = info["battery_pct"]
+            _batt_beep["n"] += 1
             html = (
                 "<div style='position:fixed;bottom:24px;right:24px;z-index:9999;"
                 "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
@@ -796,15 +931,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 f"<div style='font-size:0.88rem;color:#7f1d1d;'>{pct} % — please charge soon.</div>"
                 "</div>"
             )
-            return gr.update(visible=True, value=html)
-        return gr.update(visible=False)
+            return gr.update(visible=True, value=html), f"{pct}|{_batt_beep['n']}"
+        return gr.update(visible=False), ""
 
     def get_system_bar():
-        """Returns (system_bar_html, battery_popup_update) from a single API call."""
+        """Returns (system_bar_html, battery_popup_update, beep_signal)."""
         info = client.get_system_info()
         if info is None:
             bar = "<p style='color:#64748b;font-size:0.85rem;margin:0.5rem 0;'>System disconnected</p>"
-            return bar, gr.update(visible=False)
+            return bar, gr.update(visible=False), ""
 
         def _card(label, value, extra_style=""):
             return (
@@ -828,7 +963,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         if "battery_pct" in info:
             pct = info["battery_pct"]
-            if pct > 60:
+            charging = info.get("battery_charging")
+            if charging or pct > 40:
                 batt_color = "#22c55e"
                 batt_border = "#166534"
             elif pct > 20:
@@ -837,12 +973,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             else:
                 batt_color = "#ef4444"
                 batt_border = "#991b1b"
+            batt_value = f"⚡ {pct} %" if charging else f"{pct} %"
             parts.append(
                 f"<div style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
                 f"border:2px solid {batt_border};flex:1;min-width:0;'>"
                 f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
                 f"color:#94a3b8;margin-bottom:0.2rem;'>Battery</div>"
-                f"<div style='font-size:0.9rem;font-weight:700;color:{batt_color};'>{pct} %</div>"
+                f"<div style='font-size:0.9rem;font-weight:700;color:{batt_color};'>{batt_value}</div>"
                 f"</div>"
             )
 
@@ -851,16 +988,26 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             + "".join(parts)
             + "</div>"
         )
-        return bar, _battery_popup_html(info)
+        popup_update, beep_signal = _battery_popup_html(info)
+        return bar, popup_update, beep_signal
 
     # ── Episodes status strip (battery + camera connections) ─────────
 
     def get_episode_status_bar():
-        return _status_bar_html(
-            client.get_system_info(),
+        """(status_bar_html, battery_popup, beep_signal) from ONE system-info read.
+
+        The battery warning piggybacks on this 3 s poll rather than a dedicated
+        timer, so a single get_system_info() feeds both the strip and the popup
+        (no redundant I2C read).
+        """
+        info = client.get_system_info()
+        bar = _status_bar_html(
+            info,
             client.get_oakd_status(),
             client.get_camera_status(),
         )
+        popup_update, beep_signal = _battery_popup_html(info)
+        return bar, popup_update, beep_signal
 
     # ── WiFi network info (Settings page) ────────────────────────────
 
@@ -1008,19 +1155,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return f"Error: {result['error']}"
         return f"Upload started (job: {result.get('job_id', '?')})"
 
-    def check_hf_account():
-        return _hf_status_text(client.hf_check_auth())  # noqa: F821  FIXME: _hf_status_text is undefined (latent NameError) — tracked separately
-
-    def on_hf_update_token(token):
-        if not token:
-            return "No token provided", gr.update()
-        result = client.hf_set_auth(token)
-        return _hf_status_text(result), gr.update(value="")  # noqa: F821  FIXME: _hf_status_text is undefined (latent NameError) — tracked separately
-
-    def on_hf_remove_token():
-        client.hf_set_auth("")
-        return "Not authenticated"
-
     # ── Power off ─────────────────────────────────────────────────────
 
     def _poweroff_notice(text: str, color: str = "#f97316") -> str:
@@ -1104,12 +1238,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         save_task_btn = gr.Button("Save changes", variant="primary", size="sm")
                     with gr.Group(visible=False) as delete_confirm:
                         gr.Markdown(
-                            "⚠ **This will permanently delete the task and ALL its episodes. "
-                            "This action cannot be undone.**"
+                            "⚠ **Delete this task — what about its episodes?**\n\n"
+                            "- **Keep episodes**: the task is removed and its episodes "
+                            "move to *Unassigned*.\n"
+                            "- **Delete everything**: the task *and* all its episodes "
+                            "are permanently deleted. This cannot be undone."
                         )
                         with gr.Row():
+                            delete_keep_btn = gr.Button(
+                                "Delete task, keep episodes", variant="secondary", size="sm",
+                            )
                             confirm_delete_btn = gr.Button(
-                                "Yes, delete everything", variant="stop", size="sm",
+                                "Delete everything", variant="stop", size="sm",
                             )
                             cancel_delete_btn = gr.Button("Cancel", size="sm")
 
@@ -1216,7 +1356,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # Edit Task
         edit_task_btn.click(
             fn=on_open_edit_form, inputs=task_list,
-            outputs=[edit_task_form, rename_input, desc_edit_input],
+            outputs=[edit_task_form, rename_input, desc_edit_input, delete_confirm],
         )
         cancel_edit_btn.click(
             fn=lambda: gr.update(visible=False), outputs=edit_task_form,
@@ -1232,10 +1372,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cancel_delete_btn.click(
             fn=lambda: gr.update(visible=False), outputs=delete_confirm,
         )
+        _delete_outputs = [task_list, task_header_md, capture_title, task_desc_md, episodes_title,
+                           episodes_table, move_target_dd, edit_task_form, delete_confirm]
+        delete_keep_btn.click(
+            fn=on_delete_task_keep, inputs=task_list, outputs=_delete_outputs,
+        )
         confirm_delete_btn.click(
-            fn=on_delete_task, inputs=task_list,
-            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title,
-                     episodes_table, move_target_dd, edit_task_form, delete_confirm],
+            fn=on_delete_task_purge, inputs=task_list, outputs=_delete_outputs,
         )
 
         session_btn.click(
@@ -1253,11 +1396,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         dl_btn.click(fn=on_download_episodes, inputs=episodes_table, outputs=dl_file)
         del_episode_btn.click(
             fn=on_delete_episode, inputs=[episodes_table, task_list],
-            outputs=[episode_msg, episodes_table, move_target_dd],
+            outputs=[episode_msg, episodes_table, move_target_dd, task_desc_md],
         )
         move_btn.click(
             fn=on_move_episodes, inputs=[episodes_table, move_target_dd, task_list],
-            outputs=[episode_msg, episodes_table, move_target_dd],
+            outputs=[episode_msg, episodes_table, move_target_dd, task_desc_md],
         )
 
         replay_btn.click(
@@ -1345,15 +1488,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
         batt_popup_ep = gr.HTML(visible=False)
-        batt_timer_ep = gr.Timer(60.0)
-        batt_timer_ep.tick(fn=check_battery_warning, outputs=batt_popup_ep)
+        batt_beep_ep = gr.Textbox(visible=False)
+        batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
+        demo.load(fn=None, js=_BATTERY_INIT_JS)
 
+        # Battery warning rides on the status-bar poll (one system-info read
+        # feeds both the strip and the popup) — no dedicated battery timer.
+        status_bar_outputs = [episode_status_bar, batt_popup_ep, batt_beep_ep]
         status_bar_timer = gr.Timer(3.0)
-        status_bar_timer.tick(fn=get_episode_status_bar, outputs=episode_status_bar)
+        status_bar_timer.tick(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
         demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
-        demo.load(fn=check_battery_warning, outputs=batt_popup_ep)
-        demo.load(fn=get_episode_status_bar, outputs=episode_status_bar)
+        demo.load(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Datasets (HF auth popup + upload)
@@ -1446,13 +1592,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
         datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
-        ds_auth_timer = gr.Timer(3.0)
+        # HF auth state changes rarely — poll gently (was 3 s, unnecessarily hot).
+        ds_auth_timer = gr.Timer(15.0)
         ds_auth_timer.tick(fn=check_hf_auth_on_load, inputs=[ds_namespace], outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
 
         batt_popup_ds = gr.HTML(visible=False)
-        batt_timer_ds = gr.Timer(60.0)
-        batt_timer_ds.tick(fn=check_battery_warning, outputs=batt_popup_ds)
-        datasets_demo.load(fn=check_battery_warning, outputs=batt_popup_ds)
+        batt_beep_ds = gr.Textbox(visible=False)
+        # No status strip on this page to piggyback on; poll gently on its own.
+        batt_timer_ds = gr.Timer(30.0)
+        batt_timer_ds.tick(fn=check_battery_warning, outputs=[batt_popup_ds, batt_beep_ds])
+        batt_beep_ds.change(fn=None, inputs=batt_beep_ds, outputs=None, js=_BATTERY_BEEP_JS)
+        datasets_demo.load(fn=check_battery_warning, outputs=[batt_popup_ds, batt_beep_ds])
+        datasets_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 3 — Live View
@@ -1523,10 +1674,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         live_demo.load(fn=poll_oakd, outputs=[oakd_btn, oak_row])
 
         batt_popup_lv = gr.HTML(visible=False)
+        batt_beep_lv = gr.Textbox(visible=False)
 
         dv_system_timer = gr.Timer(10)
-        dv_system_timer.tick(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv])
-        live_demo.load(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv])
+        dv_system_timer.tick(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
+        batt_beep_lv.change(fn=None, inputs=batt_beep_lv, outputs=None, js=_BATTERY_BEEP_JS)
+        live_demo.load(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
+        live_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 4 — Settings
@@ -1552,9 +1706,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         settings_demo.load(fn=get_wifi_network_info, outputs=wifi_network_info)
 
         batt_popup_st = gr.HTML(visible=False)
-        batt_timer_st = gr.Timer(60.0)
-        batt_timer_st.tick(fn=check_battery_warning, outputs=batt_popup_st)
-        settings_demo.load(fn=check_battery_warning, outputs=batt_popup_st)
+        batt_beep_st = gr.Textbox(visible=False)
+        # No status strip on this page to piggyback on; poll gently on its own.
+        batt_timer_st = gr.Timer(30.0)
+        batt_timer_st.tick(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
+        batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
+        settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
+        settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 5 — Power Off

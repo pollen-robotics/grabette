@@ -68,14 +68,18 @@ def update_session(
 
 
 @router.delete("/api/sessions/{session_id}")
-def delete_session(session_id: str, sm: SessionManager = Depends(get_session_manager)):
+def delete_session(
+    session_id: str,
+    delete_episodes: bool = False,
+    sm: SessionManager = Depends(get_session_manager),
+):
     try:
-        sm.delete_session(session_id)
+        sm.delete_session(session_id, delete_episodes=delete_episodes)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {"deleted": session_id}
+    return {"deleted": session_id, "episodes_deleted": delete_episodes}
 
 
 # ── Episode endpoints ─────────────────────────────────────────────────
