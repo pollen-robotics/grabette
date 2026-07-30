@@ -126,10 +126,17 @@ class ButtonListener:
         # press ack) first → fast blink until fully off.
         if getattr(b, "is_stopping", False) or time.monotonic() < self._stop_ack_until:
             return "blink_fast"
+        # A start in progress keeps blinking CONTINUOUSLY until the recording is
+        # fully live. Checked BEFORE is_capturing on purpose: the backend flips
+        # is_capturing True partway through start_capture (before the streams are
+        # started and while the scheduled-start task is still finishing), so
+        # checking it first would flash solid mid-init, then blink again. Since
+        # is_scheduled stays True until start_capture fully returns, this holds a
+        # steady blink through the whole warm-up → solid only once truly recording.
+        if getattr(b, "is_starting", False) or get_capture_scheduler().is_scheduled():
+            return "blink"       # initializing: warming up / waiting for T0
         if b.is_capturing:
             return "on"          # recording (solid)
-        if getattr(b, "is_starting", False) or get_capture_scheduler().is_scheduled():
-            return "blink"       # initializing: warming up or waiting for T0
         return "off"             # idle
 
     def _led_monitor(self) -> None:
