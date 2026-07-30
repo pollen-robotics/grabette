@@ -16,7 +16,9 @@ Usage:
 """
 
 import argparse
+import atexit
 import logging
+import math
 import threading
 import time
 
@@ -136,6 +138,287 @@ def apply_grip_gain(g1, g2, gain, ref):
     g1 = ref[0] + gain * (g1 - ref[0])
     g2 = ref[1] + gain * (g2 - ref[1])
     return float(np.clip(g1, -1.6, 1.6)), float(np.clip(g2, -1.6, 1.6))
+
+
+# Gripper joint limits in ROBOT FRAME, mirroring the AUTHORITY —
+# gripette.config.Settings.motor{1,2}_max. Use the same radians expression, not
+# the rounded values the docs quote (1.484 / 2.025): those are LARGER than the
+# real limits, so commands clamped to them are rejected by the service, and the
+# error message hides it by printing the limit rounded ("Motor 1 goal 1.484 rad
+# outside limits [0.000, 1.484]" — seen on the real gripper 2026-07-28).
+# A device may narrow these via GRIPPER_MOTOR*_MIN/MAX; the service remains the
+# authority and rejects anything out of range, so this is only a sanity bound.
+GRIPPER_LIMITS = ((0.0, math.radians(85)), (0.0, math.radians(116)))
+
+
+class GripAssist:
+    """Load-triggered grip assist for the UNDER-CLOSE failure.
+
+    The policy learned the DEMONSTRATED closing angles — which is where the
+    human's fingers sat while PRESSING the object. Replaying that angle on a
+    force-blind position servo can leave the fingers stopped just short,
+    touching nothing: "parked at angle θ in air" and "pressing the object at
+    angle θ" are indistinguishable to the policy, and the dataset gave it no
+    force channel to tell them apart (measured on the bench 2026-07-27).
+
+    So leave the policy fully in charge of WHEN to close and WHICH posture to
+    use — with a 2-DoF index against a fixed thumb the proximal/distal ratio
+    IS the grasp type (fingertip pinch ↔ power wrap), and a fixed target pose
+    would both override that choice and risk driving the index into the thumb.
+    Intervene ONLY in the one state where the policy demonstrably fails: it
+    has SETTLED into a closed pose that is NOT gripping. Then extend the
+    closure ALONG THE POLICY'S OWN POSTURE DIRECTION until the load reports
+    contact — object-adaptive, so there is no per-object gain to tune —
+    bounded by a max extra travel, the joint limits, and the servo torque cap.
+
+    Why load discriminates (bench-verified): while commanding a MODERATE goal
+    the empty gripper can reach, a free finger arrives and its load falls to
+    ~0, while a finger blocked by an object keeps a position error and its
+    load stays pinned near the cap. (Slamming an unreachable goal destroys the
+    signal: then BOTH cases stall at the cap. Hence "extend gradually", never
+    "drive to max".)
+
+    CRITICAL: load ALONE is a weak test, because there is no torque sensor —
+    "load" is a PWM/current proxy, so a MOVING finger reads a nonzero motion
+    load whether or not it touches anything (measured while stepping: up to
+    ~88; at rest with the jaws free: ~0-24).
+
+    So contact is detected as a STALL — commanded to advance, but not
+    advancing, while drawing effort:
+
+        lag = |commanded - measured|  >  assist_lag  AND  load >= threshold
+
+    Bench numbers backing that (rigid object, 25% cap, 0.02 rad steps): free
+    motion lag 0.002-0.004 rad with load 0-24; from first contact lag jumps to
+    0.014 and GROWS (0.022, 0.031, 0.041, 0.052) while load climbs 72 -> 250.
+    Lag is used rather than a raw velocity/ratio because it is rate-robust: a
+    blocked finger's lag grows by the commanded increment every tick no matter
+    how much time the servo had, whereas an absolute velocity threshold shifts
+    with the control-loop rate. The load term keeps the degenerate case honest:
+    a limp/disabled servo is also "not moving", but draws nothing, and must NOT
+    read as a grasp.
+
+    Readings are debounced (assist_confirm_ticks): one noisy tick must not
+    latch GRIPPED, which would leave exactly the under-grip this fixes.
+
+    Detecting contact is not the same as HOLDING: the stall fires at light
+    touch (measured on the bench: lag 0.0114, load 64, both barely over
+    threshold), and grip force only persists while commanding PAST the object.
+    So on contact we press a further `squeeze` before latching — pressing
+    0.04-0.08 rad past contact took load 72 -> 250 (the cap) on the bench, and
+    the torque cap bounds the force, so this is where a light touch becomes a
+    grip that survives a lift.
+
+    States: IDLE → ASSISTING → SQUEEZING → GRIPPED (offset latched; re-assists
+    if the load later drops = slip) or EXHAUSTED (no contact within max_extra →
+    assist released; re-arms only once the policy opens again, so it cannot
+    chatter). A policy command back toward open always releases the assist —
+    a deliberate release is honored.
+    """
+
+    def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
+                 stable_eps=0.01, step=0.02, max_extra=0.4,
+                 dwell_ticks=2, confirm_ticks=2, lag=0.010, settle_eps=0.004,
+                 squeeze=0.05, limits=GRIPPER_LIMITS):
+        # --- tunables -----------------------------------------------------
+        self._thresh = float(load_thresh)          # load floor for "pushing"
+        self._ref = np.asarray(ref, dtype=float)   # open pose (--start_gripper)
+        self._min_close = float(min_close)         # displacement counting as closing
+        self._stable_ticks = int(stable_ticks)     # ticks the CMD must hold steady
+        self._stable_eps = float(stable_eps)       # per-tick cmd change = steady
+        self._step = float(step)                   # extra closure per increment
+        self._max_extra = float(max_extra)         # cap on total extra closure
+        self._dwell_ticks = int(dwell_ticks)       # settle ticks after an increment
+        self._confirm_ticks = int(confirm_ticks)   # debounce on contact / slip
+        self._lag = float(lag)                     # cmd-vs-measured = blocked
+        self._settle_eps = float(settle_eps)       # per-tick motion = settled
+        self._squeeze = float(squeeze)             # press past contact before latching
+        self._limits = limits
+        # --- state --------------------------------------------------------
+        self.state = "IDLE"
+        self.offset = 0.0          # extra closure along the policy's posture
+        self.trigger_step = None   # step at which the assist last engaged
+        self.n_gripped = 0         # contacts found (telemetry)
+        self.n_exhausted = 0       # top-ups that found nothing (telemetry)
+        self.lag = self.advance = float("nan")   # last measurements (logging)
+        self.why = "init"          # reason for the current state (logging)
+        self._squeeze_to = 0.0     # offset to reach while SQUEEZING
+        self._dwell = 0
+        self._confirm = 0
+        self._stable = 0
+        self._prev = None          # previous policy command (steadiness test)
+        self._meas = None          # previous measured position (settle test)
+        self._sent = None          # last pose we actually commanded
+        self._armed = True         # cleared after EXHAUSTED until re-open
+
+    def update(self, cmd, load, step=None, meas=None):
+        """One tick. cmd = the policy's (prox, distal) goal, load = the
+        gripper's (prox, distal) present_load, meas = its measured (prox,
+        distal) position (for the stall test; if omitted, falls back to a
+        load-only test). Returns the (prox, distal) to actually SEND."""
+        cmd = np.asarray(cmd, dtype=float)
+        peak = max(abs(float(x)) for x in load) if load is not None else 0.0
+        # STALL = the fingers have STOPPED MOVING, short of the pose we
+        # commanded, while the motor draws effort. All three terms are needed:
+        #   - SETTLED: a finger still travelling to a freshly-commanded pose
+        #     legitimately lags a lot and draws cap-level current. Without this
+        #     term the transit to the policy's own close reads as contact
+        #     (observed on the bench: lag 0.09, load 250, 3 ticks in, zero
+        #     top-up). Command-stable is NOT the same as fingers-settled.
+        #   - LAG: settled short of the commanded pose = something is in the way
+        #     (a finger that simply arrived has ~no lag).
+        #   - LOAD: rejects a limp/disabled servo, which is also settled+lagging
+        #     but pushing nothing.
+        meas_arr = None if meas is None else np.asarray(meas, dtype=float)
+        if meas_arr is not None and self._sent is not None and self._meas is not None:
+            lag = float(np.max(np.abs(np.asarray(self._sent, dtype=float) - meas_arr)))
+            advance = float(np.max(np.abs(meas_arr - self._meas)))
+            self.lag, self.advance = lag, advance
+            advance_str = f"{advance:.4f}"
+            stalled = (advance < self._settle_eps
+                       and lag > self._lag
+                       and peak >= self._thresh)
+        else:
+            self.lag = self.advance = float("nan")
+            advance_str = "n/a"
+            stalled = False if meas_arr is not None else peak >= self._thresh
+        if meas_arr is not None:
+            self._meas = meas_arr.copy()
+        d = cmd - self._ref
+        # CONVENTION-AGNOSTIC: "closing" = displaced from the open reference by
+        # this much in ANY direction, measured as a magnitude. Current models
+        # close POSITIVE, but legacy pre-flip datasets/models close NEGATIVE
+        # proximal (the PROXIMAL_CMD_SIGN=-1 server bridge covers the sim side
+        # only — it never reaches this client-side logic). Signed tests here
+        # would silently never fire for those, and hardcoded sign conventions
+        # in shared paths are this project's most recurrent bug class.
+        closing = float(np.linalg.norm(d)) >= self._min_close
+
+        # Track "the policy's close has settled" on the COMMAND (its intent),
+        # not the position — a blocked finger's position settles even while the
+        # policy is still driving deeper.
+        if self._prev is not None and float(np.max(np.abs(cmd - self._prev))) < self._stable_eps:
+            self._stable += 1
+        else:
+            self._stable = 0
+        self._prev = cmd.copy()
+
+        if not closing:
+            # Policy opened (or never closed): release everything, re-arm.
+            self.state, self.offset, self._armed = "IDLE", 0.0, True
+            self._confirm = self._dwell = 0
+            self.why = f"open (|cmd-ref| {float(np.linalg.norm(d)):.3f} < {self._min_close})"
+            self._sent = self._clamp(cmd)
+            return self._sent
+
+        if self.state == "IDLE":
+            if not self._armed:
+                self.why = "disarmed (waiting for the policy to open)"
+            elif self._stable < self._stable_ticks:
+                self.why = f"cmd still moving ({self._stable}/{self._stable_ticks} steady)"
+            if self._armed and self._stable >= self._stable_ticks:
+                if stalled:
+                    self.state = "GRIPPED"      # already gripping — hands off
+                    self.n_gripped += 1
+                    self.why = "already gripping at the policy's own command"
+                else:
+                    self.state = "ASSISTING"    # settled but empty — top up
+                    self.trigger_step = step
+                    self._dwell = self._confirm = 0
+                    self.why = "settled closed but not gripping — topping up"
+        elif self.state == "ASSISTING":
+            # Brief dwell after each increment so the fingers have a chance to
+            # move before we judge whether they are stuck (kept small: the stall
+            # test already tolerates motion, unlike a bare load threshold).
+            if self._dwell < self._dwell_ticks:
+                self._dwell += 1
+                self.why = f"dwell {self._dwell}/{self._dwell_ticks} after a step"
+            elif stalled:
+                self._confirm += 1
+                if self._confirm >= self._confirm_ticks:
+                    # Contact found — but that is only a TOUCH. Press on for
+                    # `squeeze` more to develop actual grip force before
+                    # latching (bounded by the torque cap and max_extra).
+                    self._squeeze_to = min(self.offset + self._squeeze,
+                                           self._max_extra)
+                    self.why = f"contact confirmed (lag {self.lag:.4f}, load {peak:.0f})"
+                    self.state = ("SQUEEZING" if self._squeeze_to > self.offset
+                                  else "GRIPPED")
+                    if self.state == "GRIPPED":
+                        self.n_gripped += 1
+                    self._confirm = 0
+            elif self.offset + self._step <= self._max_extra:
+                self._confirm = 0
+                self.offset += self._step
+                self._dwell = 0
+                self.why = (f"stepping to {self.offset:.3f} (settled={advance_str}, "
+                            f"lag {self.lag:.4f}, load {peak:.0f})"
+                            if self.lag == self.lag else f"stepping to {self.offset:.3f}")
+            else:
+                # Nothing within reach: release and wait for the policy to
+                # re-approach (it must open first, so this cannot chatter).
+                self.state, self.offset, self._armed = "EXHAUSTED", 0.0, False
+                self.n_exhausted += 1
+                self.why = f"no contact within max_extra {self._max_extra:.3f} — released"
+        elif self.state == "SQUEEZING":
+            # Press past contact to build grip force, then latch. No load check
+            # here: we are deliberately pushing into a known object, and the
+            # torque cap is what limits the force.
+            if self.offset + self._step <= self._squeeze_to:
+                self.offset += self._step
+                self.why = f"squeezing to {self._squeeze_to:.3f} (at {self.offset:.3f})"
+            else:
+                self.state = "GRIPPED"
+                self.n_gripped += 1
+                self._confirm = 0
+                self.why = f"latched at {self.offset:.3f} (load {peak:.0f})"
+        elif self.state == "GRIPPED":
+            # Slip = the fingers stopped PUSHING (load fell). Deliberately does
+            # NOT reuse the `stalled` test: that requires the fingers to be
+            # settled, but a gripped finger legitimately keeps creeping while
+            # the policy raises its own command or the object beds in. Treating
+            # that motion as slip made the assist re-close on a grasp already
+            # pushing at the cap, ratcheting the offset 0.18 -> 0.24 -> 0.30 on
+            # the real arm (2026-07-28) and tripping the arm's lead guard.
+            # Debounced so one noisy reading cannot restart a top-up.
+            if peak < self._thresh:
+                self._confirm += 1
+                self.why = f"grip lost? {self._confirm}/{self._confirm_ticks} (load {peak:.0f})"
+                if self._confirm >= self._confirm_ticks:
+                    self.state, self._dwell, self._confirm = "ASSISTING", 0, 0
+                    self.why = "slip — re-closing"
+            else:
+                self._confirm = 0
+                self.why = f"holding (load {peak:.0f}, lag {self.lag:.4f})"
+        elif self.state == "EXHAUSTED":
+            # Hold at the policy's own command until it opens (kept explicit so
+            # the diagnostic never goes stale while disarmed).
+            self.why = "disarmed after finding nothing — waiting for the policy to open"
+
+        out = self._clamp(cmd + self._direction(d) * self.offset)
+        self._sent = out            # lag next tick is measured against this
+        return out
+
+    def _direction(self, d):
+        """Unit vector along the policy's commanded closing posture, so extra
+        travel deepens the grasp it chose instead of imposing a pose."""
+        n = float(np.linalg.norm(d))
+        return d / n if n > 1e-6 else np.zeros_like(d)
+
+    # Stay a hair INSIDE the limit even so: the goal crosses the wire as
+    # float32, and a value exactly at the boundary can round up over it.
+    _LIMIT_MARGIN = 1e-4
+
+    def _clamp(self, v):
+        """Bound travel by MAGNITUDE, preserving sign — so this works for both
+        the current positive-closing convention and legacy negative-closing
+        models. (The gripette service is the real authority on limits and
+        rejects out-of-range goals itself; this only stops the assist from
+        driving past the mechanical range.)"""
+        return tuple(float(np.clip(v[i],
+                                   -(self._limits[i][1] - self._LIMIT_MARGIN),
+                                   self._limits[i][1] - self._LIMIT_MARGIN))
+                     for i in (0, 1))
 
 
 logger = logging.getLogger(__name__)
@@ -261,6 +544,68 @@ def parse_args():
                         "Force is now the cap, not Kp x position-overshoot — so --grip_gain "
                         "only needs to push the closing target past contact. Real hardware "
                         "only (no-op in sim). Try 0.2-0.4; watch motor{1,2}_load telemetry.")
+    p.add_argument("--grip_assist", type=float, default=None, metavar="LOAD_THRESH",
+                   help="Load-triggered GRIP ASSIST (sync cartesian mode; the recommended "
+                        "fix for the under-close failure — supersedes --latch_close/"
+                        "--commit_close/--grip_gain when set; pair with --grip_torque_limit). "
+                        "The policy replays the demonstrated closing ANGLE, which is where "
+                        "the human's fingers sat while PRESSING the object — on a force-blind "
+                        "position servo that can stop just short, touching nothing. This "
+                        "watches for the policy SETTLING into a closed pose with LOW load "
+                        "(= not gripping) and only then extends the closure ALONG THE "
+                        "POLICY'S OWN posture until the load reports contact, so the grasp "
+                        "TYPE (pinch vs power wrap) stays the policy's choice. LOAD_THRESH "
+                        "is the present_load above which we consider the fingers loaded — "
+                        "hardware units (STS3215 ~0-1000, so a few hundred) do NOT match "
+                        "sim units (MuJoCo actuator_force): measure both, never reuse a "
+                        "threshold across them.")
+    p.add_argument("--assist_min_close", type=float, default=0.15,
+                   help="--grip_assist: the policy command must exceed --start_gripper by "
+                        "this much (rad, either DOF) to count as 'closing' — below it the "
+                        "assist releases and re-arms (a deliberate open is always honored).")
+    p.add_argument("--assist_stable_ticks", type=int, default=5,
+                   help="--grip_assist: consecutive ticks the policy's gripper command must "
+                        "hold steady before the assist may engage. Guards against firing "
+                        "mid-approach; raise it if you see it trigger while still moving.")
+    p.add_argument("--assist_stable_eps", type=float, default=0.01,
+                   help="--grip_assist: per-tick command change (rad) below which the "
+                        "command counts as steady.")
+    p.add_argument("--assist_step", type=float, default=0.02,
+                   help="--grip_assist: extra closure added per tick (rad) while topping up. "
+                        "Smaller = gentler approach to contact.")
+    p.add_argument("--assist_lag", type=float, default=0.010,
+                   help="--grip_assist: STALL threshold (rad). Contact = the fingers lag the\n                        commanded pose by more than this WHILE drawing load (>= LOAD_THRESH).\n                        Measured on the real gripper at 25%% cap: free motion lags\n                        0.002-0.004 rad, first contact 0.014 and growing — so ~0.010 sits\n                        mid-gap. Rate-robust (a blocked finger's lag grows every tick),\n                        unlike an absolute velocity threshold.")
+    p.add_argument("--assist_log", type=str, default=None, metavar="FILE",
+                   help="--grip_assist: append a per-tick JSONL trace (model vs sent gripper "
+                        "command, observed position, load, assist state/offset/lag/advance and "
+                        "the reason for it) — the record needed to debug a grasp attempt "
+                        "offline. One file per session; episodes are delimited by the step "
+                        "counter restarting.")
+    p.add_argument("--assist_squeeze", type=float, default=0.05,
+                   help="--grip_assist: extra closure (rad) to press PAST contact before "
+                        "latching. Contact fires at a light touch, and grip force only "
+                        "persists while commanding past the object — measured on the bench, "
+                        "pressing 0.04-0.08 past contact took load 72 -> 250 (cap). The "
+                        "torque cap bounds the force. 0 = latch at first touch.")
+    p.add_argument("--assist_settle_eps", type=float, default=0.004,
+                   help="--grip_assist: per-tick measured movement (rad) below which the "
+                        "fingers count as SETTLED. Contact is only judged once settled — a "
+                        "finger still travelling to a new commanded pose lags a lot and "
+                        "draws cap current, which would otherwise read as contact.")
+    p.add_argument("--assist_dwell_ticks", type=int, default=2,
+                   help="--grip_assist: ticks to WAIT after each increment before trusting "
+                        "the load reading. These servos have no torque sensor — a MOVING "
+                        "finger reads a nonzero motion load whether or not it touches "
+                        "anything, so the reading is only meaningful once settled.")
+    p.add_argument("--assist_confirm_ticks", type=int, default=2,
+                   help="--grip_assist: consecutive settled readings needed to accept "
+                        "contact (and, once gripped, to accept a slip). Debounces the noisy "
+                        "load register — one spurious tick would otherwise latch a grasp "
+                        "that isn't there.")
+    p.add_argument("--assist_max_extra", type=float, default=0.4,
+                   help="--grip_assist: max total extra closure (rad) beyond the policy's "
+                        "command. Reaching it without contact = nothing in the jaws → the "
+                        "assist releases until the policy re-approaches.")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -289,6 +634,8 @@ def parse_args():
     args = p.parse_args()
     if args.checkpoint is None and args.policy_addr is None:
         p.error("either --checkpoint or --policy_addr is required")
+    if args.grip_assist is not None and args.async_exec:
+        p.error("--grip_assist is sync-mode only (not --async_exec)")
     return args
 
 
@@ -654,6 +1001,8 @@ def run_episode(
     grip_ref=(0.0, 0.0),
     grip_torque_limit=0.0,
     latch_close=None,
+    grip_assist=None,
+    assist_log=None,
     client=None,
     remote_k=None,
     remote_img_wh=None,
@@ -922,15 +1271,47 @@ def run_episode(
             )
         gg1 = float(gripper_goal[0])
         gg2 = float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0
-        if latch_close is not None:
-            if grip_latch is None and max(gg1, gg2) > latch_close:
-                grip_latch = [gg1, gg2]
-                latched_at_step = step
-                print(f"CLOSE LATCHED at step {step}", flush=True)
-            if grip_latch is not None:
-                grip_latch = [max(grip_latch[0], gg1), max(grip_latch[1], gg2)]
-                gg1, gg2 = grip_latch
-        gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
+        if grip_assist is not None:
+            # Minimal intervention: the assist only acts once the policy has
+            # settled closed WITHOUT load (see GripAssist). Outside that state
+            # the policy's gripper command passes through untouched, so the
+            # approach and any already-good grasp are never perturbed.
+            _load = camera.get_load()
+            _model_grip = (gg1, gg2)
+            gg1, gg2 = grip_assist.update((gg1, gg2), _load, step,
+                                          meas=tuple(state[-2:]))
+            if assist_log is not None:
+                # Structured per-tick trace: everything needed to reconstruct a
+                # grasp attempt offline (why it engaged or didn't, what it sent,
+                # what the fingers and the load actually did).
+                # Re-opened in append mode per tick ON PURPOSE: each line is
+                # flushed and closed immediately, so the trace survives the run
+                # being killed — which is how these runs usually end. The cost
+                # (tens of microseconds) is noise next to the loop's gRPC round
+                # trips, and this is opt-in debug output.
+                with open(assist_log, "a") as f:
+                    f.write(_json.dumps({
+                        "step": step, "t": time.perf_counter() - episode_start,
+                        "model_grip": [round(float(v), 4) for v in _model_grip],
+                        "sent_grip": [round(float(gg1), 4), round(float(gg2), 4)],
+                        "obs_grip": [round(float(v), 4) for v in state[-2:]],
+                        "load": [round(float(v), 1) for v in _load],
+                        "state": grip_assist.state,
+                        "offset": round(grip_assist.offset, 4),
+                        "lag": round(float(grip_assist.lag), 5),
+                        "advance": round(float(grip_assist.advance), 5),
+                        "why": grip_assist.why,
+                    }) + "\n")
+        else:
+            if latch_close is not None:
+                if grip_latch is None and max(gg1, gg2) > latch_close:
+                    grip_latch = [gg1, gg2]
+                    latched_at_step = step
+                    print(f"CLOSE LATCHED at step {step}", flush=True)
+                if grip_latch is not None:
+                    grip_latch = [max(grip_latch[0], gg1), max(grip_latch[1], gg2)]
+                    gg1, gg2 = grip_latch
+            gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
         gripper_stub.SendMotorCommand(
             gripper_pb2.MotorCommand(
                 motor1_goal=gg1, motor2_goal=gg2,
@@ -957,11 +1338,21 @@ def run_episode(
             # state[-2:] is always the observed gripper (2D-only, relative, and
             # joint-space states all end with [proximal, distal]).
             obs_g = state[-2:]
-            cmd_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             obs_dist = obs_g[1] if len(obs_g) > 1 else 0.0
+            model_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             load1, load2 = camera.get_load()
+            # `cmd` is what was actually SENT (gg1,gg2 — post commit/latch/gain
+            # override); the model's raw goal follows in parens so an assist
+            # override is visible (cmd pinned while the model's own goal drifts).
+            assist_tag = ""
+            if grip_assist is not None:
+                assist_tag = (f" | {grip_assist.state}+{grip_assist.offset:.3f}"
+                              f" lag={grip_assist.lag:.4f} adv={grip_assist.advance:.4f}"
+                              f" [{grip_assist.why}]")
             print(
-                f"step {step:3d} | gripper cmd: prox={gripper_goal[0]:+.4f} dist={cmd_dist:+.4f}"
+                f"step {step:3d} | gripper cmd: prox={gg1:+.4f} dist={gg2:+.4f}"
+                f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
+                f"{assist_tag}"
                 f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
                 f" | load: prox={load1:+.0f} dist={load2:+.0f}",
                 flush=True,
@@ -1381,6 +1772,42 @@ def main():
     camera.get()  # block until the first frame arrives
     logger.info("Camera stream up")
 
+    # ---- SAFETY: never leave the gripper clamped on exit ----------------
+    # The servo holds its last commanded goal, so a run that ends while the
+    # gripper is closed (normal end, Ctrl-C, or a crash) leaves it squeezing at
+    # the torque cap indefinitely. Observed on the real gripper 2026-07-28:
+    # found at prox 1.387 with load pinned at 250 long after a killed run —
+    # hard on the motor, and the NEXT episode then starts with the policy
+    # observing a CLOSED gripper, which is out of distribution (every demo
+    # starts open) and makes it predict lift/hold instead of approach/close.
+    # atexit covers normal return, KeyboardInterrupt and exceptions; a SIGKILL
+    # (kill -9) cannot be caught, so after one of those, reopen manually.
+    # Ordering matters: the reopen is an RPC, so it must happen BEFORE the
+    # channels are closed. Hence ONE idempotent teardown that reopens and then
+    # releases resources, called explicitly at the end of main() and registered
+    # with atexit for the abnormal paths.
+    def _teardown():
+        if getattr(_teardown, "done", False):
+            return
+        _teardown.done = True
+        try:
+            gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
+                motor1_goal=float(args.start_gripper[0]),
+                motor2_goal=float(args.start_gripper[1]),
+                motor1_torque_limit=float(args.grip_torque_limit),
+                motor2_torque_limit=float(args.grip_torque_limit),
+            ))
+            print(f"gripper reopened to {tuple(args.start_gripper)} on exit", flush=True)
+        except Exception as e:  # noqa: BLE001 — best-effort teardown
+            print(f"WARNING: could not reopen the gripper on exit: {e}", flush=True)
+        for close in (camera.stop, arm_channel.close, gripper_channel.close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — already going away
+                pass
+
+    atexit.register(_teardown)
+
     # ---- Evaluation loop ----
     results = []
     logger.info(
@@ -1436,6 +1863,20 @@ def main():
                 f"cube at ({reset_resp.cube_x:.3f}, {reset_resp.cube_y:.3f}, {reset_resp.cube_z:.3f})"
             )
 
+        # Fresh assist state per EPISODE — it latches a grasp and tracks
+        # arm/disarm across ticks, so it must not leak between episodes.
+        assist = (GripAssist(
+            args.grip_assist, ref=tuple(args.start_gripper),
+            min_close=args.assist_min_close,
+            stable_ticks=args.assist_stable_ticks,
+            stable_eps=args.assist_stable_eps,
+            step=args.assist_step, max_extra=args.assist_max_extra,
+            dwell_ticks=args.assist_dwell_ticks,
+            confirm_ticks=args.assist_confirm_ticks,
+            lag=args.assist_lag, settle_eps=args.assist_settle_eps,
+            squeeze=args.assist_squeeze,
+        ) if args.grip_assist is not None else None)
+
         if args.async_exec:
             if joint_mode or use_relative_proprio:
                 raise SystemExit("--async_exec supports gripper-only (2D state) cartesian models only.")
@@ -1484,6 +1925,8 @@ def main():
             grip_ref=tuple(args.start_gripper),
             grip_torque_limit=args.grip_torque_limit,
             latch_close=args.latch_close,
+            grip_assist=assist,
+            assist_log=args.assist_log,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1501,6 +1944,15 @@ def main():
             remote_img_wh=remote_img_wh,
             remote_frames=remote_frames,
         )
+        if assist is not None:
+            # Per-episode assist bookkeeping: did it engage, did it find
+            # contact, and how much extra closure the policy was short by
+            # (offset = the measured under-close, useful for A/B analysis).
+            print(f"GRIP ASSIST | final state {assist.state} | extra closure "
+                  f"{assist.offset:+.3f} rad | contacts {assist.n_gripped} | "
+                  f"empty top-ups {assist.n_exhausted} | first engaged at step "
+                  f"{assist.trigger_step}", flush=True)
+
         # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
         # result["success"] is meaningless there: ask the operator instead and
         # append every episode to a JSONL so A/B sessions produce real numbers.
@@ -1549,9 +2001,9 @@ def main():
 
     if args.debug and _DEBUG_GUI:
         cv2.destroyAllWindows()
-    camera.stop()
-    arm_channel.close()
-    gripper_channel.close()
+    # Reopens the gripper, then stops the camera and closes the channels (also
+    # registered with atexit, and idempotent, so abnormal exits are covered).
+    _teardown()
 
 
 if __name__ == "__main__":

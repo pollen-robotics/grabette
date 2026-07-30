@@ -172,6 +172,21 @@ class Simulation:
             joint_names = ACTUATOR_NAMES
         return np.array([self.data.ctrl[self._actuator_ids[name]] for name in joint_names])
 
+    def get_actuator_force(self, joint_names: list[str] | None = None) -> np.ndarray:
+        """Read the actuator force each named actuator is applying
+        (data.actuator_force). This is the sim ANALOG of the real servo's
+        present_load: for a position actuator it is the effort to reach/hold
+        the commanded angle, so it stays HIGH when a finger is blocked by an
+        object (persistent position error) and drops LOW once the finger
+        reaches its goal freely — the blocked-vs-reached signal grip-assist
+        keys on. NOTE: physics units (N·m-ish), NOT the real device's
+        0-1000 PWM proxy, so thresholds do not transfer numerically between
+        sim and hardware — only the qualitative behavior does."""
+        if joint_names is None:
+            joint_names = ACTUATOR_NAMES
+        return np.array([self.data.actuator_force[self._actuator_ids[name]]
+                         for name in joint_names])
+
     def render_camera(self, out_size: tuple[int, int] | None = None) -> np.ndarray:
         """Render an image from the Gripette camera with fisheye distortion.
 

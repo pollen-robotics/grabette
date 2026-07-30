@@ -57,6 +57,16 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         pos = self._sim.get_joint_positions(["proximal", "distal"])
         return float(PROXIMAL_CMD_SIGN * pos[0]), float(pos[1])
 
+    def _get_motor_loads(self):
+        """Sim analog of the real servo present_load, from MuJoCo
+        actuator_force on the gripper joints, in the robot-frame convention
+        (positive = closing effort; PROXIMAL_CMD_SIGN bridge as for position).
+        High when a finger is blocked by an object, low when it reaches its
+        commanded angle freely. Physics units, NOT the device's 0-1000 PWM —
+        see Simulation.get_actuator_force. Real device overrides this field."""
+        frc = self._sim.get_actuator_force(["proximal", "distal"])
+        return float(PROXIMAL_CMD_SIGN * frc[0]), float(frc[1])
+
     def StreamState(self, request, context):
         logger.info("StreamState: client connected")
         sequence = 0
@@ -65,6 +75,7 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         while context.is_active():
             with self._lock:
                 pos1, pos2 = self._get_motor_positions()
+                load1, load2 = self._get_motor_loads()
 
             # Read cached camera frame (rendered in main thread, no GL conflict)
             img = self._server.get_camera_frame()
@@ -78,10 +89,12 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
                 motor_state=gripper_pb2.MotorState(
                     motor1_position=pos1,
                     motor2_position=pos2,
-                    # Sim has no load sensor — report 0 (the real device fills
-                    # this with decoded present_load).
-                    motor1_load=0.0,
-                    motor2_load=0.0,
+                    # Sim analog of present_load from MuJoCo actuator_force
+                    # (physics units, not the device's PWM proxy) — see
+                    # _get_motor_loads. Real device overrides with decoded
+                    # present_load.
+                    motor1_load=load1,
+                    motor2_load=load2,
                 ),
                 timestamp_ms=(time.monotonic() - self._start_time) * 1000.0,
                 sequence=sequence,
@@ -129,8 +142,9 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
     def ReadMotors(self, request, context):
         with self._lock:
             pos1, pos2 = self._get_motor_positions()
+            load1, load2 = self._get_motor_loads()
         return gripper_pb2.MotorState(motor1_position=pos1, motor2_position=pos2,
-                                      motor1_load=0.0, motor2_load=0.0)
+                                      motor1_load=load1, motor2_load=load2)
 
     def SetTorque(self, request, context):
         return gripper_pb2.TorqueResponse(success=True)
