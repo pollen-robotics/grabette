@@ -34,6 +34,11 @@ RECORDING_WAIT_TIMEOUT_S = 20.0
 # just switch it off). Local to the pressed device — the peer isn't affected.
 STOP_ACK_S = 1.2
 
+# Debounce for the LED going 'off': a cold start briefly reads all-idle between
+# internal states, which must NOT flash the LED off mid-initialization. An 'off'
+# has to persist this long (while blinking/solid) before it's applied.
+_OFF_DEBOUNCE_S = 1.0
+
 
 class ButtonListener:
     """Watches the physical button and drives capture start/stop."""
@@ -140,15 +145,39 @@ class ButtonListener:
         return "off"             # idle
 
     def _led_monitor(self) -> None:
-        """Apply _desired_led() to the LED whenever it changes. Applying only on
-        change avoids re-issuing led_blink() (which would restart its phase) and
-        needless GPIO writes."""
+        """Drive the LED from _desired_led(), but LATCH the transitions so a slow
+        cold start — where the backend flags briefly read all-false (→ off) or
+        flip between states, differently on each device — can't make the LED
+        flicker. The intent the user wants is dead simple: blink from the click
+        until the recording is truly live, then a steady solid. So:
+          • a momentary 'off' during a start/recording is debounced away;
+          • once solid (recording), a transient 'blink' reading never regresses
+            it back to blinking — only a stop/idle leaves 'on'.
+        Teleop is exempt (immediate feedback, no latching). Applying only on
+        change avoids restarting led_blink()'s phase and needless GPIO writes."""
         btn = self._button
-        last = None
+        applied = None          # LED state currently on the hardware
+        off_since = None        # monotonic when 'off' was first seen (debounce)
         while not self._stop_event.is_set():
             try:
-                want = self._desired_led()
-                if want != last:
+                raw = self._desired_led()
+                if self._backend.is_teleop_active:
+                    want = raw  # teleop: snappy, no latching
+                    off_since = None
+                elif raw == "off":
+                    # Swallow a brief all-idle gap mid start/recording; a real
+                    # stop reaches 'off' via 'blink_fast', which is applied at once.
+                    if applied in ("blink", "on"):
+                        off_since = off_since or time.monotonic()
+                        want = "off" if time.monotonic() - off_since >= _OFF_DEBOUNCE_S else applied
+                    else:
+                        want = "off"
+                else:
+                    off_since = None
+                    # Don't drop a live 'solid' back to 'blink' on a transient
+                    # scheduled/starting reading — hold solid until stop/idle.
+                    want = "on" if (raw == "blink" and applied == "on") else raw
+                if want != applied:
                     if want == "on":
                         btn.led_on()
                     elif want == "blink":
@@ -157,7 +186,7 @@ class ButtonListener:
                         btn.led_blink(0.1)        # stopping: rapid blink
                     else:
                         btn.led_off()
-                    last = want
+                    applied = want
             except Exception:
                 logger.debug("LED monitor tick failed", exc_info=True)
             self._stop_event.wait(0.2)
