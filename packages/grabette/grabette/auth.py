@@ -22,6 +22,7 @@ Register an app at https://huggingface.co/settings/connected-applications.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -265,6 +266,33 @@ class HFAuth:
 
     def oauth_configured(self) -> bool:
         return bool(self.client_id)
+
+    async def warm_relay(self, timeout_s: float = 45.0) -> dict[str, Any]:
+        """Wake the fleet Space and wait until it responds, before starting OAuth.
+
+        HF routes the OAuth callback through the Space (the registered
+        redirect_uri). A free-tier Space sleeps when idle, and an un-authenticated
+        device doesn't poll it (poll needs a token) — so nothing keeps it warm and
+        the callback would hit a sleeping Space. Pinging /healthz here wakes it and
+        blocks until it's up, so the login works without a dashboard tab open.
+        Best-effort: returns {"status": "ok" | "timeout" | "skipped"}."""
+        if not _RELAY_URL:
+            return {"status": "skipped"}  # direct mode: no relay to wake
+        url = f"{_RELAY_URL}/healthz"
+        deadline = time.monotonic() + timeout_s
+        try:
+            async with aiohttp.ClientSession() as http:
+                while time.monotonic() < deadline:
+                    try:
+                        async with http.get(url, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                            if r.status < 500:  # any real response ⇒ Space is up
+                                return {"status": "ok"}
+                    except Exception:  # noqa: BLE001 — still waking / transient
+                        pass
+                    await asyncio.sleep(2)
+        except Exception:  # noqa: BLE001
+            pass
+        return {"status": "timeout"}
 
     def _cleanup_sessions(self) -> None:
         now = time.time()

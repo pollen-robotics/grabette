@@ -49,6 +49,12 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
     async def oauth_configured() -> dict[str, Any]:
         return {"configured": auth.oauth_configured()}
 
+    @router.get("/oauth/warm-relay")
+    async def warm_relay() -> dict[str, Any]:
+        """Wake the fleet Space so the OAuth callback lands on a running relay
+        even with no dashboard tab open. Called by the login card before OAuth."""
+        return await auth.warm_relay()
+
     @router.get("/oauth/start")
     async def oauth_start() -> dict[str, Any]:
         result = auth.start_oauth()
@@ -158,7 +164,13 @@ _$('hfSave').onclick=async()=>{_$('hfErr').textContent='';const token=_$('hfTok'
  const r=await fetch(`${HF}/save-token`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
  if(r.ok){_$('hfTok').value='';hfRefresh();}else{_$('hfErr').textContent=(await r.json()).detail||'failed';}};
 async function hfLogout(){await fetch(`${HF}/token`,{method:'DELETE'});hfRefresh();}
-_$('hfOauth').onclick=async()=>{const r=await(await fetch(`${HF}/oauth/start`)).json();
+_$('hfOauth').onclick=async()=>{_$('hfErr').textContent='';
+ const b=_$('hfOauth'),orig=b.textContent;b.disabled=true;b.textContent='Waking fleet…';
+ // Wake the (sleep-when-idle) fleet Space first, so the OAuth callback — routed
+ // through it by HF — lands on a running relay even with no dashboard tab open.
+ try{await fetch(`${HF}/oauth/warm-relay`);}catch(e){}
+ b.disabled=false;b.textContent=orig;
+ const r=await(await fetch(`${HF}/oauth/start`)).json();
  if(r.status!=='success'){_$('hfErr').textContent=r.message;return;}
  const p=window.open(r.auth_url,'hf','width=600,height=750');
  const t=setInterval(async()=>{const st=await(await fetch(`${HF}/oauth/status/${r.session_id}`)).json();
