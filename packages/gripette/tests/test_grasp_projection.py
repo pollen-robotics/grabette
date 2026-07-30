@@ -10,7 +10,11 @@ import math
 
 import pytest
 
-from gripette.grasp_projection import GraspProjection, normalize_closing_sign
+from gripette.grasp_projection import (
+    GraspProjection,
+    clamp_to_command_limits,
+    normalize_closing_sign,
+)
 
 # The parameter sets the projection must work under: the plain geometric default,
 # a curved boundary, a leading-proximal path, and both refinements at once.
@@ -115,17 +119,57 @@ def test_inputs_beyond_the_limits_are_clamped():
 
 
 def test_measured_mustard_grasp_encodes_as_expected():
-    """Anchor against the real measurement: the mean mustard grasp pose was
-    (0.893, 0.296) rad, which step 0 found to be 60% of the proximal range. The
-    projection must agree, and a full close must recover the unused travel."""
+    """Anchor against the real measurement: the mean mustard grasp pose is
+    (0.893, 0.296) rad. Normalised on the MEASURED reachable travel (93.5 / 102
+    deg), not on the server's looser command bounds."""
     gp = GraspProjection()
     s, c = gp.encode(0.893, 0.296)
-    assert s == pytest.approx(0.152, abs=0.005)
-    assert c == pytest.approx(0.602, abs=0.005)
+    assert s == pytest.approx(0.188, abs=0.005)
+    assert c == pytest.approx(0.547, abs=0.005)
     prox_full, _dist_full = gp.full_close(s)
     assert prox_full == pytest.approx(gp.lim_prox, abs=1e-9)
     # The whole point: a full close commands materially more travel.
-    assert math.degrees(prox_full - 0.893) == pytest.approx(34.0, abs=1.0)
+    assert math.degrees(prox_full - 0.893) == pytest.approx(42.3, abs=1.0)
+
+
+def test_reachable_travel_is_the_measured_travel():
+    """The normaliser must be the measured travel, not a CAD figure. Using a
+    bound larger than the real travel understates that channel and biases every
+    strategy toward the other joint."""
+    gp = GraspProjection()
+    assert gp.lim_prox == pytest.approx(math.radians(93.5))
+    assert gp.lim_dist == pytest.approx(math.radians(102.0))
+
+
+def test_a_full_close_is_now_an_acceptable_command():
+    """The proximal bound was raised from 85 to the measured 93.5 deg, so a full
+    close no longer has to be clamped away. This is the point of raising it: the
+    last 8.5 deg is where a firm close lives."""
+    from gripette.config import settings
+    gp = GraspProjection()
+    prox, dist = gp.full_close(0.0)
+    cp, cd, clamped = clamp_to_command_limits(prox, dist)
+    assert clamped is False, "a full close must survive the command bounds intact"
+    assert cp == pytest.approx(prox)
+    assert settings.motor1_max >= gp.lim_prox, "the bound must not cut real travel"
+
+
+def test_the_clamp_still_guards_against_out_of_range_targets():
+    """Kept as a guard: the bound and the reachable travel are separate numbers
+    and may drift apart again on another device."""
+    from gripette.config import settings
+    cp, cd, clamped = clamp_to_command_limits(settings.motor1_max * 2, -1.0)
+    assert clamped is True
+    assert cp == pytest.approx(settings.motor1_max)
+    assert cd == pytest.approx(settings.motor2_min)
+
+
+def test_clamp_leaves_reachable_targets_alone():
+    gp = GraspProjection()
+    prox, dist = gp.decode(0.3, 0.5)
+    cp, cd, clamped = clamp_to_command_limits(prox, dist)
+    assert clamped is False
+    assert (cp, cd) == (prox, dist)
 
 
 def test_encode_trajectory_fills_the_open_frames():

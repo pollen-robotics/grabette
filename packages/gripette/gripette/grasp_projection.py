@@ -57,6 +57,31 @@ from gripette.config import settings
 
 # Half-turn of the strategy sweep: s = 0 is pure proximal, s = 1 pure distal.
 _QUARTER = math.pi / 2
+
+# Reachable joint travel, MEASURED on hardware (rgripette-v2, 2026-07-30).
+#
+# Deliberately NOT `settings.motor{1,2}_max`. Those are the server's
+# accepted-command bounds, which are a safety envelope and may be loose:
+# motor2_max is 116 deg while no device reaches past ~102. Using a bound larger
+# than the real travel as the normaliser understates `v`, which biases every
+# strategy toward the proximal end.
+#
+# These are shared by the Grabette recorder and the Gripette gripper because they
+# are the same linkage, so one joint angle means one finger shape on both. That
+# is what keeps `s` device-independent: encode runs on recorded angles, decode
+# emits gripper commands, and they must agree about what a shape is. Per-device
+# variation (zero offset, how far a given torque actually gets) is then a
+# clamping concern at the edges rather than a bias in the shape coordinate.
+#
+# Provenance: proximal from moving the joint by hand to its collision with the
+# distal open; distal from a torque-capped stall with the proximal open, so the
+# distal figure may be slightly short of the true geometric stop.
+#
+# Err HIGH rather than low. `c = 1` is meant to command INTO a hard stop: if the
+# value exceeds the real travel the servo simply stalls against its torque cap,
+# which is the intended behaviour. Too low silently reintroduces the under-close.
+REACHABLE_PROXIMAL = math.radians(93.5)
+REACHABLE_DISTAL = math.radians(102.0)
 # Numerical guards. _EPS keeps division and root-finding away from 0/0 at the
 # fully-open pose; _TOL is the bisection tolerance on s (~1e-4 of full sweep,
 # far below the servo's resolution, so it is exact for our purposes).
@@ -73,8 +98,8 @@ class GraspProjection:
     an encode/decode pair that disagree would silently corrupt every grasp.
     """
 
-    lim_prox: float = settings.motor1_max
-    lim_dist: float = settings.motor2_max
+    lim_prox: float = REACHABLE_PROXIMAL
+    lim_dist: float = REACHABLE_DISTAL
     p: float = math.inf   # full-close boundary exponent
     a: float = 1.0        # proximal path exponent
     b: float = 1.0        # distal path exponent
@@ -233,6 +258,27 @@ class GraspProjection:
             elif not math.isnan(nxt):
                 s_filled[i] = nxt
         return s_filled, closure, [c >= close_at for c in closure]
+
+
+def clamp_to_command_limits(prox: float, dist: float) -> tuple[float, float, bool]:
+    """Clamp a decoded target into what the gripper server will actually accept.
+
+    `decode(s, 1.0)` intentionally targets the REACHABLE travel, which is larger
+    than the server's accepted-command bounds (`settings.motor{1,2}_max`, 85 and
+    116 deg): the proximal joint reaches ~93.5 deg but commands above 85 are
+    rejected outright. Without this, a full close would raise instead of closing.
+
+    Clamping here loses the last few degrees of proximal travel rather than the
+    grasp. Raising `motor1_max` toward the measured reachable value would recover
+    it, but that widens what the hardware accepts and is not this module's call.
+
+    Returns (proximal, distal, was_clamped).
+    """
+    lo_p, hi_p = settings.motor1_min, settings.motor1_max
+    lo_d, hi_d = settings.motor2_min, settings.motor2_max
+    cp = min(max(prox, lo_p), hi_p)
+    cd = min(max(dist, lo_d), hi_d)
+    return cp, cd, (cp != prox or cd != dist)
 
 
 def normalize_closing_sign(values: list[float]) -> tuple[list[float], bool]:
