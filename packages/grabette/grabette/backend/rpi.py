@@ -37,6 +37,7 @@ class RpiBackend(Backend):
         self._start_time: float | None = None
         self._capturing = False
         self._starting = False
+        self._stopping = False  # True during stop_capture teardown (drives the fast-blink LED)
         # True while the OAK-D device is being brought up (init in progress).
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
@@ -437,6 +438,9 @@ class RpiBackend(Backend):
             raise RuntimeError("Not capturing")
 
         self._starting = False
+        # Mark stopping now (before the ~1-2s stream teardown + mux) so the LED
+        # fast-blinks from the moment stop begins until the capture is fully down.
+        self._stopping = True
         # Keep _capturing = True until ALL streams have stopped, to
         # prevent the daemon poll loop (get_state) from doing direct
         # I2C reads while the angle capture thread is still running.
@@ -472,6 +476,7 @@ class RpiBackend(Backend):
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
+        self._stopping = False  # teardown done → LED goes off (idle)
 
         # If the daemon auto-enabled the OAK-D for this capture, keep it warm
         # for the grace period so a back-to-back recording starts instantly,
@@ -588,6 +593,14 @@ class RpiBackend(Backend):
     @property
     def is_capturing(self) -> bool:
         return self._capturing
+
+    @property
+    def is_starting(self) -> bool:
+        return self._starting
+
+    @property
+    def is_stopping(self) -> bool:
+        return self._stopping
 
     def get_frame_jpeg(self) -> bytes | None:
         """Capture a JPEG frame from picamera2.

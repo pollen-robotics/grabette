@@ -135,6 +135,14 @@ class MockBackend(Backend):
         return self._capturing
 
     @property
+    def is_starting(self) -> bool:
+        return False  # mock starts instantly — no warm-up window
+
+    @property
+    def is_stopping(self) -> bool:
+        return False  # mock stops instantly — no teardown window
+
+    @property
     def is_camera_connected(self) -> bool:
         return True
 

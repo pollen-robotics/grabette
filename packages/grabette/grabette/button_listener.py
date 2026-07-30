@@ -6,9 +6,10 @@ capture start/stop through the same code path as the REST API.
 LED feedback is driven by the device's ACTUAL capture state (a separate monitor
 thread), not by which button was pressed — so in a group/bimanual recording
 BOTH grabettes reflect their own status, even the peer started via the fleet:
-  - Blink: a start is scheduled (waiting for the shared T0)
-  - Solid: recording in progress
-  - Off:   idle
+  - Off:        idle
+  - Blink:      initializing (warming up / waiting for the shared T0)
+  - Solid:      recording in progress
+  - Fast blink: stopping (from the stop until the capture is fully torn down)
 (Teleop mode reuses the LED: solid = sending, off = repositioning.)
 """
 
@@ -110,18 +111,25 @@ class ButtonListener:
 
     def _desired_led(self) -> str:
         """The LED state that reflects what this device is doing right now:
-        'on' | 'blink' | 'off'. State-driven (not press-driven) so every group
-        member shows its own status."""
+        'on' | 'blink' | 'blink_fast' | 'off'. State-driven (not press-driven) so
+        every group member shows its own status:
+          off        → idle
+          blink      → initializing (warming up / waiting for the shared T0)
+          on         → recording (solid)
+          blink_fast → stopping (from stop until the capture is fully torn down)."""
         from grabette.capture_scheduler import get_capture_scheduler
         b = self._backend
         if b.is_teleop_active:
             return "on" if b.is_teleop_sending else "off"
-        if time.monotonic() < self._stop_ack_until:
-            return "blink"       # just pressed stop here → acknowledge the press
+        # Stopping wins over is_capturing: the backend keeps is_capturing True
+        # through the mux teardown, so check the stopping flag (and the local
+        # press ack) first → fast blink until fully off.
+        if getattr(b, "is_stopping", False) or time.monotonic() < self._stop_ack_until:
+            return "blink_fast"
         if b.is_capturing:
-            return "on"          # recording
-        if get_capture_scheduler().is_scheduled():
-            return "blink"       # start scheduled, waiting for the shared T0
+            return "on"          # recording (solid)
+        if getattr(b, "is_starting", False) or get_capture_scheduler().is_scheduled():
+            return "blink"       # initializing: warming up or waiting for T0
         return "off"             # idle
 
     def _led_monitor(self) -> None:
@@ -134,8 +142,14 @@ class ButtonListener:
             try:
                 want = self._desired_led()
                 if want != last:
-                    (btn.led_on if want == "on" else
-                     btn.led_blink if want == "blink" else btn.led_off)()
+                    if want == "on":
+                        btn.led_on()
+                    elif want == "blink":
+                        btn.led_blink(0.3)        # initializing: steady blink
+                    elif want == "blink_fast":
+                        btn.led_blink(0.1)        # stopping: rapid blink
+                    else:
+                        btn.led_off()
                     last = want
             except Exception:
                 logger.debug("LED monitor tick failed", exc_info=True)
