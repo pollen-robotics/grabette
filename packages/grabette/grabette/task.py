@@ -380,21 +380,31 @@ class TaskManager:
         the tasks and can name each episode's peers, even ones now offline.
 
         Skips Unassigned and empty tasks (a task with no episodes has no reason
-        to exist). Each episode carries the members captured at record time.
+        to exist).
+
+        Episodes are GROUPED by their membership combination (a task's episodes
+        almost always share the same devices), so the members map is sent once
+        per group instead of once per episode — keeping the report compact even
+        for tasks with a long recording history.
         """
         out: list[dict] = []
         for t in self._tasks:
             if t["id"] == UNASSIGNED_ID or not t.get("episode_ids"):
                 continue
-            members = t.get("episode_members", {})
+            members_by_ep = t.get("episode_members", {})
+            groups: dict[tuple, dict] = {}
+            for eid in t["episode_ids"]:
+                m = members_by_ep.get(eid, {})
+                key = tuple(sorted((role, w.get("device_id")) for role, w in m.items()))
+                g = groups.get(key)
+                if g is None:
+                    g = groups[key] = {"members": m, "episode_ids": []}
+                g["episode_ids"].append(eid)
             out.append({
                 "name": t["name"],
                 "description": t.get("description", ""),
                 "device_signature": t.get("device_signature", []),
-                "episodes": [
-                    {"episode_id": eid, "members": members.get(eid, {})}
-                    for eid in t["episode_ids"]
-                ],
+                "groups": list(groups.values()),
             })
         return out
 
