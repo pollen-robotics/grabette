@@ -207,6 +207,30 @@ async def _handle_relay_command(cmd: dict) -> dict:
         except Exception as e:  # noqa: BLE001
             return {"status": "error", "message": str(e)}
 
+    if ctype == "edit_task":
+        # Fleet task edit (rename / re-describe), keyed by task name. Idempotent.
+        from grabette.app.routers.tasks import get_task_manager
+
+        args = cmd.get("args") or {}
+        name = args.get("name")
+        if not name:
+            return {"status": "error", "message": "name is required"}
+        get_task_manager().rename_task(
+            name, new_name=args.get("new_name"), description=args.get("description"),
+        )
+        return {"status": "ok"}
+
+    if ctype == "delete_task":
+        # Fleet task delete: remove the task AND its recorded episodes locally,
+        # by name. Idempotent (absent → success). Needs no capture hardware.
+        from grabette.app.routers.tasks import get_task_manager
+
+        name = (cmd.get("args") or {}).get("name")
+        if not name:
+            return {"status": "error", "message": "name is required"}
+        deleted = get_task_manager().delete_task_by_name(name)
+        return {"status": "ok", "deleted": name if deleted else None}
+
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
 
@@ -375,7 +399,8 @@ async def lifespan(app: FastAPI):
             device_id=settings.device_id,
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
-                          "upload_episodes", "process_dataset", "delete_episode"],
+                          "upload_episodes", "process_dataset", "delete_episode",
+                          "edit_task", "delete_task", "prepare_capture"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect

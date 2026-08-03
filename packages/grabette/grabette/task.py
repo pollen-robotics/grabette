@@ -461,6 +461,49 @@ class TaskManager:
         self._tasks.remove(t)
         self._save()
 
+    # ── Fleet-driven ops, keyed by task NAME ───────────────────────────
+    # The fleet aggregates tasks across devices by name (it doesn't know local
+    # ids), so edit/delete it dispatches reference the task by name. All are
+    # idempotent (absent → no-op) so a command that reaches a device which never
+    # had the task, or already applied it, still succeeds.
+
+    def _find_task_by_name(self, name: str) -> dict | None:
+        for t in self._tasks:
+            if t["id"] != UNASSIGNED_ID and t.get("name") == name:
+                return t
+        return None
+
+    def rename_task(self, name: str, new_name: str | None = None,
+                    description: str | None = None) -> bool:
+        """Update a task's name/description by name. Returns False if absent."""
+        t = self._find_task_by_name(name)
+        if t is None:
+            return False
+        if new_name:
+            t["name"] = new_name
+        if description is not None:
+            t["description"] = description
+        self._save()
+        return True
+
+    def delete_task_by_name(self, name: str) -> bool:
+        """Delete a task AND its recorded episodes (files + registry) by name.
+        Unlike delete_task(), episodes are removed, not moved to Unassigned —
+        the fleet's "delete task" means the recordings go too. Returns False if
+        the task isn't present on this device."""
+        t = self._find_task_by_name(name)
+        if t is None:
+            return False
+        members = t.get("episode_members", {})
+        for eid in list(t.get("episode_ids", [])):
+            ep_dir = self.episode_dir(eid)
+            if ep_dir.exists():
+                shutil.rmtree(ep_dir, ignore_errors=True)
+            members.pop(eid, None)
+        self._tasks.remove(t)
+        self._save()
+        return True
+
     def list_tasks(self) -> list[TaskDetail]:
         return [self._to_task_detail(t) for t in self._tasks]
 
