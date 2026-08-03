@@ -146,6 +146,7 @@ def convert_dataset(
     dst_root: Path,
     rest_is_closed: bool = False,
     overwrite: bool = False,
+    stats_repo_id: str | None = None,
 ) -> dict:
     """Copy the dataset and rewrite its gripper channels. Returns a report."""
     src_root = Path(src_root)
@@ -161,6 +162,22 @@ def convert_dataset(
     # Dereferences symlinks, so the result is a self-contained snapshot and the
     # source (a shared HF cache) cannot be touched by anything downstream.
     shutil.copytree(src_root, dst_root, symlinks=False)
+
+    # Open the dataset BEFORE rewriting anything.
+    #
+    # LeRobotDataset syncs from the Hub on construction even when `root` is
+    # local, and it must be given a repo_id that exists (an invented one 404s,
+    # and HF_HUB_OFFLINE makes the check raise rather than skip). Constructing it
+    # here means that download lands on the freshly-copied files, which are still
+    # identical to the source. Constructing it AFTER the rewrite re-downloads the
+    # source parquet over the converted data and silently undoes everything —
+    # observed, and only caught by re-running the round-trip check.
+    ds = None
+    if stats_repo_id:
+        from lerobot.datasets import LeRobotDataset
+
+        ds = LeRobotDataset(repo_id=stats_repo_id, root=dst_root)
+        logger.info("Opened %s at %s for the stats pass", stats_repo_id, dst_root)
 
     info_path = dst_root / "meta" / "info.json"
     info = json.loads(info_path.read_text())
@@ -215,6 +232,16 @@ def convert_dataset(
     info_path.write_text(json.dumps(info, indent=4))
     logger.info("Updated %s", info_path)
 
+    if ds is not None:
+        # Mandatory: `closure` is now 0..1 where the raw angle was 0..1.6 rad, so
+        # stale stats would mis-scale the channel. Uses the object opened above —
+        # constructing a new one here is what caused the clobber.
+        from lerobot.datasets.dataset_tools import recompute_stats
+
+        logger.info("Recomputing stats...")
+        recompute_stats(ds, skip_image_video=True)
+        logger.info("Stats recomputed")
+
     return {
         "episodes": len(reports),
         "single_close": sum(1 for r in reports if r["n_close"] == 1),
@@ -240,11 +267,18 @@ def convert_dataset(
 @click.option("--recompute_stats/--no_recompute_stats", default=True,
               help="Recompute normalisation stats. The gripper channels change "
                    "meaning and RANGE, so stale stats mis-normalise training.")
-def main(src_root, dst_root, rest_is_closed, overwrite, recompute_stats):
+@click.option("--repo_id", default=None,
+              help="repo_id to open the converted dataset under, for the stats "
+                   "pass only. LeRobotDataset queries the Hub for available "
+                   "revisions even when `root` is local, so an invented id 404s. "
+                   "Use the SOURCE dataset's id — the data still comes from "
+                   "--dst_root.")
+def main(src_root, dst_root, rest_is_closed, overwrite, recompute_stats, repo_id):
     """Re-express a dataset's gripper channels as (strategy, commanded closure)."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     report = convert_dataset(Path(src_root), Path(dst_root),
-                            rest_is_closed=rest_is_closed, overwrite=overwrite)
+                            rest_is_closed=rest_is_closed, overwrite=overwrite,
+                            stats_repo_id=repo_id if recompute_stats else None)
 
     n = report["episodes"]
     click.echo("")
@@ -257,18 +291,6 @@ def main(src_root, dst_root, rest_is_closed, overwrite, recompute_stats):
     click.echo(f"  sign-flipped:      {report['sign_flipped']}")
     click.echo(f"  median frames labelled close: "
                f"{100 * report['frac_close_median']:.0f}%")
-
-    if recompute_stats:
-        # Mandatory in practice: `closure` is now 0..1 while the raw angle was
-        # 0..1.6 rad, so the old stats would mis-scale the channel.
-        click.echo("")
-        click.echo("Recomputing stats...")
-        from lerobot.datasets import LeRobotDataset
-        from lerobot.datasets.dataset_tools import recompute_stats
-
-        ds = LeRobotDataset(repo_id="local/grasp_projection", root=Path(dst_root))
-        recompute_stats(ds, skip_image_video=True)
-        click.echo("Stats recomputed.")
 
     click.echo("")
     click.echo(f"Done: {dst_root}")
