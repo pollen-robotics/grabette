@@ -304,11 +304,17 @@ class TaskManager:
         if not ep_dir.exists():
             raise FileNotFoundError(f"Episode {episode_id} not found")
 
-        # Remove from whichever task contains it
+        # Remove from whichever task contains it. If that empties a named task,
+        # drop the task too — an empty task has no reason to exist (and, being
+        # unreported, the fleet couldn't otherwise reach it to delete it). This
+        # is what makes orphan cleanup that removes a task's last episode also
+        # remove the now-empty task, instead of leaving a 0-episode ghost.
         for t in self._tasks:
             if episode_id in t["episode_ids"]:
                 t["episode_ids"].remove(episode_id)
                 t.get("episode_members", {}).pop(episode_id, None)
+                if t["id"] != UNASSIGNED_ID and not t["episode_ids"]:
+                    self._tasks.remove(t)
                 break
 
         shutil.rmtree(ep_dir)
