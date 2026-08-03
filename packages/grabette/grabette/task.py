@@ -480,8 +480,10 @@ class TaskManager:
         return None
 
     def rename_task(self, name: str, new_name: str | None = None,
-                    description: str | None = None) -> bool:
-        """Update a task's name/description by name. Returns False if absent."""
+                    description: str | None = None,
+                    device_signature: list | None = None) -> bool:
+        """Update a task's name/description (and optionally backfill its device
+        signature) by name. Returns False if absent."""
         t = self._find_task_by_name(name)
         if t is None:
             return False
@@ -489,6 +491,8 @@ class TaskManager:
             t["name"] = new_name
         if description is not None:
             t["description"] = description
+        if device_signature is not None:
+            t["device_signature"] = list(device_signature)
         self._save()
         return True
 

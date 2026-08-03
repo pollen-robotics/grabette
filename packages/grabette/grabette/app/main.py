@@ -217,6 +217,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "name is required"}
         get_task_manager().rename_task(
             name, new_name=args.get("new_name"), description=args.get("description"),
+            device_signature=args.get("device_signature"),
         )
         return {"status": "ok"}
 
