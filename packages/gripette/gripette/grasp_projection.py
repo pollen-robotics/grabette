@@ -260,6 +260,202 @@ class GraspProjection:
         return s_filled, closure, [c >= close_at for c in closure]
 
 
+@dataclass(frozen=True)
+class GripEvent:
+    """A detected closing or opening intention.
+
+    `from_c` is the local REST level the hand was sitting at before the ramp —
+    not a global constant. The comfortable posture drifts between and within
+    episodes, and measurements on the real datasets showed the closure histogram
+    is flat, so a dataset-wide "rest value" is not a real quantity.
+    """
+
+    kind: str          # "close" or "open"
+    onset: int         # first frame of the ramp — where intention starts
+    end: int           # frame the ramp settles at
+    from_c: float      # local rest level immediately before the ramp
+    to_c: float        # level reached
+    amplitude: float   # closure travelled by the ramp
+
+
+def segment_grip(
+    closure: list[float],
+    rest_is_closed: bool = False,
+    min_amplitude: float = 0.08,
+    hold_frames: int = 25,
+    hold_tol: float = 0.06,
+    smooth: int = 5,
+    merge_gap: int = 8,
+    rest_window: int = 10,
+) -> tuple[list[str], list[GripEvent]]:
+    """Label each frame "open" / "rest" / "close", by detecting intention ramps.
+
+    Why ramps rather than a level threshold: the operator does not hold the
+    device fully open while approaching — the extreme is uncomfortable — so
+    approach-at-rest and grasp-holding are at similar angles and similar (near
+    zero) velocity. No level test separates them. Measured on the real datasets,
+    though, the closing ramp is 9-15x the hand tremor (amplitude 0.18-0.25 in
+    closure against a tremor sd of ~0.018), so the *event* is unambiguous even
+    where the *level* is not.
+
+    REST is the default: it is a human comfort posture, not a robot requirement,
+    and is kept only so the observed gripper stays in distribution. Nothing has
+    to fire to enter it — it is every frame not inside an event.
+
+    `tremor_k` is in units of tremor sd, so it does not need per-dataset tuning.
+
+    Returns per-frame labels and the events found, in order.
+    """
+    n = len(closure)
+    if n == 0:
+        return [], []
+    if n < max(smooth, 3):
+        return ["rest"] * n, []
+
+    c = _median_filter(list(closure), width=smooth)
+    # Noise floor from the frame-to-frame STEPS, robustly (MAD): the median is
+    # dominated by the many quiet frames, so a real ramp cannot inflate the
+    # threshold it is about to be tested against.
+    #
+    # NOT the residual of the median filter, which was the first attempt and was
+    # wrong by an order of magnitude: a median filter preserves smooth signals,
+    # so it leaves almost no residual and every micro-wiggle then cleared the
+    # bar. That reported ramps at "241 sigma" and found 300+ spurious events.
+    diffs = [c[i] - c[i - 1] for i in range(1, n)]
+    med = _median(diffs)
+    sigma_step = 1.4826 * _median([abs(d - med) for d in diffs])
+    if sigma_step <= _EPS:
+        sigma_step = 1e-4        # perfectly clean (synthetic) input
+
+    # Monotone runs, ignoring steps below the noise floor so tremor does not
+    # fragment a ramp into dozens of micro-runs.
+    step_floor = sigma_step
+    runs: list[tuple[int, int, int]] = []   # (direction, start, end)
+    i = 1
+    while i < n:
+        d = c[i] - c[i - 1]
+        if abs(d) < step_floor:
+            i += 1
+            continue
+        sign = 1 if d > 0 else -1
+        start = i - 1
+        while i < n:
+            d = c[i] - c[i - 1]
+            if abs(d) < step_floor or (1 if d > 0 else -1) != sign:
+                break
+            i += 1
+        runs.append((sign, start, i - 1))
+
+    # Merge same-direction runs separated by a short pause: a deliberate close
+    # often has a hesitation in the middle, and splitting there would report two
+    # half-amplitude events instead of one real one.
+    merged: list[tuple[int, int, int]] = []
+    for sign, s, e in runs:
+        if merged and merged[-1][0] == sign and s - merged[-1][2] <= merge_gap:
+            merged[-1] = (sign, merged[-1][1], e)
+        else:
+            merged.append((sign, s, e))
+
+    events: list[GripEvent] = []
+    for sign, s, e in merged:
+        amp = abs(c[e] - c[s])
+        # Two physical requirements, because noise-scaled thresholds do NOT work
+        # here: hand motion is correlated drift, not white noise, so any bar
+        # built from per-frame steps is cleared by slow posture wobble. Measured
+        # on real data that produced 250-500 spurious events per dataset.
+        #
+        #   1. AMPLITUDE — an intention moves the aperture by a large fraction of
+        #      the range. Note this is a threshold on the ramp's SIZE, not on its
+        #      level: it is invariant to where the hand happens to be resting,
+        #      which is what broke the level-threshold approach.
+        #   2. SUSTAINED — the level reached is then HELD. A grasp is held while
+        #      the object is transported; drift is followed by more drift. This
+        #      is the discriminator that needs no noise model at all.
+        if amp < min_amplitude:
+            continue
+        # The hold requirement applies to CLOSES ONLY. Its job is to separate a
+        # grasp (held while the object is transported) from a twitch. An open is
+        # inherently transient — open, position, close — so demanding a long hold
+        # after it rejects exactly the normal case, which is what the rest-closed
+        # trajectories exposed.
+        if sign > 0:
+            hold_to = min(n, e + 1 + hold_frames)
+            held = c[e + 1:hold_to]
+            if len(held) < hold_frames:
+                # Too close to the end to confirm a hold: accept only if the
+                # episode simply ends here, which is how a pick-and-lift finishes.
+                if e < n - 1 - hold_frames:
+                    continue
+            elif max(abs(v - c[e]) for v in held) > hold_tol:
+                continue
+        lo = max(0, s - rest_window)
+        rest_level = _median(c[lo:s]) if s > lo else c[s]
+        events.append(GripEvent(
+            kind="close" if sign > 0 else "open",
+            onset=s, end=e,
+            from_c=float(rest_level), to_c=float(c[e]),
+            amplitude=float(amp),
+        ))
+
+    if rest_is_closed:
+        # REST-CLOSED convention: the operator holds the gripper CLOSED when idle.
+        # Then rest and grasp are the SAME command — "drive to full close" — and
+        # differ only in whether an object blocks the fingers. So the close side
+        # needs no interpretation at all, which removes the one genuinely
+        # unresolvable ambiguity: relaxing back to rest after a release and
+        # closing onto a wide object are kinematically identical, and here they
+        # are also the same command, so confusing them costs nothing.
+        #
+        # Only OPEN needs detecting, and it is the easy direction: opening to
+        # clear an object is large and deliberate.
+        #
+        # Any closing run TERMINATES an open — no amplitude or hold test, because
+        # a closing motion is being used merely as "the open is over", not to
+        # decide what kind of state follows.
+        labels = ["close"] * n
+        for ev in (e for e in events if e.kind == "open"):
+            stop = n
+            for sign, rs, _re in merged:
+                if sign > 0 and rs > ev.end:   # the next CLOSING run ends the open
+                    stop = rs
+                    break
+            for t in range(ev.onset, stop):
+                labels[t] = "open"
+        return labels, [e for e in events if e.kind == "open"]
+
+    # Intermediate-rest convention (how the first datasets were recorded).
+    # A close is LATCHED from its onset — the command should fire when the human
+    # committed, so the robot's timing matches the demonstration — and holds
+    # until an opening event releases it. An open is transient: it exists to let
+    # the object go, after which the hand returns to rest.
+    labels = ["rest"] * n
+    state = "rest"
+    ptr = 0
+    for ev in events:
+        for t in range(ptr, ev.onset):
+            labels[t] = state
+        if ev.kind == "close":
+            state = "close"
+            for t in range(ev.onset, min(n, ev.end + 1)):
+                labels[t] = "close"
+        else:
+            for t in range(ev.onset, min(n, ev.end + 1)):
+                labels[t] = "open"
+            state = "rest"
+        ptr = min(n, ev.end + 1)
+    for t in range(ptr, n):
+        labels[t] = state
+    return labels, events
+
+
+def _median(xs) -> float:
+    s = sorted(xs)
+    if not s:
+        return 0.0
+    m = len(s) // 2
+    return s[m] if len(s) % 2 else 0.5 * (s[m - 1] + s[m])
+
+
 def clamp_to_command_limits(prox: float, dist: float) -> tuple[float, float, bool]:
     """Clamp a decoded target into what the gripper server will actually accept.
 

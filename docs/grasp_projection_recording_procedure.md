@@ -1,165 +1,136 @@
-# Recording procedure for the grasp projection
+# Recording for the grasp projection
 
-**Status:** procedure, drafted 2026-07-30. Companion to
+**Status:** procedure, revised 2026-08-03. Companion to
 `packages/gripette/gripette/grasp_projection.py`.
 
-## What this is for
+## What the projection does
 
-The projection maps the gripper's two joint angles to `(strategy s, closure c)`
-so a policy can command *"close all the way along this shape"* and let the object
-stop the fingers, instead of regressing a precise object-dependent angle it has
-no way to get right. The geometry needs no data. Two things do:
+The Gripette is not an open/close gripper: two joints, whose *ratio* is the shape
+of the grasp. Asking a policy to regress those angles directly gives it a problem
+it cannot solve — the demonstrated angle is where the human's fingers sat *while
+pressing the object*, and a position servo replaying it stops just short and
+touches nothing. Measured on the first three datasets, the demonstrated grasp uses
+only **38–60% of the proximal range**.
 
-| what | why data is needed | which session |
+So the two angles are re-expressed as
+
+| | meaning |
+|---|---|
+| `s` strategy | the SHAPE of the grasp: 0 = pure proximal (flat finger), 1 = pure distal (curled fingertip) |
+| `c` closure | how far along that shape: 0 = open, 1 = as closed as the shape can mechanically get |
+
+and the policy commands `c = 1` — "close all the way along this shape" — letting
+the **object** decide where the fingers stop, with the servo's torque cap doing
+the stopping. The precise, object-dependent angle stops being something the model
+has to predict.
+
+## The key convention: rest is CLOSED
+
+**Hold the gripper closed when idle**, not at a comfortable half-open posture.
+
+This is not a detail; it is what makes automatic labelling possible. With rest
+closed, **rest and grasp are the same command** — both are "drive to full close",
+differing only in whether an object is in the way. Consequently:
+
+- The one genuinely unresolvable ambiguity becomes harmless. Relaxing back to rest
+  after a release and closing onto a wide object are *kinematically identical* —
+  same direction, same shape, same duration — so no threshold, hold test or
+  amplitude test can separate them. Under this convention they are also the same
+  command, so confusing them costs nothing.
+- Only **open** events need detecting, and that is the easy direction: opening to
+  clear an object is large and deliberate.
+- The gripper action becomes genuinely binary, which is what a pretrained VLA's
+  gripper channel expects.
+- A closed gripper has a thinner profile while approaching than a wide-open one,
+  so less chance of fouling the table or the object edge.
+
+Why the alternative was rejected: with an intermediate rest posture, approach and
+grasp-holding sit at *similar angles and similar (near-zero) velocity*, so nothing
+in the joint signal separates them. Measured on real data, the closure histogram
+is flat — there is no sharp "rest mode" to key off. For the can, the tallest bin
+landed on the *grasp* value.
+
+Note this means `s` varies **within** an episode: your habitual closed rest
+posture, then whatever the object demands. That is a feature — it gives the
+strategy channel real signal, tied to something observable.
+
+## Pilot recording
+
+Small, sized to validate the labelling end to end rather than to train anything.
+
+**2 objects of clearly different size, ~15 episodes each (~30 total).** One that
+fits inside your resting aperture, one wider so you must open past it and close
+differently — that pair is what exercises the whole strategy range.
+
+Per episode: idle **closed** → open (only as wide as needed) → grasp → move →
+release → back to **closed**.
+
+Acceptance, checkable the same day and before any training:
+
+- exactly one open event detected per grasp and one per release
+- `s` at the grasp separates from `s` at rest by clearly more than its
+  within-cell spread
+- no open event detected during transport (that would be a dropped object)
+
+## Guidance
+
+Natural use is the goal; these only make the events cleaner.
+
+- **Return to the same closed rest posture each time.** It is a free stylistic
+  choice, and a policy averages variation it cannot condition on. It may not be
+  constant across operators, so it is worth stating explicitly rather than assumed.
+- **Pause briefly before closing.** Already known to help the model, and it makes
+  the ramp onset crisp.
+- **Close in one deliberate motion** rather than creeping in stages. Small
+  hesitations are merged automatically; a slow crawl looks like drift.
+- **Open only as wide as needed** — natural anyway, and it means the opening
+  posture carries information about the coming grasp.
+- **Don't idly adjust the fingers while transporting.** A held grasp should stay
+  held; fiddling mid-transport is what creates a false release.
+- **Release by opening clearly wider than the object**, so the event has real
+  amplitude.
+
+## Calibration
+
+Position limits and the torque ceiling are **standard values** in
+`gripette.config`, not per-device settings — the torque cap is the protection, so
+the limits can be the real collision angles:
+
+| | value | provenance |
 |---|---|---|
-| `p` — the full-close boundary | where the finger fouls the thumb, i.e. what "fully closed" means per shape | **A (mimic)** |
-| `a`, `b` — the path exponents | whether the proximal joint leads and the distal curls late | **A (mimic)** |
-| strategy *recognition* | so a policy can pick the shape from what it sees | **B (objects)** |
+| `motor1_max` | 93.5° | measured collision, moved by hand with the distal open |
+| `motor2_max` | 116° | left loose on purpose; a torque-capped stall reached 102°, which is a lower bound on real travel, so tightening could reject reachable commands |
+| `torque_ceiling` | 0.5 | enforced server-side on every command; an unset per-command limit resolves to it rather than to full torque |
 
-Session A is short and fits the mapping. Session B is longer and is only needed
-once `s` should become a live policy output rather than a fixed per-task value.
+Verified on hardware: a full close reached **92.55°**, held steady, load capped at
+exactly 500/1000 during motion and relaxing to 88 once settled — it reaches the
+stop without grinding into it.
 
-**Why object recordings cannot replace session A.** With an object in the jaws
-the closing motion is *truncated* at the object — the path past that point, and
-the mechanical boundary itself, are never observed. Both `p` and the late-path
-exponent `b` live exactly in the region the object hides. Free-air mimicry is the
-only way to see them.
+Zero offsets *are* per-device (`/etc/gripette/env`, written by
+`scripts/calibrate_zero_local.py`). Assume they are good to ~1°; propagated
+through the encode, 1° shifts `s` by ~0.003 against a real spread of 0.11–0.44, so
+it is negligible.
 
----
+## What is measured, and what is not
 
-## Session A — free-air mimic (fits `p`, `a`, `b`)
+Measured on mustard (199 eps), can (156) and cup (198):
 
-No object, no arm motion needed. Hold the Grabette still; only the fingers move.
-Roughly 15 minutes of recording.
+- encode/decode round-trip is exact — 2×10⁻¹⁶ rad on real data
+- the event detector finds exactly one close in **90–97%** of episodes, and the
+  recovered rest → grasp levels match the independently measured grasp closures
+- detected opens cluster at episode *starts* (pre-shape adjustments), not ends, so
+  they are not false releases
 
-### A1 · Path sweep — 5 strategies × 10 reps = 50 episodes
+Not established:
 
-For each of five hand shapes, spanning your flat → rounded range:
-
-1. Start **fully open** (both joints at zero). Hold ~0.5 s so the start is
-   unambiguous.
-2. Close **slowly and continuously** to the hard mechanical stop — aim for
-   **2–3 seconds** of travel.
-3. Hold at the stop ~0.5 s.
-4. Re-open, and repeat.
-
-The five shapes, by joint emphasis:
-
-| # | shape | what to do |
-|---|---|---|
-| 1 | flat / straight finger | close with the fingertip joint kept as straight as you can |
-| 2 | mostly proximal | mostly the base joint, slight tip curl |
-| 3 | balanced | both joints together |
-| 4 | mostly distal | mostly tip curl, base joint trailing |
-| 5 | fully rounded | curl the tip as hard as possible, base joint last |
-
-**Slowly matters.** The fit reads the *shape* of the path. At 50 fps a 0.3 s snap
-close gives ~15 samples over the whole trajectory, which aliases the curvature
-we're trying to measure. 2–3 s gives 100–150 samples.
-
-### A2 · Boundary poses — 10 episodes
-
-Short episodes, one pose each: close **as hard as the gripper physically allows**
-at varied hand shapes, including *index fingertip touching the palm*. These pin
-`p` directly — they are the only direct observation of the boundary.
-
-### What A gives us
-
-- the untruncated `(proximal, distal)` path per shape → fits `a`, `b`
-- the reachable boundary → fits `p`
-- a global fit, **one parameter set for all datasets**, not one per dataset
-
-### Acceptance criteria
-
-- Reconstruction error on **held-out** mimic paths within sensor noise.
-- The single global `(p, a, b)` fits the approach phase of mustard, can and cup
-  equally well. **If one dataset needs different parameters, the parametric class
-  is wrong** — that is a real result and it should be reported, not fitted around.
-- `p` from A2 agrees with `p` from A1's endpoints. Disagreement means the slow
-  closes weren't reaching the true stop.
-
-### Do NOT train a policy on session A
-
-The image contains no object while the action contains a grasp. Mixed into
-training, a policy learns to close on empty air and to decorrelate closing from
-any visual cue. Keep it a **separate dataset**, or tag it and exclude it. It is
-calibration data for a coordinate transform, not demonstrations.
-
----
-
-## Session B — object recordings (teaches strategy *recognition*)
-
-Only needed to make `s` a live policy output. Until then `s` is fixed per task
-and the gripper action is a single boolean, which is also the best match for
-π0.5's pretrained prior.
-
-### B1 · Same object, two strategies — the decisive block
-
-2 objects × 2 strategies × 20 = **80 episodes**. Grasp the *same* object two
-ways, e.g. a mug wrapped around the body vs pinched at the rim.
-
-This is the only block that can show `s` is **commandable** rather than merely a
-function of the object. Name the strategy in the task string
-(`"wrap the mug"` / `"pinch the mug rim"`) so it is available as a conditioning
-channel.
-
-**Interleave the two strategies, alternating rather than 20-then-20.** The
-`test_grabette_blue_cylinder` set has `corr(t, episode) = -0.92` — pure session
-drift. Recorded in blocks, drift is indistinguishable from strategy and the
-session answers nothing.
-
-### B2 · Strategy anchors — 3 objects × 20 = 60 episodes
-
-Objects whose geometry makes one shape the natural one, extending the range past
-the 0.11–0.44 the current data covers:
-
-| object | approx width | shape it forces |
-|---|---|---|
-| wide tube (chips can, 1 L bottle) | 75–90 mm | widest opening, contact toward the finger base |
-| small block (die, eraser, wood cube) | 25–35 mm | curled tip |
-| marker or AA battery | 15–18 mm | fully curled fingertip |
-
-Sim found the contact region tracks object width: ~15 mm contacts near the tip,
-50 mm on the distal link, 70 mm reaches the palm side — so width is the lever
-that forces a shape.
-
-### B3 · Compliance pair — 2 × 10 = 20 episodes
-
-A sponge and a wooden block of similar size. Checks that a *full* close plus the
-torque cap holds the rigid one without crushing the soft one — the premise of
-"always fully close", on the axis sim cannot answer.
-
----
-
-## Rules that decide whether the data is usable
-
-1. **Within a cell, be deliberately consistent.** Same shape, same approach
-   direction, same wrist angle, same closing speed. Mustard's within-object
-   strategy spread is currently sd 0.177 over a 0.00–0.65 range; shrinking that
-   *is* the deliverable. A policy averages variation it cannot condition on.
-2. **Be diverse only about what the camera can see** — object position and
-   orientation on the table.
-3. **Per-episode task strings.** Every existing dataset carries a single task
-   string, so strategy cannot currently be read per episode. B1 is pointless
-   without this; confirm the recorder supports it before starting.
-4. **One session per block where possible**, and interleave within a block.
-
-## Acceptance criteria for session B
-
-Re-run the step-0 measurement:
-
-- within-cell **sd(t) < 0.06** (the can's current best) — down from 0.177
-- **between/within variance of t > 2** — up from 0.69 today
-
-Both are measurable the same day you record, before any training.
-
-## Known data-quality issues to avoid repeating
-
-- **Angles beyond the servo limits.** One set reaches **101% of the proximal
-  limit** — a human hand outranges the servo, and the encode has to clamp. Worth
-  a calibration check before recording.
-- **Frames below the open limit.** ~18% of mustard frames sit slightly *below*
-  zero, suggesting the recorded zero isn't the configured zero. Re-zero the
-  gripper (`scripts/calibrate_zero.py`) before a session.
-- **Mixed closing sign.** Older sets close negative. The converter detects this
-  per channel, but stating the convention explicitly is better than detecting it.
+- these three datasets use the **intermediate-rest** convention, so they are not a
+  test of the rest-closed scheme; they also never release
+- multi-grasp tasks (key → unlock → open door) are out of scope here. Repeated
+  grasp/release cycles with different strategies need the smart-labelling work
+  (segmentation/detection models), not this heuristic
+- the `p` (boundary curvature) parameter is still unfitted. It cannot come from
+  the current CAD model: `proximal_bend_r` has **no collision geometry**, so the
+  sim cannot see finger-to-palm contact at all. A hardware sweep found the coupled
+  boundary is a box with one linear chamfer rather than a superellipse, but that
+  measurement was on a prototype with a known mid-motion snag at ~71° that later
+  revisions fix, so it should be redone on a current unit before being trusted
