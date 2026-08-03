@@ -1,0 +1,278 @@
+"""Re-express a dataset's gripper channels as (strategy, commanded closure).
+
+WHAT CHANGES
+------------
+The two gripper channels are replaced, in place of the raw angles:
+
+    action[-2:]            -> (s, c_target)
+    observation.state[-2:] -> (s_obs, c_obs)
+
+`c_target` is what the policy should COMMAND:
+
+    close      -> 1.0        drive fully closed along `s`; the OBJECT stops the
+                             fingers, at the servo's torque cap
+    otherwise  -> passthrough of the closure the human actually used
+
+So the ONLY thing this conversion changes is that the grasp becomes a full close.
+Everything else is the demonstration unaltered, which keeps the distribution shift
+as small as it can be.
+
+An earlier version commanded `c = 0` (fully open) on frames labelled "open". That
+was wrong: humans open only about as wide as the grasp needs, and most detected
+opens in the existing data are start-of-episode pre-shape adjustments, not
+releases. Commanding a full open there changed the approach posture by up to 76
+degrees and would have put the observed gripper out of distribution. Detecting
+opens still matters — it is what stops a full close being commanded during the
+approach or a release — it just does not dictate the value.
+
+`c_obs` stays CONTINUOUS on purpose. The command is the same for rest and for a
+grasp, so "am I actually holding something" lives in the observation — the jaws
+reach the mechanical stop when empty and are blocked short when not. That is the
+right place for it: something the policy can condition on rather than infer.
+
+WHY
+---
+Replayed angles under-close. The demonstrated angle is where the human's fingers
+sat *while pressing* the object, and a position servo reproducing it stops just
+short. Measured over these datasets, demonstrations use only 38-60% of the
+proximal range. Commanding `c = 1` removes the need to predict an
+object-dependent angle at all.
+
+Non-destructive: the source dataset is copied, never modified.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import logging
+import shutil
+from pathlib import Path
+
+import click
+import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+from gripette.grasp_projection import (
+    GraspProjection,
+    normalize_closing_sign,
+    segment_grip,
+)
+
+logger = logging.getLogger(__name__)
+
+C_CLOSE = 1.0   # every other frame passes the demonstrated closure through
+
+
+def _gripper_columns(names: list[str] | None, dim: int) -> tuple[int, int]:
+    """Locate (proximal, distal) BY NAME. Layouts differ between dataset eras —
+    8-D [x,y,z,ax,ay,az,proximal,distal] and 11-D [dx,dy,dz,dr6d_0..5,
+    proximal,distal] — so a positional guess silently reads rotation channels
+    as gripper angles.
+    """
+    if names:
+        low = [str(n).lower() for n in names]
+        ip = next((i for i, n in enumerate(low) if "proximal" in n), None)
+        idl = next((i for i, n in enumerate(low) if "distal" in n and "dr6d" not in n), None)
+        if ip is not None and idl is not None:
+            return ip, idl
+    logger.warning("Gripper channels not found by name; falling back to the last two")
+    return dim - 2, dim - 1
+
+
+def convert_episode(
+    prox: list[float],
+    dist: list[float],
+    gp: GraspProjection,
+    rest_is_closed: bool,
+) -> tuple[np.ndarray, np.ndarray, dict]:
+    """One episode -> (action gripper pairs, state gripper pairs, report)."""
+    prox, flipped_p = normalize_closing_sign(prox)
+    dist, flipped_d = normalize_closing_sign(dist)
+
+    # Clamp negatives: the recorded open pose sits slightly BELOW zero (the
+    # device's zero is a calibration, good to ~1 deg), and a negative angle has
+    # no meaning in the projection.
+    s_obs, c_obs = [], []
+    for p_, d_ in zip(prox, dist):
+        s, c = gp.encode(max(p_, 0.0), max(d_, 0.0))
+        s_obs.append(s)
+        c_obs.append(c)
+
+    # `s` is undefined at the fully-open pose (both joints zero carry no shape),
+    # so it is filled from the nearest frame where it is defined.
+    s_filled, _closure, _flags = gp.encode_trajectory(
+        [max(p_, 0.0) for p_ in prox], [max(d_, 0.0) for d_ in dist]
+    )
+    labels, events = segment_grip(c_obs, rest_is_closed=rest_is_closed)
+
+    # Only the grasp is rewritten; approach, open and rest pass through, so the
+    # decoded command matches the demonstration everywhere except where the
+    # under-close happens.
+    c_target = [C_CLOSE if lab == "close" else c_obs[i]
+                for i, lab in enumerate(labels)]
+
+    # LATCH the strategy across each close. Left per-frame, `s` drifts while the
+    # fingers settle onto the object, and since the commanded pose is
+    # decode(s, 1.0), the target then wanders — observed swinging between 57 and
+    # 93 degrees of proximal mid-grasp, which would make a servo already stalled
+    # on the object shuffle. A grasp has ONE shape, so it is taken from the pose
+    # the hand ends in (the plateau) and held from the onset.
+    s_cmd = list(s_filled)
+    for ev in (e for e in events if e.kind == "close"):
+        tail = [v for v in s_obs[max(ev.end - 5, ev.onset):ev.end + 1]
+                if not math.isnan(v)]
+        if not tail:
+            continue
+        grasp_s = sorted(tail)[len(tail) // 2]
+        end = next((i for i in range(ev.onset, len(labels)) if labels[i] != "close"),
+                   len(labels))
+        for i in range(ev.onset, end):
+            s_cmd[i] = grasp_s
+    return (
+        np.asarray(list(zip(s_cmd, c_target)), dtype=np.float32),
+        np.asarray(list(zip(s_filled, c_obs)), dtype=np.float32),
+        {
+            "n_close": sum(1 for e in events if e.kind == "close"),
+            "n_open": sum(1 for e in events if e.kind == "open"),
+            "sign_flipped": bool(flipped_p or flipped_d),
+            "frac_close": labels.count("close") / max(len(labels), 1),
+        },
+    )
+
+
+def convert_dataset(
+    src_root: Path,
+    dst_root: Path,
+    rest_is_closed: bool = False,
+    overwrite: bool = False,
+) -> dict:
+    """Copy the dataset and rewrite its gripper channels. Returns a report."""
+    src_root = Path(src_root)
+    dst_root = Path(dst_root)
+    if dst_root.exists():
+        if not overwrite:
+            raise FileExistsError(f"Destination exists: {dst_root}. Pass --overwrite.")
+        logger.warning("Overwriting %s", dst_root)
+        shutil.rmtree(dst_root)
+
+    logger.info("Copying %s -> %s", src_root, dst_root)
+    dst_root.parent.mkdir(parents=True, exist_ok=True)
+    # Dereferences symlinks, so the result is a self-contained snapshot and the
+    # source (a shared HF cache) cannot be touched by anything downstream.
+    shutil.copytree(src_root, dst_root, symlinks=False)
+
+    info_path = dst_root / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    a_names = info["features"]["action"].get("names")
+    a_dim = int(info["features"]["action"]["shape"][0])
+    s_names = info["features"]["observation.state"].get("names")
+    s_dim = int(info["features"]["observation.state"]["shape"][0])
+    a_ip, a_id = _gripper_columns(a_names, a_dim)
+    s_ip, s_id = _gripper_columns(s_names, s_dim)
+    logger.info("action gripper cols %s, state gripper cols %s", (a_ip, a_id), (s_ip, s_id))
+
+    gp = GraspProjection()
+    reports = []
+    for pf in sorted((dst_root / "data").rglob("*.parquet")):
+        table = pq.read_table(pf)
+        actions = np.array(table.column("action").to_pylist(), dtype=np.float32)
+        states = np.array(table.column("observation.state").to_pylist(), dtype=np.float32)
+        eps = np.array(table.column("episode_index").to_pylist())
+
+        for ep in np.unique(eps):
+            m = eps == ep
+            a_pair, s_pair, rep = convert_episode(
+                actions[m, a_ip].tolist(), actions[m, a_id].tolist(), gp, rest_is_closed
+            )
+            actions[m, a_ip], actions[m, a_id] = a_pair[:, 0], a_pair[:, 1]
+            states[m, s_ip], states[m, s_id] = s_pair[:, 0], s_pair[:, 1]
+            rep["episode"] = int(ep)
+            reports.append(rep)
+
+        cols = {}
+        for c in table.column_names:
+            if c == "action":
+                cols[c] = pa.array(actions.tolist(), type=pa.list_(pa.float32()))
+            elif c == "observation.state":
+                cols[c] = pa.array(states.tolist(), type=pa.list_(pa.float32()))
+            else:
+                cols[c] = table.column(c)
+        pq.write_table(pa.table(cols), pf)
+        logger.info("  rewrote %s (%d rows)", pf.name, len(actions))
+
+    # Rename the two channels so the new meaning is visible in the metadata
+    # rather than implied. Shapes are unchanged.
+    def _renamed(names, ip, idl):
+        out = list(names)
+        out[ip], out[idl] = "strategy", "closure"
+        return out
+
+    if a_names:
+        info["features"]["action"]["names"] = _renamed(a_names, a_ip, a_id)
+    if s_names:
+        info["features"]["observation.state"]["names"] = _renamed(s_names, s_ip, s_id)
+    info_path.write_text(json.dumps(info, indent=4))
+    logger.info("Updated %s", info_path)
+
+    return {
+        "episodes": len(reports),
+        "single_close": sum(1 for r in reports if r["n_close"] == 1),
+        "no_close": sum(1 for r in reports if r["n_close"] == 0),
+        "multi_close": sum(1 for r in reports if r["n_close"] > 1),
+        "with_open": sum(1 for r in reports if r["n_open"] > 0),
+        "sign_flipped": sum(1 for r in reports if r["sign_flipped"]),
+        "frac_close_median": float(np.median([r["frac_close"] for r in reports])),
+        "per_episode": reports,
+    }
+
+
+@click.command()
+@click.option("--src_root", required=True, type=click.Path(exists=True),
+              help="Source dataset root (a LeRobot dataset directory).")
+@click.option("--dst_root", required=True, type=click.Path(),
+              help="Destination root. The source is never modified.")
+@click.option("--rest_is_closed", is_flag=True,
+              help="Recording convention where the operator holds the gripper CLOSED "
+                   "when idle. Then rest and grasp are the same command and only "
+                   "opens are detected. Use for datasets recorded that way.")
+@click.option("--overwrite", is_flag=True, help="Replace the destination if it exists.")
+@click.option("--recompute_stats/--no_recompute_stats", default=True,
+              help="Recompute normalisation stats. The gripper channels change "
+                   "meaning and RANGE, so stale stats mis-normalise training.")
+def main(src_root, dst_root, rest_is_closed, overwrite, recompute_stats):
+    """Re-express a dataset's gripper channels as (strategy, commanded closure)."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    report = convert_dataset(Path(src_root), Path(dst_root),
+                            rest_is_closed=rest_is_closed, overwrite=overwrite)
+
+    n = report["episodes"]
+    click.echo("")
+    click.echo(f"episodes:            {n}")
+    click.echo(f"  exactly one close: {report['single_close']} "
+               f"({100 * report['single_close'] / max(n, 1):.1f}%)")
+    click.echo(f"  no close found:    {report['no_close']}")
+    click.echo(f"  multiple closes:   {report['multi_close']}")
+    click.echo(f"  with open events:  {report['with_open']}")
+    click.echo(f"  sign-flipped:      {report['sign_flipped']}")
+    click.echo(f"  median frames labelled close: "
+               f"{100 * report['frac_close_median']:.0f}%")
+
+    if recompute_stats:
+        # Mandatory in practice: `closure` is now 0..1 while the raw angle was
+        # 0..1.6 rad, so the old stats would mis-scale the channel.
+        click.echo("")
+        click.echo("Recomputing stats...")
+        from lerobot.datasets import LeRobotDataset
+        from lerobot.datasets.dataset_tools import recompute_stats
+
+        ds = LeRobotDataset(repo_id="local/grasp_projection", root=Path(dst_root))
+        recompute_stats(ds, skip_image_video=True)
+        click.echo("Stats recomputed.")
+
+    click.echo("")
+    click.echo(f"Done: {dst_root}")
+
+
+if __name__ == "__main__":
+    main()

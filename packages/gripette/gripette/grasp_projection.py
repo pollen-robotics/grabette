@@ -287,6 +287,7 @@ def segment_grip(
     smooth: int = 5,
     merge_gap: int = 8,
     rest_window: int = 10,
+    slope_frac: float = 0.2,
 ) -> tuple[list[str], list[GripEvent]]:
     """Label each frame "open" / "rest" / "close", by detecting intention ramps.
 
@@ -388,11 +389,20 @@ def segment_grip(
                     continue
             elif max(abs(v - c[e]) for v in held) > hold_tol:
                 continue
-        lo = max(0, s - rest_window)
-        rest_level = _median(c[lo:s]) if s > lo else c[s]
+        # Refine the onset to where the motion actually becomes deliberate.
+        #
+        # The hand CREEPS during the approach — measured on mustard, closure
+        # drifts 0.077 -> 0.126 over ~2 s before the grasp ramps to 0.54 in 30
+        # frames. Both are monotone increases, so they merge into one run and the
+        # raw onset lands at the start of the creep, firing the close command two
+        # seconds early. The two differ by ~20x in RATE, so the onset is walked
+        # forward to where the slope first reaches a fraction of the run's peak.
+        onset = _refine_onset(c, s, e, slope_frac)
+        lo = max(0, onset - rest_window)
+        rest_level = _median(c[lo:onset]) if onset > lo else c[onset]
         events.append(GripEvent(
             kind="close" if sign > 0 else "open",
-            onset=s, end=e,
+            onset=onset, end=e,
             from_c=float(rest_level), to_c=float(c[e]),
             amplitude=float(amp),
         ))
@@ -446,6 +456,25 @@ def segment_grip(
     for t in range(ptr, n):
         labels[t] = state
     return labels, events
+
+
+def _refine_onset(c: list[float], start: int, end: int, slope_frac: float) -> int:
+    """First frame in [start, end] whose slope reaches `slope_frac` of the peak.
+
+    Separates a deliberate grasp from the slow creep that precedes it. Returns
+    `start` unchanged if the run is too short to have a meaningful slope profile.
+    """
+    if end - start < 3 or slope_frac <= 0.0:
+        return start
+    slopes = [abs(c[i + 1] - c[i]) for i in range(start, end)]
+    peak = max(slopes) if slopes else 0.0
+    if peak <= 0.0:
+        return start
+    bar = slope_frac * peak
+    for k, sl in enumerate(slopes):
+        if sl >= bar:
+            return start + k
+    return start
 
 
 def _median(xs) -> float:
