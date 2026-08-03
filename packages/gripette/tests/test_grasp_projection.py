@@ -73,13 +73,13 @@ def test_circle_boundary_trades_the_joints_off():
     assert u < 1.0 and v < 1.0
 
 
-def test_strategy_axis_orientation():
-    """s = 0 must be pure PROXIMAL and s = 1 pure DISTAL.
+def test_polar_strategy_axis_orientation():
+    """POLAR: s = 0 must be pure PROXIMAL and s = 1 pure DISTAL.
 
     Pinned deliberately: this axis was inverted once during design, which made
     every conclusion about grasp shape backwards.
     """
-    gp = GraspProjection()
+    gp = GraspProjection(mode="polar")
     prox0, dist0 = gp.full_close(0.0)
     prox1, dist1 = gp.full_close(1.0)
     assert prox0 == pytest.approx(gp.lim_prox) and dist0 == pytest.approx(0.0)
@@ -97,10 +97,10 @@ def test_closure_is_monotone_in_the_angles():
         prev = c
 
 
-def test_open_pose_has_undefined_strategy():
-    """Both joints at zero carry no shape information; say so instead of
-    inventing a value."""
-    gp = GraspProjection()
+def test_polar_open_pose_has_undefined_strategy():
+    """POLAR only: both joints at zero carry no shape information, so the polar
+    angle is genuinely undefined. Decoupled mode has no such singularity."""
+    gp = GraspProjection(mode="polar")
     s, c = gp.encode(0.0, 0.0)
     assert math.isnan(s)
     assert c == 0.0
@@ -122,7 +122,7 @@ def test_measured_mustard_grasp_encodes_as_expected():
     """Anchor against the real measurement: the mean mustard grasp pose is
     (0.893, 0.296) rad. Normalised on the MEASURED reachable travel (93.5 / 102
     deg), not on the server's looser command bounds."""
-    gp = GraspProjection()
+    gp = GraspProjection(mode="polar")
     s, c = gp.encode(0.893, 0.296)
     assert s == pytest.approx(0.188, abs=0.005)
     assert c == pytest.approx(0.547, abs=0.005)
@@ -174,7 +174,7 @@ def test_clamp_leaves_reachable_targets_alone():
 
 def test_encode_trajectory_fills_the_open_frames():
     """Leading and trailing open frames must not leak nan into a dataset."""
-    gp = GraspProjection()
+    gp = GraspProjection(mode="polar")
     mid_prox, mid_dist = gp.decode(0.4, 0.8)
     prox = [0.0, 0.0, mid_prox, mid_prox, 0.0]
     dist = [0.0, 0.0, mid_dist, mid_dist, 0.0]
@@ -258,3 +258,66 @@ def test_projection_is_shareable_and_immutable():
     gp = GraspProjection()
     with pytest.raises(Exception):
         gp.p = 2.0  # type: ignore[misc]
+
+
+# ---- decoupled mode (the default) -------------------------------------------
+
+
+def test_decoupled_is_independent_per_joint():
+    """Closure drives the proximal joint, strategy IS the distal target. Chosen
+    over the polar form because polar amplified the demonstrated distal spread
+    x2.71 (35.8 deg of human variation became 96.8 deg of commanded variation)."""
+    gp = GraspProjection()
+    assert gp.mode == "decoupled"
+    prox, dist = gp.decode(0.3, 0.7)
+    assert prox == pytest.approx(0.7 * gp.lim_prox)
+    assert dist == pytest.approx(0.3 * gp.lim_dist)
+
+
+def test_decoupled_full_close_always_maxes_the_proximal_joint():
+    """The under-close is a PROXIMAL shortfall, so a full close must drive that
+    joint to its limit whatever the shape — unlike polar, where a high s pulled
+    the commanded proximal DOWN to 37 deg."""
+    for s in (0.0, 0.25, 0.5, 0.75, 1.0):
+        gp = GraspProjection()
+        prox, dist = gp.full_close(s)
+        assert prox == pytest.approx(gp.lim_prox)
+        assert dist == pytest.approx(s * gp.lim_dist)
+
+
+def test_decoupled_does_not_amplify_the_distal_spread():
+    """The measurement that decided the default: a spread in demonstrated distal
+    must produce the SAME spread in the commanded distal, not a larger one."""
+    gp = GraspProjection()
+    lo_s, _ = gp.encode(0.85, math.radians(2.0))
+    hi_s, _ = gp.encode(0.85, math.radians(38.0))
+    _p_lo, d_lo = gp.full_close(lo_s)
+    _p_hi, d_hi = gp.full_close(hi_s)
+    demonstrated = math.radians(38.0 - 2.0)
+    commanded = d_hi - d_lo
+    assert commanded == pytest.approx(demonstrated, abs=1e-6)
+
+
+def test_decoupled_strategy_is_defined_at_the_open_pose():
+    """No singularity: the distal axis is meaningful even when nothing is closed,
+    so no nan-filling is needed."""
+    gp = GraspProjection()
+    s, c = gp.encode(0.0, 0.0)
+    assert not math.isnan(s)
+    assert (s, c) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("mode", ["decoupled", "polar"])
+@pytest.mark.parametrize("s", [0.0, 0.3, 0.6, 1.0])
+@pytest.mark.parametrize("c", [0.1, 0.5, 1.0])
+def test_round_trip_exact_in_both_modes(mode, s, c):
+    gp = GraspProjection(mode=mode)
+    prox, dist = gp.decode(s, c)
+    s2, c2 = gp.encode(prox, dist)
+    assert c2 == pytest.approx(c, abs=1e-6)
+    assert s2 == pytest.approx(s, abs=1e-5)
+
+
+def test_an_unknown_mode_is_rejected():
+    with pytest.raises(ValueError, match="mode must be"):
+        GraspProjection(mode="polarr")

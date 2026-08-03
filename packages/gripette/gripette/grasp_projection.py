@@ -23,9 +23,36 @@ and let the OBJECT decide the final angle, with the servo's torque cap doing the
 stopping. The precise, object-dependent angle stops being something the model
 has to predict.
 
-The mapping is pure geometry: no fitting is required and none of it is specific
-to a dataset. Two optional refinements are exposed as parameters so the shape
-can be made more faithful later without changing any call site:
+TWO MODES, AND WHY THE DEFAULT CHANGED
+--------------------------------------
+`mode="decoupled"` (default): each joint is normalised independently. Closure
+drives the PROXIMAL joint; strategy IS the normalised distal target. Trivially
+invertible, and defined everywhere including the open pose.
+
+`mode="polar"`: the original form, where strategy is the polar ANGLE atan2(v, u)
+and closure the radius. Elegant, and wrong for this hardware — measured on 199
+real mustard grasps:
+
+  - it COUPLES the channels, `ds/dv = u/(u² + v²)`, so noise in the small channel
+    (distal, 13.6° ± 14.7) leaks into the shape coordinate with a gain that grows
+    as the pose approaches the origin — i.e. worst during the approach.
+  - because `c = 1` scales along the ray, that noise is then multiplied by
+    `k ≈ 1/cos α` on the way out. The humans produced 35.8° of distal spread; the
+    polar command spread was 96.8°, an amplification of x2.71. Decoupled
+    reproduces it at 35.4°, x0.99.
+
+So the polar form manufactured variation that was not in the demonstrations, in
+the channel the policy has to learn. It is kept for comparison, not for use.
+
+Why the under-close is a proximal matter: at the grasp, proximal sits at 52% of
+its range (48.5° of 93.5°) — that is the shortfall — while distal is at 13%
+because that is where the human CHOSE to put it. In a proximal-dominant grasp the
+object blocks the proximal motion; the distal joint is free. Driving proximal to
+its limit and passing distal through is therefore both better conditioned and
+closer to the physics.
+
+The polar mode's two refinements are exposed as parameters so its shape can be
+made more faithful without changing any call site:
 
     p       the full-close BOUNDARY. p = inf means the joints reach their limits
             independently (a box corner). Real fingers foul the thumb first, so
@@ -100,11 +127,14 @@ class GraspProjection:
 
     lim_prox: float = REACHABLE_PROXIMAL
     lim_dist: float = REACHABLE_DISTAL
-    p: float = math.inf   # full-close boundary exponent
-    a: float = 1.0        # proximal path exponent
-    b: float = 1.0        # distal path exponent
+    mode: str = "decoupled"
+    p: float = math.inf   # full-close boundary exponent (polar mode only)
+    a: float = 1.0        # proximal path exponent (polar mode only)
+    b: float = 1.0        # distal path exponent (polar mode only)
 
     def __post_init__(self) -> None:
+        if self.mode not in ("decoupled", "polar"):
+            raise ValueError(f"mode must be 'decoupled' or 'polar', got {self.mode!r}")
         if not (self.lim_prox > 0 and self.lim_dist > 0):
             raise ValueError(f"joint limits must be positive, got "
                              f"{self.lim_prox}, {self.lim_dist}")
@@ -143,6 +173,11 @@ class GraspProjection:
 
     def decode(self, s: float, c: float) -> tuple[float, float]:
         """(strategy, closure) -> (proximal, distal) angles in radians."""
+        if self.mode == "decoupled":
+            # Each joint normalised independently: closure drives the PROXIMAL
+            # joint, strategy IS the distal target. See the class docstring for
+            # why this beats the polar form.
+            return _clamp01(c) * self.lim_prox, _clamp01(s) * self.lim_dist
         u_end, v_end = self.boundary(s)
         c = _clamp01(c)
         u = u_end * c ** self.a
@@ -164,6 +199,10 @@ class GraspProjection:
         """
         u = _clamp01(prox / self.lim_prox)
         v = _clamp01(dist / self.lim_dist)
+        if self.mode == "decoupled":
+            # Strategy is the distal axis and stays defined even at the open pose,
+            # unlike the polar angle, which is genuinely undefined there.
+            return v, u
         if u <= _EPS and v <= _EPS:
             return math.nan, 0.0
 
