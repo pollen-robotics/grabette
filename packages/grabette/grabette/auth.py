@@ -45,6 +45,18 @@ from huggingface_hub.errors import HfHubHTTPError
 # relay knows which grabette to forward the callback to.
 logger = logging.getLogger(__name__)
 
+
+def _write_secret(path: Path, text: str) -> None:
+    """Write a credential file (HF token / refresh store) with owner-only perms.
+    chmod 0600 so another local user/process on the device can't read the token;
+    best-effort (a no-op on non-POSIX filesystems, which is acceptable)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
+
 _HOSTNAME = socket.gethostname()
 
 _DEFAULT_RELAY_URL = "https://glannuzel-fleet-test.hf.space"
@@ -121,9 +133,7 @@ class HFAuth:
             user_info = whoami(token=token)  # validates; raises on invalid token
             from huggingface_hub.constants import HF_TOKEN_PATH
 
-            token_path = Path(HF_TOKEN_PATH)
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(token)
+            _write_secret(Path(HF_TOKEN_PATH), token)
             return {"status": "success", "username": user_info.get("name", "")}
         except (HfHubHTTPError, ValueError):
             return {"status": "error", "message": "Invalid token or network error"}
@@ -177,9 +187,7 @@ class HFAuth:
             "expires_at": time.time() + float(expires_in) if expires_in else None,
         }
         try:
-            path = self._oauth_store_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(store))
+            _write_secret(self._oauth_store_path(), json.dumps(store))
         except Exception:  # noqa: BLE001
             logger.warning("failed to persist OAuth refresh store", exc_info=True)
 
@@ -217,9 +225,7 @@ class HFAuth:
 
         from huggingface_hub.constants import HF_TOKEN_PATH
 
-        token_path = Path(HF_TOKEN_PATH)
-        token_path.parent.mkdir(parents=True, exist_ok=True)
-        token_path.write_text(access_token)
+        _write_secret(Path(HF_TOKEN_PATH), access_token)
         # HF rotates the refresh token; keep the newest. token_data carries the
         # new refresh_token + expires_in, so reuse the same persistence path.
         self._save_oauth_store(token_data)
@@ -376,14 +382,19 @@ class HFAuth:
                 async with http.post("https://huggingface.co/oauth/token", data=data) as resp:
                     body = await resp.text()
                     if resp.status != 200:
+                        # Log the raw body server-side (debug) but never return it —
+                        # the token endpoint's response can echo request details.
+                        logger.debug("OAuth token exchange failed (HTTP %s): %s", resp.status, body)
                         session.status = "error"
-                        session.error_message = f"Token exchange failed (HTTP {resp.status}): {body}"
+                        session.error_message = f"Token exchange failed (HTTP {resp.status})."
                         return {"status": "error", "message": session.error_message}
                     token_data = json.loads(body)
             access_token = token_data.get("access_token") or token_data.get("accessToken")
             if not access_token:
+                # Log only the response KEYS (not values) for diagnosis.
+                logger.debug("OAuth token response had no access_token; keys=%s", list(token_data))
                 session.status = "error"
-                session.error_message = f"No access token. Response: {token_data}"
+                session.error_message = "No access token in the authorization response."
                 return {"status": "error", "message": session.error_message}
         except Exception as e:  # noqa: BLE001
             session.status = "error"
@@ -396,9 +407,7 @@ class HFAuth:
         try:
             from huggingface_hub.constants import HF_TOKEN_PATH
 
-            token_path = Path(HF_TOKEN_PATH)
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(access_token)
+            _write_secret(Path(HF_TOKEN_PATH), access_token)
         except Exception as e:  # noqa: BLE001
             session.status = "error"
             session.error_message = f"Failed to save token: {type(e).__name__}: {e}"
