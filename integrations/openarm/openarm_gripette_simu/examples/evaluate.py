@@ -1429,11 +1429,23 @@ def run_episode(
                 assist_tag = (f" | {grip_assist.state}+{grip_assist.offset:.3f}"
                               f" lag={grip_assist.lag:.4f} adv={grip_assist.advance:.4f}"
                               f" [{grip_assist.why}]")
+            # With the projection active, state[-2:] and the model's own output are
+            # (strategy, closure), NOT angles — labelling them prox/dist made a
+            # firm 60 deg grasp read as "prox=+0.02", which is badly misleading.
+            # Print the pair under its real names and the angles it means.
+            if grasp_projection is not None:
+                _op, _od = grasp_projection.decode(float(obs_g[0]), float(obs_dist))
+                obs_txt = (f" | obs: s={obs_g[0]:+.4f} c={obs_dist:+.4f}"
+                           f" (= prox {math.degrees(_op):5.1f}° dist {math.degrees(_od):5.1f}°)")
+                model_txt = f" (model s={gripper_goal[0]:+.3f} c={model_dist:+.3f})"
+            else:
+                obs_txt = f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
+                model_txt = f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
             print(
                 f"step {step:3d} | gripper cmd: prox={gg1:+.4f} dist={gg2:+.4f}"
-                f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
+                f"{model_txt}"
                 f"{assist_tag}"
-                f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
+                f"{obs_txt}"
                 f" | load: prox={load1:+.0f} dist={load2:+.0f}",
                 flush=True,
             )
