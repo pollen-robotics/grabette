@@ -141,10 +141,23 @@ Two things about the bucket mount, both learned by hitting them:
   `push_to_hub` to *true*, so without either that flag or a `--policy.repo_id`
   the job dies in `cfg.validate()` with *"'repo_id' argument missing"* — before
   training starts, and after you have already paid for the GPU to boot.
-- **Pass `--save_freq` explicitly.** Left unset, lerobot's default applies, and
-  π0.5 is a ~2.3B-parameter model — each checkpoint is several GB, so a 20k-step run
-  can fill a bucket that has only ever held kilobytes. `--save_freq=5000` gives
-  four intermediates plus the final, which is what the mid-training gates need.
+- **Pass `--save_freq` explicitly — and budget the storage.** Measured on a
+  100-step smoke, ONE checkpoint is **~24.5 GB**:
+
+  | file | size |
+  |---|---|
+  | `pretrained_model/model.safetensors` | 9.35 GB |
+  | `training_state/optimizer_state.safetensors` | **15.13 GB** |
+
+  The optimizer state is two thirds of it and is only needed to *resume* — not to
+  evaluate or to run the gates. Left unset, lerobot's default `save_freq` applies;
+  `--save_freq=5000` over 20k steps means four checkpoints ≈ **98 GB**, and
+  `--save_freq=10000` two ≈ 49 GB, which still leaves one mid-training checkpoint
+  for the gates. Budget accordingly: a fresh bucket starts empty.
+
+  Failed multipart uploads also leave orphaned `.tmpXXXXXX` files the size of the
+  file they were writing (a stray 9.35 GB one after our smoke). Check with
+  `hf buckets ls -R` and delete them with `hf buckets rm`.
 
 Recipe rationale (matched to the verified `lerobot/pi05-libero` fine-tune):
 
