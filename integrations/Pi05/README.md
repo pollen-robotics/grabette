@@ -103,6 +103,7 @@ hf jobs uv run --flavor a100-large --timeout 1h -s HF_TOKEN \
     --policy.empty_cameras=0 \
     --policy.gradient_checkpointing=true --policy.dtype=bfloat16 \
     --policy.compile_model=false \
+    --policy.push_to_hub=false \
     --dataset.repo_id=<user>/<dataset>_cartesian \
     --dataset.video_backend=pyav \
     --steps=100 --batch_size=32 --num_workers=4 \
@@ -136,6 +137,10 @@ Two things about the bucket mount, both learned by hitting them:
   reserved for Jobs artifacts when running local scripts."* Any other path works;
   `/bucket` above is arbitrary. `hf buckets list` shows what you already have,
   `hf buckets create <name>` makes one.
+- **The smoke run needs `--policy.push_to_hub=false`.** lerobot defaults
+  `push_to_hub` to *true*, so without either that flag or a `--policy.repo_id`
+  the job dies in `cfg.validate()` with *"'repo_id' argument missing"* — before
+  training starts, and after you have already paid for the GPU to boot.
 - **Pass `--save_freq` explicitly.** Left unset, lerobot's default applies, and
   π0.5 is a ~3B-parameter model — each checkpoint is several GB, so a 20k-step run
   can fill a bucket that has only ever held kilobytes. `--save_freq=5000` gives
