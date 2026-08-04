@@ -59,6 +59,7 @@ from openarm_gripette_simu.rotation import (
     rotation_6d_to_matrix as rotation_6d_to_rotation_matrix_numpy,
     rotation_matrix_to_6d as rotation_matrix_to_rotation_6d_numpy,
 )
+from gripette.grasp_projection import GraspProjection, clamp_to_command_limits
 
 
 # --- Debug frame display (headless-safe) -------------------------------------
@@ -606,6 +607,14 @@ def parse_args():
                    help="--grip_assist: max total extra closure (rad) beyond the policy's "
                         "command. Reaching it without contact = nothing in the jaws → the "
                         "assist releases until the policy re-approaches.")
+    p.add_argument("--grasp_projection", choices=["auto", "on", "off"], default="auto",
+                   help="Interpret the policy's last two action channels as "
+                        "(strategy, closure) from the grasp projection rather than "
+                        "raw joint angles, decoding them to angles before sending. "
+                        "'auto' inspects the checkpoint's saved normaliser ranges "
+                        "(projected channels are 0..1, raw angles reach ~1.6 rad) "
+                        "and logs what it decided. Override with on/off if a raw "
+                        "dataset happens to stay under 1 rad on both joints.")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -939,6 +948,49 @@ def compute_relative_state(arm_state, gripper_joints, start_pos, start_rot):
     return np.concatenate([rel_pos, rel_rot_6d, gripper_joints])
 
 
+def detect_grasp_projection(checkpoint):
+    """Was this checkpoint trained on (strategy, closure) instead of raw angles?
+
+    Returns True / False, or None when it cannot be determined.
+
+    Detected from the SAVED NORMALISER RANGES, not from channel names: the
+    checkpoint records only feature shapes, so the names are gone by this point
+    (`output_features = {"action": {"type": "ACTION", "shape": [11]}}`).
+
+    The discriminator is that both projected channels are normalised to [0, 1]
+    whereas raw angles are radians reaching ~1.6. Measured: the projected
+    checkpoint has action.max[-2:] = (0.813, 1.000); the raw mustard dataset has
+    (1.338, 1.448).
+
+    KNOWN FAILURE MODE, hence the override flag: a raw dataset in which NEITHER
+    gripper joint ever exceeded 1 rad (57 deg) in any frame would be misread as
+    projected. The decision is logged loudly so it can be caught at a glance.
+    """
+    ckpt = _Path(checkpoint)
+    if not ckpt.is_dir():
+        return None                      # a Hub id; nothing local to inspect
+    files = sorted(ckpt.glob("*normalizer*.safetensors"))
+    if not files:
+        return None
+    try:
+        from safetensors.torch import load_file
+
+        stats = load_file(str(files[0]))
+    except Exception as e:
+        logger.warning(f"Could not read normaliser stats ({e}); "
+                       "pass --grasp_projection on|off explicitly")
+        return None
+    amax = stats.get("action.max")
+    if amax is None or len(amax) < 2:
+        return None
+    last_two = [float(v) for v in amax.flatten()[-2:]]
+    projected = all(v <= 1.0 + 1e-3 for v in last_two)
+    logger.info(f"Grasp projection auto-detect: action.max[-2:] = "
+                f"{[round(v, 4) for v in last_two]} -> "
+                f"{'PROJECTED (strategy, closure)' if projected else 'RAW angles'}")
+    return projected
+
+
 def build_observation(
     arm_stub,
     arm_pb2,
@@ -947,11 +999,22 @@ def build_observation(
     start_pos,
     start_rot,
     joint_mode=False,
+    grasp_projection=None,
 ):
     """Build the full observation (camera image + state) for one step.
 
     Returns (camera_image, state, frame_ts_ms)."""
     camera_image, gripper_joints, frame_ts_ms = camera.get()
+
+    if grasp_projection is not None:
+        # The policy was TRAINED on (strategy, closure) proprioception, so the
+        # live gripper position has to be encoded the same way. Feeding raw
+        # angles here would silently put the state channel out of distribution —
+        # no error, just a worse policy.
+        _s, _c = grasp_projection.encode(float(gripper_joints[0]),
+                                         float(gripper_joints[1]))
+        gripper_joints = np.array(
+            [0.0 if math.isnan(_s) else _s, _c], dtype=np.float32)
 
     if joint_mode:
         # Joint-space state = [arm_q(7), proximal, distal], matching
@@ -1003,6 +1066,7 @@ def run_episode(
     latch_close=None,
     grip_assist=None,
     assist_log=None,
+    grasp_projection=None,
     client=None,
     remote_k=None,
     remote_img_wh=None,
@@ -1072,6 +1136,7 @@ def run_episode(
             start_pos,
             start_rot,
             joint_mode=joint_mode,
+            grasp_projection=grasp_projection,
         )
         recv_ms = time.perf_counter() * 1000.0
         lat_min_offset = min(lat_min_offset, recv_ms - frame_ts_ms)
@@ -1271,6 +1336,21 @@ def run_episode(
             )
         gg1 = float(gripper_goal[0])
         gg2 = float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0
+        if grasp_projection is not None:
+            # The policy's last two outputs are (strategy, closure), not angles.
+            # Decode to angles HERE, before latch/gain/assist, so everything
+            # downstream keeps operating on angles exactly as it always has.
+            #
+            # closure = 1 means "drive fully closed along this strategy" — the
+            # object stops the fingers at the torque cap. That is the whole point:
+            # the policy no longer has to predict an object-dependent angle.
+            _sc = (gg1, gg2)
+            gg1, gg2 = grasp_projection.decode(gg1, gg2)
+            gg1, gg2, _clamped = clamp_to_command_limits(gg1, gg2)
+            if step == 0 or _sc[1] >= 0.999:
+                print(f"proj step {step:3d} | s={_sc[0]:.3f} c={_sc[1]:.3f} -> "
+                      f"prox={math.degrees(gg1):.1f}° dist={math.degrees(gg2):.1f}°"
+                      f"{' CLAMPED' if _clamped else ''}", flush=True)
         if grip_assist is not None:
             # Minimal intervention: the assist only acts once the policy has
             # settled closed WITHOUT load (see GripAssist). Outside that state
@@ -1743,6 +1823,29 @@ def main():
         )
 
         # Auto-detect state/action mode from the policy's feature shapes.
+        # Grasp projection: does this policy emit (strategy, closure) or angles?
+        # Getting this wrong is silent in both directions — a closure of 1.0 sent
+        # as radians barely moves the gripper; an angle of 0.9 rad read as a
+        # closure decodes to a near-full close every step — so the decision is
+        # logged unconditionally.
+        projection = None
+        if args.grasp_projection == "on":
+            projection = GraspProjection()
+        elif args.grasp_projection == "auto":
+            detected = detect_grasp_projection(args.checkpoint)
+            if detected:
+                projection = GraspProjection()
+            elif detected is None:
+                logger.warning(
+                    "Grasp projection could not be auto-detected (remote checkpoint "
+                    "or no saved normaliser stats); assuming RAW angles. Pass "
+                    "--grasp_projection on if this policy was trained on the "
+                    "projected dataset."
+                )
+        logger.info(
+            f"Gripper action space: "
+            f"{'(strategy, closure) -> decoded to angles' if projection else 'raw angles'}"
+        )
         state_dim = policy.config.robot_state_feature.shape[0]
         action_dim = policy.config.action_feature.shape[0]
         joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
@@ -1926,6 +2029,7 @@ def main():
             grip_torque_limit=args.grip_torque_limit,
             latch_close=args.latch_close,
             grip_assist=assist,
+            grasp_projection=projection,
             assist_log=args.assist_log,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,

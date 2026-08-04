@@ -20,7 +20,13 @@ import pytest
 # servicer code is exercised rather than a reimplementation of its logic. Nothing
 # in these tests touches a serial port; the motors object is a fake.
 if "serial" not in sys.modules:
+    import importlib.machinery
+
     _stub = types.ModuleType("serial")
+    # A real __spec__ is required: without it, anything that later inspects the
+    # module through importlib raises "serial.__spec__ is None" — which broke 17
+    # unrelated tests once this stub leaked across a shared pytest session.
+    _stub.__spec__ = importlib.machinery.ModuleSpec("serial", None)
     _stub.Serial = object          # referenced by motors.py for typing/construction
     _stub.SerialException = Exception
     sys.modules["serial"] = _stub
