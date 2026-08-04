@@ -966,16 +966,31 @@ def detect_grasp_projection(checkpoint):
     gripper joint ever exceeded 1 rad (57 deg) in any frame would be misread as
     projected. The decision is logged loudly so it can be caught at a glance.
     """
+    stats_path = None
     ckpt = _Path(checkpoint)
-    if not ckpt.is_dir():
-        return None                      # a Hub id; nothing local to inspect
-    files = sorted(ckpt.glob("*normalizer*.safetensors"))
-    if not files:
+    if ckpt.is_dir():
+        files = sorted(ckpt.glob("*normalizer*.safetensors"))
+        stats_path = str(files[0]) if files else None
+    else:
+        # A Hub id. Fetch JUST the normaliser file (a few KB) rather than giving
+        # up: returning None here used to mean "assume raw angles", which sends a
+        # closure of 1.0 as 1.0 RADIAN and silently reproduces the under-close —
+        # and evaluating a Hub checkpoint is the normal case after a cloud run.
+        try:
+            from huggingface_hub import list_repo_files, hf_hub_download
+
+            names = [f for f in list_repo_files(checkpoint)
+                     if "normalizer" in f and f.endswith(".safetensors")]
+            if names:
+                stats_path = hf_hub_download(checkpoint, sorted(names)[0])
+        except Exception as e:
+            logger.warning(f"Could not fetch normaliser stats from the Hub ({e})")
+    if stats_path is None:
         return None
     try:
         from safetensors.torch import load_file
 
-        stats = load_file(str(files[0]))
+        stats = load_file(stats_path)
     except Exception as e:
         logger.warning(f"Could not read normaliser stats ({e}); "
                        "pass --grasp_projection on|off explicitly")
@@ -1848,11 +1863,17 @@ def main():
             if detected:
                 projection = GraspProjection()
             elif detected is None:
-                logger.warning(
-                    "Grasp projection could not be auto-detected (remote checkpoint "
-                    "or no saved normaliser stats); assuming RAW angles. Pass "
-                    "--grasp_projection on if this policy was trained on the "
-                    "projected dataset."
+                # REFUSE rather than guess. Assuming raw is the silent failure:
+                # a projected policy's closure of 1.0 would be sent as 1.0 radian
+                # (57 deg proximal), i.e. a partial close — the exact under-close
+                # this projection exists to fix, with nothing in the log to say so.
+                raise SystemExit(
+                    "Could not determine whether this checkpoint was trained on the "
+                    "grasp projection (no readable normaliser stats).\n"
+                    "Refusing to guess: assuming raw angles would silently send a "
+                    "closure of 1.0 as 1.0 RADIAN and under-close every grasp.\n"
+                    "Pass --grasp_projection on (projected dataset) or off (raw "
+                    "joint angles) explicitly."
                 )
         logger.info(
             f"Gripper action space: "
