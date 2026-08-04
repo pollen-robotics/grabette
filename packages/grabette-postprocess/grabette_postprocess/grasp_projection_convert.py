@@ -39,6 +39,21 @@ proximal range. Commanding `c = 1` removes the need to predict an
 object-dependent angle at all.
 
 Non-destructive: the source dataset is copied, never modified.
+
+PUSHING THE RESULT TO THE HUB
+----------------------------
+`hf upload` is not sufficient on its own. LeRobot resolves a dataset by a git TAG
+matching its `codebase_version` (e.g. `v3.0`), and `hf upload` only writes `main`.
+Without the tag, training dies in `get_safe_version` with a
+`RevisionNotFoundError` that lerobot then re-raises incorrectly, surfacing as an
+unrelated `TypeError: HfHubHTTPError.__init__() missing ... 'response'`.
+
+So after uploading:
+
+    from huggingface_hub import create_tag
+    create_tag(repo_id, tag="v3.0", repo_type="dataset", revision="main")
+
+using whatever `codebase_version` meta/info.json reports.
 """
 
 from __future__ import annotations
