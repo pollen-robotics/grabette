@@ -111,6 +111,7 @@ button{{padding:.45rem .9rem;border:0;border-radius:7px;cursor:pointer;font-weig
 button.oauth{{background:#10b981;color:#fff;width:100%;margin-bottom:.5rem}}
 button.primary{{background:#f59e0b;color:#fff}}
 button.logout{{background:#ef4444;color:#fff}}
+.who-row{{display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap}}
 .muted{{color:#64748b;font-size:.78rem}}
 .err{{color:#dc2626;font-size:.78rem;min-height:1rem}}
 </style></head>
@@ -149,7 +150,7 @@ const HF='/api/hf-auth',_$=id=>document.getElementById(id);
 async function hfRefresh(){
  const s=await(await fetch(`${HF}/status`)).json();
  if(s.is_logged_in){
-  _$('hfStatus').innerHTML=`Logged in as <b>${s.username||'user'}</b> <button class="logout" onclick="hfLogout()">Logout</button>`;
+  _$('hfStatus').innerHTML=`<div class="who-row"><span>Logged in as <b>${s.username||'user'}</b></span><button class="logout" onclick="hfLogout()">Logout</button></div>`;
   _$('hfLogin').style.display='none';
  }else{
   _$('hfStatus').textContent='Not logged in.';_$('hfLogin').style.display='block';
