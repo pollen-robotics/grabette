@@ -97,7 +97,7 @@ would survive.
 ```bash
 # $2 smoke first: verify training runs AND the checkpoint lands in the bucket
 hf jobs uv run --flavor a100-large --timeout 1h -s HF_TOKEN \
-    -v hf://buckets/<namespace>/<bucket>:/data \
+    -v hf://buckets/<namespace>/<bucket>:/bucket \
     train.py -- \
     --policy.type=pi05 --policy.pretrained_path=lerobot/pi05_base \
     --policy.empty_cameras=0 \
@@ -106,13 +106,13 @@ hf jobs uv run --flavor a100-large --timeout 1h -s HF_TOKEN \
     --dataset.repo_id=<user>/<dataset>_cartesian \
     --dataset.video_backend=pyav \
     --steps=100 --batch_size=32 --num_workers=4 \
-    --save_freq=100 --output_dir=/data/outputs/<task>_pi05_smoke
+    --save_freq=100 --output_dir=/bucket/outputs/<task>_pi05_smoke
 # then check: hf jobs logs, and that the bucket contains
 # outputs/<task>_pi05_smoke/checkpoints/000100/pretrained_model/
 
 # real run (~12 h on a100-large ≈ $30)
 hf jobs uv run --flavor a100-large --timeout 24h -s HF_TOKEN \
-    -v hf://buckets/<namespace>/<bucket>:/data \
+    -v hf://buckets/<namespace>/<bucket>:/bucket \
     train.py -- \
     --policy.type=pi05 --policy.pretrained_path=lerobot/pi05_base \
     --policy.empty_cameras=0 \
@@ -125,9 +125,21 @@ hf jobs uv run --flavor a100-large --timeout 24h -s HF_TOKEN \
     --dataset.video_backend=pyav \
     --dataset.eval_split=0.05 --eval_steps=1000 \
     --steps=20000 --batch_size=32 --num_workers=4 \
-    --output_dir=/data/outputs/<task>_pi05 \
+    --output_dir=/bucket/outputs/<task>_pi05 \
     --policy.push_to_hub=true --policy.repo_id=<user>/<task>_pi05
 ```
+
+Two things about the bucket mount, both learned by hitting them:
+
+- **Do NOT mount at `/data`.** HF reserves it for Jobs artifacts when running a
+  local script, and the job is rejected outright: *"Mount path '/data' is
+  reserved for Jobs artifacts when running local scripts."* Any other path works;
+  `/bucket` above is arbitrary. `hf buckets list` shows what you already have,
+  `hf buckets create <name>` makes one.
+- **Pass `--save_freq` explicitly.** Left unset, lerobot's default applies, and
+  π0.5 is a ~3B-parameter model — each checkpoint is several GB, so a 20k-step run
+  can fill a bucket that has only ever held kilobytes. `--save_freq=5000` gives
+  four intermediates plus the final, which is what the mid-training gates need.
 
 Recipe rationale (matched to the verified `lerobot/pi05-libero` fine-tune):
 
