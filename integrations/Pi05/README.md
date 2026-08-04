@@ -142,7 +142,7 @@ Two things about the bucket mount, both learned by hitting them:
   the job dies in `cfg.validate()` with *"'repo_id' argument missing"* — before
   training starts, and after you have already paid for the GPU to boot.
 - **Pass `--save_freq` explicitly.** Left unset, lerobot's default applies, and
-  π0.5 is a ~3B-parameter model — each checkpoint is several GB, so a 20k-step run
+  π0.5 is a ~2.3B-parameter model — each checkpoint is several GB, so a 20k-step run
   can fill a bucket that has only ever held kilobytes. `--save_freq=5000` gives
   four intermediates plus the final, which is what the mid-training gates need.
 
