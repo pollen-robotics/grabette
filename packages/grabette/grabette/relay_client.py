@@ -83,6 +83,12 @@ class RelayClient:
         # heartbeat so a freshly-recorded episode is re-reported to the fleet
         # within one beat, instead of only on the next reconnect.
         tasks_rev_provider: Optional[Callable[[], int]] = None,
+        # Optional callable returning this device's current activity — one of
+        # "idle" | "capturing" | "uploading" | "processing" — piggy-backed on the
+        # heartbeat so the operator dashboard can show device state and block a
+        # recording while the device is busy. In-memory & fast (unlike battery's
+        # I2C), so it's read inline on the heartbeat path.
+        activity_provider: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -94,6 +100,7 @@ class RelayClient:
         self.battery_provider = battery_provider
         self.tasks_provider = tasks_provider
         self.tasks_rev_provider = tasks_rev_provider
+        self.activity_provider = activity_provider
         self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
         self._battery: Optional[float] = None  # cached; refreshed off the heartbeat path
         self.status = "offline"
@@ -187,6 +194,13 @@ class RelayClient:
                     params = {"device_id": self.device_id}
                     if self._battery is not None:  # cached value only — never I2C here
                         params["battery"] = self._battery
+                    if self.activity_provider is not None:  # in-memory, safe to read inline
+                        try:
+                            act = self.activity_provider()
+                        except Exception:
+                            act = None
+                        if act:
+                            params["status"] = act
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",

@@ -393,6 +393,31 @@ async def lifespan(app: FastAPI):
         from grabette.relay_client import RelayClient
         from grabette.app.routers.system import _pisugar_battery
         from grabette.app.routers.tasks import get_task_manager
+        from grabette.daemon import DaemonState
+        from grabette.jobs import JobStatus, get_job_manager
+
+        def _device_activity() -> str:
+            """Current device activity for the fleet heartbeat:
+            idle | capturing | uploading | processing. Surfaces local, dashboard-
+            initiated work (SLAM push / episode upload) that the fleet can't infer
+            on its own, plus live capture. Best-effort & non-throwing — a bad read
+            just reports 'idle'. All in-memory, so it's cheap on the heartbeat."""
+            try:
+                active = [j for j in get_job_manager().list_jobs()
+                          if j.status in (JobStatus.PENDING, JobStatus.RUNNING)]
+                if any(j.name.startswith("push:") for j in active):
+                    return "processing"  # SLAM convert + push to the dataset
+                if any(j.name.startswith("upload:") for j in active):
+                    return "uploading"
+            except Exception:
+                pass
+            try:
+                d = get_daemon_instance()
+                if d is not None and d.state == DaemonState.RUNNING and d.backend.is_capturing:
+                    return "capturing"
+            except Exception:
+                pass
+            return "idle"
 
         relay = RelayClient(
             base_url=settings.relay_url,
@@ -406,6 +431,7 @@ async def lifespan(app: FastAPI):
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
             tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
+            activity_provider=_device_activity,  # device state, reported via heartbeat
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
