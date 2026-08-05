@@ -117,3 +117,38 @@ def test_active_session_route_not_shadowed():
         param = next(i for i, (p, m) in enumerate(order)
                      if p == "/api/sessions/{session_id}" and method in m)
         assert active < param, f"{method} /api/sessions/active is shadowed"
+
+
+def test_healthy_episode_reports_no_issues(tmp_path):
+    _make_episode(tmp_path, "ep_fine", ["oakd_imu.json", "raw_video.mp4"])
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_fine")
+    assert info.issues == []
+
+
+def test_aborted_capture_is_flagged_not_hidden(tmp_path):
+    # An interrupted capture leaves every output file created but zero-length.
+    # exists() alone reported has_video=True for a 0-byte mp4, so the episode
+    # looked merely "empty" instead of broken.
+    ep = tmp_path / "episodes" / "ep_aborted"
+    ep.mkdir(parents=True)
+    for name in ("raw_video.mp4", "oakd_imu.json", "metadata.json"):
+        (ep / name).write_text("")
+
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_aborted")
+
+    assert info.has_video is False
+    assert info.has_imu is False
+    assert set(info.issues) == {"empty video", "empty IMU log", "unreadable metadata"}
+
+
+def test_truncated_metadata_flagged_but_media_kept(tmp_path):
+    # Only metadata.json is damaged: the media is fine and must stay usable,
+    # so exactly one issue is reported.
+    _make_episode(tmp_path, "ep_meta", ["oakd_imu.json", "raw_video.mp4"])
+    (tmp_path / "episodes" / "ep_meta" / "metadata.json").write_text('{"frame_count": 4')
+
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_meta")
+
+    assert info.issues == ["unreadable metadata"]
+    assert info.has_video is True
+    assert info.has_imu is True

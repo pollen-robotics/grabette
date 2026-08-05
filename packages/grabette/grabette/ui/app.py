@@ -603,6 +603,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 task_name = s.get("name", "")
                 task_description = s.get("description", "")
                 for ep in s.get("episodes", []):
+                    issues = ep.get("issues") or []
                     rows.append([
                         False,
                         ep["episode_id"],
@@ -610,6 +611,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         ep["frame_count"],
                         ep["imu_sample_count"],
                         ep.get("angle_sample_count", 0),
+                        "⚠ " + ", ".join(issues) if issues else "ok",
                     ])
                 break
         rows.reverse()
@@ -627,6 +629,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if task_description:
             desc_parts.append(f"**Task description:** {task_description}")
         desc_parts.append(f"*{count_str} recorded*")
+        # An unreachable/erroring API used to look exactly like "no episodes
+        # yet" — an empty table and no explanation. Say which it is.
+        if client.sessions_error:
+            desc_parts.append(
+                f"🛑 **Could not read the task list:** {client.sessions_error}"
+            )
+        damaged = sum(1 for r in rows if r[6] != "ok")
+        if damaged:
+            desc_parts.append(
+                f"⚠ **{damaged} damaged episode"
+                f"{'s' if damaged != 1 else ''}** (see the Status column) — "
+                "recording was interrupted, so there is no data to recover. "
+                "Tick the row(s) and press **Delete**."
+            )
         desc = "\n\n".join(desc_parts)
         return rows, move_dd, task_header, desc, cap_title, ep_title
 
@@ -1284,11 +1300,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 task_desc_md = gr.Markdown("")
 
                 episodes_table = gr.Dataframe(
-                    headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
-                    datatype=["bool", "str", "str", "number", "number", "number"],
+                    headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle", "Status"],
+                    datatype=["bool", "str", "str", "number", "number", "number", "str"],
                     interactive=True,
-                    static_columns=[1, 2, 3, 4, 5],
-                    col_count=(6, "fixed"),
+                    static_columns=[1, 2, 3, 4, 5, 6],
+                    col_count=(7, "fixed"),
                     show_search="filter",
                 )
                 with gr.Row():
