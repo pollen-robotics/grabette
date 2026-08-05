@@ -152,3 +152,41 @@ def test_truncated_metadata_flagged_but_media_kept(tmp_path):
     assert info.issues == ["unreadable metadata"]
     assert info.has_video is True
     assert info.has_imu is True
+
+
+def test_dead_oakd_is_flagged(tmp_path):
+    # The OAK-D died mid-capture: the Pi camera and angles recorded fine, so
+    # the episode reports a full frame count and looks healthy — but it has no
+    # oakd_left.mp4 and the SLAM export drops it without a word.
+    _make_episode(
+        tmp_path, "ep_dead_oak",
+        ["raw_video.mp4", "angle_data.json", "oakd_calib.json",
+         "oakd_left.h264", "oakd_right.h264"],
+        meta={"frame_count": 396, "duration_seconds": 8.08},
+    )
+    for name in ("oakd_left.h264", "oakd_right.h264"):
+        (tmp_path / "episodes" / "ep_dead_oak" / name).write_text("")
+
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_dead_oak")
+
+    assert info.frame_count == 396
+    assert info.has_video is True
+    assert set(info.issues) == {
+        "no OAK-D video", "no OAK-D IMU", "unmuxed OAK-D stream",
+    }
+
+
+def test_healthy_oakd_episode_is_clean(tmp_path):
+    _make_episode(
+        tmp_path, "ep_oak_ok",
+        ["raw_video.mp4", "oakd_calib.json", "oakd_left.mp4",
+         "oakd_right.mp4", "oakd_imu.json"],
+    )
+    assert SessionManager(data_dir=tmp_path)._get_episode_info("ep_oak_ok").issues == []
+
+
+def test_legacy_episode_is_not_flagged_for_missing_oakd(tmp_path):
+    # No oakd_calib.json: this recording never had an OAK-D, so the absence of
+    # its outputs is normal, not damage.
+    _make_episode(tmp_path, "ep_legacy_ok", ["raw_video.mp4", "imu_data.json"])
+    assert SessionManager(data_dir=tmp_path)._get_episode_info("ep_legacy_ok").issues == []

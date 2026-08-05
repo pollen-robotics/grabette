@@ -358,6 +358,18 @@ class SessionManager:
         if not imu_present and any(p.exists() for p in imu_paths):
             issues.append("empty IMU log")
 
+        # oakd_calib.json is written by start_recording(), so it marks the
+        # episodes that actually ran an OAK-D. oakd_left.mp4 is the anchor the
+        # SLAM export globs on: without it the episode is silently missing
+        # from the pushed dataset. A leftover .h264 means the mux never ran.
+        if (ep_dir / "oakd_calib.json").exists():
+            if not self._has_data(ep_dir / "oakd_left.mp4"):
+                issues.append("no OAK-D video")
+            if not (ep_dir / "oakd_imu.json").exists():
+                issues.append("no OAK-D IMU")
+            if any((ep_dir / f"oakd_{s}.h264").exists() for s in ("left", "right")):
+                issues.append("unmuxed OAK-D stream")
+
         duration = 0.0
         frame_count = 0
         imu_sample_count = 0
