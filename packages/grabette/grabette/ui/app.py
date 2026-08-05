@@ -598,12 +598,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         rows = []
         task_name = ""
         task_description = ""
+        export_skipped = 0
         for s in sessions:
             if s["id"] == session_id:
                 task_name = s.get("name", "")
                 task_description = s.get("description", "")
                 for ep in s.get("episodes", []):
                     issues = ep.get("issues") or []
+                    if "no OAK-D video" in issues:
+                        export_skipped += 1
                     rows.append([
                         False,
                         ep["episode_id"],
@@ -635,14 +638,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             desc_parts.append(
                 f"🛑 **Could not read the task list:** {client.sessions_error}"
             )
-        damaged = sum(1 for r in rows if r[6] != "ok")
-        if damaged:
-            desc_parts.append(
-                f"⚠ **{damaged} damaged episode"
-                f"{'s' if damaged != 1 else ''}** (see the Status column) — "
-                "recording was interrupted, so there is no data to recover. "
-                "Tick the row(s) and press **Delete**."
+        flagged = sum(1 for r in rows if r[6] != "ok")
+        if flagged:
+            msg = (
+                f"⚠ **{flagged} episode{'s' if flagged != 1 else ''} flagged** "
+                "— see the Status column."
             )
+            if export_skipped:
+                msg += (
+                    f" {export_skipped} without OAK-D video will be skipped "
+                    "by the dataset export."
+                )
+            desc_parts.append(msg)
         desc = "\n\n".join(desc_parts)
         return rows, move_dd, task_header, desc, cap_title, ep_title
 
