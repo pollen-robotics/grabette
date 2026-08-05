@@ -159,6 +159,16 @@ Two things about the bucket mount, both learned by hitting them:
   file they were writing (a stray 9.35 GB one after our smoke). Check with
   `hf buckets ls -R` and delete them with `hf buckets rm`.
 
+- **Enable wandb, or the loss curve is gone.** With `wandb.enable=false`
+  (lerobot's default) the run logs only to stdout. HF Jobs logs are not
+  retrievable after the job leaves the queue (`hf jobs logs <id>` → 404), and
+  nothing is written into the bucket beside the checkpoints. We finished a 12 h /
+  $30 run whose training and eval losses are **unrecoverable** — so the recipe's
+  own success criterion (eval loss descending, reference 0.755 → 0.447) could not
+  be checked at all. Pass `--wandb.enable=true --wandb.project=<project>` with a
+  `WANDB_API_KEY` secret, or accept that the only evidence you will have is the
+  offline gates below.
+
 Recipe rationale (matched to the verified `lerobot/pi05-libero` fine-tune):
 
 | Ingredient | Value | Note |
