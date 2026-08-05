@@ -1217,8 +1217,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Remembers, per browser, which task was selected so a page
                 # refresh stays on it instead of snapping back to the first
                 # task. Independent of the (server-side) capture session.
+                # `secret` must be pinned: Gradio encrypts the localStorage
+                # blob and, left unset, generates a fresh random key at every
+                # process start. After a daemon restart the browser's stored
+                # value would no longer decrypt — Gradio logs
+                # "Error reading from localStorage: SyntaxError: JSON.parse:
+                # unexpected end of data" and falls back to the default, so
+                # the selection was never actually remembered. This only
+                # obfuscates a task id, so a constant is fine.
                 selected_task_state = gr.BrowserState(
-                    "", storage_key="grabette_selected_task",
+                    "",
+                    storage_key="grabette_selected_task",
+                    secret="grabette-ui-v1",
                 )
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
                 with gr.Group(visible=False) as new_task_form:

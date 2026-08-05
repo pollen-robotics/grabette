@@ -80,3 +80,40 @@ def test_delete_session_purges_episodes(tmp_path):
 
     assert not (tmp_path / "episodes" / "ep_b").exists()
     assert "ep_b" not in sm.get_session_detail(UNASSIGNED_ID).episode_ids
+
+
+def test_corrupt_metadata_does_not_break_listing(tmp_path):
+    # A capture cut short can leave metadata.json empty/truncated. That must
+    # not raise out of list_sessions() — the dashboard reads the whole task
+    # list through it, so one bad episode used to blank every task at once.
+    _make_episode(tmp_path, "ep_ok", ["oakd_imu.json"], meta={"frame_count": 42})
+    _make_episode(tmp_path, "ep_bad", ["oakd_imu.json"])
+    (tmp_path / "episodes" / "ep_bad" / "metadata.json").write_text("")
+
+    sm = SessionManager(data_dir=tmp_path)
+    sm.move_episodes(["ep_ok", "ep_bad"], UNASSIGNED_ID)
+
+    detail = sm.get_session_detail(UNASSIGNED_ID)
+    assert detail.episode_count == 2
+    by_id = {e.episode_id: e for e in detail.episodes}
+    assert by_id["ep_ok"].frame_count == 42
+    assert by_id["ep_bad"].frame_count == 0
+    assert by_id["ep_bad"].has_imu is True
+
+
+def test_active_session_route_not_shadowed():
+    # /api/sessions/active must be declared before /api/sessions/{session_id},
+    # otherwise FastAPI matches "active" as a session id and returns 404.
+    from grabette.app.routers.sessions import router
+
+    order = [
+        (r.path, sorted(r.methods))
+        for r in router.routes
+        if r.path in ("/api/sessions/active", "/api/sessions/{session_id}")
+    ]
+    for method in ("GET", "PUT"):
+        active = next(i for i, (p, m) in enumerate(order)
+                      if p == "/api/sessions/active" and method in m)
+        param = next(i for i, (p, m) in enumerate(order)
+                     if p == "/api/sessions/{session_id}" and method in m)
+        assert active < param, f"{method} /api/sessions/active is shadowed"

@@ -31,6 +31,10 @@ class UpdateSessionRequest(BaseModel):
     description: str | None = None
 
 
+class SetActiveSessionRequest(BaseModel):
+    session_id: str
+
+
 @router.get("/api/sessions")
 def list_sessions(sm: SessionManager = Depends(get_session_manager)):
     return sm.list_sessions()
@@ -43,6 +47,26 @@ def create_session(
 ):
     session_id = sm.create_session(req.name, req.description)
     return sm.get_session(session_id)
+
+
+# The two /api/sessions/active routes MUST stay above their
+# /api/sessions/{session_id} counterparts: FastAPI matches in declaration
+# order, so a "{session_id}" route declared first swallows "active" and
+# answers 404 "Session not found" instead.
+@router.get("/api/sessions/active")
+def get_active_session(sm: SessionManager = Depends(get_session_manager)):
+    return {"session_id": sm.active_session_id}
+
+
+@router.put("/api/sessions/active")
+def set_active_session(
+    req: SetActiveSessionRequest,
+    sm: SessionManager = Depends(get_session_manager),
+):
+    if sm._find_session(req.session_id) is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    sm.active_session_id = req.session_id
+    return {"session_id": sm.active_session_id}
 
 
 @router.get("/api/sessions/{session_id}")
@@ -92,26 +116,6 @@ class MoveEpisodesRequest(BaseModel):
 
 class StartCaptureRequest(BaseModel):
     session_id: str | None = None
-
-
-class SetActiveSessionRequest(BaseModel):
-    session_id: str
-
-
-@router.get("/api/sessions/active")
-def get_active_session(sm: SessionManager = Depends(get_session_manager)):
-    return {"session_id": sm.active_session_id}
-
-
-@router.put("/api/sessions/active")
-def set_active_session(
-    req: SetActiveSessionRequest,
-    sm: SessionManager = Depends(get_session_manager),
-):
-    if sm._find_session(req.session_id) is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    sm.active_session_id = req.session_id
-    return {"session_id": sm.active_session_id}
 
 
 @router.get("/api/capture-session/status")

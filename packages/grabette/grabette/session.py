@@ -339,7 +339,16 @@ class SessionManager:
         angle_sample_count = 0
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
+            # A capture cut short (power loss, daemon kill, full SD card) can
+            # leave metadata.json empty or truncated. Same policy as _load()
+            # for a corrupt registry: warn and fall back to zeroed counters,
+            # so one damaged episode degrades to "0 frames" instead of
+            # raising out of list_sessions() and blanking the whole dashboard.
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Corrupt metadata.json for episode %s: %s", episode_id, e)
+                meta = {}
             duration = meta.get("duration_seconds", 0.0)
             frame_count = meta.get("frame_count", 0)
             imu_sample_count = meta.get("imu_sample_count") or meta.get("oakd", {}).get("imu_samples", 0)
