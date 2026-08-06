@@ -233,18 +233,23 @@ async def _handle_relay_command(cmd: dict) -> dict:
         return {"status": "ok", "deleted": name if deleted else None}
 
     if ctype == "set_episode_members":
-        # Fleet "fill devices": backfill who recorded an episode (role →
-        # {device_id, name}) for an episode saved before members were persisted.
+        # Fleet "fill devices": backfill who recorded episodes (role →
+        # {device_id, name}) saved before members were persisted. Accepts a batch
+        # ("episodes": [{episode_id, members}, …]) or a single episode_id/members.
         # Merges (partial repair) and is idempotent; absent locally → success.
         from grabette.app.routers.tasks import get_task_manager
 
         args = cmd.get("args") or {}
+        tm = get_task_manager()
+        sig = args.get("device_signature")
+        if isinstance(args.get("episodes"), list):
+            updated = tm.set_episodes_members(args["episodes"], device_signature=sig)
+            return {"status": "ok", "updated": updated}
         eid = args.get("episode_id")
         if not eid:
-            return {"status": "error", "message": "episode_id is required"}
-        updated = get_task_manager().set_episode_members(
-            eid, args.get("members") or {}, device_signature=args.get("device_signature"))
-        return {"status": "ok", "updated": updated}
+            return {"status": "error", "message": "episode_id or episodes is required"}
+        updated = tm.set_episode_members(eid, args.get("members") or {}, device_signature=sig)
+        return {"status": "ok", "updated": 1 if updated else 0}
 
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
