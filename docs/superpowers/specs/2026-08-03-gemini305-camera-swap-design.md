@@ -226,32 +226,57 @@ Also confirmed incidentally: Depth + LEFT_IR + RIGHT_IR stream together at
 predicted — `nlohmann::detail::type_error.302 "type must be number, but is null"`
 — so the guard at `offline_vslam.cpp:118` is confirmed necessary.
 
-### Trajectory quality: NOT yet measured
+### Trajectory quality: GOOD at realistic pace
 
-Two captures, neither valid for the question:
+Three captures were needed, because the first two were invalid — the first moved
+3–4× too fast at room scale, the second turned out to be stationary (frame 0 vs
+frame 1349 differed no more than adjacent frames). Motion was verified from pixel
+statistics before trusting any grade thereafter.
 
-| Capture | verdict | duration | distance | median step | jumps |
-|---|---|---|---|---|---|
-| fast, room-scale | **BAD** | 60.0 s | 29.92 m | 14.61 mm | 19 |
-| "slow", close | GOOD | 44.9 s | 0.24 m | 0.16 mm | 0 |
-| OAK-D reference | GOOD | 10–15 s | 1.1–2.0 m | 3.4–4.5 mm | 0 |
+| Capture | verdict | trk % | dist | median step | max step | jumps |
+|---|---|---|---|---|---|---|
+| **305 realistic** | **GOOD** | 97.8 | 5.40 m | **3.84 mm** | 13.3 mm | **0** |
+| 305 realistic, rerun | GOOD | 97.8 | 5.42 m | 3.87 mm | 12.4 mm | 0 |
+| 305 fast, room-scale | BAD | 100.0 | 29.92 m | 14.61 mm | 76.7 mm | 19 |
+| OAK-D 20260615 | GOOD | 100.0 | 1.14 m | 3.38 mm | 10.5 mm | 0 |
+| OAK-D 20260611 | GOOD | 100.0 | 2.01 m | 4.54 mm | 12.8 mm | 0 |
 
-- The fast capture moved 3–4× faster than a real episode and looked at a room at
-  2.36 m median depth, outside the 305's 7–50 cm ideal band, leaving 81% of depth
-  invalid. It failed with "Zigzag pattern: 19 jumps with med_angle=112.9°".
-- The "slow" capture was **stationary** — consecutive-frame mean-absolute-difference
-  1.67 versus 1.96 for frame-0-vs-frame-1349, i.e. the whole episode differs no
-  more than adjacent frames do. Its GOOD grade is vacuous: `check_trajectory`
-  passes a motionless camera trivially.
+The realistic capture hit the target pace — 3.84 mm/frame sits inside the OAK-D
+band of 3.38–4.54 mm — at 0.33 m median depth with 65.5% valid pixels, and graded
+**GOOD with zero jumps**, reproducibly across two runs.
 
-**Still open:** a capture at genuine Grabette pace (~3–5 mm/frame, 1–2 m of path,
-15–40 cm from a cluttered textured surface) is needed before any claim about the
-305's trajectory quality. The geometry result above is independent of this and
-stands on its own.
+Run-to-run local-delta RMSE was 2.184 mm on a 3.968 mm mean step, the same
+magnitude as the OAK-D noise floor measured in Phase 0 (2.309 mm on 3.715 mm).
+The pipeline's non-determinism is inherent, not camera-dependent.
 
-Depth coverage is strongly scene-dependent and worth watching: 18.9% valid at
-room scale, 48.2% at desk range. The 305 is passive stereo with an IR-cut filter
-and no projector (`OBDeviceType.LIGHT_BINOCULAR`), so it needs texture and light.
+### The one real deficit: 97.8% vs 100% tracking
+
+The 30 lost frames are a **single contiguous 1-second burst** (frames 332–361),
+identical in both runs. Diagnosing that window against its own baseline:
+
+| | baseline | during burst |
+|---|---|---|
+| brightness | ~56–66 | **30.8** |
+| sharpness (Laplacian var) | 159–280 | **63** (motion blur) |
+| depth valid | 65–73% | **26.8%** |
+
+The camera swung through a dark, low-texture region while moving fast enough to
+blur, depth coverage collapsed, and RGB-D odometry dropped out until it
+recovered unaided. This is exactly the predicted passive-stereo failure mode of a
+`LIGHT_BINOCULAR` device with an IR-cut filter and no projector — an
+illumination and texture limitation, not a defect in the integration.
+
+Practical implication: the 305 will need adequate workspace lighting and textured
+scenes. The OAK-D SR is also passive, so this is a difference of degree; whether
+it is worse in practice needs the same-motion A/B on the real rig.
+
+**Not claimed:** the start-to-end distances (305: 0.106 m over 5.40 m; OAK-D:
+0.104 m over 1.14 m) are *not* comparable drift figures — none of these
+recordings is a verified closed loop, so they measure where the operator happened
+to stop, not accumulated error.
+
+Depth coverage is strongly scene-dependent: 18.9% valid at room scale (2.37 m
+median), 48.6% at 0.24 m, 65.5% at 0.33 m. The ideal 7–50 cm band is real.
 
 ### Phase 1 — pluggable interface
 
