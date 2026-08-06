@@ -240,7 +240,7 @@ server needed:
 uv run python examples/evaluate.py \
     --checkpoint <user>/<task>_pi05 \
     --task "<training task string>" \
-    --n_action_steps 15 \
+    --n_action_steps 15 --fps 30 \
     --home_joints <calibrated start pose> --start_gripper <demo first-frame> \
     --num_episodes 10 --ask_success session.jsonl --dump_obs /tmp/dump_pi05
 ```
@@ -265,16 +265,43 @@ On the robot machine — same command as A with `--policy_addr` replacing
 uv run python examples/evaluate.py \
     --policy_addr endpointv1... --jpeg_quality 90 \
     --task "<training task string>" \
-    --n_action_steps 15 \
+    --n_action_steps 15 --fps 30 \
     --home_joints <calibrated start pose> --start_gripper <demo first-frame> \
     --num_episodes 10 --ask_success session.jsonl --dump_obs /tmp/dump_pi05
 ```
 
 Deployment settings that matter (each traced to a measured failure):
 
-- `--n_action_steps 15` (both modes) — replan cadence over the native
-  50-chunk: long enough to amortize inference, short enough to stay
-  closed-loop.
+- `--fps 30` (both modes) — the **control rate**, and it is NOT the dataset's
+  fps. Two different devices are involved: demos are recorded by the Grabette
+  handheld (`camera_fps 46`, declared 50 in `info.json`), while at eval the
+  images come from the Gripette gripper's own camera over gRPC
+  (`stream_hz 30`). Set `--fps` to the **live** rate, not the dataset's:
+  above it, a fraction of steps re-use an unchanged frame (at `--fps 50`,
+  measured 26% stale, staleness p95 54 ms).
+  Speed is the other half. Actions are per-frame position deltas, so the
+  control rate scales wall-clock speed: 30 Hz walks the demonstrated path at
+  ~0.65× demo speed. That is *free* accuracy-wise — `n_obs_steps = 1`, so the
+  policy sees one frame plus current state and nothing in its input depends on
+  the rate — and it helps twice over, because slower motion accumulates less
+  integrator lead and stops tripping the arm server's contact guard
+  (`--max_target_lead_mm`, tripped at 85–86 mm against its 80 mm cap when
+  running 50 Hz). If you want demo-speed motion, raise the Gripette's
+  `stream_hz` (OV5647 binned mode goes to ~42) and match `--fps` to it —
+  don't just raise `--fps`.
+- `--n_action_steps 15` (both modes) — replan cadence; the checkpoint's own
+  value is 50 (`chunk_size 50`). 15 is inherited from ACT/Diffusion tuning,
+  where short chunks fought open-loop drift; π0.5 was trained to emit 50, so
+  treat 15 as a starting point, not a tuned value. The trade-off is
+  measurable: sync mode stalls the loop for each replan (measured `infer` p50
+  9 ms on cached chunk steps vs p95 175 ms at boundaries), so at 30 Hz a
+  15-step chunk buys 500 ms of motion per ~175 ms pause — the visible
+  "hesitation". Boundaries are also the only place the grasp can un-commit: a
+  fresh draw at close onset is genuinely bimodal (pre-grasp closure ~0.2 vs
+  commit ~1.0) and was observed dipping back for 3–4 steps before recovering.
+  Fewer boundaries therefore help twice; going too far costs closed-loop
+  authority (50 steps at 30 Hz = 1.7 s open-loop). ~25 is the sensible thing
+  to compare against.
 - `--grip_gain 1.3` (both modes) — if grasps slip: demo closes are recorded
   on the Grabette trigger linkage; a position-controlled servo chasing the
   same numbers squeezes less. Scales close depth around `--start_gripper`.
