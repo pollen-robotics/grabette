@@ -320,6 +320,25 @@ class TaskManager:
         shutil.rmtree(ep_dir)
         self._save()
 
+    def set_episode_members(self, episode_id: str, members: dict,
+                            device_signature: list | None = None) -> bool:
+        """Backfill who recorded an episode (role → {device_id, name}) on the task
+        that holds it — used to repair episodes recorded before members were
+        persisted. MERGES into any existing members (so partial repairs from
+        different devices accumulate). Optionally backfills the task's device
+        signature if it has none yet. No-op (returns False) if the episode isn't
+        on this device."""
+        if not members:
+            return False
+        for t in self._tasks:
+            if episode_id in t.get("episode_ids", []):
+                t.setdefault("episode_members", {}).setdefault(episode_id, {}).update(members)
+                if device_signature and not t.get("device_signature"):
+                    t["device_signature"] = list(device_signature)
+                self._save()
+                return True
+        return False
+
     def create_episode_archive(self, episode_id: str) -> Path:
         ep_dir = self.episode_dir(episode_id)
         if not ep_dir.exists():

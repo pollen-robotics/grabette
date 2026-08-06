@@ -232,6 +232,20 @@ async def _handle_relay_command(cmd: dict) -> dict:
         deleted = get_task_manager().delete_task_by_name(name)
         return {"status": "ok", "deleted": name if deleted else None}
 
+    if ctype == "set_episode_members":
+        # Fleet "fill devices": backfill who recorded an episode (role →
+        # {device_id, name}) for an episode saved before members were persisted.
+        # Merges (partial repair) and is idempotent; absent locally → success.
+        from grabette.app.routers.tasks import get_task_manager
+
+        args = cmd.get("args") or {}
+        eid = args.get("episode_id")
+        if not eid:
+            return {"status": "error", "message": "episode_id is required"}
+        updated = get_task_manager().set_episode_members(
+            eid, args.get("members") or {}, device_signature=args.get("device_signature"))
+        return {"status": "ok", "updated": updated}
+
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
 
