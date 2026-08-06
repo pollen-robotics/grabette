@@ -1538,8 +1538,10 @@ def run_episode(
     if n_rejected > 0:
         print(
             f"WARNING: the arm server rejected {n_rejected} command(s) this "
-            f"episode (IK-jump watchdog) — the executed motion differs from "
-            f"what the policy commanded.",
+            f"episode — the executed motion differs from what the policy "
+            f"commanded. See the 'ARM REJECTED' lines above for the reason "
+            f"per command (IK-jump watchdog, contact/target-lead cap, ...); "
+            f"they are different faults with different fixes.",
             flush=True,
         )
     return {
