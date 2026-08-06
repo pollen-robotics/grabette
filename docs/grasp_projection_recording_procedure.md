@@ -1,7 +1,8 @@
 # Recording for the grasp projection
 
 **Status:** procedure, revised 2026-08-03. Companion to
-`packages/gripette/gripette/grasp_projection.py`.
+`packages/gripette/gripette/grasp_projection.py`. For what the projection is and
+why it is built this way, see [grasp_projection.md](grasp_projection.md).
 
 ## What the projection does
 
