@@ -1785,6 +1785,39 @@ def main():
     if remote and args.async_exec:
         raise SystemExit("--policy_addr supports sync mode only (not --async_exec).")
 
+    # Grasp projection: does this policy emit (strategy, closure) or angles?
+    # Getting this wrong is silent in both directions — a closure of 1.0 sent
+    # as radians barely moves the gripper; an angle of 0.9 rad read as a
+    # closure decodes to a near-full close every step — so the decision is
+    # logged unconditionally.
+    projection = None
+    if args.grasp_projection == "on":
+        projection = GraspProjection()
+    elif args.grasp_projection == "auto":
+        detected = detect_grasp_projection(args.checkpoint)
+        if detected:
+            projection = GraspProjection()
+        elif detected is None:
+            # REFUSE rather than guess. Assuming raw is the silent failure:
+            # a projected policy's closure of 1.0 would be sent as 1.0 radian
+            # (57 deg proximal), i.e. a partial close — the exact under-close
+            # this projection exists to fix, with nothing in the log to say so.
+            raise SystemExit(
+                "Could not determine whether this policy was trained on the "
+                "grasp projection"
+                + (" (remote inference — there is no local checkpoint to "
+                   "inspect)" if not args.checkpoint
+                   else " (no readable normaliser stats)") + ".\n"
+                "Refusing to guess: assuming raw angles would silently send a "
+                "closure of 1.0 as 1.0 RADIAN and under-close every grasp.\n"
+                "Pass --grasp_projection on (projected dataset) or off (raw "
+                "joint angles) explicitly."
+            )
+    logger.info(
+        f"Gripper action space: "
+        f"{'(strategy, closure) -> decoded to angles' if projection else 'raw angles'}"
+    )
+
     policy = preprocessor = postprocessor = None
     client = remote_k = remote_img_wh = None
     remote_frames = 2
@@ -1867,38 +1900,6 @@ def main():
         )
 
         # Auto-detect state/action mode from the policy's feature shapes.
-        # Grasp projection: does this policy emit (strategy, closure) or angles?
-        # Getting this wrong is silent in both directions — a closure of 1.0 sent
-        # as radians barely moves the gripper; an angle of 0.9 rad read as a
-        # closure decodes to a near-full close every step — so the decision is
-        # logged unconditionally.
-        projection = None
-        if args.grasp_projection == "on":
-            projection = GraspProjection()
-        elif args.grasp_projection == "auto":
-            detected = detect_grasp_projection(args.checkpoint)
-            if detected:
-                projection = GraspProjection()
-            elif detected is None:
-                # REFUSE rather than guess. Assuming raw is the silent failure:
-                # a projected policy's closure of 1.0 would be sent as 1.0 radian
-                # (57 deg proximal), i.e. a partial close — the exact under-close
-                # this projection exists to fix, with nothing in the log to say so.
-                raise SystemExit(
-                    "Could not determine whether this policy was trained on the "
-                    "grasp projection"
-                    + (" (remote inference — there is no local checkpoint to "
-                       "inspect)" if not args.checkpoint
-                       else " (no readable normaliser stats)") + ".\n"
-                    "Refusing to guess: assuming raw angles would silently send a "
-                    "closure of 1.0 as 1.0 RADIAN and under-close every grasp.\n"
-                    "Pass --grasp_projection on (projected dataset) or off (raw "
-                    "joint angles) explicitly."
-                )
-        logger.info(
-            f"Gripper action space: "
-            f"{'(strategy, closure) -> decoded to angles' if projection else 'raw angles'}"
-        )
         state_dim = policy.config.robot_state_feature.shape[0]
         action_dim = policy.config.action_feature.shape[0]
         joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
