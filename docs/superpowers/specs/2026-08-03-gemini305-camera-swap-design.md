@@ -1,7 +1,7 @@
 # Replacing the OAK-D SR with an Orbbec Gemini 305
 
 **Date:** 2026-08-03
-**Status:** design, awaiting review
+**Status:** design reviewed; **Phase 0 executed and passed** — see [Phase 0 results](#phase-0-results-executed-2026-08-03)
 **Driver:** vendor risk — OAK-D SR supply, cost, and Luxonis single-sourcing
 
 ## Problem
@@ -112,8 +112,87 @@ Scope limit, stated explicitly: this measures RTAB-Map's IMU dependence *on this
 rig's motion profile*. It says nothing about the 305's depth quality. Those are
 independent risks and Phase 0 retires only the first.
 
-**Input needed:** a HuggingFace dataset repo to pull episodes from. There is no
-local `test_data/` and no OAK-D currently attached.
+**Input, resolved:** `pollen-robotics/test_gripette_050526` turned out to be the
+*converted* LeRobot v3.0 output (`data/`, `meta/`, `videos/`; features are only
+`observation.images.cam0/cam1`, `action[8]`, and index bookkeeping) — no depth,
+IMU, or calibration, so SLAM cannot be re-run from it. Four complete raw
+episodes were found locally under `~/Downloads` instead and used for the run.
+
+## Phase 0 results (executed 2026-08-03)
+
+**Verdict: PASS.** Removing the IMU perturbs camera-local odometry no more than
+re-running the identical pipeline twice does.
+
+Run on four real episodes found locally (`~/Downloads`), 112–446 frames each
+(4.6–15.8 s at 30 fps), converted with `convert_episode_to_oak.py` and processed
+with the `pollenrobotics/oak-vslam` image built from
+`docker/oak_vslam/Dockerfile` (not on Docker Hub; must be built).
+
+### The control that mattered
+
+A naive IMU-vs-no-IMU comparison would have been misleading. RTAB-Map's F2M
+odometry is RANSAC-based and **this pipeline is not reproducible run to run**, so
+the baseline was run twice to establish a noise floor:
+
+| Episode | mean step | IMU vs IMU (noise) | IMU vs no-IMU (effect) | effect/noise |
+|---|---|---|---|---|
+| 20260615_130020 | 3.715 mm | 2.309 mm | 2.145 mm | **0.93** |
+| 20260609_150333 | 0.398 mm | 0.929 mm | 0.692 mm | **0.74** |
+| 20260609_150402 | 0.296 mm | 0.392 mm | 0.403 mm | **1.03** |
+| 20260611_075114 | 4.527 mm | 3.367 mm | 3.202 mm | **0.95** |
+
+RMSE of camera-local translation deltas (`R[t]ᵀ(p[t+1]−p[t])`), which are
+invariant to any rigid rotation of the world frame and therefore isolate
+odometry quality from the gravity convention. Every ratio is ≈ 1.0: the IMU's
+effect is indistinguishable from run-to-run noise.
+
+Supporting results:
+
+- `check_trajectory` grades **GOOD → GOOD on all four**, with **zero** tracking
+  losses introduced (100% tracking both ways).
+- Raw world-frame RMSE looks large (up to 0.457 m) but collapses to 0.3–7.6 mm
+  after removing a single rigid rotation of ~109–127°. That rotation *is* the
+  gravity alignment; it accounts for ~98% of the apparent difference.
+
+### What the IMU actually does here
+
+Two things, both world-frame conventions rather than odometry quality:
+
+1. RTAB-Map's gravity-aligned initial pose
+   (`Odometry.cpp:328 … Updated initial pose … with IMU orientation`).
+2. `oak_slam._gravity_align_trajectory`, a host-side rigid world rotation
+   applied after SLAM — a second IMU dependency not identified in the original
+   design, which logs `gravity-align skipped` when the CSVs are absent.
+
+Losing both means each episode's world frame becomes arbitrary rather than Z-up.
+That is **irrelevant to the DiffusionPolicy `--proprioception relative` path**:
+`convert_dataset.py:263` computes pose relative to episode start *expressed in
+the start camera frame*, which cancels any world rotation exactly. It would
+matter for a consumer of the absolute 8-D state, where gravity alignment is what
+makes Z consistent across episodes.
+
+### Consequence for the IMU decision
+
+The requirement collapses. `_estimate_gravity_imu` needs only **accelerometer**
+samples, and only their median over near-static parts of the episode. So if a
+Z-up world is wanted, it needs a cheap 3-axis accelerometer measuring a static
+gravity direction — not a 200 Hz VIO-grade 6-DoF IMU. If only relative
+proprioception is consumed, nothing is needed at all.
+
+### Limits of this result
+
+- Four episodes, all short (≤ 15.8 s). Drift accumulates with time; this cannot
+  speak to minute-long recordings.
+- All four were easy — 100% tracking with IMU, no fast motion or feature-poor
+  stretches, which is exactly where an IMU normally earns its place.
+- It says nothing about the 305's depth quality, which remains unretired.
+
+### Incidental finding worth its own attention
+
+The SLAM pipeline is **non-deterministic** at ~2–3 mm local-delta RMSE between
+identical runs. Regenerating a dataset will not reproduce previous trajectories
+bit-for-bit. That is a pre-existing property, unrelated to this work, but it
+bears on dataset reproducibility and on any future A/B that compares single runs.
 
 ### Phase 1 — pluggable interface
 
@@ -183,7 +262,9 @@ per-capture-writers structure.
 
 | Risk | Status | Mitigation |
 |---|---|---|
-| RTAB-Map degrades without IMU | **unretired — this is the gate** | Phase 0 ablation |
+| RTAB-Map degrades without IMU | **RETIRED** — effect/noise ≈ 1.0 on 4 episodes | Phase 0 ablation, passed |
+| World frame no longer Z-up without IMU | real, but scoped | Irrelevant to relative proprioception; a cheap accelerometer suffices if absolute states are needed |
+| Result may not hold on long or hard episodes | open | Re-run the ablation on a minute-long, fast-motion episode |
 | `LEFT_IR` not pixel-exact with depth | strongly implied (same size, 0 µs skew, zero-distortion depth generated in the left frame) but **not proven** | Spike: planar-target reprojection or IR/depth edge correspondence check |
 | `pyorbbecsdk2` on Pi 4 / Bookworm / Py 3.11 | **untested** — probe ran on x86_64 / Py 3.12 | Install spike on the Pi early; udev rules likely needed |
 | Pi 4 CPU cost of encoding Y8 (was free in OAK-D hardware) | **unquantified** — 640×400 Y8 @30 ≈ 7.7 MB/s raw | Measure FFV1 encode load on-device; fall back to V4L2 M2M or lower fps |
@@ -211,7 +292,10 @@ silent failure modes:
 ## Decisions taken
 
 - Pluggable interface rather than in-place swap.
-- Measure IMU-free SLAM quality before adding any IMU hardware.
+- Measure IMU-free SLAM quality before adding any IMU hardware. **Done — passed,
+  so the 305 proceeds with no IMU hardware.**
+- Any future IMU-vs-no-IMU comparison must include a same-config rerun as a
+  noise floor; the pipeline is not deterministic.
 - Keep `oakd_*` filenames and API routes in this work.
 - 640×400 @30 depth, preserving the current resolution and body mask.
 - `LEFT_IR` + `Depth` with D2C off, rather than Color + D2C + undistortion.
