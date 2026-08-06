@@ -14,65 +14,54 @@ This module reparameterises the same two angles as
 
     strategy s in [0, 1]   the SHAPE of the grasp (0 = pure proximal / flat,
                            1 = pure distal / curled fingertip)
-    closure  c in [0, 1]   how far along that shape the gripper has travelled
-                           (0 = fully open, 1 = as closed as this shape can
-                           mechanically get)
+    closure  c in [0, 1]   how far the gripper has travelled along that shape
+                           (0 = fully open, 1 = as closed as the joint can get)
 
-so that a policy can command `c = 1` — "close all the way along this shape" —
-and let the OBJECT decide the final angle, with the servo's torque cap doing the
-stopping. The precise, object-dependent angle stops being something the model
-has to predict.
+so that a policy can command `c = 1` — "close all the way" — and let the OBJECT
+decide the final angle, with the servo's torque cap doing the stopping. The
+precise, object-dependent angle stops being something the model has to predict.
 
-TWO MODES, AND WHY THE DEFAULT CHANGED
---------------------------------------
-`mode="decoupled"` (default): each joint is normalised independently. Closure
-drives the PROXIMAL joint; strategy IS the normalised distal target. Trivially
-invertible, and defined everywhere including the open pose.
+THE MAP
+-------
+Each joint is normalised independently against its own reachable travel:
 
-`mode="polar"`: the original form, where strategy is the polar ANGLE atan2(v, u)
-and closure the radius. Elegant, and wrong for this hardware — measured on 199
-real mustard grasps:
+    closure  drives the PROXIMAL joint      prox = c * lim_prox
+    strategy IS the normalised DISTAL target dist = s * lim_dist
 
-  - it COUPLES the channels, `ds/dv = u/(u² + v²)`, so noise in the small channel
-    (distal, 13.6° ± 14.7) leaks into the shape coordinate with a gain that grows
-    as the pose approaches the origin — i.e. worst during the approach.
-  - because `c = 1` scales along the ray, that noise is then multiplied by
-    `k ≈ 1/cos α` on the way out. The humans produced 35.8° of distal spread; the
-    polar command spread was 96.8°, an amplification of x2.71. Decoupled
-    reproduces it at 35.4°, x0.99.
+Trivially invertible, defined everywhere including the fully-open pose, and the
+two channels are independent — noise in one cannot leak into the other.
 
-So the polar form manufactured variation that was not in the demonstrations, in
-the channel the policy has to learn. It is kept for comparison, not for use.
+Why proximal carries the closure: at the grasp, proximal sits at 52% of its
+range (48.5 deg of 93.5) — that is the shortfall this module exists to remove —
+while distal is at 13%, because that is where the human CHOSE to put it. In a
+proximal-dominant grasp the object blocks the proximal motion and the distal
+joint is free, so driving proximal to its limit and passing distal through is
+both better conditioned and closer to the physics.
 
-Why the under-close is a proximal matter: at the grasp, proximal sits at 52% of
-its range (48.5° of 93.5°) — that is the shortfall — while distal is at 13%
-because that is where the human CHOSE to put it. In a proximal-dominant grasp the
-object blocks the proximal motion; the distal joint is free. Driving proximal to
-its limit and passing distal through is therefore both better conditioned and
-closer to the physics.
+An earlier version made strategy a polar ANGLE atan2(v, u) and closure the
+radius. It was removed, not merely disabled, because it was measurably worse on
+199 real mustard grasps: polar COUPLES the channels (ds/dv = u/(u^2+v^2)), so
+noise in the small channel (distal, 13.6 deg +/- 14.7) leaks into the shape
+coordinate with a gain that grows as the pose approaches the origin — worst
+during the approach — and because `c = 1` scales along the ray, that noise is
+then multiplied by k ~ 1/cos(alpha) on the way out. The humans produced 35.8 deg
+of distal spread; polar commanded 96.8 deg (x2.71). The map above reproduces it
+at 35.4 deg (x0.99). Recorded here so the experiment is not repeated blindly.
 
-The polar mode's two refinements are exposed as parameters so its shape can be
-made more faithful without changing any call site:
-
-    p       the full-close BOUNDARY. p = inf means the joints reach their limits
-            independently (a box corner). Real fingers foul the thumb first, so
-            the true boundary is a curve; p = 2 is a quarter circle. Fit from
-            fully-closed poses.
-    a, b    the PATH exponents. a = b = 1 is a straight ray, i.e. both joints
-            move in fixed proportion. a < b makes the proximal joint lead early
-            and the distal curl late, which is what a human hand actually does.
-
-Defaults (p = inf, a = b = 1) are the plain geometric map, so behaviour is
-well-defined before anything is fitted.
+ASYMMETRY, BY DESIGN
+--------------------
+Converted datasets are deliberately asymmetric: the ACTION closure reaches 1.0
+(a commanded full close), while the OBSERVED closure never does (it is where the
+fingers actually stopped, ~0.82 at most). That gap is the signal "something is
+in the hand" and must be preserved — do not normalise it away.
 
 CONVENTIONS
 -----------
 Angles are in RADIANS in the gripette ROBOT FRAME: 0 = fully open, positive =
-closing, limits from `gripette.config.settings`. Datasets recorded with an older
-convention may close NEGATIVE — normalise them with `normalize_closing_sign`
-before encoding, or `atan2` lands in the wrong quadrant and every strategy is
-wrong. The server's own `PROXIMAL_CMD_SIGN` is a wire-level detail below this
-layer and must not be applied here.
+closing, command limits from `gripette.config.settings`. Datasets recorded with
+an older convention may close NEGATIVE — normalise them with
+`normalize_closing_sign` before encoding. The server's own `PROXIMAL_CMD_SIGN`
+is a wire-level detail below this layer and must not be applied here.
 """
 
 from __future__ import annotations
@@ -81,9 +70,6 @@ import math
 from dataclasses import dataclass
 
 from gripette.config import settings
-
-# Half-turn of the strategy sweep: s = 0 is pure proximal, s = 1 pure distal.
-_QUARTER = math.pi / 2
 
 # Reachable joint travel, MEASURED on hardware (rgripette-v2, 2026-07-30).
 #
@@ -109,11 +95,9 @@ _QUARTER = math.pi / 2
 # which is the intended behaviour. Too low silently reintroduces the under-close.
 REACHABLE_PROXIMAL = math.radians(93.5)
 REACHABLE_DISTAL = math.radians(102.0)
-# Numerical guards. _EPS keeps division and root-finding away from 0/0 at the
-# fully-open pose; _TOL is the bisection tolerance on s (~1e-4 of full sweep,
-# far below the servo's resolution, so it is exact for our purposes).
+
+# Guard against a zero-variance (synthetic) input in the segmenter's noise floor.
 _EPS = 1e-12
-_TOL = 1e-9
 
 
 @dataclass(frozen=True)
@@ -127,38 +111,33 @@ class GraspProjection:
 
     lim_prox: float = REACHABLE_PROXIMAL
     lim_dist: float = REACHABLE_DISTAL
-    mode: str = "decoupled"
-    p: float = math.inf   # full-close boundary exponent (polar mode only)
-    a: float = 1.0        # proximal path exponent (polar mode only)
-    b: float = 1.0        # distal path exponent (polar mode only)
 
     def __post_init__(self) -> None:
-        if self.mode not in ("decoupled", "polar"):
-            raise ValueError(f"mode must be 'decoupled' or 'polar', got {self.mode!r}")
         if not (self.lim_prox > 0 and self.lim_dist > 0):
             raise ValueError(f"joint limits must be positive, got "
                              f"{self.lim_prox}, {self.lim_dist}")
-        if self.p < 1:
-            raise ValueError(f"boundary exponent p must be >= 1, got {self.p}")
-        if self.a <= 0 or self.b <= 0:
-            raise ValueError(f"path exponents must be > 0, got a={self.a}, b={self.b}")
 
-    # ---- geometry ------------------------------------------------------
+    def decode(self, s: float, c: float) -> tuple[float, float]:
+        """(strategy, closure) -> (proximal, distal) angles in radians.
 
-    def boundary(self, s: float) -> tuple[float, float]:
-        """The fully-closed NORMALISED pose (u, v) for strategy `s`.
-
-        Walks out from the open pose along the direction `s` selects, until it
-        meets the boundary `u**p + v**p = 1`. With p = inf that is the unit box,
-        so one joint always ends exactly at its limit.
+        Both inputs are clamped to [0, 1]: a policy trained on this
+        parameterisation routinely predicts slightly past 1.0 (measured up to
+        1.04 on the real arm), which is the model saturating the channel as
+        intended, not an error.
         """
-        alpha = _QUARTER * _clamp01(s)
-        ca, sa = math.cos(alpha), math.sin(alpha)
-        if math.isinf(self.p):
-            k = 1.0 / max(ca, sa, _EPS)
-        else:
-            k = (ca ** self.p + sa ** self.p) ** (-1.0 / self.p)
-        return k * ca, k * sa
+        return _clamp01(c) * self.lim_prox, _clamp01(s) * self.lim_dist
+
+    def encode(self, prox: float, dist: float) -> tuple[float, float]:
+        """(proximal, distal) angles in radians -> (strategy, closure).
+
+        Inputs are clamped into the joint limits: real recordings DO exceed them
+        (one measured set reaches 101% of the proximal limit, because a human
+        hand outranges the servo), and an unclamped value would encode to c > 1
+        and decode back to an unreachable target.
+        """
+        u = _clamp01(prox / self.lim_prox)
+        v = _clamp01(dist / self.lim_dist)
+        return v, u
 
     def full_close(self, s: float) -> tuple[float, float]:
         """Joint angles (rad) for a complete close along strategy `s`.
@@ -168,135 +147,6 @@ class GraspProjection:
         stops the fingers on the object.
         """
         return self.decode(s, 1.0)
-
-    # ---- the map -------------------------------------------------------
-
-    def decode(self, s: float, c: float) -> tuple[float, float]:
-        """(strategy, closure) -> (proximal, distal) angles in radians."""
-        if self.mode == "decoupled":
-            # Each joint normalised independently: closure drives the PROXIMAL
-            # joint, strategy IS the distal target. See the class docstring for
-            # why this beats the polar form.
-            return _clamp01(c) * self.lim_prox, _clamp01(s) * self.lim_dist
-        u_end, v_end = self.boundary(s)
-        c = _clamp01(c)
-        u = u_end * c ** self.a
-        v = v_end * c ** self.b
-        return u * self.lim_prox, v * self.lim_dist
-
-    def encode(self, prox: float, dist: float) -> tuple[float, float]:
-        """(proximal, distal) angles in radians -> (strategy, closure).
-
-        Returns s = nan at the fully-open pose, where the strategy is genuinely
-        undefined (both joints at zero carry no shape information). Callers
-        working on trajectories should hold the last defined value — see
-        `encode_trajectory`, which does exactly that.
-
-        Inputs are clamped into the joint limits: real recordings DO exceed them
-        (one measured set reaches 101% of the proximal limit, because a human
-        hand outranges the servo), and an unclamped value would encode to c > 1
-        and decode back to an unreachable target.
-        """
-        u = _clamp01(prox / self.lim_prox)
-        v = _clamp01(dist / self.lim_dist)
-        if self.mode == "decoupled":
-            # Strategy is the distal axis and stays defined even at the open pose,
-            # unlike the polar angle, which is genuinely undefined there.
-            return v, u
-        if u <= _EPS and v <= _EPS:
-            return math.nan, 0.0
-
-        if abs(self.a - self.b) <= _TOL:
-            # Equal path exponents: the joint ratio is constant along the path,
-            # so the direction alone gives s and the radius gives c. Closed form.
-            alpha = math.atan2(v, u)
-            s = alpha / _QUARTER
-            u_end, v_end = self.boundary(s)
-            end = math.hypot(u_end, v_end)
-            frac = math.hypot(u, v) / max(end, _EPS)
-            return s, _clamp01(frac ** (1.0 / self.a))
-
-        # Unequal exponents: the ratio drifts along the path, so s must be
-        # solved for. `_residual` is monotone decreasing in s (raising s pulls
-        # the boundary toward the distal axis), so bisection is safe.
-        lo, hi = 0.0, 1.0
-        f_lo, f_hi = self._residual(lo, u, v), self._residual(hi, u, v)
-        if f_lo <= 0.0:
-            s = lo
-        elif f_hi >= 0.0:
-            s = hi
-        else:
-            while hi - lo > _TOL:
-                mid = 0.5 * (lo + hi)
-                if self._residual(mid, u, v) > 0.0:
-                    lo = mid
-                else:
-                    hi = mid
-            s = 0.5 * (lo + hi)
-        return s, _clamp01(self._closure_at(s, u, v))
-
-    def _residual(self, s: float, u: float, v: float) -> float:
-        """Disagreement between the closure implied by each joint, at strategy s.
-
-        Zero exactly when (u, v) lies on strategy s's path. Positive means s is
-        too low (the distal joint is further along than this strategy allows).
-        """
-        u_end, v_end = self.boundary(s)
-        c_u = (u / max(u_end, _EPS)) ** (1.0 / self.a)
-        c_v = (v / max(v_end, _EPS)) ** (1.0 / self.b)
-        return c_v - c_u
-
-    def _closure_at(self, s: float, u: float, v: float) -> float:
-        """Closure along strategy s, averaging both joints' estimates.
-
-        Averaging rather than picking one keeps the round-trip error symmetric
-        when (u, v) sits slightly off the path — which it will, since real
-        recordings are noisy.
-        """
-        u_end, v_end = self.boundary(s)
-        est = []
-        if u_end > _EPS:
-            est.append((u / u_end) ** (1.0 / self.a))
-        if v_end > _EPS:
-            est.append((v / v_end) ** (1.0 / self.b))
-        return sum(est) / len(est) if est else 0.0
-
-    # ---- trajectories --------------------------------------------------
-
-    def encode_trajectory(
-        self, prox: list[float], dist: list[float], close_at: float = 0.5
-    ) -> tuple[list[float], list[float], list[bool]]:
-        """Encode a whole episode -> (strategy, closure, close_flag) per frame.
-
-        `s` is undefined while the gripper is fully open, so it is filled from
-        the nearest frame where it IS defined (backwards first, then forwards).
-        Without this the open frames would carry nan into training.
-
-        `close_flag` is `closure >= close_at`. This threshold is the one lossy
-        part of the projection: it decides WHEN the jaws shut, and a wrong onset
-        moves the close to a point on the trajectory the human never closed at.
-        Sweep it against real episodes rather than trusting the default.
-        """
-        if len(prox) != len(dist):
-            raise ValueError(f"length mismatch: {len(prox)} prox vs {len(dist)} dist")
-        pairs = [self.encode(p, d) for p, d in zip(prox, dist)]
-        s_raw = [s for s, _c in pairs]
-        closure = [c for _s, c in pairs]
-
-        s_filled = list(s_raw)
-        last = math.nan
-        for i, val in enumerate(s_filled):          # carry backwards
-            if not math.isnan(val):
-                last = val
-            elif not math.isnan(last):
-                s_filled[i] = last
-        nxt = math.nan
-        for i in range(len(s_filled) - 1, -1, -1):  # then forwards, for a
-            if not math.isnan(s_filled[i]):         # leading run of open frames
-                nxt = s_filled[i]
-            elif not math.isnan(nxt):
-                s_filled[i] = nxt
-        return s_filled, closure, [c >= close_at for c in closure]
 
 
 @dataclass(frozen=True)
@@ -342,7 +192,10 @@ def segment_grip(
     and is kept only so the observed gripper stays in distribution. Nothing has
     to fire to enter it — it is every frame not inside an event.
 
-    `tremor_k` is in units of tremor sd, so it does not need per-dataset tuning.
+    The two thresholds that matter are physical, not statistical:
+    `min_amplitude` (how far a real intention moves the aperture) and
+    `hold_frames`/`hold_tol` (a grasp is HELD). See the amplitude/sustained
+    comment in the loop below for why a noise-scaled threshold was abandoned.
 
     Returns per-frame labels and the events found, in order.
     """
@@ -527,14 +380,14 @@ def _median(xs) -> float:
 def clamp_to_command_limits(prox: float, dist: float) -> tuple[float, float, bool]:
     """Clamp a decoded target into what the gripper server will actually accept.
 
-    `decode(s, 1.0)` intentionally targets the REACHABLE travel, which is larger
-    than the server's accepted-command bounds (`settings.motor{1,2}_max`, 85 and
-    116 deg): the proximal joint reaches ~93.5 deg but commands above 85 are
-    rejected outright. Without this, a full close would raise instead of closing.
-
-    Clamping here loses the last few degrees of proximal travel rather than the
-    grasp. Raising `motor1_max` toward the measured reachable value would recover
-    it, but that widens what the hardware accepts and is not this module's call.
+    `settings.motor1_max` was raised to the measured reachable travel (93.5 deg)
+    precisely so a full close is commandable, so in the normal case this clamps
+    nothing. It still matters at the edges: the distal command bound (116 deg) is
+    looser than the reachable travel this module normalises against, the minimum
+    bounds reject the small negative angles that a calibration offset produces,
+    and a goal sitting exactly ON a limit can quantise just above it (goals cross
+    gRPC as float32 while the limits are float64 — see the motor layer's
+    tolerance).
 
     Returns (proximal, distal, was_clamped).
     """
@@ -548,8 +401,8 @@ def clamp_to_command_limits(prox: float, dist: float) -> tuple[float, float, boo
 def normalize_closing_sign(values: list[float]) -> tuple[list[float], bool]:
     """Force a joint channel to the "closing is positive" convention.
 
-    Older recordings close NEGATIVE. Encoding those unflipped puts every pose in
-    the wrong quadrant, so this is not cosmetic.
+    Older recordings close NEGATIVE. Encoding those unflipped puts every pose on
+    the wrong side of the open pose, so this is not cosmetic.
 
     Decided from the direction the channel TRAVELS, not from its centre: an
     episode is mostly open, so its median sits at ~0 and the sign of that is

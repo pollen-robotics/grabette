@@ -59,7 +59,6 @@ using whatever `codebase_version` meta/info.json reports.
 from __future__ import annotations
 
 import json
-import math
 import logging
 import shutil
 from pathlib import Path
@@ -114,11 +113,6 @@ def convert_episode(
         s_obs.append(s)
         c_obs.append(c)
 
-    # `s` is undefined at the fully-open pose (both joints zero carry no shape),
-    # so it is filled from the nearest frame where it is defined.
-    s_filled, _closure, _flags = gp.encode_trajectory(
-        [max(p_, 0.0) for p_ in prox], [max(d_, 0.0) for d_ in dist]
-    )
     labels, events = segment_grip(c_obs, rest_is_closed=rest_is_closed)
 
     # Only the grasp is rewritten; approach, open and rest pass through, so the
@@ -133,10 +127,9 @@ def convert_episode(
     # 93 degrees of proximal mid-grasp, which would make a servo already stalled
     # on the object shuffle. A grasp has ONE shape, so it is taken from the pose
     # the hand ends in (the plateau) and held from the onset.
-    s_cmd = list(s_filled)
+    s_cmd = list(s_obs)
     for ev in (e for e in events if e.kind == "close"):
-        tail = [v for v in s_obs[max(ev.end - 5, ev.onset):ev.end + 1]
-                if not math.isnan(v)]
+        tail = s_obs[max(ev.end - 5, ev.onset):ev.end + 1]
         if not tail:
             continue
         grasp_s = sorted(tail)[len(tail) // 2]
@@ -146,7 +139,7 @@ def convert_episode(
             s_cmd[i] = grasp_s
     return (
         np.asarray(list(zip(s_cmd, c_target)), dtype=np.float32),
-        np.asarray(list(zip(s_filled, c_obs)), dtype=np.float32),
+        np.asarray(list(zip(s_obs, c_obs)), dtype=np.float32),
         {
             "n_close": sum(1 for e in events if e.kind == "close"),
             "n_open": sum(1 for e in events if e.kind == "open"),

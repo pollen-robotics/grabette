@@ -12,98 +12,93 @@ import pytest
 
 from gripette.grasp_projection import (
     GraspProjection,
+    _median_filter,
     clamp_to_command_limits,
     normalize_closing_sign,
 )
 
-# The parameter sets the projection must work under: the plain geometric default,
-# a curved boundary, a leading-proximal path, and both refinements at once.
-PARAM_SETS = [
-    dict(),                                  # defaults: box boundary, straight path
-    dict(p=2.0),                             # quarter-circle boundary
-    dict(p=3.0),                             # superellipse between the two
-    dict(a=1.0, b=1.6),                      # distal curls late
-    dict(a=0.8, b=1.5),                      # both exponents off 1
-    dict(p=2.5, a=0.9, b=1.4),               # everything at once
-]
 
-
-@pytest.mark.parametrize("params", PARAM_SETS)
 @pytest.mark.parametrize("s", [0.0, 0.15, 0.5, 0.75, 1.0])
-@pytest.mark.parametrize("c", [0.05, 0.25, 0.5, 0.85, 1.0])
-def test_round_trip_is_exact(params, s, c):
-    """decode -> encode must return what we started with, for every parameter set."""
-    gp = GraspProjection(**params)
+@pytest.mark.parametrize("c", [0.0, 0.05, 0.25, 0.5, 0.85, 1.0])
+def test_round_trip_is_exact(s, c):
+    """decode -> encode must return what we started with, everywhere on the square."""
+    gp = GraspProjection()
     prox, dist = gp.decode(s, c)
     s2, c2 = gp.encode(prox, dist)
-    assert c2 == pytest.approx(c, abs=1e-6)
-    # At s = 0 or 1 one joint is exactly zero, which pins the direction; in
-    # between, bisection tolerance applies.
-    assert s2 == pytest.approx(s, abs=1e-5)
+    assert c2 == pytest.approx(c, abs=1e-9)
+    assert s2 == pytest.approx(s, abs=1e-9)
 
 
-@pytest.mark.parametrize("params", PARAM_SETS)
-def test_full_close_reaches_the_boundary(params):
-    """c = 1 must sit ON the boundary — that is what makes 'fully closed' mean
-    something. If it fell short, the under-close bug would survive the rewrite."""
-    gp = GraspProjection(**params)
-    for s in (0.0, 0.2, 0.5, 0.9, 1.0):
-        u, v = gp.boundary(s)
-        if math.isinf(gp.p):
-            assert max(u, v) == pytest.approx(1.0, abs=1e-9)
-        else:
-            assert u ** gp.p + v ** gp.p == pytest.approx(1.0, abs=1e-9)
-
-
-def test_default_boundary_is_the_box_corner():
-    """With p = inf the joints reach their limits independently."""
+@pytest.mark.parametrize("prox_deg", [0.0, 5.0, 48.5, 93.5])
+@pytest.mark.parametrize("dist_deg", [0.0, 13.6, 60.0, 102.0])
+def test_round_trip_is_exact_from_the_angle_side(prox_deg, dist_deg):
+    """The other direction, on real angle values: the converter starts from
+    recorded ANGLES, so encode -> decode must also be the identity."""
     gp = GraspProjection()
-    assert gp.boundary(0.0) == pytest.approx((1.0, 0.0), abs=1e-9)
-    assert gp.boundary(1.0) == pytest.approx((0.0, 1.0), abs=1e-9)
-    assert gp.boundary(0.5) == pytest.approx((1.0, 1.0), abs=1e-9)  # both maxed
+    prox, dist = math.radians(prox_deg), math.radians(dist_deg)
+    s, c = gp.encode(prox, dist)
+    prox2, dist2 = gp.decode(s, c)
+    assert prox2 == pytest.approx(prox, abs=1e-12)
+    assert dist2 == pytest.approx(dist, abs=1e-12)
 
 
-def test_circle_boundary_trades_the_joints_off():
-    """p = 2: closing hard on one joint costs range on the other — the physical
-    behaviour of a finger that fouls the thumb."""
-    gp = GraspProjection(p=2.0)
-    u, v = gp.boundary(0.5)
-    assert u == pytest.approx(math.sqrt(0.5), abs=1e-9)
-    assert v == pytest.approx(math.sqrt(0.5), abs=1e-9)
-    assert u < 1.0 and v < 1.0
-
-
-def test_polar_strategy_axis_orientation():
-    """POLAR: s = 0 must be pure PROXIMAL and s = 1 pure DISTAL.
-
-    Pinned deliberately: this axis was inverted once during design, which made
-    every conclusion about grasp shape backwards.
-    """
-    gp = GraspProjection(mode="polar")
-    prox0, dist0 = gp.full_close(0.0)
-    prox1, dist1 = gp.full_close(1.0)
-    assert prox0 == pytest.approx(gp.lim_prox) and dist0 == pytest.approx(0.0)
-    assert dist1 == pytest.approx(gp.lim_dist) and prox1 == pytest.approx(0.0)
-
-
-def test_closure_is_monotone_in_the_angles():
-    """Closing further must never read as less closed."""
+def test_channels_are_independent():
+    """Closure drives the proximal joint, strategy IS the distal target. Chosen
+    over an earlier polar form, which coupled the two and amplified the
+    demonstrated distal spread x2.71 (35.8 deg of human variation became 96.8 deg
+    of commanded variation)."""
     gp = GraspProjection()
-    prev = -1.0
-    for frac in [i / 20 for i in range(21)]:
-        prox, dist = gp.decode(0.3, frac)
-        _s, c = gp.encode(prox, dist)
-        assert c >= prev - 1e-9
-        prev = c
+    prox, dist = gp.decode(0.3, 0.7)
+    assert prox == pytest.approx(0.7 * gp.lim_prox)
+    assert dist == pytest.approx(0.3 * gp.lim_dist)
 
 
-def test_polar_open_pose_has_undefined_strategy():
-    """POLAR only: both joints at zero carry no shape information, so the polar
-    angle is genuinely undefined. Decoupled mode has no such singularity."""
-    gp = GraspProjection(mode="polar")
+def test_strategy_does_not_move_the_proximal_joint():
+    """Independence, stated as the property that matters: changing the SHAPE must
+    not change how far the closing joint is driven."""
+    gp = GraspProjection()
+    proxes = {gp.decode(s, 0.6)[0] for s in (0.0, 0.25, 0.5, 0.75, 1.0)}
+    assert len(proxes) == 1
+
+
+def test_full_close_always_maxes_the_proximal_joint():
+    """The under-close is a PROXIMAL shortfall, so a full close must drive that
+    joint to its limit whatever the shape — unlike polar, where a high s pulled
+    the commanded proximal DOWN to 37 deg."""
+    gp = GraspProjection()
+    for s in (0.0, 0.25, 0.5, 0.75, 1.0):
+        prox, dist = gp.full_close(s)
+        assert prox == pytest.approx(gp.lim_prox)
+        assert dist == pytest.approx(s * gp.lim_dist)
+
+
+def test_does_not_amplify_the_distal_spread():
+    """The measurement that decided this parameterisation: a spread in
+    demonstrated distal must produce the SAME spread in the commanded distal."""
+    gp = GraspProjection()
+    lo_s, _ = gp.encode(0.85, math.radians(2.0))
+    hi_s, _ = gp.encode(0.85, math.radians(38.0))
+    _p_lo, d_lo = gp.full_close(lo_s)
+    _p_hi, d_hi = gp.full_close(hi_s)
+    assert d_hi - d_lo == pytest.approx(math.radians(38.0 - 2.0), abs=1e-6)
+
+
+def test_closure_is_monotone_in_the_proximal_angle():
+    """Closure has to be an ordering on "how shut is it" or the segmenter's ramp
+    detection is meaningless."""
+    gp = GraspProjection()
+    cs = [gp.encode(math.radians(d), 0.2)[1] for d in (0, 10, 30, 60, 90)]
+    assert cs == sorted(cs)
+    assert len(set(cs)) == len(cs)
+
+
+def test_strategy_is_defined_at_the_open_pose():
+    """No singularity: the distal axis is meaningful even when nothing is closed,
+    so no nan-filling is needed anywhere downstream."""
+    gp = GraspProjection()
     s, c = gp.encode(0.0, 0.0)
-    assert math.isnan(s)
-    assert c == 0.0
+    assert not math.isnan(s)
+    assert (s, c) == (0.0, 0.0)
 
 
 def test_inputs_beyond_the_limits_are_clamped():
@@ -111,22 +106,41 @@ def test_inputs_beyond_the_limits_are_clamped():
     proximal limit). That must not encode to c > 1."""
     gp = GraspProjection()
     s, c = gp.encode(gp.lim_prox * 1.2, gp.lim_dist * 1.3)
-    assert 0.0 <= c <= 1.0
-    assert 0.0 <= s <= 1.0
+    assert (s, c) == (1.0, 1.0)
     prox, dist = gp.decode(s, c)
     assert prox <= gp.lim_prox + 1e-9
     assert dist <= gp.lim_dist + 1e-9
+
+
+def test_negative_angles_encode_to_zero_not_to_a_negative_channel():
+    """The device's zero is a calibration good to ~1 deg, so the recorded open
+    pose sits slightly BELOW zero. Those frames must not produce negative
+    channels, which would train the policy on values it can never command."""
+    gp = GraspProjection()
+    s, c = gp.encode(math.radians(-0.8), math.radians(-0.5))
+    assert (s, c) == (0.0, 0.0)
+
+
+@pytest.mark.parametrize("over", [1.001, 1.02, 1.04, 5.0])
+def test_decode_saturates_above_one(over):
+    """Measured on the real arm: a trained policy predicts closure up to 1.04.
+    That is the model saturating the channel as designed, so decode must treat it
+    as a full close rather than commanding past the joint limit."""
+    gp = GraspProjection()
+    prox, dist = gp.decode(over, over)
+    assert prox == pytest.approx(gp.lim_prox)
+    assert dist == pytest.approx(gp.lim_dist)
 
 
 def test_measured_mustard_grasp_encodes_as_expected():
     """Anchor against the real measurement: the mean mustard grasp pose is
     (0.893, 0.296) rad. Normalised on the MEASURED reachable travel (93.5 / 102
     deg), not on the server's looser command bounds."""
-    gp = GraspProjection(mode="polar")
+    gp = GraspProjection()
     s, c = gp.encode(0.893, 0.296)
-    assert s == pytest.approx(0.188, abs=0.005)
     assert c == pytest.approx(0.547, abs=0.005)
-    prox_full, _dist_full = gp.full_close(s)
+    assert s == pytest.approx(0.166, abs=0.005)
+    prox_full, _ = gp.full_close(s)
     assert prox_full == pytest.approx(gp.lim_prox, abs=1e-9)
     # The whole point: a full close commands materially more travel.
     assert math.degrees(prox_full - 0.893) == pytest.approx(42.3, abs=1.0)
@@ -148,7 +162,7 @@ def test_a_full_close_is_now_an_acceptable_command():
     from gripette.config import settings
     gp = GraspProjection()
     prox, dist = gp.full_close(0.0)
-    cp, cd, clamped = clamp_to_command_limits(prox, dist)
+    cp, _cd, clamped = clamp_to_command_limits(prox, dist)
     assert clamped is False, "a full close must survive the command bounds intact"
     assert cp == pytest.approx(prox)
     assert settings.motor1_max >= gp.lim_prox, "the bound must not cut real travel"
@@ -172,38 +186,9 @@ def test_clamp_leaves_reachable_targets_alone():
     assert (cp, cd) == (prox, dist)
 
 
-def test_encode_trajectory_fills_the_open_frames():
-    """Leading and trailing open frames must not leak nan into a dataset."""
-    gp = GraspProjection(mode="polar")
-    mid_prox, mid_dist = gp.decode(0.4, 0.8)
-    prox = [0.0, 0.0, mid_prox, mid_prox, 0.0]
-    dist = [0.0, 0.0, mid_dist, mid_dist, 0.0]
-    s, c, closed = gp.encode_trajectory(prox, dist, close_at=0.5)
-    assert not any(math.isnan(v) for v in s)
-    assert all(v == pytest.approx(0.4, abs=1e-5) for v in s)
-    assert closed == [False, False, True, True, False]
-    assert c[0] == 0.0
-
-
-def test_encode_trajectory_rejects_mismatched_lengths():
-    gp = GraspProjection()
-    with pytest.raises(ValueError, match="length mismatch"):
-        gp.encode_trajectory([0.1, 0.2], [0.1])
-
-
-def test_close_threshold_moves_the_onset():
-    """The threshold is the tunable knob; confirm it actually shifts the onset,
-    so a sweep over it is meaningful."""
-    gp = GraspProjection()
-    prox, dist = zip(*[gp.decode(0.3, i / 10) for i in range(11)])
-    _s, _c, early = gp.encode_trajectory(list(prox), list(dist), close_at=0.3)
-    _s, _c, late = gp.encode_trajectory(list(prox), list(dist), close_at=0.8)
-    assert early.index(True) < late.index(True)
-
-
 def test_negative_closing_convention_is_flipped():
-    """Older datasets close negative; encoding them unflipped puts every pose in
-    the wrong quadrant."""
+    """Older datasets close negative; encoding them unflipped puts every pose on
+    the wrong side of the open pose."""
     vals = [-0.1, -0.5, -0.9, -0.4]
     out, flipped = normalize_closing_sign(vals)
     assert flipped is True
@@ -215,6 +200,12 @@ def test_positive_convention_is_left_alone():
     out, flipped = normalize_closing_sign(vals)
     assert flipped is False
     assert out == vals
+
+
+def test_an_empty_channel_is_handled():
+    """The converter runs over whatever episodes exist, including degenerate ones."""
+    out, flipped = normalize_closing_sign([])
+    assert (out, flipped) == ([], False)
 
 
 def test_a_few_glitched_frames_do_not_flip_an_episode():
@@ -244,8 +235,28 @@ def test_a_genuinely_negative_episode_is_still_flipped():
     assert max(out) == pytest.approx(0.9)
 
 
-@pytest.mark.parametrize("bad", [dict(p=0.5), dict(a=0.0), dict(b=-1.0),
-                                 dict(lim_prox=0.0), dict(lim_dist=-1.0)])
+def test_median_filter_kills_a_spike_at_the_very_end():
+    """The edge window is SHIFTED INWARD rather than truncated. Truncating leaves
+    a 2-3 sample window at the boundary, where a spike PAIR is its own majority
+    and survives — and a trailing spike pair is a common recording artifact."""
+    vals = [0.5] * 10 + [9.0, 9.0]
+    out = _median_filter(vals, width=5)
+    assert max(out) == pytest.approx(0.5), "trailing spike pair survived the filter"
+
+
+def test_median_filter_kills_a_spike_at_the_start():
+    vals = [9.0, 9.0] + [0.5] * 10
+    out = _median_filter(vals, width=5)
+    assert max(out) == pytest.approx(0.5)
+
+
+def test_median_filter_passes_short_input_through():
+    """Shorter than the window: nothing to do, and it must not raise."""
+    assert _median_filter([1.0, 2.0], width=5) == [1.0, 2.0]
+
+
+@pytest.mark.parametrize("bad", [dict(lim_prox=0.0), dict(lim_dist=-1.0),
+                                 dict(lim_prox=-0.1)])
 def test_invalid_parameters_are_rejected(bad):
     """A silently-wrong projection corrupts data with no error; fail loudly."""
     with pytest.raises(ValueError):
@@ -254,70 +265,16 @@ def test_invalid_parameters_are_rejected(bad):
 
 def test_projection_is_shareable_and_immutable():
     """The converter and the eval loop must be able to share one instance; if it
-    were mutable, a drifting parameter would desynchronise encode from decode."""
+    were mutable, a drifting limit would desynchronise encode from decode."""
     gp = GraspProjection()
     with pytest.raises(Exception):
-        gp.p = 2.0  # type: ignore[misc]
+        gp.lim_prox = 2.0  # type: ignore[misc]
 
 
-# ---- decoupled mode (the default) -------------------------------------------
-
-
-def test_decoupled_is_independent_per_joint():
-    """Closure drives the proximal joint, strategy IS the distal target. Chosen
-    over the polar form because polar amplified the demonstrated distal spread
-    x2.71 (35.8 deg of human variation became 96.8 deg of commanded variation)."""
-    gp = GraspProjection()
-    assert gp.mode == "decoupled"
-    prox, dist = gp.decode(0.3, 0.7)
-    assert prox == pytest.approx(0.7 * gp.lim_prox)
-    assert dist == pytest.approx(0.3 * gp.lim_dist)
-
-
-def test_decoupled_full_close_always_maxes_the_proximal_joint():
-    """The under-close is a PROXIMAL shortfall, so a full close must drive that
-    joint to its limit whatever the shape — unlike polar, where a high s pulled
-    the commanded proximal DOWN to 37 deg."""
-    for s in (0.0, 0.25, 0.5, 0.75, 1.0):
-        gp = GraspProjection()
-        prox, dist = gp.full_close(s)
-        assert prox == pytest.approx(gp.lim_prox)
-        assert dist == pytest.approx(s * gp.lim_dist)
-
-
-def test_decoupled_does_not_amplify_the_distal_spread():
-    """The measurement that decided the default: a spread in demonstrated distal
-    must produce the SAME spread in the commanded distal, not a larger one."""
-    gp = GraspProjection()
-    lo_s, _ = gp.encode(0.85, math.radians(2.0))
-    hi_s, _ = gp.encode(0.85, math.radians(38.0))
-    _p_lo, d_lo = gp.full_close(lo_s)
-    _p_hi, d_hi = gp.full_close(hi_s)
-    demonstrated = math.radians(38.0 - 2.0)
-    commanded = d_hi - d_lo
-    assert commanded == pytest.approx(demonstrated, abs=1e-6)
-
-
-def test_decoupled_strategy_is_defined_at_the_open_pose():
-    """No singularity: the distal axis is meaningful even when nothing is closed,
-    so no nan-filling is needed."""
-    gp = GraspProjection()
-    s, c = gp.encode(0.0, 0.0)
-    assert not math.isnan(s)
-    assert (s, c) == (0.0, 0.0)
-
-
-@pytest.mark.parametrize("mode", ["decoupled", "polar"])
-@pytest.mark.parametrize("s", [0.0, 0.3, 0.6, 1.0])
-@pytest.mark.parametrize("c", [0.1, 0.5, 1.0])
-def test_round_trip_exact_in_both_modes(mode, s, c):
-    gp = GraspProjection(mode=mode)
-    prox, dist = gp.decode(s, c)
-    s2, c2 = gp.encode(prox, dist)
-    assert c2 == pytest.approx(c, abs=1e-6)
-    assert s2 == pytest.approx(s, abs=1e-5)
-
-
-def test_an_unknown_mode_is_rejected():
-    with pytest.raises(ValueError, match="mode must be"):
-        GraspProjection(mode="polarr")
+def test_a_custom_projection_still_round_trips():
+    """The limits are the only calibration left, so a device with different
+    travel must still encode/decode consistently."""
+    gp = GraspProjection(lim_prox=math.radians(80.0), lim_dist=math.radians(95.0))
+    prox, dist = gp.decode(0.4, 0.9)
+    assert prox == pytest.approx(0.9 * math.radians(80.0))
+    assert gp.encode(prox, dist) == pytest.approx((0.4, 0.9))
