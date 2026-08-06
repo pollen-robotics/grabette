@@ -966,6 +966,11 @@ def detect_grasp_projection(checkpoint):
     gripper joint ever exceeded 1 rad (57 deg) in any frame would be misread as
     projected. The decision is logged loudly so it can be caught at a glance.
     """
+    if not checkpoint:
+        # Remote inference (--policy_addr with no --checkpoint): there is nothing
+        # local OR on the Hub to inspect, so auto-detection is impossible. The
+        # caller turns None into a hard error demanding --grasp_projection.
+        return None
     stats_path = None
     ckpt = _Path(checkpoint)
     if ckpt.is_dir():
@@ -1260,13 +1265,25 @@ def run_episode(
                     # equivalent of the local policy's own internal action
                     # queue (policy.select_action, below).
                     if not action_queue:
+                        # This path builds its own observation instead of going
+                        # through build_observation(), so the projection has to be
+                        # applied HERE too. Sending raw angles to a policy trained
+                        # on (strategy, closure) is silent — no error, just a state
+                        # channel out of distribution.
+                        def _state(g):
+                            if grasp_projection is None:
+                                return g
+                            s_, c_ = grasp_projection.encode(float(g[0]), float(g[1]))
+                            return [0.0 if math.isnan(s_) else s_, c_]
+
                         if remote_frames == 2:
                             (img_prev, grip_prev, _ts_prev), (img_now, grip_now, _ts_now) = camera.get_pair()
                             img_prev_r = cv2.resize(img_prev, remote_img_wh, interpolation=cv2.INTER_AREA)
                             img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
                             obs = {
                                 "observation.images.cam0": np.stack([img_prev_r, img_now_r]),
-                                "observation.state": np.stack([grip_prev, grip_now]).astype(np.float32),
+                                "observation.state": np.stack(
+                                    [_state(grip_prev), _state(grip_now)]).astype(np.float32),
                                 "task": task,
                             }
                         else:
@@ -1276,7 +1293,7 @@ def run_episode(
                             img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
                             obs = {
                                 "observation.images.cam0": img_now_r,
-                                "observation.state": np.asarray(grip_now, dtype=np.float32),
+                                "observation.state": np.asarray(_state(grip_now), dtype=np.float32),
                                 "task": task,
                             }
                         reply = client.infer(obs)
@@ -1868,8 +1885,11 @@ def main():
                 # (57 deg proximal), i.e. a partial close — the exact under-close
                 # this projection exists to fix, with nothing in the log to say so.
                 raise SystemExit(
-                    "Could not determine whether this checkpoint was trained on the "
-                    "grasp projection (no readable normaliser stats).\n"
+                    "Could not determine whether this policy was trained on the "
+                    "grasp projection"
+                    + (" (remote inference — there is no local checkpoint to "
+                       "inspect)" if not args.checkpoint
+                       else " (no readable normaliser stats)") + ".\n"
                     "Refusing to guess: assuming raw angles would silently send a "
                     "closure of 1.0 as 1.0 RADIAN and under-close every grasp.\n"
                     "Pass --grasp_projection on (projected dataset) or off (raw "
