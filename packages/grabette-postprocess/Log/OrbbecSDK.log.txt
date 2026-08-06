@@ -1,0 +1,57 @@
+[08/06 16:31:23.591414][info][1609623][LinuxUsbPal.cpp:334] Create PollingDeviceWatcher!
+[08/06 16:31:23.591441][info][1609623][DeviceManager.cpp:25] Current found device(s): (1)
+[08/06 16:31:23.591445][info][1609623][DeviceManager.cpp:34] 	- Name: Gemini 305, PID: 0x0840, SN/ID: CV275610003C, Connection: USB3.2
+[08/06 16:31:23.591449][info][1609623][DeviceManager.cpp:405] Enable net device enumeration: true
+[08/06 16:31:24.593175][info][1609623][DeviceManager.cpp:25] Current device(s) list: (1)
+[08/06 16:31:24.593185][info][1609623][DeviceManager.cpp:34] 	- Name: Gemini 305, PID: 0x0840, SN/ID: CV275610003C, Connection: USB3.2
+[08/06 16:31:24.594351][info][1609623][G305Device.cpp:723] UVCAutoRebootOnFault=true for device: Gemini 305
+[08/06 16:31:24.600563][info][1609623][DeviceBase.cpp:665] key: AppSlot,value:1
+[08/06 16:31:24.600566][info][1609623][DeviceBase.cpp:665] key: HwType,value:S1
+[08/06 16:31:24.600567][info][1609623][DeviceBase.cpp:665] key: HwVer,value:V1.3
+[08/06 16:31:24.600568][info][1609623][DeviceBase.cpp:665] key: IspFwVer,value:20260424
+[08/06 16:31:24.600569][info][1609623][DeviceBase.cpp:665] key: IspNeedVer,value:20250920
+[08/06 16:31:24.600569][info][1609623][DeviceBase.cpp:665] key: PresetVer,value:0.0.9
+[08/06 16:31:24.794302][info][1609623][DeviceManager.cpp:199] Device created successfully! Name: Gemini 305, PID: 0x0840, SN/ID: CV275610003C FW: 1.0.70
+[08/06 16:31:25.098617][info][1609623][Pipeline.cpp:54] [CV275610003C] Pipeline created with device: {name: Gemini 305, sn: CV275610003C}, @0x216E16E0
+[08/06 16:31:25.342395][info][1609623][Pipeline.cpp:228] [CV275610003C] Check and set config done!
+[08/06 16:31:25.344402][info][1609623][Pipeline.cpp:266] [CV275610003C] Try to start streams!
+[08/06 16:31:25.344431][info][1609623][VideoSensor.cpp:58] [CV275610003C] Try to start stream: {type: Depth, format: Y16, width: 640, height: 400, fps: 30}
+[08/06 16:31:25.346333][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STOPPED to STARTING@Depth
+[08/06 16:31:25.346354][info][1609623][VideoSensor.cpp:127] [CV275610003C] Start backend stream: {type: Depth, format: Z16, width: 640, height: 400, fps: 30}
+[08/06 16:31:25.348380][info][1609623][VideoSensor.cpp:58] [CV275610003C] Try to start stream: {type: Left IR, format: Y8, width: 640, height: 400, fps: 30}
+[08/06 16:31:25.351212][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STOPPED to STARTING@LeftIR
+[08/06 16:31:25.351235][info][1609623][VideoSensor.cpp:127] [CV275610003C] Start backend stream: {type: Left IR, format: Y8, width: 640, height: 400, fps: 30}
+[08/06 16:31:25.353266][info][1609623][VideoSensor.cpp:58] [CV275610003C] Try to start stream: {type: Right IR, format: Y8, width: 640, height: 400, fps: 30}
+[08/06 16:31:25.358291][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STOPPED to STARTING@RightIR
+[08/06 16:31:25.358317][info][1609623][VideoSensor.cpp:127] [CV275610003C] Start backend stream: {type: Right IR, format: BA81, width: 640, height: 400, fps: 30}
+[08/06 16:31:25.360311][info][1609623][Pipeline.cpp:293] [CV275610003C] Start streams done!
+[08/06 16:31:25.360314][info][1609623][Pipeline.cpp:250] [CV275610003C] Pipeline start done!
+[08/06 16:31:25.738740][info][1609731][SensorBase.cpp:210] [CV275610003C] Stream state changed from STARTING to STREAMING@LeftIR
+[08/06 16:31:25.739013][info][1609732][SensorBase.cpp:210] [CV275610003C] Stream state changed from STARTING to STREAMING@RightIR
+[08/06 16:31:25.743830][info][1609730][SensorBase.cpp:210] [CV275610003C] Stream state changed from STARTING to STREAMING@Depth
+[08/06 16:31:27.073294][info][1609623][Pipeline.cpp:367] [CV275610003C] Try to stop pipeline!
+[08/06 16:31:27.073302][info][1609623][Pipeline.cpp:343] [CV275610003C] Try to stop streams!
+[08/06 16:31:27.073313][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STREAMING to STOPPING@RightIR
+[08/06 16:31:27.080203][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STOPPING to STOPPED@RightIR
+[08/06 16:31:27.080289][info][1609623][Pipeline.cpp:357] [CV275610003C] Sensor stream stopped, sensorType=RightIR
+[08/06 16:31:27.080293][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STREAMING to STOPPING@LeftIR
+[08/06 16:31:27.104597][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STOPPING to STOPPED@LeftIR
+[08/06 16:31:27.104667][info][1609623][Pipeline.cpp:357] [CV275610003C] Sensor stream stopped, sensorType=LeftIR
+[08/06 16:31:27.104680][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STREAMING to STOPPING@Depth
+[08/06 16:31:27.124618][info][1609623][SensorBase.cpp:210] [CV275610003C] Stream state changed from STOPPING to STOPPED@Depth
+[08/06 16:31:27.124707][info][1609623][Pipeline.cpp:357] [CV275610003C] Sensor stream stopped, sensorType=Depth
+[08/06 16:31:27.124711][info][1609623][Pipeline.cpp:363] [CV275610003C] Stop streams done!
+[08/06 16:31:27.144903][info][1609623][Pipeline.cpp:392] [CV275610003C] Stop pipeline done!
+[08/06 16:31:27.165369][warning][1609713][ObException.cpp:26] A recoverable_exception has occurred!
+ - where: GlobalTimestampFitter.cpp(267)
+ - msg: RTT too large
+ - type: UNKNOWN
+ - status: 101
+[08/06 16:31:27.402268][info][1609623][Pipeline.cpp:65] [CV275610003C] Pipeline destroyed! @0x216E16E0
+[08/06 16:31:27.405895][info][1609623][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[08/06 16:31:27.405901][info][1609623][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done
+[08/06 16:31:27.405989][info][1609623][SensorBase.cpp:47] [CV275610003C] SensorBase is destroyed
+[08/06 16:31:27.406048][info][1609623][SensorBase.cpp:47] [CV275610003C] SensorBase is destroyed
+[08/06 16:31:27.406167][info][1609623][SensorBase.cpp:47] [CV275610003C] SensorBase is destroyed
+[08/06 16:31:27.458062][info][1609623][ObLibuvcDevicePort.cpp:87] uvc_close done.
+[08/06 16:31:27.458072][info][1609623][ObLibuvcDevicePort.cpp:88] ~ObLibuvcDevicePort done

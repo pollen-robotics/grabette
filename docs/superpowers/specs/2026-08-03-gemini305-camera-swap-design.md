@@ -194,6 +194,65 @@ identical runs. Regenerating a dataset will not reproduce previous trajectories
 bit-for-bit. That is a pre-existing property, unrelated to this work, but it
 bears on dataset reproducibility and on any future A/B that compares single runs.
 
+## Config A verified end-to-end on hardware (2026-08-03)
+
+A 305 sequence was recorded straight into the `oak/` layout (LEFT_IR → `frames/`,
+depth×0.1 → `depth/`, SDK intrinsics → `calib_offline.json`, no IMU CSVs) and run
+through the production `offline_vslam` image and `check_trajectory` grader.
+
+### Geometry: CONFIRMED
+
+The design's core assumption was tested with a falsifiable stereo check —
+predict disparity `d = fx·B/Z` from the depth value, then score the LEFT_IR patch
+against RIGHT_IR at that disparity:
+
+| Depth-scale hypothesis | mean NCC | fraction > 0.8 |
+|---|---|---|
+| `raw × 0.1` → mm (**the design**) | **0.8754** | 77% |
+| `raw` unscaled (10×) | 0.0782 | 3% |
+| `raw × 0.01` (0.1×) | 0.0125 | 0% |
+
+Both sharpness sweeps peak exactly at zero and fall off monotonically —
+disparity offset `0 → 0.875`, decaying to `0.117` at ±8 px; row offset
+`0 → 0.875`, symmetric to `0.564` at ±4 px.
+
+Therefore, on real hardware: `LEFT_IR` **is** the rectified left image, it is
+row-rectified against `RIGHT_IR`, depth shares its pixel grid, and
+`depth_scale = 0.1 → mm` is metrically consistent with `fx·B/Z`. **No host
+undistortion is required; the Config B fallback is not needed.**
+
+Also confirmed incidentally: Depth + LEFT_IR + RIGHT_IR stream together at
+640×400 @30, and `offline_vslam` crashes without `imu_to_cam` exactly as
+predicted — `nlohmann::detail::type_error.302 "type must be number, but is null"`
+— so the guard at `offline_vslam.cpp:118` is confirmed necessary.
+
+### Trajectory quality: NOT yet measured
+
+Two captures, neither valid for the question:
+
+| Capture | verdict | duration | distance | median step | jumps |
+|---|---|---|---|---|---|
+| fast, room-scale | **BAD** | 60.0 s | 29.92 m | 14.61 mm | 19 |
+| "slow", close | GOOD | 44.9 s | 0.24 m | 0.16 mm | 0 |
+| OAK-D reference | GOOD | 10–15 s | 1.1–2.0 m | 3.4–4.5 mm | 0 |
+
+- The fast capture moved 3–4× faster than a real episode and looked at a room at
+  2.36 m median depth, outside the 305's 7–50 cm ideal band, leaving 81% of depth
+  invalid. It failed with "Zigzag pattern: 19 jumps with med_angle=112.9°".
+- The "slow" capture was **stationary** — consecutive-frame mean-absolute-difference
+  1.67 versus 1.96 for frame-0-vs-frame-1349, i.e. the whole episode differs no
+  more than adjacent frames do. Its GOOD grade is vacuous: `check_trajectory`
+  passes a motionless camera trivially.
+
+**Still open:** a capture at genuine Grabette pace (~3–5 mm/frame, 1–2 m of path,
+15–40 cm from a cluttered textured surface) is needed before any claim about the
+305's trajectory quality. The geometry result above is independent of this and
+stands on its own.
+
+Depth coverage is strongly scene-dependent and worth watching: 18.9% valid at
+room scale, 48.2% at desk range. The 305 is passive stereo with an IR-cut filter
+and no projector (`OBDeviceType.LIGHT_BINOCULAR`), so it needs texture and light.
+
 ### Phase 1 — pluggable interface
 
 The 88 `oakd` references in `backend/rpi.py` are almost entirely lifecycle
@@ -265,7 +324,8 @@ per-capture-writers structure.
 | RTAB-Map degrades without IMU | **RETIRED** — effect/noise ≈ 1.0 on 4 episodes | Phase 0 ablation, passed |
 | World frame no longer Z-up without IMU | real, but scoped | Irrelevant to relative proprioception; a cheap accelerometer suffices if absolute states are needed |
 | Result may not hold on long or hard episodes | open | Re-run the ablation on a minute-long, fast-motion episode |
-| `LEFT_IR` not pixel-exact with depth | strongly implied (same size, 0 µs skew, zero-distortion depth generated in the left frame) but **not proven** | Spike: planar-target reprojection or IR/depth edge correspondence check |
+| `LEFT_IR` not pixel-exact with depth | **RETIRED** — stereo NCC test confirms rectification, row alignment and depth scale on hardware | n/a |
+| 305 trajectory quality under realistic motion | **open — the main remaining unknown** | Capture at ~3–5 mm/frame, 1–2 m path, 15–40 cm from textured clutter |
 | `pyorbbecsdk2` on Pi 4 / Bookworm / Py 3.11 | **untested** — probe ran on x86_64 / Py 3.12 | Install spike on the Pi early; udev rules likely needed |
 | Pi 4 CPU cost of encoding Y8 (was free in OAK-D hardware) | **unquantified** — 640×400 Y8 @30 ≈ 7.7 MB/s raw | Measure FFV1 encode load on-device; fall back to V4L2 M2M or lower fps |
 | 305 depth quality on the real rig vs OAK-D | unretired | Same-motion A/B once mounted |
@@ -298,4 +358,5 @@ silent failure modes:
   noise floor; the pipeline is not deterministic.
 - Keep `oakd_*` filenames and API routes in this work.
 - 640×400 @30 depth, preserving the current resolution and body mask.
-- `LEFT_IR` + `Depth` with D2C off, rather than Color + D2C + undistortion.
+- `LEFT_IR` + `Depth` with D2C off, rather than Color + D2C + undistortion —
+  now verified on hardware rather than inferred.
