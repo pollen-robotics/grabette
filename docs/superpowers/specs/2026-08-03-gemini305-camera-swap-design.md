@@ -357,6 +357,77 @@ per-capture-writers structure.
 - Add `pyorbbecsdk2` to the `[rpi]` extra alongside `depthai` — both installed,
   one selected at runtime.
 
+## On-device validation on the Pi (2026-08-10)
+
+Run against `grabette-01` — Raspberry Pi 4 Model B Rev 1.5, Debian 13 (Trixie),
+Python 3.13.5, aarch64, camera on USB 3.2 (896 mA), `grabette` service active
+throughout. **Both remaining Pi-side unknowns are now retired.**
+
+### SDK: installs cleanly, but needs a udev rule
+
+`pyorbbecsdk2==2.1.1` installed from a real aarch64 wheel for Python 3.13 — no
+source build. Import and device enumeration work immediately.
+
+**But opening the device fails out of the box** with
+`OBError: usbEnumerator openUsbDevice failed!`. The USB node is `crw-rw-r--
+root root`, and the only rules present are `80-movidius.rules` (installed by
+`make install-udev-oak`, for the OAK-D) and `99-rpi-keyboard.rules`. Being in
+`plugdev`/`video` does not help.
+
+The SDK ships the fix: `pyorbbecsdk/shared/99-obsensor-libusb.rules` contains an
+explicit entry for our PID —
+`ATTRS{idVendor}=="2bc5", ATTRS{idProduct}=="0840" ... SYMLINK+="Gemini_305"`.
+Installing it gives `crw-rw-rw- root video` plus a `/dev/Gemini_305` symlink, and
+the device opens.
+
+**Action for Phase 2:** add a `make install-udev-orbbec` target mirroring
+`install-udev-oak`, and wire it into `install-rpi`. Without it a fresh flash
+cannot open the camera, and the failure message names neither udev nor
+permissions.
+
+### Streaming: full rate, no drops
+
+640×400 @30 depth + LEFT_IR, 30 s sustained: **29.90 fps, ~0 dropped frames**
+(device index span 1..902 for 901 delivered), 0 wait timeouts.
+
+### Encoding: solved, and it does not need the hardware encoder
+
+The open question was whether the Pi could absorb the H.264 encoding the OAK-D
+used to do on its own ASIC. Measured on 300 real captured Y8 frames:
+
+| encoder | realtime | CPU | MB/min |
+|---|---|---|---|
+| libx264 ultrafast, **1 thread** | **4.07×** | **111%** | **54.0** |
+| libx264 ultrafast (default threads) | 6.48× | 193% | 54.0 |
+| libx264 veryfast | 2.58× | 324% | 54.0 |
+| h264_v4l2m2m (hardware) | — | — | rejects `gray`, wants `yuv420p` |
+| FFV1 lossless | 6.38× | 268% | 162.0 |
+
+**One core encodes at 4× realtime.** So the stream can go to software x264 on a
+single core while picamera2 keeps the Pi 4's hardware V4L2 encoder for
+`raw_video.mp4` — no contention, which was the specific worry. At 54 MB/min it
+is also marginally *smaller* than the OAK-D's ~60 MB/min reference.
+
+The hardware encoder refusing `gray` input is therefore moot; converting to
+yuv420p just to use it would cost CPU for no benefit.
+
+FFV1 measures 162 MB/min — 3× H.264, confirming that recommendation was wrong,
+though the earlier ~230 MB/min estimate was pessimistic.
+
+Thermals stayed healthy: 50.6 °C idle → 62.3 °C after encoding, `throttled=0x0`.
+
+Caveat: measured with the `grabette` service active but not mid-recording. The
+true worst case is capture + picamera2 encode + x264 concurrently. Given one
+core at 111% out of four, and picamera2 using the hardware encoder rather than
+CPU, the margin is large — but it is a margin, not a measurement.
+
+### SDK gotcha worth knowing
+
+`ob.Context().query_devices()` fails with
+`NULL pointer passed for argument "deviceMgr"` — the temporary Context is
+collected mid-call. Both the `Context` **and** the device list must be held in
+named variables. `OrbbecCapture` should keep both as instance attributes.
+
 ### Deployment gap: the SLAM Space vendors its own copy
 
 SLAM does not run on the Pi — episodes are uploaded and processed by the
@@ -394,8 +465,8 @@ dependency rather than a vendored copy, though that is out of scope here.
 | Result may not hold on long or hard episodes | open | Re-run the ablation on a minute-long, fast-motion episode |
 | `LEFT_IR` not pixel-exact with depth | **RETIRED** — stereo NCC test confirms rectification, row alignment and depth scale on hardware | n/a |
 | 305 trajectory quality under realistic motion | **open — the main remaining unknown** | Capture at ~3–5 mm/frame, 1–2 m path, 15–40 cm from textured clutter |
-| `pyorbbecsdk2` on Pi 4 / Bookworm / Py 3.11 | **untested** — probe ran on x86_64 / Py 3.12 | Install spike on the Pi early; udev rules likely needed |
-| Pi 4 CPU cost of encoding Y8 (was free in OAK-D hardware) | **unquantified** — 640×400 Y8 @30 ≈ 7.7 MB/s raw | Measure FFV1 encode load on-device; fall back to V4L2 M2M or lower fps |
+| `pyorbbecsdk2` on the Pi | **RETIRED** — installs and streams at 29.90 fps on Pi 4 / Trixie / Py 3.13 | Needs a `make install-udev-orbbec` target |
+| Pi 4 CPU cost of encoding Y8 | **RETIRED** — libx264 ultrafast does 4.07× realtime on one core, 54 MB/min | Software x264; picamera2 keeps the hardware encoder |
 | 305 depth quality on the real rig vs OAK-D | unretired | Same-motion A/B once mounted |
 | Passive stereo, IR-cut, no projector | inherent (`LIGHT_BINOCULAR`) | Needs ambient light and scene texture; OAK-D SR is also passive, so roughly comparable |
 
