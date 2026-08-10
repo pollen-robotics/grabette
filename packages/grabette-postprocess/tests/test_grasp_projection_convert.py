@@ -9,6 +9,7 @@ by construction. Shapes follow the real recordings: a long approach at an
 intermediate rest posture, a fast closing ramp, then a sustained hold.
 """
 
+import json
 import math
 
 import pytest
@@ -155,3 +156,64 @@ def test_channels_stay_inside_the_trained_range():
     for arr in (action, state):
         assert arr.min() >= 0.0
         assert arr.max() <= 1.0
+
+
+# ── what a converted dataset records about itself ───────────────────────
+
+def test_the_sidecar_records_the_calibration_that_built_the_dataset(tmp_path):
+    """Channel names say WHICH representation; only this says which CALIBRATION,
+    and decode has to use the same limits encode did."""
+    from gripette.grasp_projection import PROJECTION_SIDECAR
+    from grabette_postprocess.grasp_projection_convert import _write_sidecar
+
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+    _write_sidecar(root, GP, tmp_path / "src")
+
+    meta = json.loads((root / PROJECTION_SIDECAR).read_text())
+    assert GP.matches_metadata(meta) is None
+    assert meta["source_root"].endswith("src")
+
+
+def test_a_drifted_projection_no_longer_matches_its_own_sidecar(tmp_path):
+    """The guard has to actually fire: re-measured travel must not silently pass."""
+    from gripette.grasp_projection import GraspProjection
+
+    meta = GP.to_metadata()
+    drifted = GraspProjection(lim_prox=GP.lim_prox, lim_dist=GP.lim_dist + 0.05)
+    assert drifted.matches_metadata(meta) is not None
+
+
+def test_the_card_carries_the_tags_and_the_badge(tmp_path):
+    from grabette_postprocess.grasp_projection_convert import _write_card
+
+    root = tmp_path / "ds"
+    root.mkdir()
+    _write_card(root, repo_id="user/ds")
+    card = (root / "README.md").read_text()
+    for tag in ("LeRobot", "grasp-projection"):
+        assert f"- {tag}" in card, tag
+    assert "visualize_dataset?path=user/ds" in card
+
+
+def test_the_card_is_written_without_a_badge_when_the_repo_is_unknown(tmp_path):
+    """A local conversion has no repo id yet; the tags are still worth writing."""
+    from grabette_postprocess.grasp_projection_convert import _write_card
+
+    root = tmp_path / "ds"
+    root.mkdir()
+    _write_card(root)
+    card = (root / "README.md").read_text()
+    assert "- grasp-projection" in card
+    assert "visualize_dataset" not in card
+
+
+def test_an_existing_card_is_never_overwritten(tmp_path):
+    """A hand-written card carries more than the generated one can."""
+    from grabette_postprocess.grasp_projection_convert import _write_card
+
+    root = tmp_path / "ds"
+    root.mkdir()
+    (root / "README.md").write_text("hand written, do not clobber\n")
+    _write_card(root, repo_id="user/ds")
+    assert (root / "README.md").read_text() == "hand written, do not clobber\n"

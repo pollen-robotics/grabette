@@ -47,6 +47,10 @@ VIEWER_PARAM = "path="
 # The tag every LeRobot dataset must carry to be discoverable as one.
 LEROBOT_TAG = "LeRobot"
 
+# Card tag marking a dataset whose gripper channels are (strategy, closure).
+# Queryable through the Hub API, unlike the channel names, which need a download.
+PROJECTION_HUB_TAG = "grasp-projection"
+
 # Gripper channel names this project uses, per representation.
 RAW_GRIPPER = ("proximal", "distal")
 PROJECTED_GRIPPER = ("strategy", "closure")
@@ -76,9 +80,10 @@ def check_publish(target: str | Path, deep: bool = False) -> dict:
         return status                      # nothing else is meaningful without it
 
     _check_tasks(src, info, status)
-    _check_gripper_channels(src, info, status)
+    projected = _check_gripper_channels(src, info, status)
+    _check_projection_sidecar(src, projected, status)
     _check_stats(src, status)
-    _check_card(src, status)
+    _check_card(src, status, projected)
     _check_tag(src, info, status)
     _check_fps(src, info, status, deep)
     return status
@@ -145,7 +150,12 @@ def _check_tasks(src, info, status):
 
 
 def _check_gripper_channels(src, info, status):
-    """The gripper channels must say which representation they are in."""
+    """The gripper channels must say which representation they are in.
+
+    Returns True if they name the projected representation, False if raw, None if
+    undecidable — the sidecar check keys off that.
+    """
+    projected = None
     feats = info.get("features", {})
     for key in ("action", "observation.state"):
         feat = feats.get(key)
@@ -161,14 +171,66 @@ def _check_gripper_channels(src, info, status):
             continue
         last2 = tuple(str(n).lower() for n in names[-2:])
         if last2 == PROJECTED_GRIPPER:
+            projected = True
             _check_unit_range(src, key, status)
         elif last2 == RAW_GRIPPER:
+            if projected is None:
+                projected = False
             _warn_if_unit_range(src, key, status)
         else:
             status["errors"].append(
                 f"'{key}' last two channels are {last2}, expected "
                 f"{RAW_GRIPPER} (raw angles) or {PROJECTED_GRIPPER} (projected)"
             )
+    return projected
+
+
+def _check_projection_sidecar(src, projected, status):
+    """The projection record, cross-checked against the channel names.
+
+    Names say WHICH representation; the sidecar says with which CALIBRATION. A
+    dataset built against different travel constants decodes to different angles
+    and nothing else would notice: the commands stay in range, the grasp is just
+    wrong.
+    """
+    from gripette.grasp_projection import (
+        PROJECTION_SIDECAR,
+        REPRESENTATION,
+        GraspProjection,
+    )
+
+    present = src.exists(PROJECTION_SIDECAR)
+    if not present:
+        if projected:
+            # A warning, not an error: datasets converted before the sidecar
+            # existed are still perfectly usable, they just cannot be verified.
+            status["warnings"].append(
+                f"channels are named {PROJECTED_GRIPPER} but there is no "
+                f"{PROJECTION_SIDECAR} — the calibration used to build it is "
+                "unrecorded, so decode cannot be checked against encode"
+            )
+        return
+
+    if projected is False:
+        status["errors"].append(
+            f"{PROJECTION_SIDECAR} exists but the channels are named "
+            f"{RAW_GRIPPER} — the file and the channel names contradict each other"
+        )
+        return
+
+    try:
+        meta = src.read_json(PROJECTION_SIDECAR)
+    except Exception as e:
+        status["errors"].append(f"{PROJECTION_SIDECAR} unreadable: {type(e).__name__}")
+        return
+
+    why = GraspProjection().matches_metadata(meta)
+    if why:
+        status["errors"].append(f"{PROJECTION_SIDECAR}: {why}")
+    else:
+        status["info"].append(
+            f"projection: {REPRESENTATION}, limits match this build"
+        )
 
 
 def _check_unit_range(src, key, status):
@@ -215,8 +277,8 @@ def _check_stats(src, status):
         status["errors"].append("meta/stats.json missing — training cannot normalise")
 
 
-def _check_card(src, status):
-    """The card, its LeRobot tag, and the viewer link."""
+def _check_card(src, status, projected=None):
+    """The card, its LeRobot tag, the viewer link, and the representation tag."""
     if not src.exists("README.md"):
         status["warnings"].append(
             "no README.md — `hf upload` does not render LeRobot's card template, "
@@ -235,6 +297,13 @@ def _check_card(src, status):
         status["warnings"].append(
             f"viewer link is missing '?{VIEWER_PARAM}' — the Space takes the repo "
             "id as `path`, and any other parameter renders a blank page"
+        )
+    # The Hub tag is what makes a projected dataset identifiable from a listing,
+    # without downloading meta/ to read the channel names.
+    if projected and PROJECTION_HUB_TAG not in card:
+        status["warnings"].append(
+            f"card has no '{PROJECTION_HUB_TAG}' tag — a projected dataset is then "
+            "indistinguishable from a raw one without downloading its metadata"
         )
 
 

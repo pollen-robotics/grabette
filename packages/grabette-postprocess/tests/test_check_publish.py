@@ -11,6 +11,14 @@ import pytest
 
 from grabette_postprocess.checks.publish import check_publish
 
+PROJECTED_CARD = """---
+tags:
+- LeRobot
+- grasp-projection
+---
+<a href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=user/ds"></a>
+"""
+
 CARD = """---
 tags:
 - LeRobot
@@ -30,6 +38,7 @@ def make_root(
     card=CARD,
     stats=True,
     episode_tasks=None,
+    sidecar=None,
 ):
     """A minimal but structurally valid dataset root."""
     root = tmp_path / "ds"
@@ -76,6 +85,8 @@ def make_root(
 
     if card is not None:
         (root / "README.md").write_text(card)
+    if sidecar is not None:
+        (root / "meta" / "grasp_projection.json").write_text(json.dumps(sidecar))
     return root
 
 
@@ -215,3 +226,67 @@ def test_missing_info_json_stops_early(tmp_path):
 def test_a_nonexistent_target_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         check_publish(tmp_path / "nope")
+
+
+# ── the projection sidecar (which calibration built this?) ──────────────
+
+PROJECTED = dict(action_names=("dx", "dy", "dz", "strategy", "closure"),
+                 state_names=("strategy", "closure"),
+                 action_max=(0.1, 0.1, 0.1, 0.9, 1.0))
+
+
+def _good_sidecar():
+    from gripette.grasp_projection import GraspProjection
+    return GraspProjection().to_metadata()
+
+
+def test_a_matching_sidecar_is_reported_clean(tmp_path):
+    st = check_publish(make_root(tmp_path, sidecar=_good_sidecar(),
+                                 card=PROJECTED_CARD, **PROJECTED))
+    assert st["errors"] == []
+    assert any("limits match this build" in i for i in st["info"]), st
+
+
+def test_a_sidecar_with_different_limits_is_an_error(tmp_path):
+    """The silent failure this file exists to prevent: a dataset encoded against
+    other travel constants decodes to different angles, in range and wrong."""
+    meta = _good_sidecar()
+    meta["lim_dist_rad"] = meta["lim_dist_rad"] + 0.1     # ~5.7 deg of drift
+    st = check_publish(make_root(tmp_path, sidecar=meta, card=PROJECTED_CARD,
+                                 **PROJECTED))
+    assert any("decode would not match encode" in e for e in st["errors"]), st
+
+
+def test_a_sidecar_with_an_unknown_representation_is_an_error(tmp_path):
+    meta = _good_sidecar()
+    meta["representation"] = "polar"
+    st = check_publish(make_root(tmp_path, sidecar=meta, card=PROJECTED_CARD,
+                                 **PROJECTED))
+    assert any("representation is" in e for e in st["errors"]), st
+
+
+def test_a_sidecar_on_a_raw_dataset_is_an_error(tmp_path):
+    """File and channel names contradicting each other is worse than either alone."""
+    st = check_publish(make_root(tmp_path, sidecar=_good_sidecar()))
+    assert any("contradict" in e for e in st["errors"]), st
+
+
+def test_a_projected_dataset_without_a_sidecar_only_warns(tmp_path):
+    """Datasets converted before the sidecar existed are still usable — they just
+    cannot be verified, so this must not block them."""
+    st = check_publish(make_root(tmp_path, card=PROJECTED_CARD, **PROJECTED))
+    assert st["errors"] == []
+    assert any("calibration used to build it is unrecorded" in w
+               for w in st["warnings"]), st
+
+
+def test_a_projected_dataset_without_the_hub_tag_warns(tmp_path):
+    """Without the tag a projected dataset is indistinguishable from a raw one in
+    a listing, which is how the wrong dataset gets trained."""
+    st = check_publish(make_root(tmp_path, sidecar=_good_sidecar(), **PROJECTED))
+    assert any("grasp-projection' tag" in w for w in st["warnings"]), st
+
+
+def test_a_raw_dataset_is_not_asked_for_the_projection_tag(tmp_path):
+    st = check_publish(make_root(tmp_path))
+    assert not any("grasp-projection" in w for w in st["warnings"]), st

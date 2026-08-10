@@ -80,6 +80,35 @@ away, and do not rewrite the state to match the action. Everything outside the
 grasp — approach, open, rest — passes through untouched; an early version that
 zeroed closure on open frames shifted the approach aperture by 76°.
 
+## How a dataset declares which representation it is in
+
+Range alone cannot answer this — a raw dataset's gripper q99 measured **0.894**,
+below 1.0 — so three things carry it, in descending authority:
+
+| where | says | survives |
+|---|---|---|
+| `features.*.names` in `info.json` | `proximal`/`distal` (raw) vs `strategy`/`closure` (projected) | yes — `features` is a declared LeRobot field |
+| `meta/grasp_projection.json` | the exact **calibration**: `lim_prox_rad`, `lim_dist_rad`, source root | yes — outside LeRobot's schema, never rewritten |
+| card tag `grasp-projection` | queryable from the Hub API without downloading | yes, on the Hub |
+
+The sidecar exists because names say *which* representation but not *which
+calibration*, and decode must use the limits encode used. `REACHABLE_DISTAL` is
+explicitly provisional (it came from a torque-capped stall, not a measured stop) —
+re-measure it and every existing dataset decodes differently, silently, since the
+commands stay in range and only the grasp is wrong. `check_publish` compares the
+recorded limits against the running build and errors on any drift.
+
+**Do not put this in `info.json` as a custom key.** That file is parsed into a
+fixed-field dataclass which drops unknown keys on the next write (verified:
+`DatasetInfo.from_dict` warns and discards), and our own converter triggers a
+rewrite via `recompute_stats` — so the key would survive until then and vanish
+after, leaving some copies annotated and others not.
+
+None of this reaches the trained **checkpoint**, which keeps only
+`{"action": {"type": "ACTION", "shape": [11]}}` — no names. That is why
+`evaluate.py` has to sniff the saved normaliser, and why remote inference needs
+`--grasp_projection on` explicitly.
+
 ## Using it
 
 **Convert a dataset** (never in place — the raw dataset is the archive):
