@@ -6,6 +6,7 @@ import time
 
 import grpc
 
+from .config import settings
 from .hardware.camera import CameraCapture
 from .hardware.motors import MotorController
 from .hardware.sync import SyncManager
@@ -36,6 +37,13 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
         self._camera_failures = 0
         # Last torque-limit fractions applied, to dedup the per-command write.
         self._last_torque_limit: tuple[float, float] | None = None
+        # Apply the ceiling up front so the guarantee holds from boot, not from
+        # the first command: between SetTorque(enable) and the first goal the
+        # servo would otherwise hold at whatever limit it had stored.
+        ceiling = float(settings.torque_ceiling)
+        self._motors.set_torque_limit([ceiling, ceiling])
+        self._last_torque_limit = (ceiling, ceiling)
+        logger.info("Torque ceiling %.2f applied at startup", ceiling)
 
     def StreamState(self, request, context):
         """Server-streaming: yields GripperFrame at the configured rate."""
@@ -107,14 +115,23 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
             return gripper_pb2.MotorCommandResponse(success=False, error=str(e))
 
     def _apply_torque_limit(self, request):
-        """Deposit a torque-limit write only when the command sets it and it
-        changed. A value of 0 means "unset" (proto default) — left untouched,
-        so a client that never sets it keeps full torque (backward-compatible).
-        Deduped here so a constant per-command value isn't re-deposited at
-        stream rate."""
-        tl = (request.motor1_torque_limit, request.motor2_torque_limit)
-        if tl[0] <= 0.0 and tl[1] <= 0.0:
-            return  # unset — leave the current limit alone
+        """Apply the per-command torque limit, capped by settings.torque_ceiling.
+
+        A value of 0 means "unset" (proto default). Unset now resolves to the
+        CEILING rather than being left alone: the position limits are the real
+        collision angles, so a full close is meant to drive into the stop and be
+        halted by torque. Leaving an unset limit untouched meant full torque on a
+        fresh boot, which would grind into that collision — the protection
+        depended on every client remembering to pass a limit.
+
+        Requests above the ceiling are clamped, not rejected: a caller asking for
+        more effort than allowed should still get a working grasp.
+
+        Deduped so a constant per-command value isn't re-deposited at stream rate.
+        """
+        ceiling = float(settings.torque_ceiling)
+        req = (request.motor1_torque_limit, request.motor2_torque_limit)
+        tl = tuple(ceiling if v <= 0.0 else min(v, ceiling) for v in req)
         if tl != self._last_torque_limit:
             self._motors.set_torque_limit([tl[0], tl[1]])
             self._last_torque_limit = tl

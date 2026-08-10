@@ -12,6 +12,11 @@ dependencies = [
     "pandas",
     "tqdm",
     "lerobot[dataset,viz]==0.6.0 ; python_version >= '3.12'",
+    # The grasp projection lives with the gripper's own joint limits, in gripette,
+    # so the dataset converter and the eval loop cannot disagree about what a
+    # strategy or a full close means. Base gripette is pure wheels — the hardware
+    # deps (rustypot, picamera2) are in its `rpi` extra and are not pulled here.
+    "gripette",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +27,10 @@ test = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+# Resolved from the monorepo workspace (packages/gripette), not PyPI.
+gripette = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -227,19 +227,35 @@ class MotorController:
         with self._pos_lock:
             return self._cached_positions
 
-    def _check_limits(self, pos1: float, pos2: float) -> None:
-        """Raise ValueError if positions are outside configured limits."""
+    # Tolerance on the limit check, radians (~0.006 deg — far below the 0.088 deg
+    # encoder step, so it cannot mask a real out-of-range command).
+    #
+    # Needed because goals arrive over gRPC as proto `float` (float32) while the
+    # limits are float64. A client legitimately asking for EXACTLY the limit —
+    # which is what a full close does — sends a value that quantises to marginally
+    # above it and was rejected outright: "goal 1.632 rad outside limits
+    # [0.000, 1.632]". Observed on hardware. Values inside the tolerance are
+    # clamped to the limit rather than refused.
+    _LIMIT_TOL = 1e-4
+
+    def _check_limits(self, pos1: float, pos2: float) -> tuple[float, float]:
+        """Validate goals against the configured limits.
+
+        Returns the (possibly clamped) goals. Raises ValueError only for values
+        genuinely outside the range, not for float32 rounding at the boundary.
+        """
         if self.limits is None:
-            return
+            return pos1, pos2
         (m1_min, m1_max), (m2_min, m2_max) = self.limits
-        if not (m1_min <= pos1 <= m1_max):
+        if not (m1_min - self._LIMIT_TOL <= pos1 <= m1_max + self._LIMIT_TOL):
             raise ValueError(
                 f"Motor 1 goal {pos1:.3f} rad outside limits [{m1_min:.3f}, {m1_max:.3f}]"
             )
-        if not (m2_min <= pos2 <= m2_max):
+        if not (m2_min - self._LIMIT_TOL <= pos2 <= m2_max + self._LIMIT_TOL):
             raise ValueError(
                 f"Motor 2 goal {pos2:.3f} rad outside limits [{m2_min:.3f}, {m2_max:.3f}]"
             )
+        return (min(max(pos1, m1_min), m1_max), min(max(pos2, m2_min), m2_max))
 
     def write_goal_positions(self, pos1: float, pos2: float) -> None:
         """Queue a goal write for the bus thread. Non-blocking. Validates limits.
@@ -251,7 +267,9 @@ class MotorController:
 
         Last-wins: if a previous goal hasn't been applied yet, it's overwritten.
         """
-        self._check_limits(pos1, pos2)
+        # Clamped, not just checked: a goal exactly AT the limit arrives from the
+        # wire as float32 and can land a hair outside it.
+        pos1, pos2 = self._check_limits(pos1, pos2)
         if self._mock:
             # Mock keeps robot-frame state to match read_positions() semantics.
             self._mock_positions = [pos1, pos2]

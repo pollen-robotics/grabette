@@ -69,6 +69,37 @@ uv run python -m openarm_gripette.grpc_server_real \
 
 Client machines (running eval / teleop) connect to `arm_addr = <robot-ip>:50052` and to the gripette's own gRPC service (`packages/gripette`) for the gripper.
 
+### The contact guard: `--max_target_lead_mm`
+
+The server rejects any Cartesian delta that would put the interpolator **target**
+more than this far ahead of the **measured** pose *and* increase that gap. Three
+trips within eight commands escalates to `CONTACT confirmed — target relaxed to
+the measured pose`, which releases press force and effectively aborts whatever
+motion was in progress. Lead-*reducing* deltas (retreats) always pass, so the
+guard never distorts a trajectory — it only refuses to push harder.
+
+**It is a genuine compromise, and the default (80 mm) is the considered value:**
+it sits deliberately *above* normal full-speed tracking lag, so ordinary lag is
+not mistaken for contact.
+
+Running it tighter is tempting but backfires. At **40 mm** we saw repeated false
+contact during a *lift of a near-weightless object* — 25 trips in one episode,
+ending in `CONTACT confirmed` and a stalled lift. The arm was simply lagging, not
+blocked. The same run was also clamping on `--max_relative_target 3` (default
+**8**, in degrees per step), which limits how fast it can catch up and feeds the
+same loop.
+
+So if you see false contact during transport or lifting:
+
+1. Restore `--max_target_lead_mm 80` (the default).
+2. Restore `--max_relative_target 8` (the default).
+3. Only then consider stiffer tracking, `--kp_scale 1.5` with `--kd_scale ~1.2`
+   (the help suggests scaling kd by about the square root of the kp factor).
+
+Going much *above* 80 is the opposite failure: past the real tracking lag the
+guard stops distinguishing contact from lag, and press force is no longer bounded
+if the arm genuinely jams.
+
 ## Verification sequence (before any policy run)
 
 Run these from the client machine, in this order. Each has a clear pass/fail signal:
