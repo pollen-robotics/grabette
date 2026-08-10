@@ -54,6 +54,20 @@ So after uploading:
     create_tag(repo_id, tag="v3.0", repo_type="dataset", revision="main")
 
 using whatever `codebase_version` meta/info.json reports.
+
+The other thing `hf upload` skips is the dataset CARD. LeRobot's own
+`push_to_hub` renders one from a template; uploading files directly does not, so
+the repo lands with no README, no `LeRobot` tag, and — the part that is easy to
+miss — no link to the online viewer. Include this block in the card, since the
+Space takes the repo id as `path` (NOT `dataset`, which silently shows nothing):
+
+    <a class="flex" href="https://huggingface.co/spaces/lerobot/visualize_dataset?path=<repo_id>">
+    <img class="block dark:hidden" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/visualize-this-dataset-xl.svg"/>
+    <img class="hidden dark:block" src="https://huggingface.co/datasets/huggingface/badges/resolve/main/visualize-this-dataset-xl-dark.svg"/>
+    </a>
+
+and keep `tags: [LeRobot]` in the front matter, which is what makes the dataset
+discoverable as a LeRobot one.
 """
 
 from __future__ import annotations
