@@ -330,10 +330,21 @@ per-capture-writers structure.
     phantom 6.5 m return — grabette's `wait_until_ready` gates on
     `(depth > 0).mean()` and the body mask multiplies by 0, so `0` must remain
     the sole invalid marker.
-- **Encoding:** no on-device H.264. Reuse the existing lossless FFV1 path
-  (`_pack_depth_video` is a ready-made pattern) for the Y8 left stream rather
-  than contending with picamera2 for the Pi 4's hardware encoder. Revisit if
-  file size hurts.
+- **Encoding — the FFV1 suggestion above was wrong.** The left stream has two
+  consumers: SLAM input (`convert.py` explodes `oakd_left.mp4` into
+  `oak/frames/*.png`) and **a policy observation** (`dataset.py`:
+  `observation.images.cam1`, "OAK left, resized to image_size like cam0"). The
+  OAK-D encodes it on-ASIC at 8 Mbit/s: 640×400 Y8 raw is 7.7 MB/s (~460 MB/min),
+  H.264 brings it to ~60 MB/min. Lossless FFV1 only manages ~2:1, i.e. ~230
+  MB/min — 4× the SD-card *and* WiFi-upload cost, since the only consumer is the
+  remote Space. And losslessness buys nothing anyone values: the stream is
+  already lossy H.264 today, SLAM reads it as grayscale, and the dataset
+  re-encodes it to 720×960 anyway. **The real question is narrower: can the Pi 4
+  H.264-encode one extra 640×400@30 stream**, on the hardware encoder alongside
+  picamera2's 1296×972@46, or in software? That is a measurement needing a Pi.
+  Fallback if it cannot: the 305 emits MJPEG natively, but only on the *color*
+  stream — which is not rectified, so that trades away Config A rather than
+  dropping in.
 - **`calib_offline.json`:** fx/fy/cx/cy read from the device (the real values
   differ from the datasheet's nominal table — measured fx=622.79 vs 620 nominal
   at 1280×800, and cx/cy are not exactly W/2, H/2), plus `baseline = 0.018156`.
@@ -345,6 +356,26 @@ per-capture-writers structure.
   aborted now completes.
 - Add `pyorbbecsdk2` to the `[rpi]` extra alongside `depthai` — both installed,
   one selected at runtime.
+
+### Deployment gap: the SLAM Space vendors its own copy
+
+SLAM does not run on the Pi — episodes are uploaded and processed by the
+`pollen-robotics/grabette-slam` Space (`grabette/slam.py`, a Docker-SDK Space).
+That Space **vendors a full copy of `grabette-postprocess/`**, including its own
+`docker/oak_vslam/offline_vslam.cpp`, `convert.py`, and `checks/*`.
+
+Consequence, verified 2026-08-06 by fetching the Space's file: its copy still has
+the unguarded `auto& itc = calib["imu_to_cam"];` (line 108, zero occurrences of
+the `contains()` guard). **An IMU-free Gemini 305 episode pushed through
+`/api/hf/slam` will abort in the Space with `type_error.302`**, even though this
+repo is fixed. The fix has to be propagated to the Space repo and the Space
+rebuilt before the 305 path works in production.
+
+This is a standing hazard, not a one-off: any Phase 2 change to `convert.py` or
+`checks/*` needed to handle a 305 episode must be propagated the same way. The
+duplication is invisible from this repo — nothing here fails when the two drift.
+Worth considering whether the Space should consume `grabette-postprocess` as a
+dependency rather than a vendored copy, though that is out of scope here.
 
 ### Phase 3 — mechanical, explicitly deferred
 
