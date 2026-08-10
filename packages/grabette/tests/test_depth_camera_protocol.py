@@ -20,6 +20,12 @@ from grabette.hardware.depth_camera import DepthCameraCapture
 # skip rather than fail if the environment is missing cv2/numpy entirely.
 oakd = pytest.importorskip("grabette.hardware.oakd")
 OakdCapture = oakd.OakdCapture
+orbbec = pytest.importorskip("grabette.hardware.orbbec")
+OrbbecCapture = orbbec.OrbbecCapture
+
+# Both implementations must satisfy the same contract; RpiBackend picks between
+# them at runtime from the `depth_camera` setting and cannot tell them apart.
+IMPLS = [OakdCapture, OrbbecCapture]
 
 
 # Members RpiBackend actually calls, with the arity it calls them at.
@@ -37,37 +43,42 @@ REQUIRED_METHODS = [
 REQUIRED_PROPERTIES = ["is_initialized", "is_recording", "imu_sample_count"]
 
 
-def test_oakd_capture_satisfies_protocol():
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
+def test_capture_satisfies_protocol(cls):
     # issubclass() is rejected for Protocols carrying non-method members (the
     # three properties), so check an instance. __init__ only assigns fields —
     # it touches no hardware — so a None SyncManager is fine here.
-    assert isinstance(OakdCapture(None), DepthCameraCapture)
+    assert isinstance(cls(None), DepthCameraCapture)
 
 
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("name", REQUIRED_METHODS)
-def test_method_present_and_callable(name):
-    attr = getattr(OakdCapture, name, None)
-    assert attr is not None, f"OakdCapture is missing {name}()"
-    assert callable(attr), f"OakdCapture.{name} is not callable"
+def test_method_present_and_callable(cls, name):
+    attr = getattr(cls, name, None)
+    assert attr is not None, f"{cls.__name__} is missing {name}()"
+    assert callable(attr), f"{cls.__name__}.{name} is not callable"
 
 
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
 @pytest.mark.parametrize("name", REQUIRED_PROPERTIES)
-def test_property_present(name):
-    attr = getattr(OakdCapture, name, None)
-    assert isinstance(attr, property), f"OakdCapture.{name} must be a property"
+def test_property_present(cls, name):
+    attr = getattr(cls, name, None)
+    assert isinstance(attr, property), f"{cls.__name__}.{name} must be a property"
 
 
-def test_start_recording_takes_an_output_dir():
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
+def test_start_recording_takes_an_output_dir(cls):
     # RpiBackend calls start_recording(session_dir) positionally.
-    sig = inspect.signature(OakdCapture.start_recording)
+    sig = inspect.signature(cls.start_recording)
     params = [p for p in sig.parameters if p != "self"]
     assert len(params) == 1, f"expected one arg, got {params}"
 
 
-def test_wait_until_ready_accepts_a_bare_timeout():
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
+def test_wait_until_ready_accepts_a_bare_timeout(cls):
     # RpiBackend calls run_in_executor(None, wait_until_ready, TIMEOUT) — a
     # single positional. Extra params are fine only if they have defaults.
-    sig = inspect.signature(OakdCapture.wait_until_ready)
+    sig = inspect.signature(cls.wait_until_ready)
     params = [p for n, p in sig.parameters.items() if n != "self"]
     assert params, "wait_until_ready takes no timeout"
     assert all(p.default is not inspect.Parameter.empty for p in params[1:]), (
@@ -76,8 +87,17 @@ def test_wait_until_ready_accepts_a_bare_timeout():
     )
 
 
-def test_stop_recording_reports_imu_samples_key():
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
+def test_stop_recording_reports_imu_samples_key(cls):
     # rpi.py does oakd_stats.get("imu_samples", 0) for metadata.json. A camera
     # with no IMU must still return the key (as 0) rather than omit it.
-    src = inspect.getsource(OakdCapture.stop_recording)
+    src = inspect.getsource(cls.stop_recording)
     assert "imu_samples" in src, "stop_recording must report an imu_samples count"
+
+
+def test_orbbec_reports_no_imu():
+    # The 305 genuinely has no IMU. Consumers must see a clean "no IMU" rather
+    # than a transient None that might later become a sample.
+    cap = OrbbecCapture(None)
+    assert cap.get_latest_imu() is None
+    assert cap.imu_sample_count == 0

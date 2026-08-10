@@ -185,7 +185,13 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
     depth_ts_json = ep_dir / "oakd_depth_timestamps.json"
     imu_json = ep_dir / "oakd_imu.json"
     calib_src = ep_dir / "oakd_calib_offline.json"
-    for p in (left_mp4, left_ts_json, depth_ts_json, imu_json, calib_src):
+    # oakd_imu.json is deliberately NOT in this list: the Orbbec Gemini 305 has
+    # no IMU, so an episode from it has no IMU JSON at all. offline_vslam handles
+    # the absent CSVs (its IMU block is guarded on non-empty buffers), and the
+    # Phase 0 ablation showed IMU-free odometry is indistinguishable from
+    # re-running the pipeline. Treating it as required would reject every 305
+    # episode before SLAM ever runs.
+    for p in (left_mp4, left_ts_json, depth_ts_json, calib_src):
         if not p.exists():
             raise FileNotFoundError(f"Missing required input: {p}")
     if not depth_mkv.is_file() and not depth_dir.is_dir():
@@ -261,9 +267,13 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
                 f.write(f"{idx},{_ms_to_ns(host_ms)}\n")
 
     # --- Split IMU JSON → imu_acc.csv + imu_gyro.csv + imu_rotation.csv ---
-    n_acc, n_gyr, n_rot = _split_imu_to_csvs(imu_json, oak_dir, dev_to_host_s)
-
-    clk = "device→host fit" if dev_to_host_s is not None else "raw host_ms (no device_us)"
-    print(f"  oak/ written: {n} frames, {n_acc} accel, {n_gyr} gyro, "
-          f"{n_rot} rotation samples (IMU clock: {clk})")
+    # Skipped entirely for an IMU-less camera; offline_vslam then takes its
+    # no-orientation path and RTAB-Map runs plain RGB-D odometry.
+    if imu_json.exists():
+        n_acc, n_gyr, n_rot = _split_imu_to_csvs(imu_json, oak_dir, dev_to_host_s)
+        clk = "device→host fit" if dev_to_host_s is not None else "raw host_ms (no device_us)"
+        print(f"  oak/ written: {n} frames, {n_acc} accel, {n_gyr} gyro, "
+              f"{n_rot} rotation samples (IMU clock: {clk})")
+    else:
+        print(f"  oak/ written: {n} frames, no IMU (IMU-less camera)")
     return oak_dir

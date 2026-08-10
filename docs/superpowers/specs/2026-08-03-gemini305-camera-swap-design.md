@@ -448,6 +448,76 @@ duplication is invisible from this repo — nothing here fails when the two drif
 Worth considering whether the Space should consume `grabette-postprocess` as a
 dependency rather than a vendored copy, though that is out of scope here.
 
+## Phase 2 results (implemented and validated 2026-08-10)
+
+`hardware/orbbec.py` (`OrbbecCapture`) mirrors `OakdCapture`'s structure and
+satisfies the same Protocol. Run on `grabette-01` against real hardware:
+
+| check | result |
+|---|---|
+| 20 s recording | 600 frames, 30.02 fps |
+| mp4 frames == left timestamps == depth timestamps | 600 / 600 / 600 |
+| depth decoded from the FFV1 mkv | uint16 **mm**, median 1.047 m, max 6.519 m |
+| invalid handling | no `65535` survives, nothing above the 10 m clamp |
+| `get_latest_imu()` / `imu_sample_count` | `None` / `0` |
+| `oakd_calib_offline.json` | fx/fy/cx/cy + baseline, **no `imu_to_cam`** |
+| `wait_until_ready()` | True in 0.38 s |
+| end-to-end convert → offline_vslam | `No imu_to_cam ... using identity`, 600/600 tracked, **GOOD** |
+
+The end-to-end run was with the camera stationary on a desk (0.164 m over 20 s),
+so it validates the *plumbing*, not trajectory quality — that was established
+separately by the properly-paced workstation capture.
+
+### Two further required fixes found while implementing
+
+- **`convert.py` treated `oakd_imu.json` as mandatory** and raised
+  `FileNotFoundError`, rejecting every 305 episode before SLAM could run. Now
+  optional, printing `no IMU (IMU-less camera)` and skipping the CSV split.
+  **This must also be propagated to the SLAM Space**, which vendors its own copy.
+- **`make install-udev-orbbec`** added and wired into `install-rpi`. Both udev
+  rules install unconditionally: `depth_camera` is a runtime setting, so gating
+  provisioning on it would force a re-provision to switch cameras, and a rule for
+  an absent device is inert.
+
+### Storage: the one real regression
+
+Measured over the same 20 s recording, versus OAK-D episodes packed identically:
+
+| stream | Gemini 305 | OAK-D SR |
+|---|---|---|
+| left (H.264) | **57.3 MB/min** | ~60 MB/min |
+| depth (FFV1) | **185.7 MB/min** | **40.8 MB/min** |
+| total useful | **243 MB/min** | ~101 MB/min |
+
+The left stream is fine — slightly *better* than the OAK-D. Depth is **4.5×
+larger**, and the cause is entropy, not a bug: an OAK-D frame carries ~844 unique
+depth values (median 341 mm, max 2976 mm), a 305 frame ~1469, with native 0.1 mm
+precision and returns out to 6.5 m. FFV1 is lossless, so that noise is paid for
+in full. On a battery Pi uploading over WiFi, 2.4× the bytes is a real cost.
+
+Levers measured on 200 real frames:
+
+| variant | MB/min | valid px |
+|---|---|---|
+| as recorded | 185.9 | 45.4% |
+| clamp > 3 m | 132.5 | 34.7% |
+| **clamp > 2 m** | **94.7** | 28.2% |
+| clamp > 1 m | 64.8 | 23.2% |
+| quantise 5 mm | 166.7 | 45.4% |
+| quantise 10 mm | 144.5 | 45.4% |
+| clamp 2 m + 5 mm | 76.0 | 28.2% |
+
+Clamping the far field works; quantisation barely does. `_MAX_VALID_DEPTH_MM` is
+currently 10000, i.e. effectively unclamped.
+
+**Open decision, deliberately not taken here.** Clamping trades storage against
+mid-range structure that RGB-D odometry may use, and this spec earlier argued
+those far returns are useful. The 305 is only *rated* to 1 m, so a 2 m clamp
+keeps margin while halving the cost — but that is a quality judgement, and it is
+measurable: re-run SLAM on clamped depth and compare with
+`compare_trajectories.py --noise`. Until measured, the conservative default
+(no clamp) stands.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.
