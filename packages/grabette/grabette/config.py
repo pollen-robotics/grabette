@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     # instantly instead of paying the cold-boot warmup each time.
     oakd_keepalive_s: float = 30.0
 
+    # Which depth camera `enable_oakd` brings up. "oakd" is the Luxonis OAK-D SR
+    # via depthai; "gemini305" is the Orbbec Gemini 305 via pyorbbecsdk2, kept as
+    # a second source so the rig is not single-sourced on Luxonis. This selects
+    # the model only — enable_oakd still controls whether it is powered at all.
+    depth_camera: Literal["oakd", "gemini305"] = "oakd"
+
     # UI
     ui_enabled: bool = True
 

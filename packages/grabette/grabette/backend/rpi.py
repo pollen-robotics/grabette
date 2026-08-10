@@ -42,7 +42,7 @@ class RpiBackend(Backend):
 
     def __init__(
         self, enable_angle: bool = False, enable_oakd: bool = True,
-        oakd_keepalive_s: float = 30.0,
+        oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
     ) -> None:
         super().__init__()
         self._running = False
@@ -57,6 +57,7 @@ class RpiBackend(Backend):
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
+        self._depth_camera = depth_camera
 
         self._sync = None
         self._camera = None
@@ -102,14 +103,27 @@ class RpiBackend(Backend):
         logger.info("RpiBackend started")
 
     def _init_oakd(self) -> None:
-        """Initialize OAK-D SR (always-on pipeline, used for live view + recording)."""
+        """Initialize the depth camera (always-on pipeline: live view + recording).
+
+        Which model is brought up depends on `depth_camera`; both satisfy
+        hardware.depth_camera.DepthCameraCapture, so nothing else in this class
+        needs to know which one it got. Imports stay lazy and per-branch because
+        depthai and pyorbbecsdk2 are both optional and only one is ever used.
+        """
         try:
-            from grabette.hardware.oakd import OakdCapture
-            self._oakd = OakdCapture(self._sync)
+            if self._depth_camera == "gemini305":
+                from grabette.hardware.orbbec import OrbbecCapture
+                self._oakd = OrbbecCapture(self._sync)
+            else:
+                from grabette.hardware.oakd import OakdCapture
+                self._oakd = OakdCapture(self._sync)
             self._oakd.init_device()
-            logger.info("OAK-D SR initialized")
+            logger.info("Depth camera initialized: %s", self._depth_camera)
         except Exception as e:
-            logger.warning("OAK-D not available, continuing without it: %s", e)
+            logger.warning(
+                "Depth camera (%s) not available, continuing without it: %s",
+                self._depth_camera, e,
+            )
             self._oakd = None
 
     def _init_angle_sensors(self) -> None:

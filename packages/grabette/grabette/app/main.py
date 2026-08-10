@@ -51,6 +51,7 @@ def _create_backend():
             enable_angle=settings.angle_sensors,
             enable_oakd=settings.enable_oakd,
             oakd_keepalive_s=settings.oakd_keepalive_s,
+            depth_camera=settings.depth_camera,
         )
     else:  # auto
         try:
@@ -61,6 +62,7 @@ def _create_backend():
                 enable_angle=settings.angle_sensors,
                 enable_oakd=settings.enable_oakd,
                 oakd_keepalive_s=settings.oakd_keepalive_s,
+                depth_camera=settings.depth_camera,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend

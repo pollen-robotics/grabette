@@ -292,7 +292,18 @@ start_recording  stop_recording  get_latest_imu  get_depth_jpeg  imu_sample_coun
 - Add `hardware/depth_camera.py` defining a `DepthCameraCapture` Protocol over
   exactly those 10 members. `OakdCapture` satisfies it **unchanged**.
 - `backend/rpi.py` changes in one place: `_init_oakd()` selects the class from a
-  new config field `depth_camera: Literal["oakd", "gemini305", "none"]`.
+  new config field `depth_camera`.
+
+**Built 2026-08-06.** `hardware/depth_camera.py` defines the Protocol over the
+10 members; `OakdCapture` satisfies it unchanged. Config gained
+`depth_camera: Literal["oakd", "gemini305"] = "oakd"` — **`"none"` was dropped
+from the spec's proposed Literal** because `enable_oakd=False` already expresses
+it, and two overlapping off-switches invite drift. `depth_camera` selects the
+model; `enable_oakd` still controls power. Both branches were exercised: each
+degrades to a logged warning and `_oakd = None` when its SDK is absent.
+`tests/test_depth_camera_protocol.py` pins the contract, checking signatures
+rather than just member names (isinstance against a runtime_checkable Protocol
+would pass a `start_recording` with the wrong arity).
 - `get_latest_imu()` returns `None` on the 305. The existing contract already
   permits this ("Returns None until both first accel and first gyro packets have
   arrived"); verify the dashboard and `/charts/*` paths tolerate a permanent
@@ -327,10 +338,11 @@ per-capture-writers structure.
   differ from the datasheet's nominal table — measured fx=622.79 vs 620 nominal
   at 1280×800, and cx/cy are not exactly W/2, H/2), plus `baseline = 0.018156`.
   Omit `imu_to_cam`.
-- **Required fix:** `offline_vslam.cpp:118` does `auto& itc = calib["imu_to_cam"]`
-  **unguarded**. An IMU-free calib JSON will crash there. Guard it and fall
-  through to the existing no-IMU `setIMU(gyro, acc, ...)` branch at
-  `offline_vslam.cpp:280`.
+- **Required fix — DONE (2026-08-06).** `offline_vslam.cpp` dereferenced
+  `calib["imu_to_cam"]` unguarded, aborting with `type_error.302` on any
+  IMU-free calib. Now probed with `contains()`, falling back to identity (unused
+  when the IMU buffers are empty). Verified: the same input that previously
+  aborted now completes.
 - Add `pyorbbecsdk2` to the `[rpi]` extra alongside `depthai` — both installed,
   one selected at runtime.
 
