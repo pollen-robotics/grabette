@@ -1,5 +1,5 @@
 # Grabette
-<img src="docs/images/grabette_face.jpg" align="left" width="200px"/><br>
+<img src="docs/images/grabette_actions.gif" align="left" width="200px"/><br>
 Autonomous Raspberry Pi service for robotic manipulation data collection: 
 
 <ul style="padding-left: 260px">
