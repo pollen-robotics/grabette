@@ -45,6 +45,12 @@ _HEARTBEAT_INTERVAL_S = 5.0
 # the device offline mid-recording and drop its queued start/stop commands. So
 # we cache the last value here and the heartbeat just ships the cache (instant).
 _BATTERY_INTERVAL_S = 30.0
+# Commands that must NOT go through the serialized worker below. The worker runs
+# one command at a time, so a cancel queued behind the upload it is cancelling
+# would only run once that upload had finished — i.e. never cancel anything. These
+# are dispatched immediately, concurrently with whatever is running. Only put
+# command types here that do no hardware work and return fast.
+_FAST_PATH_TYPES = frozenset({"cancel_dataset"})
 
 logger = logging.getLogger("grabette.relay_client")
 
@@ -157,28 +163,45 @@ class RelayClient:
         so it'd flap offline and the NEXT episode's start_capture would arrive
         late (past its T0). Decoupled, the loop keeps the device online and
         delivers commands promptly; the worker runs them (in order, one at a
-        time — the backend can't record two captures at once) as it frees up."""
+        time — the backend can't record two captures at once) as it frees up.
+
+        One exception to that serialization: _FAST_PATH_TYPES (cancels) are run
+        immediately, beside the worker. A cancel queued behind the multi-minute
+        upload it is cancelling would be pointless."""
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             queue: "asyncio.Queue[dict]" = asyncio.Queue()
             inflight: set[str] = set()  # command ids queued/running (dedup)
+            # Strong refs to fast-path tasks: asyncio only weakly references tasks,
+            # so without this the GC can cancel a cancel mid-flight.
+            fast_tasks: set[asyncio.Task] = set()
+
+            async def run_one(cmd: dict) -> None:
+                """Execute one command and report its result."""
+                from grabette.cancel import get_cancel_registry
+                try:
+                    try:
+                        res = await handler(cmd)
+                    except Exception as e:  # noqa: BLE001
+                        res = {"status": "error", "message": str(e)}
+                    token = self.token_provider()
+                    if token:
+                        try:
+                            await self._report(session, token, cmd["id"], res)
+                        except Exception:
+                            logger.warning("relay report failed for %s", cmd.get("id"), exc_info=True)
+                finally:
+                    # Nothing can act on this command any more, so stop remembering
+                    # a cancel for it.
+                    get_cancel_registry().clear(cmd.get("id"))
+                    inflight.discard(cmd.get("id"))
 
             async def worker() -> None:
                 while True:
                     cmd = await queue.get()
                     try:
-                        try:
-                            res = await handler(cmd)
-                        except Exception as e:  # noqa: BLE001
-                            res = {"status": "error", "message": str(e)}
-                        token = self.token_provider()
-                        if token:
-                            try:
-                                await self._report(session, token, cmd["id"], res)
-                            except Exception:
-                                logger.warning("relay report failed for %s", cmd.get("id"), exc_info=True)
+                        await run_one(cmd)
                     finally:
-                        inflight.discard(cmd.get("id"))
                         queue.task_done()
 
             async def heartbeat_loop() -> None:
@@ -275,7 +298,14 @@ class RelayClient:
                             if cid in inflight:
                                 continue  # already queued/running — don't double-dispatch
                             inflight.add(cid)
-                            queue.put_nowait(cmd)
+                            if cmd.get("type") in _FAST_PATH_TYPES:
+                                # Run it NOW, beside the worker: a cancel must not
+                                # wait for the long job it cancels (_FAST_PATH_TYPES).
+                                fast = asyncio.create_task(run_one(cmd))
+                                fast_tasks.add(fast)
+                                fast.add_done_callback(fast_tasks.discard)
+                            else:
+                                queue.put_nowait(cmd)
                         self.status = "online"
                         # Auto-detect the server's mode: work returned, or the
                         # server held the poll open (long-poll) → re-poll now.
@@ -301,6 +331,8 @@ class RelayClient:
                 worker_task.cancel()
                 heartbeat_task.cancel()
                 battery_task.cancel()
+                for t in list(fast_tasks):
+                    t.cancel()
                 for t in (worker_task, heartbeat_task, battery_task):
                     try:
                         await t

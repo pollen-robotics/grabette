@@ -85,12 +85,35 @@ async def _handle_relay_command(cmd: dict) -> dict:
     /api/fleet/groups/{id}/start_capture or another device's local trigger)
     behaves identically to one triggered locally on this device.
     """
+    from grabette.cancel import get_cancel_registry
     from grabette.capture_scheduler import get_capture_scheduler
     from grabette.daemon import DaemonState
     from grabette.task import episode_id_for
     from grabette.app.routers.tasks import get_task_manager
 
     ctype = cmd.get("type")
+    cmd_id = cmd.get("id")
+    cancels = get_cancel_registry()
+
+    if ctype == "cancel_dataset":
+        # Handled ABOVE the daemon check on purpose: cancelling touches no capture
+        # hardware, and it must still work when the daemon is down — that is
+        # precisely a moment when a stuck upload needs stopping.
+        #
+        # The operator cancelled a fleet dataset build: flag the command ids it
+        # names so the running (or still-queued) upload/processing handler stops at
+        # its next checkpoint. See grabette.cancel for why this goes through a
+        # registry instead of cancelling a task directly, and why the relay must
+        # dispatch this command on its FAST PATH (relay_client._FAST_PATH_TYPES) —
+        # it must never wait for the work it is cancelling.
+        #
+        # It deliberately does NOT touch args["raw_repo"]: the partially-uploaded
+        # raw dataset is left in place (the fleet passes keep_raw for exactly this),
+        # so a cancelled build can be inspected or re-run without re-uploading.
+        args = cmd.get("args", {})
+        marked = cancels.cancel(args.get("command_ids") or [])
+        return {"status": "ok", "cancelled": marked, "job_id": args.get("job_id", "")}
+
     daemon = get_daemon_instance()
     if daemon is None:
         return {"status": "error", "message": "daemon not running"}
@@ -126,6 +149,16 @@ async def _handle_relay_command(cmd: dict) -> dict:
         hf = get_hf_client()
         uploaded, missing = [], []
         for eid in episode_ids:
+            # Cancellation checkpoint, once per episode. Checked BEFORE the first
+            # upload too: the cancel may have landed while this command was still
+            # queued behind another one (the relay's worker is serial), in which
+            # case nothing should be uploaded at all. Per-episode is the finest
+            # granularity available — one episode is a single blocking
+            # api.upload_folder inside hf.upload_episode, which cannot be
+            # interrupted from outside.
+            if cancels.is_cancelled(cmd_id):
+                return {"status": "cancelled", "role": role,
+                        "uploaded": uploaded, "missing": missing}
             ep_dir = tm.episode_dir(eid)
             if not ep_dir.exists():
                 missing.append(eid)
@@ -134,8 +167,15 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 await asyncio.to_thread(hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}", private)
                 uploaded.append(eid)
             except Exception as e:  # noqa: BLE001
+                if cancels.is_cancelled(cmd_id):
+                    # Cancelled mid-upload: the failure is a consequence, not news.
+                    return {"status": "cancelled", "role": role,
+                            "uploaded": uploaded, "missing": missing}
                 return {"status": "error", "message": f"upload failed for {eid}: {e}",
                         "uploaded": uploaded, "missing": missing, "role": role}
+        if cancels.is_cancelled(cmd_id):
+            return {"status": "cancelled", "role": role,
+                    "uploaded": uploaded, "missing": missing}
         return {"status": "ok", "role": role, "uploaded": uploaded, "missing": missing}
 
     if ctype == "process_dataset":
@@ -160,7 +200,15 @@ async def _handle_relay_command(cmd: dict) -> dict:
             "source_repo": source_repo, "target_repo": target_repo,
             "task": args.get("task") or target_repo.split("/")[-1],
             "roles": args.get("roles") or [], "private": bool(args.get("private", False)),
+            # Leave the raw dataset alone after the conversion (fleet-controlled,
+            # default True there). Passed through untouched so the Space's own
+            # default never silently deletes a raw we were asked to keep.
+            "keep_raw": bool(args.get("keep_raw", True)),
         }
+        # Cancelled while this command sat in the relay's queue → never even start
+        # the conversion (it would push a dataset nobody asked for any more).
+        if cancels.is_cancelled(cmd_id):
+            return {"status": "cancelled"}
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as s:
                 async with s.post(f"{space_url}/api/process", json=payload, headers=headers) as r:
@@ -175,6 +223,13 @@ async def _handle_relay_command(cmd: dict) -> dict:
                     if time.monotonic() > deadline:
                         return {"status": "error", "message": "processing timed out"}
                     await asyncio.sleep(5.0)
+                    # Stop waiting on the Space as soon as the build is cancelled.
+                    # NB: this releases the device, it does not stop the Space —
+                    # /api/process has no cancel endpoint, so a conversion already
+                    # under way runs to completion and may still push its target
+                    # dataset. The raw is kept either way (keep_raw).
+                    if cancels.is_cancelled(cmd_id):
+                        return {"status": "cancelled", "space_job_id": space_jid}
                     try:
                         async with s.get(f"{space_url}/api/status/{space_jid}", headers=headers) as r:
                             if r.status != 200:
@@ -444,8 +499,9 @@ async def lifespan(app: FastAPI):
             device_id=settings.device_id,
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
-                          "upload_episodes", "process_dataset", "delete_episode",
-                          "edit_task", "delete_task", "prepare_capture"],
+                          "upload_episodes", "process_dataset", "cancel_dataset",
+                          "delete_episode", "edit_task", "delete_task",
+                          "prepare_capture"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
