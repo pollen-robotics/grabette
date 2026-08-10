@@ -264,8 +264,29 @@ def convert_dataset(
         recompute_stats(ds, skip_image_video=True)
         logger.info("Stats recomputed")
 
+    # WARN, don't refuse. A converted dataset that only ever lives locally for an
+    # experiment is legitimate, so publication rules must not block conversion —
+    # but the operator should hear about them here, while the context is fresh,
+    # rather than from a training run that dies in `get_safe_version` an hour in.
+    # Run `checks.publish.check_publish` as the hard gate before uploading.
+    from grabette_postprocess.checks.publish import check_publish
+
+    audit = check_publish(dst_root)
+    for msg in audit["errors"]:
+        logger.warning("publish check: %s", msg)
+    for msg in audit["warnings"]:
+        logger.warning("publish check: %s", msg)
+    if audit["errors"] or audit["warnings"]:
+        logger.warning(
+            "%d publish issue(s) above — fix them before uploading; "
+            "the git tag and card checks only run against a pushed repo",
+            len(audit["errors"]) + len(audit["warnings"]),
+        )
+
     return {
         "episodes": len(reports),
+        "publish_errors": audit["errors"],
+        "publish_warnings": audit["warnings"],
         "single_close": sum(1 for r in reports if r["n_close"] == 1),
         "no_close": sum(1 for r in reports if r["n_close"] == 0),
         "multi_close": sum(1 for r in reports if r["n_close"] > 1),
