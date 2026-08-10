@@ -1,14 +1,12 @@
 # Grabette
-<img src="docs/images/grabette_actions.gif" align="left" width="200px"/><br>
-Autonomous Raspberry Pi service for robotic manipulation data collection: 
+<img src="docs/images/grabette_actions.gif" align="left" width="200px"/>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;Autonomous Raspberry Pi service for robotic manipulation data collection:<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;captures synchronized camera + depth + IMU streams from a handheld gripper<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;manages recording sessions<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;uploads episodes to Hugging Face for cloud SLAM processing.
 
-<ul style="padding-left: 260px">
-<li>captures synchronized camera + depth + IMU streams from a handheld gripper</li>
-<li>manages recording sessions</li>
-<li>uploads episodes to Hugging Face for cloud SLAM processing.</li>
-</ul>
-
-Part of the [GRABETTE project](../../README.md).
+&nbsp;&nbsp;&nbsp;&nbsp;Part of the [GRABETTE project](../../README.md).
 
 <br clear="left"/>
 
