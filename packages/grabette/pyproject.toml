@@ -26,6 +26,13 @@ rpi = [
     # and on recent Pi OS Bookworm aarch64 + cpython 3.11.15 there's no wheel,
     # so uv builds from source for ~30 min. Don't.
     "depthai>=3.6,<4",
+    # pyorbbecsdk2 (depth_camera=gemini305) is deliberately NOT listed here.
+    # Its declared deps are for its examples, not the binding: opencv-python
+    # (the full build, against this extra's headless one), pygame, pynput, and
+    # numpy>=2.1.0 — and that last one would install numpy INTO the venv,
+    # shadowing the system numpy picamera2 needs, exactly as the note above
+    # warns. Installed --no-deps by `make install-orbbec-sdk`, verified working
+    # against the system numpy on a Pi 4 / Trixie / Python 3.13.
     "opencv-python-headless>=4.8",
     "scipy",  # quaternion + rotation math (teleop, dataset processing)
     "rerun-sdk",  # live trajectory visualization for teleop

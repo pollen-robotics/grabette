@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand write-env install-udev-oak install-udev-orbbec install-systemd install-netdev install-poweroff ensure-ble-only help
+.PHONY: install-rpi check-hand write-env install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -10,6 +10,7 @@ help:
 	@echo "                        HAND={left,right} REQUIRED — determines proximal/distal sign."
 	@echo "  install-udev-oak      Install only the OAK-D / Movidius udev rule"
 	@echo "  install-udev-orbbec   Install only the Orbbec Gemini 305 udev rule"
+	@echo "  install-orbbec-sdk    Install pyorbbecsdk2 (--no-deps) for depth_camera=gemini305"
 	@echo "  install-systemd       Install + enable the grabette + bluetooth systemd services (BLE-only)"
 	@echo "  ensure-ble-only       Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
@@ -101,6 +102,17 @@ install-udev-orbbec:
 	else \
 		echo "Orbbec udev rule already present."; \
 	fi
+
+# pyorbbecsdk2 for the Gemini 305. Installed with --no-deps ON PURPOSE: the
+# SDK's declared requirements (opencv-python, pygame, pynput, numpy>=2.1.0) are
+# for its bundled examples, not the compiled binding. Letting them in would pull
+# the full opencv build alongside this project's headless one and, worse,
+# install numpy into the venv where it shadows the system numpy picamera2 links
+# against. Verified on a Pi 4 / Trixie / Python 3.13: --no-deps imports, opens
+# the device and streams using the system numpy.
+install-orbbec-sdk:
+	$(WORKSPACE_ROOT)/.venv/bin/python -m pip install --no-deps pyorbbecsdk2
+	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import pyorbbecsdk, numpy; print('pyorbbecsdk OK, numpy', numpy.__version__, 'from', numpy.__file__)"
 
 # nmcli --rescan yes triggers a real radio scan, gated by two things:
 # 1. the 'netdev' group (NM membership check)
