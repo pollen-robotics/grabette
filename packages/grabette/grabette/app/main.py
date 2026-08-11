@@ -75,6 +75,80 @@ def _create_backend():
 
 _button_listener = None
 
+# --- processing Space (raw → LeRobot conversion) ------------------------------
+# Talking to the Space has three very different latency regimes, so ONE timeout
+# for all of them is wrong: a single 60s cap used to apply to the whole session,
+# which meant a cold start (minutes) was reported as a failed call. A sleeping or
+# rebuilding HF Space does not refuse the connection — the HF proxy HOLDS it while
+# the container boots — so the wake gets its own budget, outside the per-request
+# timeouts. The URL is never hardcoded here: the fleet names the Space in the
+# command's args, and the wake follows whatever it names.
+_SPACE_WAKE_BUDGET_S = 300.0        # how long a cold start may take before giving up
+_SPACE_WAKE_PROBE_TIMEOUT_S = 20.0  # one liveness probe
+_SPACE_WAKE_RETRY_S = 5.0           # between probes
+_SPACE_POST_TIMEOUT_S = 120.0       # /api/process, on a Space known to be awake
+_SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
+
+
+class _CommandCancelled(Exception):
+    """The operator cancelled this command while it waited on something."""
+
+
+def _exc_text(e: BaseException) -> str:
+    """Never-empty description of an exception.
+
+    `str(asyncio.TimeoutError())` is the EMPTY STRING, so interpolating an
+    exception straight into a message can report only "processing failed:" —
+    leaving the operator nothing to act on, and the failure that says the least is
+    the most common one. Fall back to the class name, which at least names the
+    failure mode.
+    """
+    return str(e).strip() or type(e).__name__
+
+
+async def _wake_space(session, space_url: str, headers: dict,
+                      is_cancelled=None) -> str | None:
+    """Wait until the processing Space really serves requests. None once awake,
+    else the reason to report.
+
+    The probe is GET /api/status/<throwaway id>: cheap, needs no job, and it is a
+    route of the app ITSELF — so a JSON answer proves the app is up, not just the
+    proxy in front of it. That distinction is the whole point: a container still
+    booting answers with an HTML holding page, which must not be mistaken for
+    "awake". Headers are passed through so this works on a private Space too.
+
+    Raises _CommandCancelled if the build is cancelled while we wait: this wait
+    can last minutes, and a conversion nobody wants any more must not start.
+    """
+    import aiohttp
+
+    deadline = time.monotonic() + _SPACE_WAKE_BUDGET_S
+    last, probes = "no response", 0
+    while time.monotonic() < deadline:
+        if is_cancelled and is_cancelled():
+            raise _CommandCancelled
+        probes += 1
+        try:
+            async with session.get(
+                f"{space_url}/api/status/_wake", headers=headers,
+                timeout=aiohttp.ClientTimeout(total=_SPACE_WAKE_PROBE_TIMEOUT_S),
+            ) as r:
+                ctype = r.headers.get("Content-Type", "")
+                await r.read()  # drain so the connection can be reused
+                if r.status == 200 and "json" in ctype.lower():
+                    if probes > 1:
+                        logger.info("processing Space awake after %d probe(s)", probes)
+                    return None
+                last = (f"HTTP {r.status}" if r.status != 200
+                        else f"still starting (content-type {ctype or 'unknown'})")
+        except Exception as e:  # noqa: BLE001 — almost certainly still booting; retry
+            last = _exc_text(e)
+        logger.info("processing Space not ready yet (%s) — retrying", last)
+        await asyncio.sleep(_SPACE_WAKE_RETRY_S)
+    return (f"the processing Space at {space_url} did not wake up within "
+            f"{int(_SPACE_WAKE_BUDGET_S)}s after {probes} probe(s) — last: {last}. "
+            f"Open it once in a browser, then retry.")
+
 
 async def _handle_relay_command(cmd: dict) -> dict:
     """Map fleet commands to grabette daemon actions.
@@ -171,7 +245,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
                     # Cancelled mid-upload: the failure is a consequence, not news.
                     return {"status": "cancelled", "role": role,
                             "uploaded": uploaded, "missing": missing}
-                return {"status": "error", "message": f"upload failed for {eid}: {e}",
+                return {"status": "error", "message": f"upload failed for {eid}: {_exc_text(e)}",
                         "uploaded": uploaded, "missing": missing, "role": role}
         if cancels.is_cancelled(cmd_id):
             return {"status": "cancelled", "role": role,
@@ -210,8 +284,18 @@ async def _handle_relay_command(cmd: dict) -> dict:
         if cancels.is_cancelled(cmd_id):
             return {"status": "cancelled"}
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as s:
-                async with s.post(f"{space_url}/api/process", json=payload, headers=headers) as r:
+            # No session-wide timeout: each request below sets its own, because
+            # they have nothing in common (see the _SPACE_* constants).
+            async with aiohttp.ClientSession() as s:
+                # The Space may be asleep or rebuilding — wake it FIRST, on its own
+                # budget, so a cold start is never reported as a failed conversion
+                # (it used to surface as a bare, message-less timeout).
+                not_awake = await _wake_space(s, space_url, headers,
+                                              lambda: cancels.is_cancelled(cmd_id))
+                if not_awake:
+                    return {"status": "error", "message": not_awake}
+                async with s.post(f"{space_url}/api/process", json=payload, headers=headers,
+                                  timeout=aiohttp.ClientTimeout(total=_SPACE_POST_TIMEOUT_S)) as r:
                     if r.status != 200:
                         return {"status": "error",
                                 "message": f"Space /api/process HTTP {r.status}: {(await r.text())[:200]}"}
@@ -231,7 +315,8 @@ async def _handle_relay_command(cmd: dict) -> dict:
                     if cancels.is_cancelled(cmd_id):
                         return {"status": "cancelled", "space_job_id": space_jid}
                     try:
-                        async with s.get(f"{space_url}/api/status/{space_jid}", headers=headers) as r:
+                        async with s.get(f"{space_url}/api/status/{space_jid}", headers=headers,
+                                         timeout=aiohttp.ClientTimeout(total=_SPACE_POLL_TIMEOUT_S)) as r:
                             if r.status != 200:
                                 continue
                             st = await r.json()
@@ -241,9 +326,18 @@ async def _handle_relay_command(cmd: dict) -> dict:
                     if sstatus == "done":
                         return {"status": "ok", "result_url": st.get("result")}
                     if sstatus in ("error", "not_found"):
-                        return {"status": "error", "message": st.get("error") or f"processing {sstatus}"}
+                        # not_found = the Space forgot the job. Its job list lives in
+                        # memory, so this means it restarted mid-conversion (OOM, a
+                        # redeploy) — say so, rather than echoing "not_found".
+                        lost = (f"the Space no longer knows job {space_jid} — it restarted "
+                                f"mid-conversion (its job list is kept in memory)")
+                        return {"status": "error",
+                                "message": st.get("error") or (
+                                    lost if sstatus == "not_found" else "the Space reported a failure")}
+        except _CommandCancelled:
+            return {"status": "cancelled"}
         except Exception as e:  # noqa: BLE001
-            return {"status": "error", "message": f"processing failed: {e}"}
+            return {"status": "error", "message": f"processing failed: {_exc_text(e)}"}
 
     if ctype == "delete_episode":
         # Fleet "delete last episode": remove this device's local files + registry
