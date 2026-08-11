@@ -66,10 +66,26 @@ def test_check_imu_ok_but_no_rotation_warns(tmp_path):
     assert any("rotation" in w for w in st["warnings"])
 
 
-def test_check_imu_missing_file_errors(tmp_path):
+def test_check_imu_missing_file_is_not_an_error(tmp_path):
+    # The Orbbec Gemini 305 has no IMU, so an episode from it carries no
+    # oakd_imu.json. That must not be flagged: convert.py and offline_vslam both
+    # handle the absence, and Phase 0 measured IMU-free odometry as
+    # indistinguishable from re-running the pipeline. Reporting it as an error
+    # would mark every valid 305 recording as broken.
     st = _status()
     _check_imu(tmp_path, st)
-    assert any("missing oakd_imu.json" in e for e in st["errors"])
+    assert not st["errors"]
+    assert any("IMU-less" in i for i in st["info"])
+
+
+def test_check_imu_present_but_empty_still_errors(tmp_path):
+    # An OAK-D that wrote the file but captured nothing is still a real failure;
+    # relaxing the missing-file case must not relax this one.
+    _write(tmp_path / "oakd_imu.json", {"samples": []})
+    st = _status()
+    _check_imu(tmp_path, st)
+    assert any("accel" in e for e in st["errors"])
+    assert any("gyro" in e for e in st["errors"])
 
 
 # ── _check_calib ─────────────────────────────────────────────────────────
@@ -77,7 +93,7 @@ def test_check_imu_missing_file_errors(tmp_path):
 def test_check_calib_bad_intrinsics(tmp_path):
     _write(tmp_path / "oakd_calib_offline.json", {
         "width": 640, "height": 400, "fx": 0.0, "fy": 100.0,
-        "cx": 320, "cy": 200, "baseline": 0.05, "imu_to_cam": [],
+        "cx": 320, "cy": 200, "baseline": 0.05,
     })
     st = _status()
     _check_calib(tmp_path, st)
@@ -94,11 +110,27 @@ def test_check_calib_missing_key(tmp_path):
     assert any("missing keys" in e for e in st["errors"])
 
 
+def test_check_calib_without_imu_to_cam_is_valid(tmp_path):
+    # An IMU-less camera writes no imu_to_cam. offline_vslam probes for it with
+    # contains() and falls back to identity, so requiring it here would reject
+    # every Gemini 305 episode.
+    _write(tmp_path / "oakd_calib_offline.json", {
+        "width": 640, "height": 400, "fx": 311.4, "fy": 311.4,
+        "cx": 318.75, "cy": 196.25, "baseline": 0.018156,
+    })
+    st = _status()
+    _check_calib(tmp_path, st)
+    assert not st["errors"]
+
+
 # ── check_recording aggregate (empty dir → all required inputs missing) ──
 
 def test_check_recording_empty_dir_reports_missing(tmp_path):
     status = check_recording(tmp_path)
     errs = " ".join(status["errors"])
-    for expected in ("oakd_left.mp4", "oakd_imu.json",
-                     "angle_data.json", "oakd_calib_offline.json"):
+    for expected in ("oakd_left.mp4", "angle_data.json",
+                     "oakd_calib_offline.json"):
         assert expected in errs
+    # oakd_imu.json is deliberately NOT required — see
+    # test_check_imu_missing_file_is_not_an_error.
+    assert "oakd_imu.json" not in errs

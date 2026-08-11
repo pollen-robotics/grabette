@@ -10,7 +10,8 @@ What it verifies:
       oakd_left_timestamps.json   — has samples
       oakd_depth.mkv | oakd_depth/ — depth present, non-empty
       oakd_depth_timestamps.json  — has samples
-      oakd_imu.json               — accel + gyro present (rotation warned if absent)
+      oakd_imu.json               — accel + gyro present (rotation warned if absent);
+                                    absent entirely is fine for an IMU-less camera
       oakd_calib_offline.json     — required keys + positive intrinsics
   - Dataset inputs (required):
       angle_data.json             — has samples; each joint actually moves
@@ -129,12 +130,17 @@ def _check_seq_overlap(ep_dir: Path, status: dict) -> None:
 
 
 def _check_imu(ep_dir: Path, status: dict) -> None:
-    """OAK IMU (oakd_imu.json): accel + gyro are required SLAM inputs; rotation is
-    optional (VIO init aid), so its absence only warns."""
+    """IMU (oakd_imu.json): accel + gyro when present; rotation only warns.
+
+    An absent file is NOT an error — the Orbbec Gemini 305 has no IMU at all, so
+    its episodes legitimately carry none. Phase 0 measured IMU-free odometry as
+    indistinguishable from re-running the pipeline, and both convert.py and
+    offline_vslam handle the absence. If the file IS present it is still checked
+    fully, so a genuinely broken OAK-D capture is caught as before."""
     err, warn, info = status["errors"], status["warnings"], status["info"]
     imu_path = ep_dir / "oakd_imu.json"
     if not imu_path.is_file():
-        err.append("missing oakd_imu.json")
+        info.append("imu: none (IMU-less camera)")
         return
     counts = {"accel": 0, "gyro": 0, "rotation": 0}
     for s in _samples(imu_path):
@@ -215,7 +221,9 @@ def _check_calib(ep_dir: Path, status: dict) -> None:
         err.append("missing oakd_calib_offline.json")
         return
     c = _load_json(calib)
-    required = ["width", "height", "fx", "fy", "cx", "cy", "baseline", "imu_to_cam"]
+    # imu_to_cam is absent for an IMU-less camera; offline_vslam probes for it
+    # with contains() and falls back to identity, so it is not required here.
+    required = ["width", "height", "fx", "fy", "cx", "cy", "baseline"]
     miss = [k for k in required if k not in c]
     if miss:
         err.append(f"calib missing keys: {miss}")
