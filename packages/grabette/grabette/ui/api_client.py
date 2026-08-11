@@ -43,6 +43,10 @@ class GrabetteClient:
         # Spaces where /tmp is a normal-sized filesystem.
         self._download_dir = Path(download_dir) if download_dir else Path(tempfile.gettempdir())
         self._http = httpx.Client(base_url=self.base_url, timeout=10.0)
+        # Why the last list_sessions() returned nothing, or None if it
+        # succeeded. Without it a failing /api/sessions is indistinguishable
+        # from "no tasks yet": the dashboard just renders empty.
+        self.sessions_error: str | None = None
 
     # -- Camera --
 
@@ -216,8 +220,10 @@ class GrabetteClient:
         try:
             r = self._http.get("/api/sessions")
             r.raise_for_status()
+            self.sessions_error = None
             return r.json()
-        except Exception:
+        except Exception as e:
+            self.sessions_error = str(e)
             return []
 
     def create_session(self, name: str, description: str = "") -> dict:

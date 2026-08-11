@@ -35,6 +35,10 @@ class EpisodeInfo(BaseModel):
     angle_sample_count: int = 0
     has_video: bool = False
     has_imu: bool = False
+    # Human-readable damage report, empty for a healthy episode. Surfaced in
+    # the dashboard's Status column so a broken capture is visible and can be
+    # deleted, rather than silently listed with zeroed counters.
+    issues: list[str] = []
 
 
 class SessionInfo(BaseModel):
@@ -327,11 +331,44 @@ class SessionManager:
                     tar.add(ep_dir, arcname=episode_id)
         return archive_path
 
+    @staticmethod
+    def _has_data(path: Path) -> bool:
+        """True if the file exists *and* holds at least one byte.
+
+        An aborted capture leaves every output file created but zero-length,
+        so a bare exists() check reports has_video=True for a 0-byte mp4.
+        """
+        try:
+            return path.stat().st_size > 0
+        except OSError:
+            return False
+
     def _get_episode_info(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)
+        issues: list[str] = []
+
         video_path = ep_dir / "raw_video.mp4"
+        has_video = self._has_data(video_path)
+        if video_path.exists() and not has_video:
+            issues.append("empty video")
+
         # Real (OAK-D) episodes write oakd_imu.json; mock/legacy write imu_data.json.
-        imu_present = (ep_dir / "oakd_imu.json").exists() or (ep_dir / "imu_data.json").exists()
+        imu_paths = (ep_dir / "oakd_imu.json", ep_dir / "imu_data.json")
+        imu_present = any(self._has_data(p) for p in imu_paths)
+        if not imu_present and any(p.exists() for p in imu_paths):
+            issues.append("empty IMU log")
+
+        # oakd_calib.json is written by start_recording(), so it marks the
+        # episodes that actually ran an OAK-D. oakd_left.mp4 is the anchor the
+        # SLAM export globs on: without it the episode is silently missing
+        # from the pushed dataset. A leftover .h264 means the mux never ran.
+        if (ep_dir / "oakd_calib.json").exists():
+            if not self._has_data(ep_dir / "oakd_left.mp4"):
+                issues.append("no OAK-D video")
+            if not (ep_dir / "oakd_imu.json").exists():
+                issues.append("no OAK-D IMU")
+            if any((ep_dir / f"oakd_{s}.h264").exists() for s in ("left", "right")):
+                issues.append("unmuxed OAK-D stream")
 
         duration = 0.0
         frame_count = 0
@@ -339,7 +376,18 @@ class SessionManager:
         angle_sample_count = 0
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
+            # A capture cut short (power loss, daemon kill, full SD card) can
+            # leave metadata.json empty or truncated. Same policy as _load()
+            # for a corrupt registry: warn and fall back to zeroed counters,
+            # so one damaged episode degrades to "0 frames" instead of
+            # raising out of list_sessions() and blanking the whole dashboard.
+            # The failure is recorded in `issues` so it stays visible.
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (json.JSONDecodeError, OSError) as e:
+                logger.warning("Corrupt metadata.json for episode %s: %s", episode_id, e)
+                issues.append("unreadable metadata")
+                meta = {}
             duration = meta.get("duration_seconds", 0.0)
             frame_count = meta.get("frame_count", 0)
             imu_sample_count = meta.get("imu_sample_count") or meta.get("oakd", {}).get("imu_samples", 0)
@@ -352,8 +400,9 @@ class SessionManager:
             frame_count=frame_count,
             imu_sample_count=imu_sample_count,
             angle_sample_count=angle_sample_count,
-            has_video=video_path.exists(),
+            has_video=has_video,
             has_imu=imu_present,
+            issues=issues,
         )
 
     # ── Session operations ────────────────────────────────────────────

@@ -80,3 +80,113 @@ def test_delete_session_purges_episodes(tmp_path):
 
     assert not (tmp_path / "episodes" / "ep_b").exists()
     assert "ep_b" not in sm.get_session_detail(UNASSIGNED_ID).episode_ids
+
+
+def test_corrupt_metadata_does_not_break_listing(tmp_path):
+    # A capture cut short can leave metadata.json empty/truncated. That must
+    # not raise out of list_sessions() — the dashboard reads the whole task
+    # list through it, so one bad episode used to blank every task at once.
+    _make_episode(tmp_path, "ep_ok", ["oakd_imu.json"], meta={"frame_count": 42})
+    _make_episode(tmp_path, "ep_bad", ["oakd_imu.json"])
+    (tmp_path / "episodes" / "ep_bad" / "metadata.json").write_text("")
+
+    sm = SessionManager(data_dir=tmp_path)
+    sm.move_episodes(["ep_ok", "ep_bad"], UNASSIGNED_ID)
+
+    detail = sm.get_session_detail(UNASSIGNED_ID)
+    assert detail.episode_count == 2
+    by_id = {e.episode_id: e for e in detail.episodes}
+    assert by_id["ep_ok"].frame_count == 42
+    assert by_id["ep_bad"].frame_count == 0
+    assert by_id["ep_bad"].has_imu is True
+
+
+def test_active_session_route_not_shadowed():
+    # /api/sessions/active must be declared before /api/sessions/{session_id},
+    # otherwise FastAPI matches "active" as a session id and returns 404.
+    from grabette.app.routers.sessions import router
+
+    order = [
+        (r.path, sorted(r.methods))
+        for r in router.routes
+        if r.path in ("/api/sessions/active", "/api/sessions/{session_id}")
+    ]
+    for method in ("GET", "PUT"):
+        active = next(i for i, (p, m) in enumerate(order)
+                      if p == "/api/sessions/active" and method in m)
+        param = next(i for i, (p, m) in enumerate(order)
+                     if p == "/api/sessions/{session_id}" and method in m)
+        assert active < param, f"{method} /api/sessions/active is shadowed"
+
+
+def test_healthy_episode_reports_no_issues(tmp_path):
+    _make_episode(tmp_path, "ep_fine", ["oakd_imu.json", "raw_video.mp4"])
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_fine")
+    assert info.issues == []
+
+
+def test_aborted_capture_is_flagged_not_hidden(tmp_path):
+    # An interrupted capture leaves every output file created but zero-length.
+    # exists() alone reported has_video=True for a 0-byte mp4, so the episode
+    # looked merely "empty" instead of broken.
+    ep = tmp_path / "episodes" / "ep_aborted"
+    ep.mkdir(parents=True)
+    for name in ("raw_video.mp4", "oakd_imu.json", "metadata.json"):
+        (ep / name).write_text("")
+
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_aborted")
+
+    assert info.has_video is False
+    assert info.has_imu is False
+    assert set(info.issues) == {"empty video", "empty IMU log", "unreadable metadata"}
+
+
+def test_truncated_metadata_flagged_but_media_kept(tmp_path):
+    # Only metadata.json is damaged: the media is fine and must stay usable,
+    # so exactly one issue is reported.
+    _make_episode(tmp_path, "ep_meta", ["oakd_imu.json", "raw_video.mp4"])
+    (tmp_path / "episodes" / "ep_meta" / "metadata.json").write_text('{"frame_count": 4')
+
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_meta")
+
+    assert info.issues == ["unreadable metadata"]
+    assert info.has_video is True
+    assert info.has_imu is True
+
+
+def test_dead_oakd_is_flagged(tmp_path):
+    # The OAK-D died mid-capture: the Pi camera and angles recorded fine, so
+    # the episode reports a full frame count and looks healthy — but it has no
+    # oakd_left.mp4 and the SLAM export drops it without a word.
+    _make_episode(
+        tmp_path, "ep_dead_oak",
+        ["raw_video.mp4", "angle_data.json", "oakd_calib.json",
+         "oakd_left.h264", "oakd_right.h264"],
+        meta={"frame_count": 396, "duration_seconds": 8.08},
+    )
+    for name in ("oakd_left.h264", "oakd_right.h264"):
+        (tmp_path / "episodes" / "ep_dead_oak" / name).write_text("")
+
+    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep_dead_oak")
+
+    assert info.frame_count == 396
+    assert info.has_video is True
+    assert set(info.issues) == {
+        "no OAK-D video", "no OAK-D IMU", "unmuxed OAK-D stream",
+    }
+
+
+def test_healthy_oakd_episode_is_clean(tmp_path):
+    _make_episode(
+        tmp_path, "ep_oak_ok",
+        ["raw_video.mp4", "oakd_calib.json", "oakd_left.mp4",
+         "oakd_right.mp4", "oakd_imu.json"],
+    )
+    assert SessionManager(data_dir=tmp_path)._get_episode_info("ep_oak_ok").issues == []
+
+
+def test_legacy_episode_is_not_flagged_for_missing_oakd(tmp_path):
+    # No oakd_calib.json: this recording never had an OAK-D, so the absence of
+    # its outputs is normal, not damage.
+    _make_episode(tmp_path, "ep_legacy_ok", ["raw_video.mp4", "imu_data.json"])
+    assert SessionManager(data_dir=tmp_path)._get_episode_info("ep_legacy_ok").issues == []

@@ -598,11 +598,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         rows = []
         task_name = ""
         task_description = ""
+        export_skipped = 0
         for s in sessions:
             if s["id"] == session_id:
                 task_name = s.get("name", "")
                 task_description = s.get("description", "")
                 for ep in s.get("episodes", []):
+                    issues = ep.get("issues") or []
+                    if "no OAK-D video" in issues:
+                        export_skipped += 1
                     rows.append([
                         False,
                         ep["episode_id"],
@@ -610,6 +614,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         ep["frame_count"],
                         ep["imu_sample_count"],
                         ep.get("angle_sample_count", 0),
+                        "⚠ " + ", ".join(issues) if issues else "ok",
                     ])
                 break
         rows.reverse()
@@ -627,6 +632,24 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if task_description:
             desc_parts.append(f"**Task description:** {task_description}")
         desc_parts.append(f"*{count_str} recorded*")
+        # An unreachable/erroring API used to look exactly like "no episodes
+        # yet" — an empty table and no explanation. Say which it is.
+        if client.sessions_error:
+            desc_parts.append(
+                f"🛑 **Could not read the task list:** {client.sessions_error}"
+            )
+        flagged = sum(1 for r in rows if r[6] != "ok")
+        if flagged:
+            msg = (
+                f"⚠ **{flagged} episode{'s' if flagged != 1 else ''} flagged** "
+                "— see the Status column."
+            )
+            if export_skipped:
+                msg += (
+                    f" {export_skipped} without OAK-D video will be skipped "
+                    "by the dataset export."
+                )
+            desc_parts.append(msg)
         desc = "\n\n".join(desc_parts)
         return rows, move_dd, task_header, desc, cap_title, ep_title
 
@@ -1217,8 +1240,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Remembers, per browser, which task was selected so a page
                 # refresh stays on it instead of snapping back to the first
                 # task. Independent of the (server-side) capture session.
+                # `secret` must be pinned: Gradio encrypts the localStorage
+                # blob and, left unset, generates a fresh random key at every
+                # process start. After a daemon restart the browser's stored
+                # value would no longer decrypt — Gradio logs
+                # "Error reading from localStorage: SyntaxError: JSON.parse:
+                # unexpected end of data" and falls back to the default, so
+                # the selection was never actually remembered. This only
+                # obfuscates a task id, so a constant is fine.
                 selected_task_state = gr.BrowserState(
-                    "", storage_key="grabette_selected_task",
+                    "",
+                    storage_key="grabette_selected_task",
+                    secret="grabette-ui-v1",
                 )
                 new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
                 with gr.Group(visible=False) as new_task_form:
@@ -1274,11 +1307,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 task_desc_md = gr.Markdown("")
 
                 episodes_table = gr.Dataframe(
-                    headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
-                    datatype=["bool", "str", "str", "number", "number", "number"],
+                    headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle", "Status"],
+                    datatype=["bool", "str", "str", "number", "number", "number", "str"],
                     interactive=True,
-                    static_columns=[1, 2, 3, 4, 5],
-                    col_count=(6, "fixed"),
+                    static_columns=[1, 2, 3, 4, 5, 6],
+                    col_count=(7, "fixed"),
                     show_search="filter",
                 )
                 with gr.Row():
