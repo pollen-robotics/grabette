@@ -618,6 +618,47 @@ That is the fourth file needing the IMU-optional treatment, after
 `offline_vslam.cpp`, `convert.py` and `checks/recording.py` — all four vendored
 by the SLAM Space.
 
+## Open issue: daemon memory growth degrades capture (2026-08-12)
+
+A second batch of recordings (`try2`) still dropped 41-49% of depth frames at
+15-17 fps, despite the fixes above. Not thermal (51 C, no active throttling), not
+disk (22.1 MB/s available against ~5.3 MB/s needed), and **not** the dashboard
+preview streams — an A/B showed captures *with* two preview WebSockets attached
+did better (26.4% dropped) than without (48.8%), which refutes that hypothesis.
+
+The correlate is daemon RSS:
+
+| daemon state | RSS | capture result |
+|---|---|---|
+| freshly restarted | 182 MB | — |
+| camera enabled, idle | 245 MB | — |
+| after 2 captures | 327 MB (stable) | **29.36 fps, 2.2% dropped** |
+| long-running (`try2` era) | **1660 MB** | 15-17 fps, 41-49% dropped |
+
+**A fresh restart restores full performance.** Growth tracks enable/disable
+cycles — 318 → 478 MB over six — which the keepalive triggers after every
+capture. Increments decelerate (57, 32, 37, 11, 6, 17 MB), so this looks partly
+like allocator arena growth rather than a pure leak.
+
+One real cause found and fixed: `ob.Context()` was constructed per
+`init_device()`, and each one spawns a device-watcher thread plus native state
+that is never released ("Create PollingDeviceWatcher" appeared 16 times in one
+session). The Context is now process-wide (`_shared_context()`), which took that
+to 1 per run and stabilised thread count.
+
+That was not the whole story — RSS still grows ~27 MB/cycle. A standalone probe
+on the same hardware shows the SDK itself is nearly clean (Pipeline recreation
+~0.5 MB/cycle, reuse and calibration dumps flat), so the remaining growth is in
+the daemon rather than pyorbbecsdk.
+
+**Not yet attributed to this work.** `RpiBackend` constructs and drops a capture
+object per enable/disable cycle for the OAK-D too, so the same pattern may
+predate the Orbbec. Establishing that needs the same cycling test run with
+`depth_camera=oakd`, which has not been done.
+
+**Interim workaround:** restart `grabette` before a recording session. Raising
+`oakd_keepalive_s` would also reduce cycling.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.

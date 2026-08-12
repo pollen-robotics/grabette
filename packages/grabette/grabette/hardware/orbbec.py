@@ -71,6 +71,31 @@ _MAX_VALID_DEPTH_MM = 10_000
 # (5 fps) when idle. Recording converts every frame, as it must.
 _IDLE_PREVIEW_EVERY = 6
 
+# One Context for the process, created lazily and never torn down.
+#
+# ob.Context() is not a cheap handle: each one spawns a device-watcher thread
+# and native state that is NOT released when the Python object is dropped.
+# Because the daemon powers the camera down after each capture (the keepalive)
+# and re-initialises it for the next one, constructing a Context per
+# init_device() leaked ~14-22 MB and a thread or two per cycle. Measured on the
+# Pi: RSS climbed 324 -> 457 MB over six enable/disable cycles and reached
+# 1.66 GB in normal use, at which point memory pressure started costing ~50% of
+# the depth frames. The SDK log made it plain -- "Create PollingDeviceWatcher"
+# once per Context, 16 times in one session.
+_CONTEXT = None
+_CONTEXT_LOCK = threading.Lock()
+
+
+def _shared_context():
+    """The process-wide Orbbec Context, created on first use."""
+    global _CONTEXT
+    with _CONTEXT_LOCK:
+        if _CONTEXT is None:
+            import pyorbbecsdk as ob
+            _CONTEXT = ob.Context()
+            logger.info("Created the process-wide Orbbec Context")
+        return _CONTEXT
+
 
 class OrbbecCapture:
     """Captures rectified left mono (H.264) + depth from a Gemini 305 over USB3."""
@@ -99,6 +124,8 @@ class OrbbecCapture:
         # The SDK collects a temporary Context mid-call and then raises
         # 'NULL pointer passed for argument "deviceMgr"', so the Context and the
         # device list have to stay referenced for the lifetime of the device.
+        # The Context itself is process-wide (see _shared_context); this is just
+        # a local alias to keep it reachable.
         self._ctx = None
         self._devlist = None
         self._device = None
@@ -140,7 +167,7 @@ class OrbbecCapture:
         """Connect, sync clocks, read calibration, START the pipeline, drain."""
         import pyorbbecsdk as ob
 
-        self._ctx = ob.Context()
+        self._ctx = _shared_context()
         self._devlist = self._ctx.query_devices()
         if self._devlist.get_count() == 0:
             raise RuntimeError("No Orbbec device found (check the udev rules — "
@@ -561,6 +588,8 @@ class OrbbecCapture:
         self._pipeline = None
         self._device = None
         self._devlist = None
+        # Drop only this instance's alias. The Context stays alive for the
+        # process — recreating it per cycle is exactly what leaked.
         self._ctx = None
         self._initialized = False
         logger.info("OrbbecCapture shut down")
