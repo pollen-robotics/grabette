@@ -518,6 +518,32 @@ measurable: re-run SLAM on clamped depth and compare with
 `compare_trajectories.py --noise`. Until measured, the conservative default
 (no clamp) stands.
 
+## Pre-merge TODO: generic camera naming in the dashboard
+
+Requested 2026-08-12, to be done before this branch merges. The UI hardcodes
+"OAK-D" in user-visible strings and should instead show whichever depth camera
+is configured.
+
+The clean seam is `app/routers/oakd.py::_status()`, which already returns
+`supported/enabled/initialized/initializing` and is what the dashboard polls.
+Adding a `model` field (`"oakd"` / `"gemini305"`) — or better, a display label —
+lets the UI name itself with no new endpoint.
+
+Known user-visible sites:
+
+- `ui/app.py:264-272` — five `_badge("OAK-D", ...)` calls (N/A / Connected /
+  Starting… / Error / Off).
+- `ui/app.py:484` — toggle button appearance and the OAK data-row visibility.
+- `app/routers/oakd.py:42,53` — `HTTPException(501, "backend has no OAK-D")`.
+- `app/routers/camera.py:51,60` — docstrings for the depth endpoints (these
+  surface in the OpenAPI schema).
+
+**Not** in scope for that change, deliberately: the `/api/oakd/*` route paths and
+the `oakd_*` output filenames. Renaming routes breaks the UI client and any
+external caller; renaming files breaks convert.py, checks/*, dataset.py, the
+OpenArm integration and every existing HuggingFace dataset. Both are separate
+mechanical PRs with a compatibility shim, not part of a hardware swap.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.
