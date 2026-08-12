@@ -3,6 +3,7 @@
 Used by:
 - app/routers/wifi.py to serve status and connect to networks from the web UI
 - app/routers/system.py and relay_client.py for the device's routable LAN IP
+- relay_client.py for the SSID reported to the fleet (which network this device is on)
 """
 
 from __future__ import annotations

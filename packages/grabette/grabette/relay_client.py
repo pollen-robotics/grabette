@@ -23,7 +23,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 import aiohttp
 
-from grabette.wifi import get_route_ip
+from grabette.wifi import get_current_ssid, get_route_ip
 
 # Per-request timeout for the poll GET. Must exceed the fleet's LONG_POLL_S hold
 # (server-side, ~25s) so a legitimately held poll isn't cut short and mistaken
@@ -114,6 +114,20 @@ class RelayClient:
     def _headers(self, token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}"}
 
+    @staticmethod
+    async def _wifi_network() -> str:
+        """Current WiFi SSID, or "" if unknown (wired, hotspot, no nmcli).
+
+        Reported alongside the IP so the fleet page can say WHICH network a device
+        is on — two devices on different LANs both look plainly "online" otherwise.
+        Off the event loop: get_current_ssid() shells out to nmcli, and this runs
+        on the register path (which doubles as the heartbeat)."""
+        try:
+            return await asyncio.to_thread(get_current_ssid) or ""
+        except Exception:
+            logger.debug("could not read the WiFi SSID", exc_info=True)
+            return ""
+
     async def _register(self, session: aiohttp.ClientSession, token: str) -> None:
         body = {
             "device_id": self.device_id,
@@ -121,6 +135,8 @@ class RelayClient:
             "capabilities": self.capabilities,
             "hand": self.hand,
             "ip": get_route_ip(),  # recomputed each register so IP changes are caught
+            # Recomputed too — a device moved to another WiFi keeps the same id.
+            "network": await self._wifi_network(),
         }
         if self.tasks_provider is not None:
             try:
