@@ -114,12 +114,18 @@ class OrbbecCapture:
         depth_resolution: tuple[int, int] = DEFAULT_DEPTH_RESOLUTION,
         bitrate: str = DEFAULT_BITRATE,
         enable_depth: bool = True,
+        ir_exposure_us: int = 0,
+        ir_gain: int = 0,
     ) -> None:
         self.sync = sync_manager
         self.fps = fps
         self.depth_resolution = depth_resolution
         self.bitrate = bitrate
         self.enable_depth = enable_depth
+        # 0 = leave auto-exposure alone (the default, unchanged behaviour).
+        # Non-zero disables AE and pins exposure/gain — see _apply_exposure.
+        self.ir_exposure_us = ir_exposure_us
+        self.ir_gain = ir_gain
 
         # The SDK collects a temporary Context mid-call and then raises
         # 'NULL pointer passed for argument "deviceMgr"', so the Context and the
@@ -205,6 +211,8 @@ class OrbbecCapture:
         self._pipeline.enable_frame_sync()
         self._pipeline.start(config)
 
+        self._apply_exposure()
+
         # Intrinsics must be read after start(): they track the streaming
         # resolution, and the per-unit values differ from the datasheet's
         # nominal table.
@@ -217,6 +225,35 @@ class OrbbecCapture:
         self._thread.start()
 
         logger.info("OrbbecCapture pipeline running (idle, awaiting start_recording)")
+
+    def _apply_exposure(self) -> None:
+        """Optionally pin IR exposure/gain instead of letting auto-exposure run.
+
+        Default AE in a dim room picks ~15.6 ms of integration with gain at its
+        minimum of 16 — nearly half the 33 ms frame interval. That is the right
+        trade for a static camera (low noise) and the wrong one for a moving
+        rig: frames smear, and tracking losses in real recordings correlated
+        with a drop in image sharpness while depth coverage stayed healthy.
+
+        Pinning a shorter exposure forces the noise up instead. Measured on a
+        static scene, 3000 us with gain 160 holds the same mean brightness as
+        AE's 15600/16 while costing ~9 points of depth coverage (59.6% -> 50.7%).
+        Whether that trade wins depends on how fast the rig actually moves, so
+        this stays OFF by default and is opt-in per device.
+        """
+        if not self.ir_exposure_us:
+            return
+        try:
+            import pyorbbecsdk as ob
+            P = ob.OBPropertyID
+            self._device.set_bool_property(P.OB_PROP_IR_AUTO_EXPOSURE_BOOL, False)
+            self._device.set_int_property(P.OB_PROP_IR_EXPOSURE_INT, self.ir_exposure_us)
+            if self.ir_gain:
+                self._device.set_int_property(P.OB_PROP_IR_GAIN_INT, self.ir_gain)
+            logger.info("IR exposure pinned: %d us, gain %s",
+                        self.ir_exposure_us, self.ir_gain or "unchanged")
+        except Exception as e:
+            logger.warning("Could not pin IR exposure (leaving AE on): %s", e)
 
     def _pick_profile(self, sensor, fmt: str, w: int, h: int):
         """Exact width/height/format/fps profile, or a clear error listing options."""

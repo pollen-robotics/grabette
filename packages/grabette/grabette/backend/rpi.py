@@ -43,6 +43,7 @@ class RpiBackend(Backend):
     def __init__(
         self, enable_angle: bool = False, enable_oakd: bool = True,
         oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
+        orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
     ) -> None:
         super().__init__()
         self._running = False
@@ -58,6 +59,8 @@ class RpiBackend(Backend):
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
         self._depth_camera = depth_camera
+        self._orbbec_ir_exposure_us = orbbec_ir_exposure_us
+        self._orbbec_ir_gain = orbbec_ir_gain
 
         self._sync = None
         self._camera = None
@@ -113,7 +116,11 @@ class RpiBackend(Backend):
         try:
             if self._depth_camera == "gemini305":
                 from grabette.hardware.orbbec import OrbbecCapture
-                self._oakd = OrbbecCapture(self._sync)
+                self._oakd = OrbbecCapture(
+                    self._sync,
+                    ir_exposure_us=self._orbbec_ir_exposure_us,
+                    ir_gain=self._orbbec_ir_gain,
+                )
             else:
                 from grabette.hardware.oakd import OakdCapture
                 self._oakd = OakdCapture(self._sync)

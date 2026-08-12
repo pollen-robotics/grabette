@@ -80,6 +80,14 @@ class Settings(BaseSettings):
     # the model only — enable_oakd still controls whether it is powered at all.
     depth_camera: Literal["oakd", "gemini305"] = "oakd"
 
+    # Gemini 305 IR exposure. 0 = leave the camera's auto-exposure alone.
+    # AE favours low noise over short integration (~15.6 ms with gain 16 in a
+    # dim room), which smears a moving rig. Pinning a shorter exposure trades
+    # depth coverage for less motion blur; whether that wins depends on the
+    # workspace lighting, so it is opt-in per device.
+    orbbec_ir_exposure_us: int = 0
+    orbbec_ir_gain: int = 0
+
     # UI
     ui_enabled: bool = True
 
