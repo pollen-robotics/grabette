@@ -659,6 +659,45 @@ predate the Orbbec. Establishing that needs the same cycling test run with
 **Interim workaround:** restart `grabette` before a recording session. Raising
 `oakd_keepalive_s` would also reduce cycling.
 
+## Working recordings on a clean daemon (try3, 2026-08-12)
+
+Five episodes recorded through the dashboard after restarting `grabette`.
+**5/5 GOOD.**
+
+| episode | tracked | dist | median step | fps | dropped |
+|---|---|---|---|---|---|
+| 131857 | 134/164 (82%) | 0.82 m | 6.3 mm | 27.96 | 12/176 |
+| 131908 | 187/187 (100%) | 1.03 m | 5.4 mm | 28.20 | 12/199 |
+| 131919 | 230/230 (100%) | 1.19 m | 5.0 mm | 28.77 | 10/240 |
+| 131932 | 141/201 (70%) | 0.88 m | 5.3 mm | 28.19 | 13/214 |
+| 131944 | 191/191 (100%) | 1.02 m | 5.1 mm | 28.66 | 9/200 |
+
+5.4% of depth frames dropped overall, against 71% before the fixes and 41-49%
+on the bloated daemon. Median step 5.0-6.3 mm sits just above the OAK-D
+reference band of 3.4-4.5 mm, so the motion is representative.
+
+Run-to-run noise floor on 131919: **3.264 mm local-delta RMSE on a 5.211 mm mean
+step** — the same order as the OAK-D's 2.309/3.715, confirming the pipeline's
+non-determinism is unchanged by the camera.
+
+### The two tracking losses are the passive-stereo limit, not a bug
+
+| episode | burst | brightness | depth coverage |
+|---|---|---|---|
+| 131857 | frames 47-76 | 57.4 → 38.8 | 63% → **18%** |
+| 131932 | 72-101, 136-165 | 54.5 → 46.7 | 69% → **17%** |
+
+Depth collapses to ~17% in dimmer parts of the scene and odometry drops out;
+sharpness barely moves, so this is illumination and texture rather than motion
+blur. Same signature as the very first workstation capture. Every burst is
+exactly 30 frames because `offline_vslam.cpp` sets
+`kOdomResetCountdown = 30` — one second before RTAB-Map resets.
+
+Practical consequence, unchanged from earlier: the 305 is
+`OBDeviceType.LIGHT_BINOCULAR` with an IR-cut filter and no projector, so it
+needs a lit, textured workspace. Whether it is materially worse than the OAK-D
+SR (also passive) still needs the same-motion A/B.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.
