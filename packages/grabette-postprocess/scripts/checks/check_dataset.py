@@ -33,8 +33,10 @@ def main(dataset_dir, verbose):
     """Check dataset health: Arducam video, OAK RGBD/IMU, gripper angles, SLAM outputs."""
     dataset_dir = Path(dataset_dir).expanduser().absolute()
 
-    # An episode is any dir containing an OAK recording (oakd_imu.json is the anchor).
-    episodes = find_episodes(dataset_dir, anchor="oakd_imu.json")
+    # An episode is any dir containing a depth recording. Anchor on the SLAM
+    # input rather than the IMU: the Orbbec Gemini 305 has no IMU, so anchoring
+    # on oakd_imu.json makes every 305 episode invisible to this check.
+    episodes = find_episodes(dataset_dir, anchor="oakd_left.mp4")
     if not episodes:
         print(f"No episodes (oakd_imu.json) found under {dataset_dir}")
         return

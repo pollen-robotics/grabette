@@ -544,6 +544,80 @@ external caller; renaming files breaks convert.py, checks/*, dataset.py, the
 OpenArm integration and every existing HuggingFace dataset. Both are separate
 mechanical PRs with a compatibility shim, not part of a hardware swap.
 
+## First real recordings exposed two bugs (2026-08-12)
+
+Five episodes recorded through the daemon on `grabette-01` — the first time
+`OrbbecCapture` ran under real concurrent load, with picamera2 encoding
+`raw_video.mp4` at the same time. Both bugs were introduced by this work; the
+standalone bench had passed at 30 fps because nothing else was running.
+
+### Bug 1 — 71% of depth frames dropped
+
+| | OAK-D reference | Orbbec, as first written |
+|---|---|---|
+| depth stream | 30.02 fps, seq span 307 = 307 frames, **0 dropped** | 8.61 fps, seq span 266 = 77 frames, **189 dropped (71%)** |
+| arducam | 49.7 fps | 28.1 fps |
+
+Causes, in order of cost:
+
+1. A 640×400 uint16 **PNG encode per frame**, on the acquisition thread.
+2. A float32 depth conversion allocating a 1 MB array and walking it four times,
+   where integer `raw // 10` does the job in one pass.
+3. `(mask > 0).astype(...)` recomputed **every frame** for a value that never
+   changes.
+4. Everything on a single thread, where `OakdCapture` splits video and depth.
+
+Fixed by piping depth straight into a second ffmpeg FFV1 encoder instead of
+writing PNGs (which also deletes the `_pack_depth_video` packing pass), the
+integer conversion, and precomputing the mask.
+
+### Bug 2 — timestamps on the wrong clock
+
+`sync.monotonic_s_to_ms()` expects **CLOCK_MONOTONIC** — depthai's
+`getTimestamp()` is monotonic, which is what it was written for. Orbbec's
+`get_global_timestamp_us()` is **CLOCK_REALTIME (epoch)**. Feeding epoch in gave
+`host_ms ≈ 1.79e12`; `camera_trajectory.csv` then showed `1786530000.0` on every
+row, because ~1.79e9 exceeds float32's ~7 significant digits and every stamp
+collapsed to one value. Episodes looked zero-length, so `check_trajectory`
+reported "Unrealistic avg speed: 9.70 m/s (total 0.97m in 0.0s)".
+
+Worse than the cosmetic grade: cross-stream alignment with the arducam and angle
+data was silently wrong. Fixed by measuring `time.monotonic() - time.time()` once
+at init and applying it per frame.
+
+### Bug 3 — the always-on pipeline cooked the board
+
+Even when *not* recording, the loop converted and masked every frame at 30 fps
+just to keep a preview warm. Measured cost: **78.8 °C enabled-and-idle vs 60.8 °C
+disabled**, which put the Pi into thermal throttling (`throttled=0xe0008`, soft
+temp limit active) *before* a capture began. Idle now converts one frame in six
+(~5 fps preview, `_IDLE_PREVIEW_EVERY`).
+
+### Result
+
+| | as first written | after fixes |
+|---|---|---|
+| depth/IR | 8.61 fps, 71% dropped | **29.63 fps, 1.3% dropped** |
+| arducam | 28.1 fps | **40.0 fps** |
+| idle temp, camera on | 78.8 °C | **55.5 °C** |
+| thermal throttling | active | **none** |
+| `host_ms` | ~1.79e12 (epoch) | 10.8 → 19896.4 ✓ |
+
+End-to-end on a fixed episode: depth decodes as uint16 mm (median 0.308 m, no
+`65535`), convert → SLAM **600/600 tracked, GOOD**.
+
+Caveat: that episode was near-stationary (0.19 m, 0.3 mm/frame), so it validates
+plumbing, not trajectory quality. The 1.3% residual drop is not yet explained —
+the OAK-D reference dropped none.
+
+### Bug 4 — check_dataset anchored on the IMU
+
+`find_episodes(dataset_dir, anchor="oakd_imu.json")` made every 305 episode
+invisible ("No episodes found"). Now anchors on `oakd_left.mp4`, the SLAM input.
+That is the fourth file needing the IMU-optional treatment, after
+`offline_vslam.cpp`, `convert.py` and `checks/recording.py` — all four vendored
+by the SLAM Space.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.

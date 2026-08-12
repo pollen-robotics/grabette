@@ -27,7 +27,7 @@ sharing depth's pixel grid, so no host undistortion is needed.
 Output layout matches oakd.py's `oakd_*` names on purpose — convert.py,
 checks/*, dataset.py and every existing HuggingFace dataset key on them:
     oakd_left.mp4               H.264, rectified left (from LEFT_IR)
-    oakd_depth/<seq>.png        uint16 mm, packed to oakd_depth.mkv on stop
+    oakd_depth.mkv              uint16 mm, lossless FFV1, encoded live
     oakd_left_timestamps.json   per-frame device_us + host_ms
     oakd_depth_timestamps.json
     oakd_calib_offline.json     fx/fy/cx/cy/baseline (no imu_to_cam)
@@ -62,6 +62,15 @@ _MASK_PATH = Path(__file__).parent / "oak_mask.png"
 # on (depth > 0).mean() and the body mask zeroes pixels by multiplication.
 _MAX_VALID_DEPTH_MM = 10_000
 
+# While NOT recording the pipeline still runs, purely to keep a live preview
+# frame warm. Converting every frame for that is waste: measured on a Pi 4, the
+# always-on loop alone accounted for ~18 C of steady-state temperature
+# (78.8 C enabled-and-idle vs 60.8 C disabled), which pushed the board into
+# thermal throttling before a capture even began. The preview WebSocket runs at
+# ~15 fps and nobody is watching most of the time, so convert one frame in six
+# (5 fps) when idle. Recording converts every frame, as it must.
+_IDLE_PREVIEW_EVERY = 6
+
 
 class OrbbecCapture:
     """Captures rectified left mono (H.264) + depth from a Gemini 305 over USB3."""
@@ -69,7 +78,6 @@ class OrbbecCapture:
     DEFAULT_FPS = 30
     DEFAULT_DEPTH_RESOLUTION = (640, 400)
     DEFAULT_BITRATE = "8M"
-    DEFAULT_DEPTH_PNG_COMPRESSION = 1
 
     PREVIEW_DEPTH_MIN_MM = 200
     PREVIEW_DEPTH_MAX_MM = 3000
@@ -81,14 +89,12 @@ class OrbbecCapture:
         depth_resolution: tuple[int, int] = DEFAULT_DEPTH_RESOLUTION,
         bitrate: str = DEFAULT_BITRATE,
         enable_depth: bool = True,
-        depth_png_compression: int = DEFAULT_DEPTH_PNG_COMPRESSION,
     ) -> None:
         self.sync = sync_manager
         self.fps = fps
         self.depth_resolution = depth_resolution
         self.bitrate = bitrate
         self.enable_depth = enable_depth
-        self.depth_png_compression = depth_png_compression
 
         # The SDK collects a temporary Context mid-call and then raises
         # 'NULL pointer passed for argument "deviceMgr"', so the Context and the
@@ -107,10 +113,18 @@ class OrbbecCapture:
         self._clock_pairs: list[dict] = []
 
         self._encoder: subprocess.Popen | None = None
+        self._depth_encoder: subprocess.Popen | None = None
         self._files_lock = threading.Lock()
 
         self._latest_depth: np.ndarray | None = None
         self._depth_scale = 1.0
+        # Orbbec's get_global_timestamp_us() is CLOCK_REALTIME (epoch), but
+        # SyncManager.monotonic_s_to_ms() expects CLOCK_MONOTONIC — depthai's
+        # getTimestamp() is monotonic, which is what it was written for. Feeding
+        # epoch straight in yields host_ms ~1.79e12, which downstream collapses
+        # to a single value at float precision and makes every episode look
+        # zero-length. Measured once at init and applied per frame.
+        self._epoch_to_monotonic = 0.0
 
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
@@ -118,6 +132,7 @@ class OrbbecCapture:
         self._calibration_json: dict | None = None
         self._calib_offline: dict | None = None
         self._mask: np.ndarray | None = None
+        self._mask_mul: np.ndarray | None = None
 
     # ------------------------------------------------------------------ init
 
@@ -139,6 +154,10 @@ class OrbbecCapture:
         # get_system_timestamp_us(), which is ~28 ms late because it marks
         # delivery rather than capture.
         self._device.timer_sync_with_host()
+        # Offset between the epoch clock the SDK stamps with and the monotonic
+        # clock SyncManager runs on. Sampled tightly so scheduling noise between
+        # the two reads stays sub-millisecond.
+        self._epoch_to_monotonic = time.monotonic() - time.time()
 
         logger.info("Gemini 305 ready: %s id=%s fw=%s conn=%s",
                     info.get_name(), info.get_serial_number(),
@@ -197,6 +216,10 @@ class OrbbecCapture:
         want = (self.depth_resolution[1], self.depth_resolution[0])
         if mask is not None and mask.shape == want:
             self._mask = mask
+            # Precomputed once. Doing `(mask > 0).astype(...)` per frame meant a
+            # full-frame compare plus a cast 30 times a second for a value that
+            # never changes.
+            self._mask_mul = (mask > 0).astype(np.uint16)
         else:
             logger.warning("oak_mask.png shape %s != depth_resolution %s — mask disabled",
                            None if mask is None else mask.shape, self.depth_resolution)
@@ -281,8 +304,7 @@ class OrbbecCapture:
 
         self._output_dir = Path(output_dir).absolute()
         self._output_dir.mkdir(parents=True, exist_ok=True)
-        if self.enable_depth:
-            (self._output_dir / "oakd_depth").mkdir(parents=True, exist_ok=True)
+
 
         if self._calibration_json:
             (self._output_dir / "oakd_calib.json").write_text(
@@ -302,6 +324,9 @@ class OrbbecCapture:
 
         with self._files_lock:
             self._encoder = self._spawn_encoder(self._output_dir / "oakd_left.mp4")
+            if self.enable_depth:
+                self._depth_encoder = self._spawn_depth_encoder(
+                    self._output_dir / "oakd_depth.mkv")
             self._recording = True
 
         logger.info("OrbbecCapture recording → %s", self._output_dir)
@@ -330,6 +355,29 @@ class OrbbecCapture:
         return subprocess.Popen(cmd, stdin=subprocess.PIPE,
                                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
+    def _spawn_depth_encoder(self, mkv_path: Path) -> subprocess.Popen:
+        """ffmpeg reading raw uint16 depth on stdin, writing lossless FFV1.
+
+        Encoding live replaces the OAK-D path's write-PNGs-then-pack-at-stop
+        approach. A 640x400 uint16 PNG per frame cost more than the whole rest of
+        the loop on a Pi 4 and was the main reason two thirds of frames were
+        dropped once picamera2 was encoding concurrently. Piping to ffmpeg moves
+        the compression onto its own process, drops the separate packing pass,
+        and produces exactly the same oakd_depth.mkv.
+
+        Lossless is right here, unlike the left stream: depth values are
+        measurements RTAB-Map reads numerically.
+        """
+        w, h = self.depth_resolution
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-f", "rawvideo", "-pix_fmt", "gray16le", "-s", f"{w}x{h}",
+            "-r", str(self.fps), "-i", "-",
+            "-c:v", "ffv1", "-level", "3", "-threads", "1", str(mkv_path),
+        ]
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
     def stop_recording(self) -> dict:
         """Stop disk writes, close the encoder, dump sidecars. Pipeline keeps running."""
         if not self._recording:
@@ -338,20 +386,21 @@ class OrbbecCapture:
         with self._files_lock:
             self._recording = False
             enc, self._encoder = self._encoder, None
+            denc, self._depth_encoder = self._depth_encoder, None
 
-        if enc is not None:
+        # Both encoders finalise in parallel; each is an independent process.
+        for proc, label in ((enc, "left"), (denc, "depth")):
+            if proc is None:
+                continue
             try:
-                enc.stdin.close()
-                enc.wait(timeout=30)
-                if enc.returncode != 0:
-                    err = enc.stderr.read().decode(errors="replace")[-300:]
-                    logger.error("ffmpeg encode failed: %s", err)
+                proc.stdin.close()
+                proc.wait(timeout=60)
+                if proc.returncode != 0:
+                    err = proc.stderr.read().decode(errors="replace")[-300:]
+                    logger.error("ffmpeg %s encode failed: %s", label, err)
             except Exception as e:
-                logger.error("Error finalising encoder: %s", e)
-                enc.kill()
-
-        if self.enable_depth:
-            self._pack_depth_video()
+                logger.error("Error finalising %s encoder: %s", label, e)
+                proc.kill()
 
         if self._output_dir:
             (self._output_dir / "oakd_left_timestamps.json").write_text(
@@ -375,9 +424,15 @@ class OrbbecCapture:
     # ---------------------------------------------------------------- writer
 
     def _writer_loop(self) -> None:
-        """Drain frames continuously; cache for preview; write only while recording."""
-        png_params = [cv2.IMWRITE_PNG_COMPRESSION, self.depth_png_compression]
+        """Drain frames continuously; cache for preview; write only while recording.
+
+        Per-frame work is kept deliberately small — an integer depth conversion
+        and two pipe writes. Anything heavier here (a float conversion, a PNG
+        encode) stalls the loop past the 33 ms frame interval and the SDK drops
+        frames, which is exactly what happened in the first on-device recordings.
+        """
         n = 0
+        idle_n = 0
         while not self._stop_event.is_set():
             try:
                 frames = self._pipeline.wait_for_frames(1000)
@@ -392,19 +447,28 @@ class OrbbecCapture:
             if depth_frame is None or ir_frame is None:
                 continue
 
+            recording = self._recording
+            if not recording:
+                # Idle: keep the preview warm at ~5 fps instead of 30, and skip
+                # the conversion entirely on the frames in between.
+                idle_n += 1
+                if idle_n % _IDLE_PREVIEW_EVERY:
+                    continue
+
             depth_mm = self._to_millimetres(depth_frame)
-            if self._mask is not None and depth_mm.shape == self._mask.shape:
-                depth_mm = depth_mm * (self._mask > 0).astype(depth_mm.dtype)
+            if self._mask_mul is not None and depth_mm.shape == self._mask_mul.shape:
+                depth_mm = depth_mm * self._mask_mul
             self._latest_depth = depth_mm  # atomic reference swap for preview
 
-            if not self._recording:
+            if not recording:
                 continue
 
             # Both streams are hardware-synced to the same device timestamp, so
             # one stamp covers the pair.
             device_us = int(depth_frame.get_timestamp_us())
             host_ms = self.sync.monotonic_s_to_ms(
-                depth_frame.get_global_timestamp_us() / 1_000_000.0)
+                depth_frame.get_global_timestamp_us() / 1_000_000.0
+                + self._epoch_to_monotonic)
             seq = int(depth_frame.get_index())
 
             if not self._clock_pairs:
@@ -421,17 +485,15 @@ class OrbbecCapture:
                     continue
                 try:
                     self._encoder.stdin.write(gray.tobytes())
+                    self._left_ts.append(
+                        {"seq": seq, "device_us": device_us, "host_ms": host_ms})
+                    if self._depth_encoder is not None:
+                        self._depth_encoder.stdin.write(depth_mm.tobytes())
+                        self._depth_ts.append(
+                            {"seq": seq, "device_us": device_us, "host_ms": host_ms})
                 except (BrokenPipeError, ValueError):
                     logger.error("encoder pipe closed unexpectedly")
                     continue
-                self._left_ts.append(
-                    {"seq": seq, "device_us": device_us, "host_ms": host_ms})
-                if self.enable_depth:
-                    cv2.imwrite(
-                        str(self._output_dir / "oakd_depth" / f"{seq:08d}.png"),
-                        depth_mm, png_params)
-                    self._depth_ts.append(
-                        {"seq": seq, "device_us": device_us, "host_ms": host_ms})
                 n += 1
         logger.info("orbbec writer: %d frames recorded", n)
 
@@ -445,10 +507,15 @@ class OrbbecCapture:
         scale = depth_frame.get_depth_scale()
         raw = np.frombuffer(depth_frame.get_data(), dtype=np.uint16).reshape(
             depth_frame.get_height(), depth_frame.get_width())
-        mm = raw.astype(np.float32) * scale
-        mm[raw == 65535] = 0          # saturation marker, not a 6.5 m return
-        mm[mm > _MAX_VALID_DEPTH_MM] = 0
-        return mm.astype(np.uint16)
+        # Integer path, not float. scale is 0.1 on this device, so millimetres
+        # are raw // 10 — one uint16 pass instead of allocating a 1 MB float32
+        # and walking it four times. At 30 fps on a Pi 4 that difference is the
+        # gap between keeping up and dropping two thirds of the frames.
+        step = int(round(1.0 / scale)) if scale > 0 else 1
+        mm = raw // step if step > 1 else raw.copy()
+        np.putmask(mm, raw == 65535, 0)      # saturation marker, not 6.5 m
+        np.putmask(mm, mm > _MAX_VALID_DEPTH_MM, 0)
+        return mm
 
     # ------------------------------------------------------------- live view
 
@@ -471,47 +538,6 @@ class OrbbecCapture:
         return buf.tobytes() if ok else None
 
     # -------------------------------------------------------------- shutdown
-
-    def _pack_depth_video(self) -> None:
-        """Pack oakd_depth/*.png into one lossless FFV1 16-bit oakd_depth.mkv.
-
-        Same contract as oakd.py's version: capture order, bit-identical once
-        decoded, PNGs kept on any failure since convert/episode_check accept
-        either layout. Lossless is right here — unlike the left stream, depth
-        values are measurements the SLAM reads numerically.
-        """
-        if not self._output_dir or not self._depth_ts:
-            return
-        depth_dir = self._output_dir / "oakd_depth"
-        if not depth_dir.is_dir():
-            return
-        out = self._output_dir / "oakd_depth.mkv"
-        try:
-            import tempfile
-            with tempfile.TemporaryDirectory() as tmp:
-                stage = Path(tmp)
-                for i, s in enumerate(self._depth_ts):
-                    src = depth_dir / f'{int(s["seq"]):08d}.png'
-                    if not src.exists():
-                        logger.warning("depth pack: missing PNG for seq %s — keeping PNGs",
-                                       s.get("seq"))
-                        return
-                    (stage / f"{i:06d}.png").symlink_to(src.resolve())
-                result = subprocess.run([
-                    "ffmpeg", "-y", "-loglevel", "error",
-                    "-framerate", f"{float(self.fps):.3f}",
-                    "-start_number", "0", "-i", str(stage / "%06d.png"),
-                    "-c:v", "ffv1", "-level", "3", "-pix_fmt", "gray16le", str(out),
-                ], capture_output=True, text=True)
-            if result.returncode != 0:
-                logger.error("depth pack ffmpeg failed: %s", result.stderr[-300:])
-                if out.exists():
-                    out.unlink()
-                return
-            shutil.rmtree(depth_dir)
-            logger.info("orbbec depth packed → %s (%d frames)", out.name, len(self._depth_ts))
-        except Exception as e:
-            logger.warning("depth pack failed (%s) — keeping PNGs", e)
 
     def shutdown(self) -> None:
         """Stop the pipeline and exit the drainer thread."""
