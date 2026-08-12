@@ -698,6 +698,54 @@ Practical consequence, unchanged from earlier: the 305 is
 needs a lit, textured workspace. Whether it is materially worse than the OAK-D
 SR (also passive) still needs the same-motion A/B.
 
+## Clean result: 100% tracking on every episode (try5, 2026-08-12)
+
+Six episodes, two batches of three, kitchen scene, freshly restarted daemon.
+**6/6 GOOD, 100% tracking on every one — zero losses across 1,256 frames.**
+
+| batch | tracking | median step | dropped |
+|---|---|---|---|
+| try5a | 100 / 100 / 100 % | 5.0, 7.0, 3.6 mm | 4.6% |
+| try5b | 100 / 100 / 100 % | 3.6, 3.6, 4.5 mm | 4.2% |
+
+Median step 3.6-7.0 mm brackets the OAK-D reference band of 3.4-4.5 mm, so the
+motion is representative, and drop rates are matched between batches.
+
+### The exposure experiment did not actually run
+
+try5b was meant to test pinned exposure, and did not: the feature touches four
+files and only `orbbec.py` had ever been scp'd to the Pi, which was still at
+`4911872`. `GRABETTE_ORBBEC_IR_EXPOSURE_US` was silently ignored, because
+pydantic-settings drops unknown env vars without complaint.
+
+So try5b is a **second auto-exposure batch**, which makes the pair a
+repeatability measurement rather than an A/B — and both hit 100%.
+
+**The consequence is that the exposure knob is not needed.** Auto-exposure
+reaches 100% tracking once the daemon is healthy and the scene is textured; the
+motion blur seen in try4 was an artefact of that batch's 23% frame drops
+stretching the interval between surviving frames, not of the exposure itself.
+The setting stays in the codebase, off by default, for workspaces where
+lighting cannot be improved. `grabette-01` has been reverted to AE.
+
+### What each batch actually taught us
+
+| batch | drops | scene | result | limiting factor |
+|---|---|---|---|---|
+| try1 | 71% | desk | 1 WARN / 4 BAD | frame drops + wrong clock |
+| try2 | 41-49% | desk | 4 GOOD / 1 WARN | daemon RSS at 1.66 GB |
+| try3 | 5.4% | desk | 5/5 GOOD, 90% tracked | dark objects starving depth (63% → 17%) |
+| try4 | 23% | kitchen | 5/5 GOOD, 81% tracked | drops; depth stayed healthy at 68-75% |
+| **try5** | **4.4%** | **kitchen** | **6/6 GOOD, 100% tracked** | **none observed** |
+
+Two conditions have to hold together: a **freshly restarted daemon** (RSS growth
+is still unattributed) and a **lit, textured workspace** (passive stereo, IR-cut
+filter, no projector). With both, the Gemini 305 matches what the OAK-D produces
+on this rig.
+
+Still outstanding: the same-motion A/B against the OAK-D itself, which is the
+only thing that can say whether the 305 is as good, not merely good.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.
