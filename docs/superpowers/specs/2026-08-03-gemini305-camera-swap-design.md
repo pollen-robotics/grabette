@@ -618,85 +618,56 @@ That is the fourth file needing the IMU-optional treatment, after
 `offline_vslam.cpp`, `convert.py` and `checks/recording.py` — all four vendored
 by the SLAM Space.
 
-## Open issue: daemon memory growth degrades capture (2026-08-12)
+## RESOLVED: daemon memory growth was glibc arena retention (2026-08-12)
 
-A second batch of recordings (`try2`) still dropped 41-49% of depth frames at
-15-17 fps, despite the fixes above. Not thermal (51 C, no active throttling), not
-disk (22.1 MB/s available against ~5.3 MB/s needed), and **not** the dashboard
-preview streams — an A/B showed captures *with* two preview WebSockets attached
-did better (26.4% dropped) than without (48.8%), which refutes that hypothesis.
+**Symptom.** Daemon RSS climbed to 1.66 GB in normal use, and capture degraded
+with it — from 1.3% of depth frames dropped on a fresh daemon to 41-49% on a
+bloated one, at 15-17 fps instead of 29. A restart restored full performance.
 
-The correlate is daemon RSS:
+**Ruled out first:** thermal (51 C, no active throttling), disk (22.1 MB/s
+available against ~5.3 MB/s needed), and the dashboard preview streams — an A/B
+had captures *with* two preview WebSockets doing better (26.4% dropped) than
+without (48.8%), refuting that hypothesis outright.
 
-| daemon state | RSS | capture result |
-|---|---|---|
-| freshly restarted | 182 MB | — |
-| camera enabled, idle | 245 MB | — |
-| after 2 captures | 327 MB (stable) | **29.36 fps, 2.2% dropped** |
-| long-running (`try2` era) | **1660 MB** | 15-17 fps, 41-49% dropped |
+**Root cause.** Not a leak. Cycling `OrbbecCapture` in a standalone process with
+`tracemalloc` showed the **Python heap completely flat** — 4.2 MB across 8
+cycles, gc objects +3, writer thread exiting cleanly every time — while RSS still
+grew. `malloc_trim(0)` then handed back 6-8 MB per cycle and held RSS at a
+plateau, which is the signature of memory freed by the application but retained
+by the allocator.
 
-**A fresh restart restores full performance.** Growth tracks enable/disable
-cycles — 318 → 478 MB over six — which the keepalive triggers after every
-capture. Increments decelerate (57, 32, 37, 11, 6, 17 MB), so this looks partly
-like allocator arena growth rather than a pure leak.
+The capture threads churn roughly 1 MB of numpy buffers per frame (a 512 KB
+depth conversion plus a 512 KB mask multiply) at up to 30 fps. glibc keeps freed
+memory in per-thread arenas rather than returning it, and on a 4-core Pi it will
+open up to `8 * cores = 32` arenas of up to 64 MB each — about 2 GB of headroom,
+which is why RSS could reach 1.66 GB without anything leaking.
 
-One real cause found and fixed: `ob.Context()` was constructed per
-`init_device()`, and each one spawns a device-watcher thread plus native state
-that is never released ("Create PollingDeviceWatcher" appeared 16 times in one
-session). The Context is now process-wide (`_shared_context()`), which took that
-to 1 per run and stabilised thread count.
+**Fix.** `Environment=MALLOC_ARENA_MAX=2` in `systemd/grabette.service`.
 
-That was not the whole story — RSS still grows ~27 MB/cycle. A standalone probe
-on the same hardware shows the SDK itself is nearly clean (Pipeline recreation
-~0.5 MB/cycle, reuse and calibration dumps flat), so the remaining growth is in
-the daemon rather than pyorbbecsdk.
+**Verified** across a six-capture session on `grabette-01`:
 
-**Not yet attributed to this work.** `RpiBackend` constructs and drops a capture
-object per enable/disable cycle for the OAK-D too, so the same pattern may
-predate the Orbbec. Establishing that needs the same cycling test run with
-`depth_camera=oakd`, which has not been done.
-
-**Interim workaround:** restart `grabette` before a recording session. Raising
-`oakd_keepalive_s` would also reduce cycling.
-
-## Working recordings on a clean daemon (try3, 2026-08-12)
-
-Five episodes recorded through the dashboard after restarting `grabette`.
-**5/5 GOOD.**
-
-| episode | tracked | dist | median step | fps | dropped |
-|---|---|---|---|---|---|
-| 131857 | 134/164 (82%) | 0.82 m | 6.3 mm | 27.96 | 12/176 |
-| 131908 | 187/187 (100%) | 1.03 m | 5.4 mm | 28.20 | 12/199 |
-| 131919 | 230/230 (100%) | 1.19 m | 5.0 mm | 28.77 | 10/240 |
-| 131932 | 141/201 (70%) | 0.88 m | 5.3 mm | 28.19 | 13/214 |
-| 131944 | 191/191 (100%) | 1.02 m | 5.1 mm | 28.66 | 9/200 |
-
-5.4% of depth frames dropped overall, against 71% before the fixes and 41-49%
-on the bloated daemon. Median step 5.0-6.3 mm sits just above the OAK-D
-reference band of 3.4-4.5 mm, so the motion is representative.
-
-Run-to-run noise floor on 131919: **3.264 mm local-delta RMSE on a 5.211 mm mean
-step** — the same order as the OAK-D's 2.309/3.715, confirming the pipeline's
-non-determinism is unchanged by the camera.
-
-### The two tracking losses are the passive-stereo limit, not a bug
-
-| episode | burst | brightness | depth coverage |
+| capture | RSS | fps | dropped |
 |---|---|---|---|
-| 131857 | frames 47-76 | 57.4 → 38.8 | 63% → **18%** |
-| 131932 | 72-101, 136-165 | 54.5 → 46.7 | 69% → **17%** |
+| 1 | 306 MB | 29.09 | 3.0% |
+| 2 | 307 MB | 29.19 | 2.7% |
+| 3 | 310 MB | 29.12 | 3.0% |
+| 4 | 310 MB | 29.28 | 2.5% |
+| 5 | 317 MB | 28.95 | 3.6% |
+| 6 | 313 MB | 29.20 | 2.7% |
 
-Depth collapses to ~17% in dimmer parts of the scene and odometry drops out;
-sharpness barely moves, so this is illumination and texture rather than motion
-blur. Same signature as the very first workstation capture. Every burst is
-exactly 30 frames because `offline_vslam.cpp` sets
-`kOdomResetCountdown = 30` — one second before RTAB-Map resets.
+RSS plateaus at ~310 MB and the drop rate holds at 2.5-3.6% instead of climbing.
+Enable/disable cycling likewise flattens: 281 → 309 MB over six cycles, against
+318 → 478 MB before.
 
-Practical consequence, unchanged from earlier: the 305 is
-`OBDeviceType.LIGHT_BINOCULAR` with an IR-cut filter and no projector, so it
-needs a lit, textured workspace. Whether it is materially worse than the OAK-D
-SR (also passive) still needs the same-motion A/B.
+**Note this was never Orbbec-specific.** The allocation churn comes from the
+capture path generally, so the OAK-D almost certainly shares it — the Orbbec
+merely adds a second encoder and a per-frame depth conversion, reaching the
+cliff sooner. Worth confirming with `depth_camera=oakd`, but the fix is
+camera-agnostic either way.
+
+**Residual:** 2.5-3.6% of frames still drop, stably, where the OAK-D reference
+dropped none. Stable rather than degrading, so it is a separate and much smaller
+question.
 
 ## Clean result: 100% tracking on every episode (try5, 2026-08-12)
 
