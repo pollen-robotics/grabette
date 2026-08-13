@@ -28,14 +28,16 @@ class _FakeResponse:
 
 
 class _FakeSession:
-    """Counts probes and replays a scripted response sequence."""
+    """Counts probes, records their kwargs, replays a scripted response sequence."""
 
     def __init__(self, *responses: _FakeResponse) -> None:
         self._responses = list(responses)
         self.probes = 0
+        self.kwargs: list[dict] = []
 
     def get(self, url, **kw):
         self.probes += 1
+        self.kwargs.append(kw)
         if self._responses:
             return self._responses.pop(0)
         return _FakeResponse(503, "text/html")
@@ -106,6 +108,18 @@ def test_unreadable_runtime_falls_back_to_probing(monkeypatch):
 
     assert _wake(session, space_repo="org/space") is None
     assert session.probes == 1
+
+
+def test_probe_timeout_is_forwarded_to_the_session():
+    # _wake_space takes no HTTP library of its own, so the per-probe deadline can
+    # only come from the caller. If it stopped being forwarded, probes would
+    # silently fall back to the session-wide timeout — the exact bug the layered
+    # _SPACE_* constants exist to prevent.
+    sentinel = object()
+    session = _FakeSession(_AWAKE())
+
+    assert _wake(session, probe_timeout=sentinel) is None
+    assert session.kwargs[0]["timeout"] is sentinel
 
 
 def test_cancellation_aborts_the_wait(monkeypatch):

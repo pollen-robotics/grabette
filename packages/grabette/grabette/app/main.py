@@ -167,7 +167,8 @@ def _restart_space(space_repo: str, token: str | None) -> bool:
 
 async def _wake_space(session, space_url: str, headers: dict,
                       is_cancelled=None, space_repo: str | None = None,
-                      token: str | None = None) -> str | None:
+                      token: str | None = None,
+                      probe_timeout=None) -> str | None:
     """Wait until the processing Space really serves requests. None once awake,
     else the reason to report.
 
@@ -184,9 +185,11 @@ async def _wake_space(session, space_url: str, headers: dict,
 
     Raises _CommandCancelled if the build is cancelled while we wait: this wait
     can last minutes, and a conversion nobody wants any more must not start.
-    """
-    import aiohttp
 
+    session and probe_timeout are both injected, so this function never touches
+    the HTTP library itself — the caller owns that choice, and the wake logic
+    stays unit-testable against a stub session with no aiohttp installed.
+    """
     deadline = time.monotonic() + _SPACE_WAKE_BUDGET_S
     last, probes = "no response", 0
     restart_tried = False
@@ -218,7 +221,7 @@ async def _wake_space(session, space_url: str, headers: dict,
         try:
             async with session.get(
                 f"{space_url}/api/status/_wake", headers=headers,
-                timeout=aiohttp.ClientTimeout(total=_SPACE_WAKE_PROBE_TIMEOUT_S),
+                timeout=probe_timeout,
             ) as r:
                 ctype = r.headers.get("Content-Type", "")
                 await r.read()  # drain so the connection can be reused
@@ -384,6 +387,9 @@ async def _handle_relay_command(cmd: dict) -> dict:
                     lambda: cancels.is_cancelled(cmd_id),
                     space_repo=args.get("space_repo"),
                     token=token,
+                    probe_timeout=aiohttp.ClientTimeout(
+                        total=_SPACE_WAKE_PROBE_TIMEOUT_S
+                    ),
                 )
                 if not_awake:
                     return {"status": "error", "message": not_awake}
