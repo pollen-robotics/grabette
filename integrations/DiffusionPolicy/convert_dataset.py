@@ -21,11 +21,11 @@ Transforms the dataset:
 Usage:
   # Gripper-only state (2D):
   uv run python convert_dataset.py \\
-      --repo_id SteveNguyen/Grabette_redcube_quest
+      --repo_id <user>/<raw_dataset>
 
   # With relative proprioception (11D, UMI-style):
   uv run python convert_dataset.py \\
-      --repo_id SteveNguyen/Grabette_redcube_quest --proprioception relative
+      --repo_id <user>/<raw_dataset> --proprioception relative
 """
 
 import argparse
@@ -93,6 +93,66 @@ def pose_8d_to_11d(data_8d: np.ndarray) -> np.ndarray:
     rot6d = rotvec_to_rotation_6d(rotvec).astype(np.float32)
 
     return np.concatenate([pos, rot6d, gripper], axis=1)
+
+
+def smooth_poses_11d(poses_11d: np.ndarray, episode_indices: np.ndarray,
+                     window: int, polyorder: int = 3,
+                     jump_cap_m: float = 0.08) -> np.ndarray:
+    """Savitzky-Golay-smooth the absolute poses BEFORE differencing.
+
+    Why: per-step deltas are numerical derivatives of SLAM poses at 50 fps —
+    a ±1-2 mm pose wobble becomes ±2-3 mm of per-step delta noise. Measured on
+    real data, the grasp window's supervision signal-to-noise drops to ~1.4:1
+    (vs noiseless sim data that reached 70% success): the policy learns the
+    approach from clean signal and the final fine-positioning from mush. A
+    ~9-frame window at 50 fps (~150 ms) removes the jitter while preserving
+    hand dynamics below ~5 Hz.
+
+    Details:
+      * positions: SG filter per axis; rotations: SG on sign-aligned quaternion
+        components + renormalize (valid for the small intra-window rotations of
+        a 150 ms window). Gripper dims (9,10) are NOT smoothed — the close is a
+        clean step command and softening it would teach a hesitant close.
+      * smoothing runs per contiguous CLEAN segment: segments are split at
+        episode boundaries and at raw per-step jumps > jump_cap_m (SLAM
+        re-acquisition steps). Smoothing across a jump would smear it into a
+        fast ramp that sneaks under the despike cap — splitting keeps the jump
+        as a single delta that the existing despike then zeroes.
+      * segments shorter than the window are left unsmoothed.
+    """
+    from scipy.signal import savgol_filter
+    from scipy.spatial.transform import Rotation
+
+    out = poses_11d.copy()
+    pos = poses_11d[:, :3].astype(np.float64)
+    step = np.linalg.norm(np.diff(pos, axis=0), axis=1)
+    n = len(poses_11d)
+
+    # Segment breaks: episode changes and re-acquisition jumps.
+    breaks = {0, n}
+    breaks.update((np.where(episode_indices[1:] != episode_indices[:-1])[0] + 1).tolist())
+    breaks.update((np.where(step > jump_cap_m)[0] + 1).tolist())
+    bounds = sorted(breaks)
+
+    n_smoothed = 0
+    for lo, hi in zip(bounds[:-1], bounds[1:]):
+        seg = hi - lo
+        if seg <= window or window <= polyorder:
+            continue
+        out[lo:hi, :3] = savgol_filter(pos[lo:hi], window, polyorder, axis=0)
+        # Rotations: r6d -> quaternion, align signs, smooth, renormalize.
+        quat = Rotation.from_matrix(
+            rotation_6d_to_rotation_matrix_numpy(poses_11d[lo:hi, 3:9])).as_quat()
+        flip = np.cumprod(np.where(np.sum(quat[1:] * quat[:-1], axis=1) < 0, -1.0, 1.0))
+        quat[1:] *= flip[:, None]
+        quat = savgol_filter(quat, window, polyorder, axis=0)
+        quat /= np.linalg.norm(quat, axis=1, keepdims=True)
+        out[lo:hi, 3:9] = rotation_matrix_to_rotation_6d_numpy(
+            Rotation.from_quat(quat).as_matrix())
+        n_smoothed += seg
+    logger.info(f"  pose smoothing: SG window {window}, {n_smoothed}/{n} frames smoothed "
+                f"({len(bounds) - 1} segments; gripper untouched)")
+    return out
 
 
 def compute_delta_actions(poses_11d: np.ndarray, episode_indices: np.ndarray) -> np.ndarray:
@@ -215,8 +275,15 @@ def parse_args():
     parser.add_argument(
         "--repo_id",
         type=str,
-        default="SteveNguyen/Grabette_redcube_quest",
+        required=True,
         help="LeRobot dataset repo ID",
+    )
+    parser.add_argument(
+        "--root",
+        type=str,
+        default=None,
+        help="Local dataset root for the SOURCE (e.g. a clean_dataset.py output). "
+             "If unset, the dataset is resolved from the HF cache by repo_id.",
     )
     parser.add_argument(
         "--proprioception",
@@ -256,13 +323,45 @@ def parse_args():
         type=str,
         default=None,
         help="If set, push the converted dataset to this Hub repo id "
-             "(e.g. 'SteveNguyen/sim_grasp_train_v2'). If the local repo "
+             "(e.g. '<user>/<dataset>_train'). If the local repo "
              "id does not match, the push retargets to this id.",
     )
     parser.add_argument(
         "--hub_private",
         action="store_true",
         help="Make the Hub repo private (default: public).",
+    )
+    parser.add_argument(
+        "--smooth_poses",
+        type=int,
+        default=0,
+        help="Savitzky-Golay window (odd, frames) applied to the absolute poses "
+             "before differencing; 0 = off. Recommended 9 at 50fps (~150ms): "
+             "removes SLAM pose jitter that otherwise dominates the grasp-phase "
+             "delta supervision (measured ~1.4:1 signal-to-noise). Gripper "
+             "channels are never smoothed.",
+    )
+    parser.add_argument(
+        "--no_despike",
+        action="store_true",
+        help="Disable zeroing of per-step outlier deltas (SLAM glitches).",
+    )
+    parser.add_argument(
+        "--despike_max_mm",
+        type=float,
+        default=80.0,
+        help="Per-step |Δpos| above this (mm) is a glitch → that delta is zeroed. "
+             "80mm/step ≈ 4 m/s at 50fps, well above hand speed but below SLAM jumps.",
+    )
+    parser.add_argument(
+        "--despike_max_deg",
+        type=float,
+        default=5.0,
+        help="Per-step rotation delta above this (deg) is a glitch → that delta is zeroed. "
+             "5°/step = 250°/s at 50fps, above human wrist speed (~150°/s peak) but below "
+             "SLAM orientation glitches. (Was 45°: that let 5-45° glitches into training — "
+             "the policy reproduced them at eval, amplified through the widened r6d "
+             "normalization ranges, and tripped the arm server's IK-jump watchdog.)",
     )
     return parser.parse_args()
 
@@ -281,7 +380,7 @@ def main():
     # directory and operate on the copy. Otherwise the conversion is in-place
     # on the HF cache (original behavior).
     if args.output_repo_id:
-        src_ds = LeRobotDataset(args.repo_id)
+        src_ds = LeRobotDataset(args.repo_id, root=args.root)
         src_root = Path(src_ds.root)
         if args.output_root:
             dst_root = Path(args.output_root).expanduser().resolve()
@@ -324,9 +423,9 @@ def main():
         work_root: Path | None = dst_root
         ds = LeRobotDataset(work_repo_id, root=work_root)
     else:
-        ds = LeRobotDataset(args.repo_id)
+        ds = LeRobotDataset(args.repo_id, root=args.root)
         work_repo_id = args.repo_id
-        work_root = None  # let LeRobotDataset resolve from HF cache by repo_id
+        work_root = args.root  # None → HF cache by repo_id; else the given local root
     root = Path(ds.root)
     logger.info(f"Dataset root: {root}")
     logger.info(f"Frames: {len(ds)}, Episodes: {ds.meta.total_episodes}")
@@ -360,12 +459,42 @@ def main():
         # Episode indices
         episode_indices = np.array(table.column("episode_index").to_pylist())
 
+        # Optional pose smoothing before differencing (see smooth_poses_11d).
+        if args.smooth_poses > 0:
+            poses_11d = smooth_poses_11d(poses_11d, episode_indices, args.smooth_poses)
+
         # Compute delta actions
         delta_actions = compute_delta_actions(poses_11d, episode_indices)
         logger.info(
             f"  {pf.name}: delta actions "
             f"(mean pos delta: {np.linalg.norm(delta_actions[:, :3], axis=1).mean() * 1000:.2f} mm)"
         )
+
+        # --- Zero out per-step outlier deltas (SLAM tracking glitches) ---
+        # A single glitch frame yields one impossibly-large delta (a
+        # relocalization "step" — the offset cancels in every OTHER delta) or
+        # two (a "return" spike). Since we train on deltas, replacing the
+        # outlier with 0 = "hold for that frame", which removes the bad action
+        # with no side effect on the rest of the trajectory. Episodes with
+        # segments too long to absorb this way are dropped upstream by
+        # clean_dataset.py (same --despike_max_* thresholds).
+        if not args.no_despike:
+            dpos_mm = np.linalg.norm(delta_actions[:, :3], axis=1) * 1000.0
+            r6d = delta_actions[:, 3:9]
+            Rd = rotation_6d_to_rotation_matrix_numpy(r6d)
+            cos = np.clip((np.trace(Rd, axis1=1, axis2=2) - 1.0) / 2.0, -1.0, 1.0)
+            ang_deg = np.degrees(np.arccos(cos))
+            # Episode-boundary deltas are already zeroed to [0..0]; that degenerate
+            # 6D yields a bogus angle, so only apply the rotation test to real
+            # (non-zero) rotation deltas.
+            valid_rot = np.linalg.norm(r6d, axis=1) > 1e-6
+            bad = (dpos_mm > args.despike_max_mm) | (valid_rot & (ang_deg > args.despike_max_deg))
+            if bad.any():
+                delta_actions[bad, :9] = 0.0
+                logger.info(
+                    f"  {pf.name}: zeroed {int(bad.sum())} outlier delta(s) "
+                    f"(>{args.despike_max_mm:.0f}mm or >{args.despike_max_deg:.0f}°)"
+                )
 
         # Compute observation state
         if use_relative:
@@ -411,7 +540,7 @@ def main():
 
     # --- 3. Recompute stats ---
     logger.info("Recomputing stats...")
-    from lerobot.datasets.dataset_tools import recompute_stats
+    from lerobot.datasets import recompute_stats
 
     ds_updated = LeRobotDataset(work_repo_id, root=work_root)
     recompute_stats(ds_updated, skip_image_video=True)
@@ -429,9 +558,11 @@ def main():
         f"names={ds_final.meta.features['action']['names']}"
     )
 
-    sample = ds_final[50]
+    # Mid-episode sample (clamped: episodes can be shorter than 50 frames).
+    mid = min(50, len(ds_final) - 1)
+    sample = ds_final[mid]
     state = sample["observation.state"].tolist()
-    logger.info("\nSample frame 50:")
+    logger.info(f"\nSample frame {mid}:")
     logger.info(f"  observation.state ({state_dim}D):")
     for n, v in zip(state_names, state, strict=True):
         logger.info(f"    {n:12s}: {v:+.6f}")

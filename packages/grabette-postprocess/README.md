@@ -3,7 +3,7 @@
 SLAM/VIO orchestration and LeRobot dataset generation for the GRABETTE project.
 
 Takes raw episode recordings (OAK-D stereo + depth + IMU) from
-[Grabette](https://github.com/pollen-robotics/grabette), runs offline visual-inertial
+[Grabette](../grabette), runs offline visual-inertial
 SLAM to produce a camera trajectory, and converts everything into a
 [LeRobot v3](https://huggingface.co/docs/lerobot) dataset (Parquet + MP4) ready
 for policy training.
@@ -16,7 +16,7 @@ odometry, run in Docker.
 
 ```
 Episode directory (from Grabette)
-├── oakd_left.mp4 + oakd_depth/        OAK-D stereo + depth
+├── oakd_left.mp4 + oakd_depth.mkv     OAK-D stereo + depth
 ├── oakd_*_timestamps.json             frame timestamps
 ├── oakd_imu.json                      accel/gyro/rotation
 ├── oakd_calib_offline.json            intrinsics + imu_to_cam
@@ -38,10 +38,15 @@ LeRobot v3 dataset/
 
 ## Setup
 
-Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires [uv](https://docs.astral.sh/uv/). The non-LeRobot conversion and SLAM
+tools support Python >= 3.11; dataset generation, publishing, and visualization
+require Python >= 3.12 because that is LeRobot 0.6's minimum.
+
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
 
 ```bash
-uv sync
+uv sync --package grabette-postprocess
 ```
 
 The OAK SLAM step requires Docker with a locally built image:
@@ -52,31 +57,52 @@ docker build -t pollenrobotics/oak-vslam docker/oak_vslam/
 
 ## Quick start
 
+The pipeline expects `-i` to point at a **dataset directory** containing one or
+more episode subdirectories (`<dataset>/<episode>/…`), except for the
+per-episode scripts (`convert_episode_to_oak.py`, `run_oak_slam.py`,
+`visualize_rgbd_trajectory.py`) which take a **single episode directory**.
+
 ```bash
-# 1. Convert the compact recording into the per-file oak/ layout the C++ expects
+# 1. Sanity-check the recording (no Docker, fast) — sample counts, file inventory
+uv run python scripts/checks/check_dataset.py -i ~/data/dataset
+
+# 2. Convert the compact recording into the per-file oak/ layout the C++ expects
 uv run python scripts/pipeline/convert_episode_to_oak.py -i ~/data/dataset/episode
 
-# 2. Run offline RTAB-Map VSLAM → camera_trajectory.csv
+# 3. Run offline RTAB-Map VSLAM → camera_trajectory.csv
 uv run python scripts/pipeline/run_oak_slam.py -i ~/data/dataset/episode
 
-# 3. Validate trajectories
-uv run python scripts/checks/check_trajectory.py -i ~/data/dataset
+# 4. Validate trajectories (drift, relocalization jumps, motion realism)
+uv run python scripts/checks/check_trajectory.py -i ~/data/dataset -v
 
-# 4. Generate LeRobot dataset
+# 5. Generate LeRobot v3 dataset (angles are np.interp'd onto trajectory timestamps here)
 uv run python scripts/pipeline/generate_dataset.py \
   -i ~/data/dataset \
   --repo_id user/dataset-name \
   --task "task description" \
   --root ~/lerobot_datasets
 
-# 5. Visualize a trajectory
-uv run python scripts/visualize/visualize_rgbd_trajectory.py -i ~/data/dataset/episode
+# 6. Visualize the SLAM trajectory in Rerun (3D poses + camera + IMU)
+uv run python scripts/visualize/visualize_rgbd_trajectory.py \
+  -i ~/data/dataset/episode --gravity-align --video-skip 2
 
-# 6. Push to HuggingFace Hub
+# 7. Visualize the generated LeRobot dataset (action + video, episode-by-episode)
+uv run lerobot-dataset-viz \
+  --repo-id user/dataset-name --root ~/lerobot_datasets --episode-index 0
+
+# 8. Push to HuggingFace Hub
 uv run python scripts/pipeline/push_to_hub.py \
   --repo_id user/dataset-name \
   --root ~/lerobot_datasets
 ```
+
+Notes:
+- `--repo_id` accepts any `owner/name` string; for local-only runs the owner
+  half doesn't need to correspond to a real HF account until you actually push
+  (step 8).
+- Rerun's `--gravity-align` re-orients the world so Z points up (uses the
+  oak/ imu_acc stream), and `--video-skip 2` renders every other frame for
+  faster loading. Both are optional.
 
 ## Usage details
 
@@ -112,7 +138,7 @@ Converts trajectories + raw data into a LeRobot v3 dataset.
 
 ```bash
 uv run python scripts/pipeline/generate_dataset.py \
-  --input_dir ~/data/dataset \
+  -i ~/data/dataset \
   --repo_id myuser/grabette-demo \
   --task "cup manipulation" \
   --root ~/lerobot_datasets
@@ -128,6 +154,11 @@ uv run python scripts/pipeline/generate_dataset.py \
 Poses are gravity-aligned (Z-up). The pose component is position +
 axis-angle rotation; the gripper component is the two joint angles.
 
+To train a policy, the [DiffusionPolicy](../../integrations/DiffusionPolicy)
+integration's `convert_dataset.py` turns this 8D **absolute** action into the
+11D **camera-local delta** action (6D rotation) + 2D gripper state the policy
+actually trains on.
+
 ### 4. Push dataset to Hugging Face Hub
 
 ```bash
@@ -139,14 +170,38 @@ uv run python scripts/pipeline/push_to_hub.py \
   # add --private for a private repo
 ```
 
-### 5. Visualize trajectory
+### 5. Visualize
 
-Interactive 3D visualization with [Rerun](https://rerun.io/): the SLAM
-trajectory, the OAK-left camera feed, and IMU time series.
+Two independent viewers, depending on what you want to inspect.
+
+**Trajectory (Rerun)** — interactive 3D of the SLAM output, with the OAK-left
+camera feed animated along the trajectory and IMU time series alongside.
+Requires steps 2 + 3 (needs `camera_trajectory.csv` and, with
+`--gravity-align`, the `oak/` subdir produced by `convert_episode_to_oak.py`):
 
 ```bash
-uv run python scripts/visualize/visualize_rgbd_trajectory.py -i ~/data/dataset/episode
+uv run python scripts/visualize/visualize_rgbd_trajectory.py \
+  -i ~/data/dataset/episode --gravity-align --video-skip 2
 ```
+
+`--gravity-align` re-orients so Z is world-up; `--video-skip N` renders every
+Nth frame (higher = faster load). Both optional.
+
+**Generated LeRobot dataset (`lerobot-dataset-viz`)** — walk the produced
+dataset episode-by-episode with the LeRobot viewer. Shows the camera stream
+alongside the `action` vector; useful for confirming the end-to-end pipeline
+(SLAM poses + gripper angles) matches expectations:
+
+```bash
+uv run lerobot-dataset-viz \
+  --repo-id user/dataset-name \
+  --root ~/lerobot_datasets \
+  --episode-index 0
+```
+
+`--repo-id` is the same string you passed to `generate_dataset.py`.
+`--episode-index` picks the episode inside the dataset. See
+`lerobot-dataset-viz --help` for `--mode local/distant` and other flags.
 
 ## Project structure
 
@@ -179,6 +234,5 @@ grabette-postprocess/
 ## Hardware
 
 - **Camera/depth**: OAK-D SR (stereo + on-board depth)
-- **IMU**: BNO086 (accel + gyro + fused rotation)
+- **IMU**: OAK-D SR onboard IMU — BNO086 (accel + gyro + fused rotation vector)
 - **Angle sensors**: two joint encoders (proximal + distal)
-```

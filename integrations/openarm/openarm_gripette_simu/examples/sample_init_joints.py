@@ -74,7 +74,7 @@ def main():
         print(f"Could not find a feasible plan in {args.max_attempts} attempts.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Sampled training-distribution home pose:")
+    print("Sampled training-distribution home pose:")
     print(f"  cube_xyz   : {wp.cube_xyz}")
     print(f"  home_xyz   : {wp.home_xyz}  (body frame, in world coords)")
     print(f"  home pitch : {wp.home_dbg['pitch_deg']:.1f} deg")
@@ -96,8 +96,8 @@ def main():
     print()
     print("Pass to the sim server like this:")
     joint_str = " ".join(f"{q:.4f}" for q in arm_q)
-    print(f"  uv run python -m openarm_gripette_simu \\")
-    print(f"      --scene scenes/table_grasp.xml \\")
+    print("  uv run python -m openarm_gripette_simu \\")
+    print("      --scene scenes/table_grasp.xml \\")
     print(f"      --initial-joints {joint_str}")
 
 

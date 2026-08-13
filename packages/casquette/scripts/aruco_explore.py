@@ -95,7 +95,7 @@ def main() -> None:
     print(f"Polling {args.api}/api/camera/snapshot at {args.rate_hz:.1f} Hz")
     print(f"Detecting {args.dict}, assumed marker size {args.size_mm:.1f} mm, "
           f"focal {args.focal_px:.0f} px")
-    print(f"Press 'q' in the window to quit.\n")
+    print("Press 'q' in the window to quit.\n")
 
     last_print = 0.0
     while True:

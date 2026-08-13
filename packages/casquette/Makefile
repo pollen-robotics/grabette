@@ -1,4 +1,4 @@
-.PHONY: install-rpi enable-i2c install-systemd check help
+.PHONY: install-rpi enable-i2c install-systemd ensure-ble-only check help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -9,6 +9,7 @@ help:
 	@echo "  install-rpi       One-shot bring-up: apt deps + I2C enable + venv + sync + verify"
 	@echo "  enable-i2c        Enable hardware I2C bus 1 (GPIO 2/3) via raspi-config nonint"
 	@echo "  install-systemd   Install + enable casquette.service and casquette-bluetooth.service"
+	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  check             Run scripts/check_hardware.py against current install"
 	@echo ""
 	@echo "Prereqs before 'install-rpi':"
@@ -48,10 +49,22 @@ enable-i2c:
 		echo "I2C bus 1 already enabled (/dev/i2c-1 present)."; \
 	fi
 
+# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
+ensure-ble-only:
+	@CONF=/etc/bluetooth/main.conf; \
+	sudo grep -q '^\[General\]' "$$CONF" || echo '[General]' | sudo tee -a "$$CONF" >/dev/null; \
+	if sudo grep -qE '^[[:space:]]*#?[[:space:]]*ControllerMode' "$$CONF"; then \
+	  sudo sed -i -E 's|^[[:space:]]*#?[[:space:]]*ControllerMode.*|ControllerMode = le|' "$$CONF"; \
+	else \
+	  sudo sed -i '/^\[General\]/a ControllerMode = le' "$$CONF"; \
+	fi
+	sudo systemctl restart bluetooth
+	@echo "BlueZ set to BLE-only (ControllerMode = le)"
+
 # Install both casquette services. Run after install-rpi has verified the
 # venv builds. The bluetooth service needs root (BlueZ DBus access); the
 # main service runs as rasp.
-install-systemd:
+install-systemd: ensure-ble-only
 	@# Patch the units' hardcoded path to this device's actual workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
 	sed 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' systemd/casquette.service \

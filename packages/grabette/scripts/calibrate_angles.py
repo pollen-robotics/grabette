@@ -76,14 +76,14 @@ def main():
     i2c_1.deinit()
     i2c_2.deinit()
 
-    print(f"\nRaw angles at current position:")
+    print("\nRaw angles at current position:")
     print(f"  Sensor 1 (distal,   bus {I2C_BUS_1}): {raw1:.1f}°")
     print(f"  Sensor 2 (proximal, bus {I2C_BUS_2}): {raw2:.1f}°")
 
     if CALIBRATION_FILE.exists():
         with open(CALIBRATION_FILE) as f:
             old = json.load(f)
-        print(f"\nCurrent calibration:")
+        print("\nCurrent calibration:")
         print(f"  Sensor 1 offset: {old.get('sensor_1_offset_deg', 0):.1f}°")
         print(f"  Sensor 2 offset: {old.get('sensor_2_offset_deg', 0):.1f}°")
 

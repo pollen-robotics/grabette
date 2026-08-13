@@ -382,7 +382,13 @@ class TaskManager:
     def _get_episode_info(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)
         video_path = ep_dir / "raw_video.mp4"
-        imu_path = ep_dir / "imu_data.json"
+        # Real (OAK-D) episodes write oakd_imu.json; mock/legacy write
+        # imu_data.json. Checking only the latter reported has_imu=False for
+        # every real recording (issue #79).
+        imu_present = (
+            (ep_dir / "oakd_imu.json").exists()
+            or (ep_dir / "imu_data.json").exists()
+        )
 
         duration = 0.0
         frame_count = 0
@@ -404,7 +410,7 @@ class TaskManager:
             imu_sample_count=imu_sample_count,
             angle_sample_count=angle_sample_count,
             has_video=video_path.exists(),
-            has_imu=imu_path.exists(),
+            has_imu=imu_present,
         )
 
     def revision(self) -> int:

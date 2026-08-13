@@ -145,7 +145,7 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
     df_valid = df_all[~df_all['is_lost'].astype(bool)].copy()
     n_total, n_tracked = len(df_all), len(df_valid)
 
-    print(f"\n=== SLAM Statistics ===")
+    print("\n=== SLAM Statistics ===")
     print(f"  Frames:   {n_tracked}/{n_total} tracked ({100*n_tracked/n_total:.1f}%)")
     print(f"  Lost:     {n_total - n_tracked} frames")
     if n_tracked > 0:
@@ -167,16 +167,16 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
         positions, quaternions, g_unit_for_log = _gravity_align(
             positions, quaternions, oak_dir,
         )
-        print(f"\n=== Gravity Alignment ===")
+        print("\n=== Gravity Alignment ===")
         print(f"  Measured g in SLAM camera frame (unit): "
               f"[{g_unit_for_log[0]:+.3f}, {g_unit_for_log[1]:+.3f}, {g_unit_for_log[2]:+.3f}]")
-        print(f"  Rotated so that direction now maps to [0, 0, -1] (world -Z)")
+        print("  Rotated so that direction now maps to [0, 0, -1] (world -Z)")
         # Also rotate the position/quaternion columns we still need from df_valid
         df_valid = df_valid.copy()
         df_valid.loc[:, ['x', 'y', 'z']] = positions
         df_valid.loc[:, ['q_x', 'q_y', 'q_z', 'q_w']] = quaternions
 
-    print(f"\n=== Trajectory Statistics ===")
+    print("\n=== Trajectory Statistics ===")
     for ax, name in enumerate(['X', 'Y', 'Z']):
         lo, hi = positions[:, ax].min(), positions[:, ax].max()
         print(f"  {name}: [{lo:.4f}, {hi:.4f}]  range={hi-lo:.4f}")
@@ -345,10 +345,10 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
             n_vframes_logged = frame_i // video_skip + 1
             print(f"  Frame {frame_i}/{n_total}  video_idx={frame_idx if video_cap else '-'}  logged={n_vframes_logged}", end='\r')
 
-    print(f"\nVisualization complete.")
-    print(f"  Green line: full trajectory (static)")
-    print(f"  Blue line:  trajectory up to current time")
-    print(f"  RGB arrows: camera X/Y/Z axes")
+    print("\nVisualization complete.")
+    print("  Green line: full trajectory (static)")
+    print("  Blue line:  trajectory up to current time")
+    print("  RGB arrows: camera X/Y/Z axes")
 
     if video_cap is not None:
         video_cap.release()

@@ -31,3 +31,6 @@ gripette-data/
 *.swp
 .DS_Store
 *~
+
+# evaluate.py --debug headless frame dumps
+eval_debug_frames/

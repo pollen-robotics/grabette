@@ -1,3 +1,13 @@
+/*
+ * Copyright 2026 Pollen Robotics
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Drives RTAB-Map (IntRoLab, BSD-3-Clause) for offline RGBD-inertial odometry. The
+ * processing logic is adapted from Luxonis DepthAI's RTABMapVIO node
+ * (https://github.com/luxonis/depthai-core, MIT) — offline reimplementation, no
+ * DepthAI code linked at build time. See THIRD_PARTY_NOTICES.md at the repo root.
+ */
+
 /**
  * Offline RTABMapVIO — processes a session recorded with record_vslam.py.
  *

@@ -118,6 +118,19 @@ CONNECTED [wlan0] 192.168.1.36
 
 The gripette is now on your WiFi network.
 
+## BLE command reference
+
+The web tool wraps these, but the commands are also usable directly — written as UTF-8 to the COMMAND characteristic; responses arrive as notifications:
+
+| Command | Response | Description |
+|---|---|---|
+| `PING` | `PONG` | Health check |
+| `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` | Authenticate (required before WIFI/WIFI_RESET) |
+| `WIFI ssid password` | `OK: Connecting to <ssid>` / `ERROR: ...` | Connect to WiFi via nmcli |
+| `WIFI_RESET` | `OK: WiFi connections cleared` | Delete all saved WiFi networks |
+
+Network status is also readable from a dedicated BLE characteristic (auto-updates every 10s).
+
 ## Troubleshooting
 
 ### Device shows as hostname (e.g., "raspiZ") instead of "Gripette"

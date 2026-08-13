@@ -1,4 +1,6 @@
 # Mesh assets are large binaries — keep them out of plain git history.
 # Covers the OpenArm model package and the grabette/gripette urdf/ meshes.
 *.stl filter=lfs diff=lfs merge=lfs -text
+
+# Assembly & 3D-print guides (PDF) — large binaries, kept in LFS.
 *.pdf filter=lfs diff=lfs merge=lfs -text

@@ -1,4 +1,4 @@
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 for local_id, remote_id in [
         ("sim_grasp_train_v1", "SteveNguyen/sim_grasp_train_v1"),

@@ -5,7 +5,7 @@ import warnings
 
 from . import arm_pb2 as arm__pb2
 
-GRPC_GENERATED_VERSION = '1.73.1'
+GRPC_GENERATED_VERSION = '1.81.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -18,14 +18,14 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + f' but the generated code in arm_pb2_grpc.py depends on'
+        + ' but the generated code in arm_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
 
-class ArmServiceStub(object):
+class ArmServiceStub:
     """Missing associated documentation comment in .proto file."""
 
     def __init__(self, channel):
@@ -54,6 +54,11 @@ class ArmServiceStub(object):
                 request_serializer=arm__pb2.SuccessStatusRequest.SerializeToString,
                 response_deserializer=arm__pb2.SuccessStatusResponse.FromString,
                 _registered_method=True)
+        self.SetTorque = channel.unary_unary(
+                '/openarm.ArmService/SetTorque',
+                request_serializer=arm__pb2.SetTorqueRequest.SerializeToString,
+                response_deserializer=arm__pb2.ArmCommandResponse.FromString,
+                _registered_method=True)
         self.Ping = channel.unary_unary(
                 '/openarm.ArmService/Ping',
                 request_serializer=arm__pb2.ArmPingRequest.SerializeToString,
@@ -61,7 +66,7 @@ class ArmServiceStub(object):
                 _registered_method=True)
 
 
-class ArmServiceServicer(object):
+class ArmServiceServicer:
     """Missing associated documentation comment in .proto file."""
 
     def SendCartesianDelta(self, request, context):
@@ -88,6 +93,14 @@ class ArmServiceServicer(object):
 
     def GetSuccessStatus(self, request, context):
         """Check if the current episode goal is achieved (cube touched)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetTorque(self, request, context):
+        """Enable/disable motor torque. Real robot: Damiao enable/disable (disable =
+        motors freewheel, the arm FALLS under gravity). Simulator: no-op.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -123,6 +136,11 @@ def add_ArmServiceServicer_to_server(servicer, server):
                     request_deserializer=arm__pb2.SuccessStatusRequest.FromString,
                     response_serializer=arm__pb2.SuccessStatusResponse.SerializeToString,
             ),
+            'SetTorque': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetTorque,
+                    request_deserializer=arm__pb2.SetTorqueRequest.FromString,
+                    response_serializer=arm__pb2.ArmCommandResponse.SerializeToString,
+            ),
             'Ping': grpc.unary_unary_rpc_method_handler(
                     servicer.Ping,
                     request_deserializer=arm__pb2.ArmPingRequest.FromString,
@@ -136,7 +154,7 @@ def add_ArmServiceServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class ArmService(object):
+class ArmService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
@@ -237,6 +255,33 @@ class ArmService(object):
             '/openarm.ArmService/GetSuccessStatus',
             arm__pb2.SuccessStatusRequest.SerializeToString,
             arm__pb2.SuccessStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetTorque(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/openarm.ArmService/SetTorque',
+            arm__pb2.SetTorqueRequest.SerializeToString,
+            arm__pb2.ArmCommandResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -1,0 +1,306 @@
+# openarm_gripette
+
+Real-hardware driver for the OpenArm-Gripette follower (7-DoF arm, gripette gripper on its own service). Wraps upstream LeRobot's `OpenArmFollower` as a 7-joint variant that leaves the gripper off the CAN bus, and exposes the arm over the same gRPC `ArmService` API as the simulator.
+
+For the wider package map, see [`../README.md`](../README.md).
+
+## What's in the package
+
+```
+openarm_gripette/
+├── openarm7_follower.py           # OpenArm7Follower — subclass of lerobot.robots.OpenArmFollower
+├── config_openarm7_follower.py    # @RobotConfig.register_subclass("openarm7_follower")
+├── grpc_server_real.py            # ArmService gRPC server (mirrors simulator's API)
+└── examples/
+    ├── calibrate_arm_no_gripper.py  # per-joint calibration via openarm-can
+    ├── read_arm_state.py            # observability
+    ├── set_arm_torque.py            # enable/disable arm torque (--off = arm falls!)
+    ├── disable_all_motors_can.py    # software e-stop, direct CAN (no server needed)
+    ├── clear_motor_fault.py         # clear a latched fault (red LED), direct CAN
+    ├── read_motor_fault.py          # decode WHICH fault is latched + motor temps, direct CAN
+    ├── log_motor_health.py          # passive fault/temperature logger (RX-only, run alongside sessions)
+    ├── _torque_guard.py             # shared Ctrl+C/crash handler: torque off on abort
+    ├── reset_arm.py                 # smooth interpolation to home
+    ├── set_arm_pose.py              # absolute-target test
+    ├── set_gripper_pose.py          # gripette gRPC test
+    ├── view_camera.py               # gripette camera stream test
+    ├── cartesian_sinusoid.py        # sinusoid delta demo
+    └── cartesian_square.py          # square-trajectory smoke test (do this BEFORE any policy run)
+```
+
+## Install
+
+The package is part of the monorepo `uv` workspace. Running the real-hardware
+driver requires Python >= 3.12, LeRobot 0.6's minimum:
+
+```bash
+cd /path/to/grabette
+uv sync --package openarm-gripette
+```
+
+Deps (auto): `lerobot[damiao]` from upstream PyPI, `openarm-gripette-simu` (local workspace, provides proto + kinematics + rotation), `grpcio`, `numpy`.
+
+## Prerequisites
+
+1. **CAN bus setup** — *once per boot / re-plug*: the interface configuration does not survive a power cycle or unplugging the CAN adapter. See LeRobot's [Damiao guide](https://huggingface.co/docs/lerobot/damiao):
+   ```bash
+   uv run lerobot-setup-can --mode=setup --interfaces=can0
+   uv run lerobot-setup-can --mode=test  --interfaces=can0
+   ```
+
+2. **Firmware-zero calibration** — *once per physical arm*: the zeros are written into the Damiao motor firmware, so re-run only after replacing a motor or mechanically disassembling the arm. Uses OpenArm's official calibration procedure (**not** LeRobot's calibration — `OpenArm7Follower.is_calibrated` returns `True` unconditionally).
+
+   ```bash
+   uv run python examples/calibrate_arm_no_gripper.py --canport can0 --arm-side right_arm
+   ```
+   The tool uses OpenArm's [`openarm_can`](https://github.com/enactic/openarm_can) bindings — a regular dependency of this package (pinned git tag, compiled from C++ at install time), so the standard `uv sync --package openarm-gripette` provides it. The only system requirement is a C++ compiler.
+   > ⚠️ Upstream LeRobot's `OpenArmFollower.connect()` **re-zeros all motors at the current pose on every connect** (its own calibration convention). `OpenArm7Follower` overrides `connect()` to skip that — but if you ever ran a server version without this override, your firmware zeros were silently overwritten at each server start: re-run the calibration once.
+
+3. **Direction check** — *once per physical arm*: for each joint 1..7, command 30° alone and verify the physical direction matches the simulator. If a motor is wired reversed, set `joint_signs = {"joint_i": -1.0}` in the config so read/write symmetrically flip.
+
+## Start the gRPC arm server
+
+The server exposes `ArmService` on the CAN-connected machine:
+
+```bash
+uv run python -m openarm_gripette.grpc_server_real \
+    --can_port can0 --side right --arm_port 50052
+```
+
+Client machines (running eval / teleop) connect to `arm_addr = <robot-ip>:50052` and to the gripette's own gRPC service (`packages/gripette`) for the gripper.
+
+### The contact guard: `--max_target_lead_mm`
+
+The server rejects any Cartesian delta that would put the interpolator **target**
+more than this far ahead of the **measured** pose *and* increase that gap. Three
+trips within eight commands escalates to `CONTACT confirmed — target relaxed to
+the measured pose`, which releases press force and effectively aborts whatever
+motion was in progress. Lead-*reducing* deltas (retreats) always pass, so the
+guard never distorts a trajectory — it only refuses to push harder.
+
+**It is a genuine compromise, and the default (80 mm) is the considered value:**
+it sits deliberately *above* normal full-speed tracking lag, so ordinary lag is
+not mistaken for contact.
+
+Running it tighter is tempting but backfires. At **40 mm** we saw repeated false
+contact during a *lift of a near-weightless object* — 25 trips in one episode,
+ending in `CONTACT confirmed` and a stalled lift. The arm was simply lagging, not
+blocked. The same run was also clamping on `--max_relative_target 3` (default
+**8**, in degrees per step), which limits how fast it can catch up and feeds the
+same loop.
+
+So if you see false contact during transport or lifting:
+
+1. Restore `--max_target_lead_mm 80` (the default).
+2. Restore `--max_relative_target 8` (the default).
+3. Only then consider stiffer tracking, `--kp_scale 1.5` with `--kd_scale ~1.2`
+   (the help suggests scaling kd by about the square root of the kp factor).
+
+Going much *above* 80 is the opposite failure: past the real tracking lag the
+guard stops distinguishing contact from lag, and press force is no longer bounded
+if the arm genuinely jams.
+
+## Verification sequence (before any policy run)
+
+Run these from the client machine, in this order. Each has a clear pass/fail signal:
+
+```bash
+# 1. Can you read the state?
+uv run python examples/read_arm_state.py --arm_addr <robot-ip>:50052
+
+# 2. Can you home the arm smoothly? Requires a waypoint source (--preset or
+#    repeated --waypoint_deg); add --dry_run first to preview the plan.
+uv run python examples/reset_arm.py --arm_addr <robot-ip>:50052 --preset home_right_over_table
+
+# 3. Does an absolute pose command track? (no --joints → default home pose)
+uv run python examples/set_arm_pose.py --arm_addr <robot-ip>:50052
+
+# 4. Do delta Cartesian commands trace a square? (Trips workspace + IK-jump issues.)
+#    Tiny 2 cm square first, then a 10 cm one. Default --loops 0 runs forever; Ctrl+C to stop.
+uv run python examples/cartesian_square.py --arm_addr <robot-ip>:50052 --tiny --loops 1
+uv run python examples/cartesian_square.py --arm_addr <robot-ip>:50052 --half_size 0.05 --loops 1
+```
+
+If step 4 fails at 10 cm, don't run a policy — you have a URDF / home-pose / IK-jump issue that will silently produce garbage trajectories.
+
+## Choosing the start pose (two separate concerns)
+
+The evaluation start pose matters twice, for two independent reasons. Both
+produce failures that look like a bad model but aren't.
+
+### 1. The Gripette must start close to a pose seen in the dataset
+
+The policy conditions on what the camera sees. Start each episode with the
+Gripette posed the way the dataset episodes start **relative to the scene**:
+similar distance and bearing to the object, similar height and orientation.
+A start view the model has never seen puts it out of distribution from the
+first frame.
+
+- Symptom: stereotyped or erratic behavior right from the start of the
+  episode. Confirm with `DiffusionPolicy/ood_check.py` on a dumped episode.
+- To start from a hand-chosen pose: torque off, place the arm, torque on
+  (holds the pose), then `evaluate.py --no_reset`.
+
+### 2. The arm's starting joints must leave room to execute the task
+
+The policy's actions are camera-local deltas: it reproduces demo-scale
+motions **relative to wherever the arm starts**. The starting joints
+therefore place the entire task trajectory inside — or outside — the arm's
+reachable envelope. If the task zone lands near the reach boundary, the arm
+stretches toward full extension, IK trades away orientation to keep reaching
+(the camera view degrades away from anything in the dataset), and IK branch
+flips trip the server's per-command jump watchdog.
+
+- Symptom: the arm moves toward the object but overextends, ends up looking
+  down at it, and never completes the task → the task zone sits past the
+  comfortable envelope; move the start pose back/adjust it.
+
+How to verify a candidate start for your task/dataset, before touching the
+robot:
+
+1. Measure the demos' motion extent (net camera-local displacement from
+   episode start to the task event — it is usually clustered).
+2. Pick a start so that start + typical demo motion lands the task zone in
+   comfortable reach, not at the boundary.
+3. IK-walk real episodes from the candidate start: compose each episode's
+   action deltas from identity (`p += R @ dp; R = R @ R_delta`), place the
+   trajectory at the candidate start's FK, and check every pose with
+   `openarm_gripette_simu.ik_feasibility.IKFeasibilityChecker` (instantiate
+   kinematics with the server's solver weights, `orientation_weight=10`).
+   Require 100% pose feasibility and max per-step joint jump comfortably
+   under the watchdog (15°).
+   `openarm_gripette_simu/examples/check_grabette_reachable.py` shows the
+   checker in use.
+4. Pass the chosen joints to the eval:
+   `evaluate.py --home_joints J1 J2 J3 J4 J5 J6 J7` (radians; forwarded to
+   the server's `Reset`), and place the object at the demo-typical distance
+   **from the gripper**, not at an absolute table position.
+
+## Torque safety
+
+- **Every motion example disables arm torque on Ctrl+C or crash** (via `ArmService.SetTorque`): the motors freewheel and **the arm falls under gravity** — be ready to catch it or let it drop safely. Pass `--keep_torque` to leave the arm holding instead. Normal completion always leaves torque on.
+- Manual control:
+  ```bash
+  uv run python examples/set_arm_torque.py --arm_addr <robot-ip>:50052 --off   # arm falls!
+  uv run python examples/set_arm_torque.py --arm_addr <robot-ip>:50052 --on    # enabled but limp — Reset to home next
+  ```
+- Stopping the **server** (Ctrl+C) also disables torque on disconnect. The Damiao disable frames are fire-and-forget (a motor that misses one silently stays powered), so the server sends a redundant double-pass; if a joint still holds torque after the server is gone, run the direct-CAN software e-stop **on the CAN machine, with the server stopped**:
+  ```bash
+  uv run python examples/disable_all_motors_can.py --can_port can0
+  ```
+  It also reports which motors ACK — a motor that never ACKs has a wiring/communication problem.
+- None of this replaces the hardware e-stop — keep it within reach whenever the arm is powered.
+- `set_arm_torque.py --on` now **holds the current pose** (the interpolator target is set to the measured joints), so a hand-placed arm stays where you put it. Use with `evaluate.py --no_reset` to start an episode from a hand-chosen pose.
+
+## Troubleshooting
+
+### Reading a motor's fault code
+
+Damiao motors report *why* they faulted in every feedback frame (status nibble,
+high 4 bits of byte 0) — but keep **no history**: the full register (RID) table
+holds only protection *thresholds* (`UV_Value`, `OT_Value`, …), so the code is
+live-only and gone after a reboot. Decode it while the fault is present
+(read-only, server stopped, on the CAN machine):
+
+```bash
+uv run python examples/read_motor_fault.py --can_port can0            # all joints
+uv run python examples/read_motor_fault.py --can_port can0 --motor 7
+```
+
+| code | meaning | | code | meaning |
+|---|---|---|---|---|
+| `0x0`/`0x1` | disabled/enabled, no fault | | `0xB` | MOS overtemperature |
+| `0x8` | overvoltage | | `0xC` | motor coil overtemperature |
+| `0x9` | undervoltage | | `0xD` | communication loss (CAN timeout) |
+| `0xA` | overcurrent | | `0xE` | overload |
+
+The same frame carries the MOS and rotor temperatures — the tool prints both.
+
+Since the motors keep no history, `log_motor_health.py` builds it host-side:
+run it in a separate terminal alongside any teleop/eval session. It is RX-only
+by construction (own socketcan socket, never sends a frame — the kernel gives
+every socket a copy of all traffic, so it cannot interfere with the arm
+server) and records every status transition, per-joint temperatures at 1 Hz,
+and any joint going **silent** while the rest of the bus streams:
+
+```bash
+uv run python examples/log_motor_health.py --can_port can0    # Ctrl-C to stop
+```
+
+### Red LED that survives "power cycles"
+
+A quick flip of the PSU switch may not actually reboot the motor controllers:
+the bus capacitors can hold the MCUs above brownout, so a latched fault — or a
+crashed controller, which additionally goes fully silent on CAN — sails right
+through the "power cycle". **Watch the motor LEDs when you switch off**: if
+they stay lit, nothing has reset yet. Field case: joint 7 with a red LED,
+completely silent on CAN (no REFRESH answer, bus error counters clean),
+unaffected by `clear_motor_fault.py` and several quick power cycles — it came
+back only after ~12 minutes powered off.
+
+If the LEDs do die quickly and the red LED still returns at every boot, the
+fault *condition* itself persists (hot coil → overtemp re-latch, sagging
+supply → undervoltage): grab the code with `read_motor_fault.py` as soon as
+the motor answers.
+
+### After a collision: recovering undetected motors
+
+A hard impact can make one or more motors disappear from detection. Recovery,
+in order of least-invasive (field-validated after a table strike that took out
+joints 1 and 7):
+
+1. **Full power cycle** (PSU off until the motor LEDs go dark — see
+   ["Red LED that survives power cycles"](#red-led-that-survives-power-cycles),
+   not just software) — Damiao motors latch protection faults (over-current
+   from the impact) that only clear on power-off. This alone often brings
+   motors back.
+2. **A motor with a RED LED has power and is latching a fault** — it is NOT a
+   dead cable. Clear the latch over CAN without another power cycle (server
+   stopped, on the CAN machine):
+   ```bash
+   uv run python examples/clear_motor_fault.py --can_port can0 --motor 7
+   ```
+   This sends the Damiao clear-error frame (`[0xFF]*7 + 0xFB`, same protocol
+   family as enable/disable) and health-checks every motor with REFRESH. An
+   over-current latch — the typical post-impact fault — clears immediately
+   (validated: red LED off, motor detected again).
+3. **Reseat CAN/power connectors** at the affected motors and along the
+   harness near the impact path. If an END-of-chain motor is flaky, check the
+   CAN terminator's seating — a loose terminator degrades detection bus-wide.
+4. **Power off and rotate the joint by hand**: smooth = mechanics fine (the
+   fault was electrical); grinding/notchy/blocked = gearbox damage.
+5. If the red LED returns after every clear + power cycle, decode the fault
+   with `read_motor_fault.py` (see above). If the motor is silent even to
+   REFRESH, bench-test it alone with the Damiao Debugging Assistant (PC tool,
+   via USB-CAN) — it can factory-reset, re-flash, and fix a corrupted ID/baud
+   config. Note a factory-reset motor answers on CAN ID `0x01`, which joint 1
+   shadows on the full chain — another reason to bench-test alone. Persistent
+   encoder/driver faults mean hardware replacement.
+
+After recovery, verify calibration hasn't shifted (`read_arm_state.py` at a
+known pose) before the first torque-on.
+
+## Using with the LeRobot CLI
+
+If you want `--robot.type=openarm7_follower` to work with `lerobot-record`, `lerobot-teleoperate`, etc., add an explicit import at the top of your script:
+
+```python
+import openarm_gripette  # registers OpenArm7Follower with draccus
+```
+
+Alternatively, LeRobot's plugin auto-discovery (`register_third_party_plugins`) will find this package if it's installed under a distribution name starting with `lerobot_robot_`. We chose the plain `openarm_gripette` name for readable direct imports; if you need auto-discovery in a shared install, publish under `lerobot_robot_openarm_gripette` or add a shim distribution.
+
+Note: on lerobot 0.6.x the recording CLI requires the `core-scripts` extra
+(dataset + hardware + visualization dependencies). Install
+`lerobot[core-scripts,damiao]` on recording machines, plus any extra required
+by the chosen teleoperator. This driver package itself only needs
+`lerobot[damiao]`.
+
+## Design notes
+
+- `OpenArm7Follower.get_observation` / `send_action` apply a per-joint sign flip (`config.joint_signs`) symmetrically on read and write — the URDF convention is preserved upstream regardless of individual motor wiring.
+- LeRobot's file-based calibration (`homing_offset`, `drive_mode`, `range_*`) is vestigial for this arm: the Damiao bus never reads those fields, motor zeros live in firmware. We disable LeRobot calibration entirely to avoid prompts and accidental zero overwrites.
+- `OpenArm7Follower.connect` overrides the upstream method for one reason: upstream calls `bus.set_zero_position()` on every connect (writing the current pose into the motor firmware as zero), which destroys the OpenArm official calibration whenever the server starts with the arm away from the calibration pose. Our override is byte-identical otherwise (bus + cameras + configure + enable torque).
+- `grpc_server_real.py` uses the same `Kinematics` (Placo, from `openarm_gripette_simu`) as the simulator. FK/IK are bit-for-bit identical; the only difference between sim and real is the CAN-side backend.
+- `Reset` on the real arm interpolates to the home pose (can't teleport a real arm). Cube-randomization arguments to `Reset` are no-ops on real — they return dummy cube coordinates for API compat with the simulator.
+- `GetSuccessStatus` on the real server always returns `goal_reached=False` — there's no cube tracking on hardware. Success determination is up to the client.

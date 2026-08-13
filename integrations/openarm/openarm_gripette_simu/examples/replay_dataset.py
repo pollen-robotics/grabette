@@ -42,7 +42,7 @@ from grabette_trajectory import CUBE_START_Z, GRASP_OFFSET_BODY  # noqa: E402
 from check_grabette_reachable import ARM_IK_SEED  # noqa: E402
 from openarm_gripette_simu import Simulation
 from openarm_gripette_simu.kinematics import Kinematics, CONTROL_FRAME
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 
 SCENE = Path(__file__).parent.parent / "scenes" / "grabette_grasp.xml"
 ARM_SCENE = Path(__file__).parent.parent / "scenes" / "table_grasp.xml"

@@ -64,17 +64,45 @@ def fit_device_to_host_s(left_ts_samples: list) -> tuple[float, float] | None:
     return float(slope), float(intercept)
 
 
+def _run_ffmpeg(cmd: list[str], what: str) -> None:
+    """Run an ffmpeg command, surfacing its stderr on failure.
+
+    A bare `check=True` raises a CalledProcessError whose message is only the
+    argv + exit code — hiding the one line that says WHY ffmpeg failed. We
+    capture stderr and fold its tail into the raised error so it reaches the
+    caller's logs (incl. the HF Space run logs) instead of being swallowed.
+    """
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        tail = (result.stderr or "").strip()[-1000:] or "(no stderr)"
+        raise RuntimeError(
+            f"ffmpeg failed ({what}, exit {result.returncode}): {tail}\n"
+            f"  command: {' '.join(cmd)}"
+        )
+
+
+# The PNG encoder defaults to frame-level multithreading. In a container with a
+# restricted pids/threads cgroup (HF Spaces), spawning that thread pool fails
+# with "ff_frame_thread_encoder_init failed" → "Error while opening encoder for
+# output stream". Forcing a single thread bypasses the frame-thread wrapper
+# entirely; output is byte-for-byte identical. MUST sit AFTER -i so it applies
+# to the output (encoder), not the input (decoder) — verified via clone() count:
+# after -i cuts the encoder pool, before -i does not.
+_FFMPEG_PNG_THREADS = ["-threads", "1"]
+
+
 def _extract_mp4_frames(mp4_path: Path, out_dir: Path) -> int:
     """Decode mp4 to GRAY8 6-digit PNGs starting at 000000.png. Returns count."""
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", str(mp4_path),
+        *_FFMPEG_PNG_THREADS,
         "-pix_fmt", "gray",
         "-start_number", "0",
         str(out_dir / "%06d.png"),
     ]
-    subprocess.run(cmd, check=True)
+    _run_ffmpeg(cmd, f"decode {mp4_path.name}")
     return len(list(out_dir.glob("*.png")))
 
 
@@ -88,10 +116,11 @@ def _extract_depth_video(mkv_path: Path, out_dir: Path) -> int:
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", str(mkv_path),
+        *_FFMPEG_PNG_THREADS,
         "-start_number", "0",
         str(out_dir / "%06d.png"),
     ]
-    subprocess.run(cmd, check=True)
+    _run_ffmpeg(cmd, f"decode {mkv_path.name}")
     return len(list(out_dir.glob("*.png")))
 
 

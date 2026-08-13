@@ -1,0 +1,35 @@
+{
+  "image_width": 1296,
+  "image_height": 972,
+  "intrinsic_type": "FISHEYE",
+  "intrinsics": {
+    "aspect_ratio": 0.9974064140442742,
+    "focal_length": 512.336215632677,
+    "principal_pt_x": 639.4547113545062,
+    "principal_pt_y": 495.85762143010663,
+    "radial_distortion_1": -0.0036315938261216887,
+    "radial_distortion_2": -0.006340515410813272,
+    "radial_distortion_3": -0.005022585622138357,
+    "radial_distortion_4": 0.002255799946569448,
+    "skew": 0.0
+  },
+  "fps": 49.62,
+  "calibration_source": "OpenICC (full spline optimization)",
+  "camera_reproj_error": 0.31874753391544464,
+  "imu_camera_reproj_error": 7.244266583888487,
+  "nr_calib_images": 29,
+  "t_i_c": {
+    "x": -0.00011395952305253986,
+    "y": -0.005276075233591049,
+    "z": -0.006171107108430983
+  },
+  "q_i_c": {
+    "w": -0.528343102376054,
+    "x": -0.8414094982035182,
+    "y": -0.09443487530222187,
+    "z": 0.06297362012147899
+  },
+  "time_offset_imu_to_cam": -0.17615498950452477,
+  "gyro_bias": [0.00015996975557990202, 0.0009524907263527097, -0.0020606042040575644],
+  "_note": "Final calibration from OpenICC spline optimization. Euler angles XYZ: (116deg, 12deg, 5deg)"
+}

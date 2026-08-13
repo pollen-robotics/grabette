@@ -4,7 +4,8 @@ Sends commands and reads feedback at LOOP_HZ using the lightweight ReadMotors RP
 (no camera involved). Outputs a CSV for plotting command vs feedback.
 
 Usage:
-    uv run python scripts/sinus_test.py [host:port]
+    uv run python scripts/sinus_test.py <host:port>
+    uv run python scripts/sinus_test.py 192.168.1.36:50051
 
 Plot:
     import pandas as pd, matplotlib.pyplot as plt
@@ -17,35 +18,44 @@ Plot:
     plt.tight_layout(); plt.savefig("sinus_test.png", dpi=150); plt.show()
 """
 
+import argparse
 import csv
 import math
-import sys
 import time
 
 from gripette.client import GripperClient
+from gripette.config import settings
 
 # Sinus parameters
 FREQ = 1.0         # Hz
 DURATION = 5.0     # seconds
 LOOP_HZ = 100      # command + feedback rate
 
-# Motor 1: center of range [-1.484, 0] → -0.742, amplitude 0.3 rad
-M1_CENTER = -0.742
+# Robot frame: 0 = open, positive = closing. Center the sinus in the
+# middle of each motor's range.
+# Motor 1: center of range [0, +1.484] → +0.742, amplitude 0.3 rad
+M1_CENTER = +0.742
 M1_AMP = 0.3
-# Motor 2: center of range [-2.025, 0] → -1.013, amplitude 0.3 rad
-M2_CENTER = -1.013
+# Motor 2: center of range [0, +2.025] → +1.013, amplitude 0.3 rad
+M2_CENTER = +1.013
 M2_AMP = 0.3
 
 OUTPUT = "sinus_test.csv"
-TARGET = sys.argv[1] if len(sys.argv) > 1 else "192.168.1.36:50051"
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("target",
+                        help=f"Gripette endpoint as HOST or HOST:PORT (port defaults to {settings.port})")
+    args = parser.parse_args()
+
+    target = args.target if ":" in args.target else f"{args.target}:{settings.port}"
+
     rows = []
     dt = 1.0 / LOOP_HZ
 
-    with GripperClient(TARGET) as g:
-        print(f"Connected to {TARGET}")
+    with GripperClient(target) as g:
+        print(f"Connected to {target}")
         g.torque_on()
         print(f"Torque on — sinus test: {FREQ}Hz, {DURATION}s, loop at {LOOP_HZ}Hz")
 

@@ -425,21 +425,27 @@ class OakdCapture:
             self._left_h264_fp = None
             self._right_h264_fp = None
 
-        # Mux raw .h264 → .mp4 (left + right in parallel; each is an ffmpeg
-        # -c copy subprocess, so it's I/O-bound and concurrency just overlaps
-        # the two process spawns) with actual fps inferred from timestamps.
+        # Finalize the three encoded streams (left mp4, right mp4, depth mkv)
+        # in parallel — each is an independent ffmpeg subprocess with no
+        # dependencies on the others, and depth-packing is CPU-heavy (FFV1
+        # encoding of hundreds of PNGs), so overlapping it with the two mp4
+        # muxes cuts wall-clock by roughly the depth-pack duration.
         import concurrent.futures
-        mux_jobs = [
-            (self._left_h264_path, self._left_ts, "left"),
-            (self._right_h264_path, self._right_ts, "right"),
-        ]
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-            futures = [ex.submit(self._mux_h264_to_mp4, p, ts, name)
-                       for p, ts, name in mux_jobs]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
+            futures = [
+                ex.submit(self._mux_h264_to_mp4, self._left_h264_path, self._left_ts, "left"),
+                ex.submit(self._mux_h264_to_mp4, self._right_h264_path, self._right_ts, "right"),
+            ]
+            if self.enable_depth and self._output_dir:
+                # _pack_depth_video reads self._depth_ts + PNG dir; no dep on
+                # sidecar files or the mp4 muxes, so it's safe to run alongside.
+                futures.append(ex.submit(self._pack_depth_video))
             for f in futures:
                 f.result()
 
-        # Sidecars
+        # Sidecar JSONs (fast — total ~10-50ms even on the Pi). Kept serial
+        # since parallelism buys nothing against ffmpeg's already-completed
+        # muxes and the JSON write cost is trivial.
         if self._output_dir:
             (self._output_dir / "oakd_left_timestamps.json").write_text(
                 json.dumps({"samples": self._left_ts})
@@ -457,9 +463,6 @@ class OakdCapture:
             (self._output_dir / "oakd_clock_pairs.json").write_text(
                 json.dumps({"pairs": self._clock_pairs})
             )
-            # Pack depth PNGs → one lossless video (after its timestamps sidecar
-            # is written), same finalization stage as the H.264 mux above.
-            self._pack_depth_video()
 
         stats = {
             "left_frames": len(self._left_ts),

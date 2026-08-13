@@ -18,26 +18,81 @@ Prerequisites:
 Usage:
   uv run python train.py --dataset_repo_id <user>/<dataset>_cartesian
   uv run python train.py --dataset_repo_id <user>/<dataset>_cartesian --batch_size 64
+
+Cloud training (no local GPU) — the PEP-723 header below makes this file a
+self-contained uv script, so it runs on HF Jobs as-is (see README → "Cloud
+training with HF Jobs"):
+  hf jobs uv run --flavor a100-large --timeout 8h -s HF_TOKEN train.py -- \\
+      --dataset_repo_id <user>/<dataset>_cartesian --push_to_hub <user>/<model> ...
 """
 
+# /// script
+# requires-python = ">=3.12,<3.13"
+# dependencies = ["lerobot[training,diffusion]==0.6.0"]
+# ///
+
 import argparse
+import json
+import sys
+import time
 from pathlib import Path
 
 import torch
 import torchvision.transforms as T
 
-from lerobot.configs.types import FeatureType, NormalizationMode
+from lerobot.configs import FeatureType, NormalizationMode
 from lerobot.datasets import LeRobotDataset, LeRobotDatasetMetadata
-from lerobot.policies.factory import make_pre_post_processors
-from lerobot.policies.diffusion.configuration_diffusion import DiffusionConfig
-from lerobot.policies.diffusion.modeling_diffusion import DiffusionPolicy
-from lerobot.datasets.feature_utils import dataset_to_policy_features
+from lerobot.policies import DiffusionConfig, make_pre_post_processors
+from lerobot.policies.diffusion import DiffusionPolicy
+from lerobot.utils.feature_utils import dataset_to_policy_features
 
-# Back DataLoader-worker tensors with /tmp files instead of /dev/shm, so a small
-# /dev/shm (common on servers/containers) doesn't cause "RuntimeError: unable to
-# allocate shared memory" at higher --num_workers / --prefetch_factor. Must run
-# before any DataLoader worker spawns (well before the training loop).
-torch.multiprocessing.set_sharing_strategy("file_system")
+# DataLoader-worker tensor sharing: default to $TMPDIR-file-backed shm, so a
+# small /dev/shm (common on servers/containers) doesn't cause "RuntimeError:
+# unable to allocate shared memory". Cost: every batch crosses the worker→main
+# boundary through the filesystem — slow on container overlay fs; the
+# --shm_strategy flag switches to /dev/shm ('file_descriptor') where it's large
+# enough. Must be set before any DataLoader worker spawns; argparse runs later,
+# so we peek at argv directly here.
+_shm = "file_descriptor" if any("file_descriptor" in a for a in sys.argv) else "file_system"
+torch.multiprocessing.set_sharing_strategy(_shm)
+
+# Line-buffer stdout even when piped (e.g. `... | tee train.log`). Python
+# block-buffers piped stdout, so a hard kill (OOM SIGKILL, segfault) discards
+# everything still in the buffer — leaving an EMPTY log for a run that printed
+# for minutes. Line buffering makes every step line land in the log immediately.
+sys.stdout.reconfigure(line_buffering=True)
+
+
+def _warn_if_shm_dir_on_tmpfs() -> None:
+    """The file_system sharing strategy backs worker batches with files in
+    $TMPDIR. If that is a RAM-backed tmpfs (common for /tmp), the files eat RAM
+    and eventually exhaust the mount — the run dies mid-training with
+    "unable to allocate shared memory(shm) for file </torch_...>".
+    Warn up-front with the fix instead of failing at step 16000."""
+    import tempfile
+    tmp = Path(tempfile.gettempdir()).resolve()
+    try:
+        best, fstype = Path("/"), ""
+        for line in Path("/proc/mounts").read_text().splitlines():
+            parts = line.split()
+            if len(parts) < 3:
+                continue
+            mnt = Path(parts[1])
+            if mnt == tmp or mnt in tmp.parents:
+                if len(str(mnt)) >= len(str(best)):
+                    best, fstype = mnt, parts[2]
+        if fstype in ("tmpfs", "ramfs"):
+            print(f"WARNING: TMPDIR ({tmp}) is on {fstype} (RAM-backed). DataLoader shared-\n"
+                  f"         memory files will consume RAM and can exhaust the mount mid-\n"
+                  f"         training ('unable to allocate shared memory ... </torch_...>').\n"
+                  f"         Fix: run with TMPDIR set to a real-disk dir, e.g.\n"
+                  f"             mkdir -p ~/tmp && TMPDIR=~/tmp uv run python train.py ...",
+                  file=sys.stderr)
+    except OSError:
+        pass  # non-Linux or unreadable /proc — nothing to check
+
+
+_warn_if_shm_dir_on_tmpfs()
 
 
 def save_train_state(ckpt_dir: Path, *, optimizer, step: int, best_val_loss: float):
@@ -222,6 +277,15 @@ def parse_args():
         default=8,
         help="Actions executed before re-planning (4=reactive, 8=default, 16=smooth)",
     )
+    parser.add_argument(
+        "--n_obs_steps",
+        type=int,
+        default=2,
+        help="Observation frames the policy conditions on. 2 (default, UMI) adds an "
+             "inter-frame motion cue but requires deployment to reproduce the training "
+             "frame spacing (dataset-fps camera); 1 conditions on a single frame — "
+             "robust to any deployment camera rate / execution speed.",
+    )
     parser.add_argument("--log_freq", type=int, default=100, help="Log every N steps")
     parser.add_argument("--save_freq", type=int, default=10_000, help="Save checkpoint every N steps")
     parser.add_argument("--eval_freq", type=int, default=200, help="Evaluate on validation set every N steps")
@@ -301,14 +365,38 @@ def parse_args():
     parser.add_argument(
         "--num_workers",
         type=int,
-        default=8,
-        help="DataLoader workers. Higher helps keep the GPU fed; typical range 4-16.",
+        default=4,
+        help="DataLoader workers. The default is sized to survive on ordinary RAM: "
+             "each worker holds prefetched batches of DECODED video frames, and "
+             "8+ workers have been OOM-killed (silent crash, exit 137, "
+             "'pt_data_worker' in dmesg) on 32GB machines. Raise to 8-16 only on "
+             "big-RAM boxes if the GPU is starved.",
     )
     parser.add_argument(
         "--prefetch_factor",
         type=int,
-        default=4,
-        help="Batches pre-loaded per worker. Default=4 hides most data-loading stalls.",
+        default=2,
+        help="Batches pre-loaded per worker. Multiplies worker memory; raise only "
+             "together with --num_workers on big-RAM machines.",
+    )
+    parser.add_argument(
+        "--shm_strategy",
+        choices=["file_system", "file_descriptor"],
+        default="file_system",
+        help="How DataLoader workers hand tensors to the main process. "
+             "'file_system' (default) writes through $TMPDIR files — survives tiny "
+             "/dev/shm but every batch pays a filesystem round-trip (slow on container "
+             "overlay fs). 'file_descriptor' uses /dev/shm — faster where /dev/shm is "
+             "large enough (watch for 'unable to allocate shared memory' if not).",
+    )
+    parser.add_argument(
+        "--video_backend",
+        choices=["torchcodec", "pyav"],
+        default=None,
+        help="Video decoding backend (default: lerobot's choice, usually torchcodec). "
+             "torchcodec needs SYSTEM FFmpeg libraries; pyav bundles its own FFmpeg "
+             "inside the wheel. Use 'pyav' in containers/cloud jobs without system "
+             "FFmpeg (symptom: 'Could not load libtorchcodec / libavutil.so not found').",
     )
     parser.add_argument(
         "--bf16",
@@ -364,6 +452,20 @@ def main():
     print(f"Output features:  {list(output_features.keys())}")
     print(f"Action names:     {action_feature_names}")
 
+    # ---- Guard: this recipe trains on the CONVERTED dataset only ----
+    # A raw build has an 8D absolute-pose action and no observation.state;
+    # pointing train.py at it crashes deep in the policy init with an opaque
+    # AttributeError. Fail here with the actual diagnosis instead.
+    action_dim = dataset_metadata.features["action"]["shape"][0]
+    if action_dim != 11 or "observation.state" not in dataset_metadata.features:
+        raise SystemExit(
+            f"\nERROR: this looks like a RAW dataset (action dim {action_dim}, "
+            f"state {'present' if 'observation.state' in dataset_metadata.features else 'MISSING'}).\n"
+            f"train.py needs the CONVERTED dataset (11D delta actions + 2D gripper state).\n"
+            f"Run the prep pipeline first:  ./run_pipeline.sh {args.dataset_repo_id}\n"
+            f"then train on its printed output (repo_id local/<name>_cartesian + --dataset_root)."
+        )
+
     # ---- Policy configuration ----
     # Parameters are aligned with the UMI (Universal Manipulation Interface) project,
     # which is a known-working diffusion policy for SLAM-recorded Cartesian datasets.
@@ -372,7 +474,12 @@ def main():
         input_features=input_features,
         output_features=output_features,
         # -- Temporal structure (same as UMI) --
-        n_obs_steps=2,
+        # n_obs_steps=2 conditions the policy on a PAIR of consecutive frames
+        # (20 ms apart at 50 fps) — i.e. on inter-frame MOTION. Deployment must
+        # then reproduce that spacing (camera rate x execution speed), which a
+        # slow camera cannot. n_obs_steps=1 conditions on a single frame:
+        # weaker temporal cue, but immune to frame-rate mismatch at deployment.
+        n_obs_steps=args.n_obs_steps,
         horizon=16,
         n_action_steps=args.n_action_steps,
         # -- Vision encoder --
@@ -387,6 +494,7 @@ def main():
         crop_is_random=not args.no_random_crop,  # default True (UMI); pass --no_random_crop to disable
         pretrained_backbone_weights=None,
         use_group_norm=True,
+        use_separate_rgb_encoder_per_camera=False,
         spatial_softmax_num_keypoints=32,
         # -- U-Net (same as UMI) --
         down_dims=(256, 512, 1024),
@@ -424,6 +532,16 @@ def main():
     # ---- Instantiate policy ----
     if args.resume_from:
         ckpt_path = Path(args.resume_from)
+        # Guard: if the directory doesn't exist, lerobot's from_pretrained
+        # falls through to interpreting the path as a HUB REPO ID and dies
+        # with a cryptic HFValidationError. Fail with the real diagnosis.
+        if not (ckpt_path / "config.json").is_file():
+            raise SystemExit(
+                f"\nERROR: --resume_from checkpoint not found: {ckpt_path.resolve()}\n"
+                f"(no config.json there). Relative paths resolve from the directory you\n"
+                f"run in — pass the ABSOLUTE path to the checkpoint dir, e.g.\n"
+                f"  --resume_from <output_dir>/checkpoint_15000  (must contain config.json)"
+            )
         print(f"\nResuming from checkpoint: {ckpt_path}")
         policy = DiffusionPolicy.from_pretrained(ckpt_path)
     else:
@@ -472,18 +590,33 @@ def main():
         excl = set(args.exclude_episodes)
         all_episodes = [e for e in all_episodes if e not in excl]
         print(f"  Excluding {len(excl)} episodes; {len(all_episodes)} remain.")
-    num_val = max(1, int(len(all_episodes) * args.val_ratio))
-    # Use last episodes as validation (deterministic split, no randomness)
-    val_episodes = all_episodes[-num_val:]
-    train_episodes = all_episodes[:-num_val]
+    # STRIDED validation split (deterministic, no randomness): every Nth episode.
+    # Consecutive episodes are recorded minutes apart — same lighting, operator
+    # rhythm, object placements — so a tail split (old behavior) validates on a
+    # correlated blob and flatters the metrics. Striding spreads the val set
+    # across the whole recording session(s).
+    stride = max(2, round(1 / args.val_ratio))
+    val_episodes = all_episodes[::stride]
+    val_set = set(val_episodes)
+    train_episodes = [e for e in all_episodes if e not in val_set]
+    # Persist the exact split next to the checkpoints: offline_eval.py reads it
+    # from there, so eval can never silently disagree with training (exclusions
+    # and split changes included).
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "val_episodes.json").write_text(json.dumps(
+        {"val_episodes": val_episodes, "split": "stride", "val_ratio": args.val_ratio}))
+    print(f"  Val episodes (strided, saved to val_episodes.json): {val_episodes}")
 
     train_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,
-        delta_timestamps=delta_timestamps, episodes=train_episodes
+        delta_timestamps=delta_timestamps, episodes=train_episodes,
+        video_backend=args.video_backend,
     )
     val_dataset = LeRobotDataset(
         args.dataset_repo_id, root=args.dataset_root,
-        delta_timestamps=delta_timestamps, episodes=val_episodes
+        delta_timestamps=delta_timestamps, episodes=val_episodes,
+        video_backend=args.video_backend,
     )
 
     print(f"  Train episodes:   {len(train_episodes)} ({len(train_dataset)} frames)")
@@ -506,6 +639,12 @@ def main():
         pin_memory=device.type != "cpu",
         drop_last=False,
         num_workers=2,
+        # persistent: compute_val_loss breaks out of the iterator early
+        # (max_batches), and non-persistent workers torn down mid-iteration
+        # can leak /dev/shm segments — one small leak per eval fills shm
+        # after tens of evals and kills training with "unable to allocate
+        # shared memory". Persistent workers are created once and reused.
+        persistent_workers=True,
     )
 
     # ---- Optimizer ----
@@ -575,6 +714,8 @@ def main():
     best_val_loss = resumed_best_val
     step = resumed_step
     done = False
+    t_log = time.perf_counter()  # throughput clock (it/s over each log window)
+    speed = ""
     while not done:
         for batch in train_dataloader:
             # Training-only image augmentation (BEFORE normalization in preprocessor)
@@ -602,6 +743,15 @@ def main():
 
             train_loss = loss.item()
 
+            # Throughput over the last log window (train steps only — the
+            # val pause is excluded by resetting the clock after eval below).
+            if step % args.log_freq == 0:
+                now = time.perf_counter()
+                its = args.log_freq / max(now - t_log, 1e-9) if step > 0 else 0.0
+                eta_h = (args.training_steps - step) / its / 3600 if its > 0 else 0.0
+                speed = f"  {its:5.2f} it/s  eta {eta_h:4.1f}h" if step > 0 else ""
+                t_log = now
+
             # ---- Validation ----
             val_loss = None
             if step > 0 and step % args.eval_freq == 0:
@@ -623,17 +773,21 @@ def main():
                     f"step: {step:>7d} / {args.training_steps}  "
                     f"train_loss: {train_loss:.4f}  val_loss: {val_loss:.4f}  "
                     f"best_val: {best_val_loss:.4f}" + (" *" if val_loss <= best_val_loss else "")
+                    + speed
                 )
+                t_log = time.perf_counter()  # don't bill the val pause to the next window
 
             if use_wandb:
                 log_dict = {"train_loss": train_loss, "step": step}
+                if step % args.log_freq == 0 and step > 0:
+                    log_dict["it_per_s"] = its
                 if val_loss is not None:
                     log_dict["val_loss"] = val_loss
                     log_dict["best_val_loss"] = best_val_loss
                 wandb.log(log_dict)
 
             if step % args.log_freq == 0 and val_loss is None:
-                print(f"step: {step:>7d} / {args.training_steps}  train_loss: {train_loss:.4f}")
+                print(f"step: {step:>7d} / {args.training_steps}  train_loss: {train_loss:.4f}{speed}")
 
             # Periodic checkpoint
             if step > 0 and step % args.save_freq == 0:

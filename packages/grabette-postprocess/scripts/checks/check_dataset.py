@@ -9,9 +9,9 @@ For each episode, checks the recordings produced by the current rig:
   - Gripper                    : angle_data.json (joint angles)
   - SLAM outputs (if present)  : camera_trajectory.csv (+ slam_metadata.json)
 
-Counts are cross-checked against metadata.json. The check logic lives in
-grabette_postprocess.checks.recording so it can be reused by the HF Space
-pipeline; this file is just the CLI.
+Verifies each subsystem's data is present and non-empty (a fast content check,
+not a full audit). The check logic lives in grabette_postprocess.checks.recording
+so it can be reused by the HF Space pipeline; this file is just the CLI.
 
 Usage:
     uv run python scripts/checks/check_dataset.py -i ~/data/dataset

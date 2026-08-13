@@ -21,6 +21,7 @@ IMU_HZ = 200
 
 class MockBackend(Backend):
     def __init__(self) -> None:
+        super().__init__()
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
@@ -153,9 +154,7 @@ class MockBackend(Backend):
     @staticmethod
     def _generate_test_pattern() -> bytes:
         """Generate a minimal test pattern as JPEG bytes."""
-        import io
         import struct
-        import zlib
 
         # Generate a 160x120 PPM image (color bars), then convert to JPEG-like
         # For simplicity, create a minimal valid JPEG using raw encoding
@@ -246,6 +245,10 @@ class MockBackend(Backend):
             "hand": settings.hand,
             "angle_convention": "positive_closing",
             "device_id": settings.device_id,
+            # Which URDF the rpi backend would use for this hand — mock doesn't
+            # write frames.json / intrinsics, but the field keeps the metadata
+            # schema uniform across backends.
+            "urdf": f"grabette_{settings.hand}",
         }
         sync_meta = self._take_sync_metadata()
         if sync_meta:

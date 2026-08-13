@@ -40,6 +40,26 @@ DEFAULT_SERIAL_TIMEOUT = 0.05
 # consumer, so clients never see stale data.
 DEFAULT_BUS_HZ = 100.0
 
+# present_load is force telemetry / feedback, not the position control signal,
+# so it doesn't need the full bus rate. Reading it costs one extra sync round
+# trip; do it every Nth tick to keep the position read on the hot path.
+LOAD_READ_DECIMATION = 2
+
+# STS3215 running (RAM) torque-limit register range: 0..1000 = 0..100% of the
+# servo's max torque. This is the *running* limit, NOT the EEPROM max-torque
+# register — the running one is safe to write repeatedly.
+TORQUE_LIMIT_MAX = 1000
+
+# present_load's direction bit gives the hardware effort sign. We map it to the
+# robot convention — positive = CLOSING effort, matching "positive angle closes"
+# (true for both left and right gripette) — by applying the per-motor position
+# `sign` (so left/right read consistently, exactly like the angle handling)
+# plus this calibrated polarity. The sign is PRESERVED (no abs): an external
+# force driving the joint the other way flips it, which is meaningful.
+# Calibrated on a RIGHT unit (commanded close drives decoded load negative, so
+# we flip). VERIFY this polarity on a LEFT unit before trusting its load sign.
+LOAD_CLOSING_SIGN = -1
+
 try:
     from rustypot import Sts3215PyController
 
@@ -73,14 +93,25 @@ class MotorController:
         id_2: int = 2,
         timeout: float = DEFAULT_SERIAL_TIMEOUT,
         limits: tuple[tuple[float, float], tuple[float, float]] | None = None,
+        signs: tuple[int, int] = (1, 1),
+        offsets: tuple[float, float] = (0.0, 0.0),
         bus_hz: float = DEFAULT_BUS_HZ,
     ):
         self.port = port
         self.baudrate = baudrate
         self.ids = [id_1, id_2]
         self.timeout = timeout
-        # limits: ((m1_min, m1_max), (m2_min, m2_max)) in radians
+        # limits: ((m1_min, m1_max), (m2_min, m2_max)) in radians, ROBOT FRAME
+        # (0 = open, positive = closing).
         self.limits = limits
+        # Robot frame <-> encoder frame mapping (per motor):
+        #   read:  robot = (encoder - offset) * sign
+        #   write: encoder = robot * sign + offset
+        # signs are ±1 (hardware mounting); offsets are the encoder reading
+        # observed at robot-frame zero (calibration). Cached/limit-checked
+        # values are therefore always in robot frame (positive = closing).
+        self.signs = signs
+        self.offsets = offsets
         self._bus_period = 1.0 / bus_hz
         self._controller = None
         self._mock = not _HAS_RUSTYPOT
@@ -92,10 +123,21 @@ class MotorController:
         self._pos_lock = threading.Lock()
         self._cached_positions: tuple[float, float] = (0.0, 0.0)
 
+        # Cached present-load (decoded signed effort), refreshed by the bus
+        # thread at a decimated rate. Separate lock so a load read never
+        # contends with the higher-rate position read.
+        self._load_lock = threading.Lock()
+        self._cached_load: tuple[float, float] = (0.0, 0.0)
+        self._load_tick = 0
+
         # Pending write slots (written by RPC threads, consumed by bus thread).
         self._slot_lock = threading.Lock()
         self._pending_goal: tuple[float, float] | None = None
         self._pending_torque: bool | None = None
+        # Torque-limit is a per-grasp write: deposit as raw register units,
+        # applied only when it changed (dedup) so we never write per-tick.
+        self._pending_torque_limit: tuple[int, int] | None = None
+        self._last_torque_limit: tuple[int, int] | None = None
 
         # Bus thread lifecycle.
         self._running = False
@@ -133,14 +175,19 @@ class MotorController:
             )
             try:
                 pos = self._controller.sync_read_present_position(self.ids)
-                # Seed the cache so clients don't see (0, 0) before the first tick.
+                # Encoder -> robot frame: subtract offset, then apply sign.
+                # Seed the cache so clients don't see (0, 0) before the
+                # first bus-loop tick.
+                robot = (
+                    (pos[0] - self.offsets[0]) * self.signs[0],
+                    (pos[1] - self.offsets[1]) * self.signs[1],
+                )
                 with self._pos_lock:
-                    self._cached_positions = (pos[0], pos[1])
+                    self._cached_positions = robot
                 logger.info(
-                    "Motors started on %s: ids=%s, positions=%s",
-                    self.port,
-                    self.ids,
-                    pos,
+                    "Motors started on %s: ids=%s, encoder=%s, robot=%s, "
+                    "signs=%s, offsets=%s",
+                    self.port, self.ids, pos, robot, self.signs, self.offsets,
                 )
                 break  # success
             except RuntimeError as e:
@@ -173,38 +220,68 @@ class MotorController:
         logger.info("Motor bus thread started at %.1f Hz", 1.0 / self._bus_period)
 
     def read_positions(self) -> tuple[float, float]:
-        """Return the most recent cached positions in radians. Non-blocking."""
+        """Return the most recent cached positions in radians (ROBOT FRAME:
+        0 = open, positive = closing). Non-blocking."""
         if self._mock:
             return (self._mock_positions[0], self._mock_positions[1])
         with self._pos_lock:
             return self._cached_positions
 
-    def _check_limits(self, pos1: float, pos2: float) -> None:
-        """Raise ValueError if positions are outside configured limits."""
+    # Tolerance on the limit check, radians (~0.006 deg — far below the 0.088 deg
+    # encoder step, so it cannot mask a real out-of-range command).
+    #
+    # Needed because goals arrive over gRPC as proto `float` (float32) while the
+    # limits are float64. A client legitimately asking for EXACTLY the limit —
+    # which is what a full close does — sends a value that quantises to marginally
+    # above it and was rejected outright: "goal 1.632 rad outside limits
+    # [0.000, 1.632]". Observed on hardware. Values inside the tolerance are
+    # clamped to the limit rather than refused.
+    _LIMIT_TOL = 1e-4
+
+    def _check_limits(self, pos1: float, pos2: float) -> tuple[float, float]:
+        """Validate goals against the configured limits.
+
+        Returns the (possibly clamped) goals. Raises ValueError only for values
+        genuinely outside the range, not for float32 rounding at the boundary.
+        """
         if self.limits is None:
-            return
+            return pos1, pos2
         (m1_min, m1_max), (m2_min, m2_max) = self.limits
-        if not (m1_min <= pos1 <= m1_max):
+        if not (m1_min - self._LIMIT_TOL <= pos1 <= m1_max + self._LIMIT_TOL):
             raise ValueError(
                 f"Motor 1 goal {pos1:.3f} rad outside limits [{m1_min:.3f}, {m1_max:.3f}]"
             )
-        if not (m2_min <= pos2 <= m2_max):
+        if not (m2_min - self._LIMIT_TOL <= pos2 <= m2_max + self._LIMIT_TOL):
             raise ValueError(
                 f"Motor 2 goal {pos2:.3f} rad outside limits [{m2_min:.3f}, {m2_max:.3f}]"
             )
+        return (min(max(pos1, m1_min), m1_max), min(max(pos2, m2_min), m2_max))
 
     def write_goal_positions(self, pos1: float, pos2: float) -> None:
         """Queue a goal write for the bus thread. Non-blocking. Validates limits.
 
+        Arguments are in ROBOT FRAME (0 = open, positive = closing). Limits
+        are checked in robot frame, then the goal is converted to the encoder
+        frame via `encoder = robot * sign + offset` before being queued for
+        the bus thread.
+
         Last-wins: if a previous goal hasn't been applied yet, it's overwritten.
         """
-        self._check_limits(pos1, pos2)
+        # Clamped, not just checked: a goal exactly AT the limit arrives from the
+        # wire as float32 and can land a hair outside it.
+        pos1, pos2 = self._check_limits(pos1, pos2)
         if self._mock:
+            # Mock keeps robot-frame state to match read_positions() semantics.
             self._mock_positions = [pos1, pos2]
             logger.debug("Mock motors → goals: (%.3f, %.3f)", pos1, pos2)
             return
+        # Robot frame -> encoder frame just before crossing the bus boundary.
+        encoder_goal = (
+            pos1 * self.signs[0] + self.offsets[0],
+            pos2 * self.signs[1] + self.offsets[1],
+        )
         with self._slot_lock:
-            self._pending_goal = (pos1, pos2)
+            self._pending_goal = encoder_goal
 
     def set_torque(self, enable: bool) -> None:
         """Queue a torque-enable write for the bus thread. Non-blocking.
@@ -217,16 +294,67 @@ class MotorController:
         with self._slot_lock:
             self._pending_torque = enable
 
+    def set_torque_limit(self, values: list[float]) -> None:
+        """Queue a RUNNING (RAM) torque-limit write. Non-blocking, last-wins.
+
+        `values` are fractions 0.0–1.0 of the servo's max torque, one per
+        motor. The bus thread applies it only when it changed (dedup), so this
+        is a per-grasp write, never per-tick. The fraction→register mapping
+        lives here so callers never see raw units. Hits the RAM running-torque
+        register (safe to rewrite), NOT the EEPROM max-torque register.
+        """
+        if len(values) != len(self.ids):
+            raise ValueError(
+                f"expected {len(self.ids)} torque-limit values, got {len(values)}"
+            )
+        raw = tuple(
+            int(round(max(0.0, min(1.0, v)) * TORQUE_LIMIT_MAX)) for v in values
+        )
+        if self._mock:
+            logger.debug("Mock motors → torque_limit %s", raw)
+            return
+        with self._slot_lock:
+            self._pending_torque_limit = raw
+
+    @staticmethod
+    def _decode_load(raw: int) -> float:
+        """Decode Feetech present_load's register layout: bit 10 = direction,
+        bits 0–9 = magnitude (0–1000, ~PWM effort, clamped at torque_limit).
+        Returns the hardware-frame signed value; robot-frame mapping (sign
+        convention) is applied by _load_to_robot."""
+        mag = raw & 0x3FF
+        return float(-mag if (raw & 0x400) else mag)
+
+    def _load_to_robot(self, raw: int, idx: int) -> float:
+        """Decode present_load and map to ROBOT FRAME: positive = closing
+        effort (matching the angle convention), left/right-consistent via the
+        per-motor `sign`. Sign preserved — a force driving the joint the other
+        way flips it. See LOAD_CLOSING_SIGN."""
+        return self._decode_load(raw) * self.signs[idx] * LOAD_CLOSING_SIGN
+
+    def get_present_load(self) -> list[float]:
+        """Most recent present-load per motor, ROBOT FRAME (positive = closing
+        effort, left/right consistent; sign preserved). Non-blocking; refreshed
+        by the bus thread at a decimated rate."""
+        if self._mock:
+            return [0.0] * len(self.ids)
+        with self._load_lock:
+            return list(self._cached_load)
+
     def _bus_loop(self) -> None:
         """Single owner of the serial bus. Reads positions, applies pending writes."""
         while self._running:
             tick = time.monotonic()
 
-            # 1. Read positions → update cache.
+            # 1. Read positions → convert encoder -> robot frame → update cache.
+            #    robot = (encoder - offset) * sign
             try:
                 pos = self._controller.sync_read_present_position(self.ids)
                 with self._pos_lock:
-                    self._cached_positions = (pos[0], pos[1])
+                    self._cached_positions = (
+                        (pos[0] - self.offsets[0]) * self.signs[0],
+                        (pos[1] - self.offsets[1]) * self.signs[1],
+                    )
                 # Reset fail counter on success to reduce log noise.
                 self._read_fail_count = 0
             except Exception as e:
@@ -239,12 +367,29 @@ class MotorController:
                         e,
                     )
 
+            # 1b. Read present_load at a decimated rate (force telemetry, not
+            #     the position control signal). A dropped load read is
+            #     non-critical — just skip it.
+            self._load_tick += 1
+            if self._load_tick % LOAD_READ_DECIMATION == 0:
+                try:
+                    raw = self._controller.sync_read_present_load(self.ids)
+                    with self._load_lock:
+                        self._cached_load = (
+                            self._load_to_robot(raw[0], 0),
+                            self._load_to_robot(raw[1], 1),
+                        )
+                except Exception:
+                    pass
+
             # 2. Drain pending write slots under the lock, then apply outside it.
             with self._slot_lock:
                 goal = self._pending_goal
                 self._pending_goal = None
                 torque_req = self._pending_torque
                 self._pending_torque = None
+                tl_req = self._pending_torque_limit
+                self._pending_torque_limit = None
 
             if goal is not None:
                 try:
@@ -264,6 +409,19 @@ class MotorController:
                     )
                 except Exception as e:
                     logger.warning("Motor torque write failed: %s", e)
+
+            # Apply torque-limit only when it changed (per-grasp, not per-tick).
+            if tl_req is not None and tl_req != self._last_torque_limit:
+                try:
+                    self._controller.sync_write_torque_limit(
+                        self.ids, [tl_req[0], tl_req[1]]
+                    )
+                    self._last_torque_limit = tl_req
+                    logger.info(
+                        "Motors torque_limit set to %s /%d", tl_req, TORQUE_LIMIT_MAX
+                    )
+                except Exception as e:
+                    logger.warning("Torque-limit write failed: %s", e)
 
             # 3. Sleep to the next tick.
             elapsed = time.monotonic() - tick

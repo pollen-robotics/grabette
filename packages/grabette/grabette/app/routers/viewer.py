@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse
 
+from grabette.config import settings
+
 router = APIRouter(tags=["viewer"])
 
 VIEWER_HTML = """\
@@ -259,7 +261,7 @@ let rebaseModel = null;
 
 (async () => {
   try {
-    const urdf  = await parseURDF('/urdf/grabette_right/robot.urdf');
+    const urdf  = await parseURDF('__URDF_PATH__');
     const robot = await buildRobot(urdf);
     scene.add(robot.root);
     jointPivots = robot.pivots;
@@ -361,5 +363,12 @@ window.addEventListener('resize', () => {
 
 @router.get("/viewer")
 async def viewer():
-    """Serve the 3D URDF viewer page."""
-    return HTMLResponse(content=VIEWER_HTML)
+    """Serve the 3D URDF viewer page.
+
+    The URDF path is substituted at request time from settings.hand so
+    a left-hand grabette renders grabette_left/ (mirror mesh) instead of
+    the right one. The per-joint sign logic inside setJoint() is derived
+    from URDF limits and works for either hand — the swap is cosmetic.
+    """
+    urdf_path = f"/urdf/grabette_{settings.hand}/robot.urdf"
+    return HTMLResponse(content=VIEWER_HTML.replace("__URDF_PATH__", urdf_path))

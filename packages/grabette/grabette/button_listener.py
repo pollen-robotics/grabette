@@ -63,6 +63,11 @@ class ButtonListener:
             logger.info("Button not available: %s", e)
             return
 
+        # The LED is driven ONLY from here — the _led_monitor thread below reads
+        # the backend's capture state and applies the matching pattern. We do not
+        # register the LED with the backend (set_led_controller): letting it also
+        # drive the LED imperatively would fight the monitor, e.g. plain blink vs
+        # our fast blink during a stop.
         self._stop_event.clear()
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="button-listener",
@@ -86,6 +91,8 @@ class ButtonListener:
             self._led_thread.join(timeout=2.0)
             self._led_thread = None
         if self._button is not None:
+            # The monitor thread is already joined above, so nothing can touch
+            # the LED between here and the gpiod lines being released.
             self._button.led_off()
             self._button.cleanup()
             self._button = None

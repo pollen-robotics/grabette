@@ -756,7 +756,7 @@
     </inertial>
   </link>
   <joint name="camera_frame" type="fixed">
-    <origin xyz="0.0408486 -0.0255417 0.0701847" rpy="1.91986 -0 -3.14159"/>
+    <origin xyz="0.0408486 -0.0255417 0.0701847" rpy="-1.91986 0 0"/>
     <parent link="grip_l"/>
     <child link="camera"/>
     <axis xyz="0 0 0"/>

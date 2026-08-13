@@ -17,13 +17,21 @@ Without them, `import placo` (and the sim) fails with
 
 Then sync the Python environment:
 
+> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
+> monorepo* environment. Always pass `--package` (root README → Development).
+> The base simulator supports Python 3.11; the `dataset` and `eval` extras
+> require Python 3.12 because they install LeRobot 0.6.x.
+
 ```bash
-uv sync                  # base install
-uv sync --extra dataset  # + lerobot (for LeRobot dataset collection)
-uv sync --extra dev      # + grpcio-tools (for regenerating proto stubs)
+uv sync --package openarm-gripette-simu                  # base install
+uv sync --package openarm-gripette-simu --extra dataset  # + lerobot (dataset collection)
+uv sync --package openarm-gripette-simu --extra dev      # + grpcio-tools (proto stubs)
 ```
 
-The robot model is fetched from [pollen-robotics/openarm_gripette_model](https://github.com/pollen-robotics/openarm_gripette_model). For local model development, swap the `[tool.uv.sources]` entry in `pyproject.toml`.
+The robot model comes from the workspace package
+[`openarm_gripette_model`](../openarm_gripette_model), resolved locally from the
+monorepo via `[tool.uv.sources]` (`openarm-gripette-model = { workspace = true }`)
+— no external fetch.
 
 ## Run the server
 
@@ -47,13 +55,13 @@ Two gRPC services on separate ports:
 
 ### GripperService (port 50051)
 
-Identical to the real [Gripette](https://github.com/pollen-robotics/gripette) gRPC API.
+Identical to the real [Gripette](../../../packages/gripette) gRPC API.
 
 | RPC | Description |
 |-----|-------------|
-| `StreamState` | 50Hz JPEG camera frames + motor positions + timestamp |
-| `SendMotorCommand(m1, m2)` | Set gripper joint goals (rad) |
-| `ReadMotors` | Read gripper joint positions (rad) |
+| `StreamState` | 30Hz JPEG camera frames + motor positions + load + timestamp |
+| `SendMotorCommand(m1, m2[, torque_limit])` | Set gripper joint goals (rad); optional grip force cap (0..1, 0 = unset) |
+| `ReadMotors` | Read gripper joint positions (rad) + load |
 | `SetTorque(enable)` | No-op in simulation |
 | `Ping` | Health check |
 
@@ -83,12 +91,13 @@ self._target_r6d = rotation_matrix_to_6d(R_target @ rotation_6d_to_matrix(dr6d))
 # IK solves to the new (target_pos, target_r6d) and commands the arm joints.
 ```
 
-This matches `convert_dataset.py` in lerobot, which builds the per-frame
-action as `R[t].T @ Δpos_world` and `R[t].T @ R[t+1]`. The full rationale is
-in `examples/openarm_gripette/README.md` → "Frame Convention" on the lerobot
-side. To verify the integrator end-to-end against a running server, use the
-**lerobot-side** `cartesian_square.py` (not the one in this repo's
-`examples/`, see "Examples" below).
+This matches `convert_dataset.py` in the [DiffusionPolicy](../../DiffusionPolicy)
+integration, which builds the per-frame action as `R[t].T @ Δpos_world` and
+`R[t].T @ R[t+1]` (the integrator-semantics box above has the full frame
+rationale). To verify the integrator end-to-end against a running server, use
+the gRPC-client `cartesian_square.py` in the
+[`openarm_gripette`](../openarm_gripette) package — not the standalone one in
+this repo's `examples/` (see "Examples" below).
 
 ### Evaluation loop pattern
 
@@ -160,7 +169,7 @@ Dataset features match the Grabette training pipeline:
 - `observation.images.cam0`: video, 972×1296 fisheye
 - `action`: `[11]` float32 — same 11D (absolute, next-step target)
 
-All rates aligned at **50fps** to match real Grabette data (20ms per frame).
+Reach episodes record at **50fps** (20ms per frame), 972×1296 — the sim's native rate. (The real rig and the **grasp** dataset below use 30fps / 960×720 to match it; the reach set is a separate, older synthetic task.)
 
 ## Grasp data collection
 
@@ -223,7 +232,7 @@ camera-local delta format produced by the `DiffusionPolicy` integration's
 `convert_dataset.py` (2D gripper state, 11D delta action).
 
 ```bash
-uv sync --extra eval          # adds lerobot + scipy
+uv sync --package openarm-gripette-simu --extra eval   # adds LeRobot Diffusion/Pi policy deps + scipy
 
 # Terminal 1 — arm grasp scene, headless
 uv run python -m openarm_gripette_simu --scene scenes/table_grasp.xml --headless
@@ -235,9 +244,143 @@ uv run python examples/evaluate.py \
 ```
 
 - `--checkpoint` — local path or HF repo id.
+- **`--grip_assist`** — the fix to reach for when the policy approaches well but
+  the gripper "closes without really gripping": see
+  [When the gripper closes but barely touches the object](#when-the-gripper-closes-but-barely-touches-the-object).
+  Supersedes `--latch_close` / `--commit_close` / `--grip_gain`.
 - `--n_action_steps 8` — committed grasp (lower = more reactive approach, but can hesitate on the trigger).
-- `--debug` — show the camera feed; `--log_gripper` — print the gripper command vs observed state each step.
+- `--debug` — preview the camera feed; `--log_gripper` — print the gripper command vs observed state (and `present_load`) each step.
 - `--clamp_pos_mm` / `--clamp_rot_deg` — cap per-step Cartesian deltas (stability test).
+- `--grip_torque_limit` — **grip force cap** as a fraction `0..1` of the servo's max torque, applied to both gripper DOFs. `0` (default) = full torque = the pre-existing behavior, so **existing policies are unaffected unless you opt in**. With a cap set, the DOF driven into the object stalls at the cap → a consistent, object-size-independent grip force, while the policy's position targets (grasp *shape*) are untouched — no shape classifier needed. Force is then the cap rather than position overshoot, which is what makes `--grip_assist` safe to let close until it feels the object. Real hardware only (no-op in sim, which has no torque cap). **Pair it with `--grip_assist`** (see below); the older `--grip_gain` route needed the cap for the same reason. Start around `0.25` (field-validated: "medium" grip, ample for grasping, and thermally safe to hold indefinitely — no overload-protection fade); watch the `motor{1,2}_load` telemetry via `--log_gripper`. Load clamps at `cap×1000`; `present_current` keeps rising past the cap if you need to sense firmer grasps.
+
+**OpenCV: headless by default, GUI window opt-in.** The workspace installs **`opencv-python-headless`** — lerobot depends on it and the on-device services (grabette on the Pi) need it, and a single venv can hold only one `cv2`. In this default, `--debug` **saves annotated frames to `eval_debug_frames/`** (and warns once) instead of opening a window. To get a **live preview window** on a GUI workstation, install the full build over the headless one:
+
+```bash
+uv pip install --force-reinstall opencv-python
+```
+
+Workstation-only (don't do this for a Pi deployment), and re-run it after any `uv sync` — sync restores the headless build.
+
+### When the gripper closes but barely touches the object
+
+**Try this first when a policy approaches correctly but fails to actually grip.**
+It is the primary remedy for the most common grasp failure on this hardware, and
+it **supersedes `--latch_close` / `--commit_close` / `--grip_gain`** — set it
+instead of those, not alongside them.
+
+**The failure.** The policy replays the closing *angle* it was shown, which is
+where the human demonstrator's fingers sat **while pressing the object**. Replayed
+on a force-blind position servo, that angle can leave the fingers stopped just
+short, touching nothing: "parked at angle θ in air" and "pressing the object at
+angle θ" are indistinguishable to the policy, and the dataset gave it no force
+channel to tell them apart. Measured on the real arm: the policy commanded
+proximal `0.865` while the object blocks the fingers at `0.871` — short by
+~0.006 rad, i.e. it would just touch the mustard with essentially zero force.
+
+**What the assist does.** It leaves the policy in charge of *when* to close and
+*which posture* to use, and intervenes only in the one state where the policy
+demonstrably fails — it has **settled** into a closed pose that is **not
+gripping**. Then it extends the closure **along the policy's own prox/distal
+direction** until the fingers stall on the object, presses a little further to
+develop grip force, and latches. Everywhere else the gripper command passes
+through untouched, so neither the approach nor an already-good grasp is
+perturbed.
+
+Preserving the posture matters here: with a 2-DoF index finger against a fixed
+thumb, the prox/distal *ratio* **is** the grasp type (fingertip pinch ↔ power
+wrap). A fixed "closed" target would override the policy's choice and could
+drive the index into the thumb; extending along its direction cannot.
+
+```bash
+uv run python examples/evaluate.py \
+    --checkpoint <user>/<model> \
+    --grip_assist 50 --assist_lag 0.010 --assist_step 0.02 --assist_squeeze 0.05 \
+    --grip_torque_limit 0.25 \
+    --start_gripper 0.40 0.30 --log_gripper --assist_log /tmp/assist.jsonl
+```
+
+**Contact is detected as a stall** — all three terms are required, and each one
+is there because omitting it failed on the robot:
+
+| term | flag | why it is needed |
+|---|---|---|
+| the fingers have stopped advancing | `--assist_settle_eps` (0.004) | fingers still *travelling* to a fresh command lag ~0.09 rad and draw cap current; without this the assist latched 3 ticks in having added nothing |
+| settled **short** of the commanded pose | `--assist_lag` (0.010 rad) | a finger that simply arrived has ~no lag; a blocked one keeps a growing one |
+| while drawing load | `--grip_assist LOAD_THRESH` | a limp/disabled servo is also "not moving", but pushes nothing, and must not read as a grasp |
+
+Readings are debounced (`--assist_confirm_ticks`, default 2) because the load
+register is noisy. **Slip is load-only** (load fell): a gripped finger keeps
+creeping while the policy raises its own command, and treating that motion as
+slip ratcheted the extra closure 0.18 → 0.24 → 0.30 on the arm.
+
+**Tuning.** The defaults come from measurements on the real gripper at a 0.25
+torque cap: free motion lags 0.002–0.004 rad with load 0–24, while from first
+contact lag is 0.014 and growing as load climbs 72 → 250 (the cap). Re-measure
+for a different gripper or cap with
+[`examples/characterize_grip_load.py`](examples/characterize_grip_load.py),
+which sweeps the closure in assist-sized steps and prints the load-vs-closure
+curve per object. **Thresholds do not transfer between hardware and sim** (the
+sim's load is MuJoCo `actuator_force`, not the servo's 0–1000 PWM proxy). If a
+soft object's signal barely clears the noise floor, raise `--assist_step` (a
+deeper press gives a stronger signal) rather than lowering the threshold into
+the noise.
+
+**Debugging.** Every tick reports *why* the assist acted or didn't — `open`,
+`cmd still moving 3/5`, `dwell`, `stepping to 0.040`, `contact confirmed`,
+`squeezing to`, `latched at`, `holding`, `slip`, `no contact within max_extra`,
+`disarmed` — via `--log_gripper`, and `--assist_log FILE` writes a per-tick
+JSONL (model vs sent command, observed position, load, state, offset, lag,
+advance, reason) for offline analysis. A silent no-show is therefore always
+explainable: if it never engages, the reason field names the gate that blocked
+it (usually `cmd still moving`, fixed with `--assist_stable_ticks 3`).
+
+The per-episode summary reports the latched **extra closure**, which is a useful
+measurement in its own right: *how much the policy was under-closing by*.
+
+**Field result (mustard, real arm).** Raw grasping (no assist, no latch/gain)
+reproduces the failure clearly. `--latch_close 0.50 --grip_gain 1.3`, tuned over
+several sessions and specific to that model/object, works. `--grip_assist` with
+the bench-measured defaults works at least as well, with nothing to re-tune when
+the object or checkpoint changes.
+
+> **Note:** the eval reopens the gripper to `--start_gripper` when it exits
+> (including Ctrl-C). A run that ends while gripped would otherwise leave the
+> servo squeezing at the torque cap indefinitely — and the *next* episode would
+> then start with the policy observing a **closed** gripper, which is out of
+> distribution (every demo starts open) and makes it predict lift/hold instead
+> of approach/close. After a `kill -9`, reopen the gripper manually.
+
+### Remote inference (big VLA checkpoints)
+
+Models too large for the robot machine (Pi0.5/Pi0Fast, ~10 GB in fp32) can run
+on a remote GPU through a [Ficelle](https://github.com/SteveNguyen/Ficelle)
+policy server — all pre/post-processing happens server-side through the
+checkpoint's own pipeline, this loop only ships raw observations and receives
+action chunks. Works for single-frame policies (Pi0/Pi0.5) and the two-frame
+Diffusion models (the server's `n_obs_steps` picks the wire format
+automatically); sync mode only.
+
+```bash
+# On the GPU machine (needs the ficelle repo). --transport iroh works through
+# NAT with no VPN/port-forwarding (QUIC hole-punching) and prints a ticket:
+uv run python serve.py --checkpoint <user>/<model> --dtype float32 --transport iroh
+# (--dtype float32: the lerobot pi05 port has a bf16 dtype clash in its flow path)
+#   -> iroh ticket: endpointv1...
+
+# On the robot machine — same eval loop, no local checkpoint; --policy_addr
+# takes the ticket (or a 'host:port' if the server is reachable directly):
+uv run python examples/evaluate.py \
+    --policy_addr endpointv1... --n_action_steps 15 \
+    --task "pick up the red can" --num_episodes 10
+```
+
+- The ficelle client must be installed in this environment
+  (`uv pip install -e '<ficelle>/client[iroh]'` — websockets + msgpack +
+  numpy, plus the iroh bindings for the ticket transport).
+- `--n_action_steps` matters: Pi0.5's native chunk is 50 actions = 5 s
+  open-loop at 10 fps; 10–25 re-plans often enough to stay closed-loop.
+- `--jpeg_quality 90` compresses frames for transport (use over WiFi/VPN;
+  raw is fine on a LAN).
 
 ### Eval safety gates (`arm_servicer`)
 
@@ -286,14 +429,14 @@ uv run python examples/grpc_client_demo.py   # gRPC client (requires server runn
 > instance with world-frame waypoints. It is **not** a gRPC client — running
 > `python -m openarm_gripette_simu --scene ...` in another terminal has no
 > effect on it. The canonical end-to-end smoke test of the camera-local
-> delta convention is the *other* `cartesian_square.py` in the lerobot
-> repo: `examples/openarm_gripette/cartesian_square.py`. That one is a gRPC
-> client and tests the integrator semantics described above.
+> delta convention is the gRPC-client `cartesian_square.py` in the
+> [`openarm_gripette`](../openarm_gripette) package (takes `--arm_addr`) — it
+> drives a running server and tests the integrator semantics described above.
 
 ## Camera
 
 The simulated Gripette camera matches the real camera calibration:
-- Resolution: 1296×972
+- Render/calibration resolution: 1296×972 (distorted at this res, then downscaled to the **960×720** streamed to the policy)
 - Lens model: KannalaBrandt8 fisheye
 - MuJoCo renders a wide-FOV (130°) pinhole image, then remaps with real distortion coefficients
 
@@ -303,16 +446,16 @@ Camera rendering is done in the main thread (alongside physics and viewer) and c
 
 | Component | Rate |
 |-----------|------|
-| Physics | 500Hz (dt=0.002s) |
-| Camera render | 50Hz |
-| Gripper gRPC stream | 50Hz |
-| Dataset FPS | 50 |
+| Physics | 500Hz (dt=0.002s) default; 1000Hz (dt=0.001s) in the grasp scenes |
+| Camera render | 30Hz (matches the real Grabette stream) |
+| Gripper gRPC stream | 30Hz |
+| Dataset FPS | 30 (grasp, matches real) · 50 (reach) |
 | Viewer sync | 60Hz |
 
 ## Regenerating proto stubs
 
 ```bash
-uv sync --extra dev
+uv sync --package openarm-gripette-simu --extra dev
 uv run python -m grpc_tools.protoc -I proto \
     --python_out=openarm_gripette_simu/proto \
     --grpc_python_out=openarm_gripette_simu/proto \

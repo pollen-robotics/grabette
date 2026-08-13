@@ -23,6 +23,11 @@ def serve() -> None:
     camera = CameraCapture(
         resolution=(settings.camera_resolution_w, settings.camera_resolution_h),
         quality=settings.jpeg_quality,
+        mode=settings.camera_mode,
+        # Ask the sensor for the stream's target rate (video mode only) —
+        # otherwise the pipeline's ~30 fps default caps the stream.
+        framerate=settings.stream_hz,
+        mock=settings.mock_camera,
     )
     motors = MotorController(
         port=settings.motor_port,
@@ -33,15 +38,30 @@ def serve() -> None:
             (settings.motor1_min, settings.motor1_max),
             (settings.motor2_min, settings.motor2_max),
         ),
+        signs=(settings.motor1_sign, settings.motor2_sign),
+        offsets=(settings.motor1_offset, settings.motor2_offset),
     )
 
     camera.start()
+    # Boot self-check: the camera stack can start "successfully" yet never
+    # deliver a frame (libcamera boot race, field-observed). Fail with a
+    # nonzero exit BEFORE exposing the gRPC API, so systemd restarts the
+    # service (Restart=on-failure) — the validated cure — instead of serving
+    # motors alongside a silently frozen camera. No graceful camera.stop()
+    # here: on a wedged stack it can block, and process exit releases the
+    # device anyway.
+    try:
+        camera.capture_jpeg()
+    except Exception:
+        logger.exception("Camera self-check FAILED — exiting so systemd restarts the service")
+        raise SystemExit(1)
+    logger.info("Camera self-check passed")
     motors.start()
     sync.start()
 
     # gRPC server
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
-    servicer = GripperServicer(camera, motors, sync)
+    servicer = GripperServicer(camera, motors, sync, stream_hz=settings.stream_hz)
     gripper_pb2_grpc.add_GripperServiceServicer_to_server(servicer, server)
     server.add_insecure_port(f"{settings.host}:{settings.port}")
     server.start()
