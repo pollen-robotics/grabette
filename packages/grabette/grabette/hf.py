@@ -123,8 +123,3 @@ class HuggingFaceClient:
         url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{dest}"
         logger.info("Episode %s uploaded to %s", episode_dir.name, url)
         return url
-
-    def delete_dataset(self, repo_id: str) -> None:
-        api = self._get_api()
-        api.delete_repo(repo_id, repo_type="dataset")
-        logger.info("Deleted dataset %s", repo_id)

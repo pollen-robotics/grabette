@@ -356,9 +356,6 @@ class HFAuth:
             result["message"] = session.error_message
         return result
 
-    def cancel_oauth(self, session_id: str) -> bool:
-        return self._sessions.pop(session_id, None) is not None
-
     async def exchange_code(self, code: str, state: str) -> dict[str, Any]:
         """Exchange an authorization code for a token, then persist it."""
         self._cleanup_sessions()

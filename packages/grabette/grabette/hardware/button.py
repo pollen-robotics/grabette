@@ -98,26 +98,6 @@ class LedButton:
         """Button is active-low: pressed = LOW = INACTIVE."""
         return self._button_request.get_value(self._button_pin) == Value.INACTIVE
 
-    def wait_for_press(self, debounce_ms: int = 50) -> None:
-        """Block until button is pressed and then released."""
-        self.wait_for_press_down()
-        self.wait_for_release(debounce_ms)
-
-    def wait_for_press_down(self) -> None:
-        """Block until button transitions from unpressed to pressed."""
-        # If already pressed, wait for release first
-        while self._button_request.get_value(self._button_pin) == Value.INACTIVE:
-            time.sleep(0.01)
-        # Wait for press
-        while self._button_request.get_value(self._button_pin) == Value.ACTIVE:
-            time.sleep(0.01)
-
-    def wait_for_release(self, debounce_ms: int = 50) -> None:
-        """Wait for button release with debounce delay."""
-        while self._button_request.get_value(self._button_pin) == Value.INACTIVE:
-            time.sleep(0.01)
-        time.sleep(debounce_ms / 1000)
-
     def cleanup(self) -> None:
         self._blink_stop.set()
         self._led_request.set_value(self._led_pin, Value.INACTIVE)

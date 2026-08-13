@@ -40,9 +40,6 @@ class CaptureScheduler:
     def is_scheduled(self) -> bool:
         return self._task is not None and not self._task.done()
 
-    def is_stop_scheduled(self) -> bool:
-        return self._stop_task is not None and not self._stop_task.done()
-
     @property
     def is_starting(self) -> bool:
         return self._starting

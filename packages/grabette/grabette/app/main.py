@@ -100,6 +100,21 @@ _SPACE_WAKE_RETRY_S = 5.0           # between probes
 _SPACE_POST_TIMEOUT_S = 120.0       # /api/process, on a Space known to be awake
 _SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
 
+# Probing the app is the authoritative readiness test, but it cannot tell apart
+# "still booting" from two states it will never get out of. When the fleet also
+# names the Space REPO (space_repo, optional), the Hub runtime resolves both:
+#   - a broken Space would otherwise burn the whole wake budget for nothing;
+#   - a PAUSED/STOPPED Space does NOT wake on incoming traffic at all, so no
+#     amount of probing helps — it needs an explicit restart.
+# The repo id can't be derived from the .hf.space URL (org names may contain
+# hyphens), which is why it's a separate arg rather than something we compute.
+_SPACE_FAILED_STAGES = {"BUILD_ERROR", "RUNTIME_ERROR", "CONFIG_ERROR", "NO_APP_FILE"}
+_SPACE_HALTED_STAGES = {"PAUSED", "STOPPED"}
+# The stage read is a second network round-trip, so it must not run on every
+# probe: once up front (to fail fast), then occasionally to catch a Space that
+# breaks while we wait.
+_SPACE_STAGE_RECHECK_PROBES = 6
+
 
 class _CommandCancelled(Exception):
     """The operator cancelled this command while it waited on something."""
@@ -117,8 +132,42 @@ def _exc_text(e: BaseException) -> str:
     return str(e).strip() or type(e).__name__
 
 
+def _space_stage(space_repo: str, token: str | None) -> str | None:
+    """Current SpaceStage (e.g. 'RUNNING', 'SLEEPING'), or None if unreadable.
+
+    Best effort only: a token without access to the Space repo, or an unreachable
+    Hub, yields None. The caller then falls back to probing the app itself, which
+    is the authoritative readiness test anyway — so this can only ever make the
+    wake smarter, never break it.
+    """
+    try:
+        from huggingface_hub import get_space_runtime
+
+        return get_space_runtime(space_repo, token=token or None).stage
+    except Exception as e:  # noqa: BLE001 — enrichment, never fatal
+        logger.info("Could not read Space runtime for %s: %s", space_repo, _exc_text(e))
+        return None
+
+
+def _restart_space(space_repo: str, token: str | None) -> bool:
+    """Ask the Hub to restart a halted Space. True if the call went through.
+
+    Needs WRITE access to the Space repo. A read-only token just fails here and
+    we fall back to reporting the manual step to the operator.
+    """
+    try:
+        from huggingface_hub import restart_space
+
+        restart_space(space_repo, token=token or None)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.info("Could not restart Space %s: %s", space_repo, _exc_text(e))
+        return False
+
+
 async def _wake_space(session, space_url: str, headers: dict,
-                      is_cancelled=None) -> str | None:
+                      is_cancelled=None, space_repo: str | None = None,
+                      token: str | None = None) -> str | None:
     """Wait until the processing Space really serves requests. None once awake,
     else the reason to report.
 
@@ -128,6 +177,11 @@ async def _wake_space(session, space_url: str, headers: dict,
     booting answers with an HTML holding page, which must not be mistaken for
     "awake". Headers are passed through so this works on a private Space too.
 
+    When space_repo is given, the Hub runtime is consulted as well: it turns a
+    doomed wait into an immediate, named failure, and restarts a Space that is
+    halted rather than merely asleep. Both are best effort — without the repo, or
+    with a token that can't read it, the wake behaves exactly as before.
+
     Raises _CommandCancelled if the build is cancelled while we wait: this wait
     can last minutes, and a conversion nobody wants any more must not start.
     """
@@ -135,10 +189,32 @@ async def _wake_space(session, space_url: str, headers: dict,
 
     deadline = time.monotonic() + _SPACE_WAKE_BUDGET_S
     last, probes = "no response", 0
+    restart_tried = False
     while time.monotonic() < deadline:
         if is_cancelled and is_cancelled():
             raise _CommandCancelled
         probes += 1
+
+        if space_repo and (probes == 1 or probes % _SPACE_STAGE_RECHECK_PROBES == 0):
+            stage = await asyncio.to_thread(_space_stage, space_repo, token)
+            if stage in _SPACE_FAILED_STAGES:
+                return (f"the processing Space at {space_url} is in a failed state "
+                        f"(stage={stage}) — it will not start on its own. Check its "
+                        f"build/runtime logs on Hugging Face.")
+            if stage in _SPACE_HALTED_STAGES and not restart_tried:
+                # A halted Space ignores incoming traffic, so probing alone would
+                # burn the whole budget. Try once; if the token is read-only the
+                # wait continues and the timeout message names the manual step.
+                restart_tried = True
+                if await asyncio.to_thread(_restart_space, space_repo, token):
+                    logger.info(
+                        "processing Space was %s — restart requested", stage,
+                    )
+                else:
+                    return (f"the processing Space at {space_url} is {stage} and this "
+                            f"device's token cannot restart it. Restart it once on "
+                            f"Hugging Face, then retry.")
+
         try:
             async with session.get(
                 f"{space_url}/api/status/_wake", headers=headers,
@@ -301,8 +377,14 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 # The Space may be asleep or rebuilding — wake it FIRST, on its own
                 # budget, so a cold start is never reported as a failed conversion
                 # (it used to surface as a bare, message-less timeout).
-                not_awake = await _wake_space(s, space_url, headers,
-                                              lambda: cancels.is_cancelled(cmd_id))
+                # space_repo is optional: when the fleet sends it, the wake can
+                # also fail fast on a broken Space and restart a halted one.
+                not_awake = await _wake_space(
+                    s, space_url, headers,
+                    lambda: cancels.is_cancelled(cmd_id),
+                    space_repo=args.get("space_repo"),
+                    token=token,
+                )
                 if not_awake:
                     return {"status": "error", "message": not_awake}
                 async with s.post(f"{space_url}/api/process", json=payload, headers=headers,

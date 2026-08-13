@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import logging
 import math
-import time
 
 import gradio as gr
 from PIL import Image
@@ -74,26 +73,6 @@ _ANGLE_IFRAME_HTML = (
     'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
-# Replacement HTML used while teleop is active. gr.update(value="") doesn't
-# seem to force a DOM swap (Gradio may treat empty as no-op), so we use an
-# explicit non-empty placeholder. Same height as the real iframes to avoid
-# layout shift; src=about:blank guarantees no /api/state/history polling.
-_GYRO_IFRAME_PAUSED = (
-    '<iframe src="about:blank" '
-    'style="width:100%;height:28vh;border:none;'
-    'border-radius:8px;background:#1a1a1a;"></iframe>'
-)
-_ACCEL_IFRAME_PAUSED = (
-    '<iframe src="about:blank" '
-    'style="width:100%;height:28vh;border:none;'
-    'border-radius:8px;background:#1a1a1a;"></iframe>'
-)
-_ANGLE_IFRAME_PAUSED = (
-    '<iframe src="about:blank" '
-    'style="width:100%;height:28vh;border:none;'
-    'border-radius:8px;background:#1a1a1a;"></iframe>'
-)
-
 _WIFI_SETTINGS_HTML = (
     '<iframe src="/api/wifi/setup" id="wifi-iframe" scrolling="no"'
     ' onload="var f=this;(function r(){'
@@ -280,54 +259,6 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     )
 
 
-def _text_bar(pct: float, width: int = 22) -> str:
-    """Render a fixed-width text progress bar like ██████░░░░ for markdown."""
-    pct = max(0.0, min(100.0, pct))
-    filled = int(round(pct / 100.0 * width))
-    return "`" + "█" * filled + "░" * (width - filled) + f"` {pct:.0f}%"
-
-
-def _upload_progress_md(repo_id: str, rows: list[dict], finished: bool) -> str:
-    """Build the markdown shown while/after pushing episodes to HF Hub.
-
-    rows: list of {episode_id, status, progress, message}. A pure function so
-    it's easy to reason about — the polling loop just feeds it fresh job state.
-    """
-    total = len(rows)
-    done = sum(1 for r in rows if r["status"] in ("completed", "failed"))
-    ok = sum(1 for r in rows if r["status"] == "completed")
-    # Overall %: finished jobs count as 100, in-flight contribute their own %.
-    overall = (
-        sum(100.0 if r["status"] in ("completed", "failed") else r.get("progress", 0.0)
-            for r in rows) / total
-        if total else 0.0
-    )
-
-    icon = {"completed": "✅", "failed": "❌", "running": "⏳", "pending": "⏳"}
-    lines: list[str] = []
-    if finished:
-        lines.append(f"### {'✅' if ok == total else '⚠️'} Pushed {ok}/{total} episode(s) to HuggingFace")
-        if ok:
-            lines.append(
-                f"\n**[Open dataset → {repo_id}](https://huggingface.co/datasets/{repo_id})**\n"
-            )
-    else:
-        lines.append(f"### Pushing {total} episode(s) to `{repo_id}` …")
-        lines.append(f"\n{_text_bar(overall)} — {done}/{total} done\n")
-
-    for r in rows:
-        mark = icon.get(r["status"], "⏳")
-        eid = r["episode_id"]
-        if r["status"] == "failed":
-            detail = r.get("message") or r.get("error") or "failed"
-        elif r["status"] == "completed":
-            detail = "uploaded"
-        else:
-            detail = f"{r.get('message', '')} ({r.get('progress', 0):.0f}%)"
-        lines.append(f"- {mark} `{eid}` — {detail}")
-    return "\n".join(lines)
-
-
 def create_ui(api_url: str | None = None) -> gr.Blocks:
     # Route downloaded episode archives to the SD-card-backed data_dir
     # instead of the OS /tmp (which on Pi OS is a small tmpfs). Same reason
@@ -463,23 +394,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=_session_banner_html(task_name, 0)),
             )
 
-    def get_teleop_display():
-        """Polled on a slow (~1 Hz) timer, separately from get_sensor_state.
-
-        Returns the teleop_msg text. When teleop is off, the textbox is
-        cleared so it doesn't visually compete with the capture box.
-        Doing this on the main state_timer caused HTTP backpressure that
-        made the IMU / Angle markdown flicker and bursted the WS stream.
-        """
-        tstatus = client.get_teleop_status() or {}
-        if not tstatus.get("active"):
-            return ""
-        sending = "YES" if tstatus.get("sending") else "no"
-        stats = tstatus.get("stats", {}) or {}
-        hz = stats.get("mean_hz", 0)
-        n = stats.get("n_poses", 0)
-        return f"● TELEOP ON   sending: {sending}   VIO: {hz:.1f} Hz   {n} poses"
-
     def _oakd_button_update():
         """Compute the OAK-D toggle button's appearance + OAK data row visibility.
 
@@ -526,63 +440,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def poll_oakd():
         return _oakd_button_update()
-
-    def on_toggle_teleop():
-        """Single-button toggle: enter teleop mode if off, exit if on.
-
-        Entering teleop pauses ALL UI live-view sources so uvicorn's event
-        loop is free for /api/teleop/stream:
-          - Gradio Timers (camera, depth, sensor, teleop) → interval set to
-            a huge value (Gradio's active=False propagation is unreliable for
-            gr.Timer at runtime; bumping the interval is a deterministic kill)
-          - gyro/accel/angle chart iframes → swapped to about:blank
-            placeholders so their JS stops polling /api/state/history
-
-        Returns: (teleop_msg, teleop_btn, camera_timer, depth_timer,
-        sensor_timer, teleop_timer, gyro_iframe, accel_iframe, angle_iframe).
-        """
-        status = client.get_teleop_status() or {}
-        active = bool(status.get("active"))
-        daemon = client.get_daemon_status() or {}
-        if daemon.get("backend") != "RpiBackend":
-            return ("Teleop not available (mock backend)",
-                    gr.update(value="Enter Teleop Mode", variant="secondary", interactive=False),
-                    gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(), gr.update(), gr.update())
-        if active:
-            result = client.stop_teleop()
-            if "error" in result:
-                return (f"Stop error: {result['error']}",
-                        gr.update(value="Exit Teleop Mode", variant="stop"),
-                        gr.update(), gr.update(), gr.update(), gr.update(),
-                        gr.update(), gr.update())
-            # Exiting teleop — resume live-view timers and restore iframes.
-            return ("Teleop OFF",
-                    gr.update(value="Enter Teleop Mode", variant="secondary"),
-                    gr.update(value=0.2),    # camera_timer
-                    gr.update(value=0.2),    # depth_timer
-                    gr.update(value=0.5),    # sensor_timer
-                    gr.update(value=1.0),    # teleop_timer
-                    gr.update(value=_GYRO_IFRAME_HTML),
-                    gr.update(value=_ACCEL_IFRAME_HTML),
-                    gr.update(value=_ANGLE_IFRAME_HTML))
-        else:
-            result = client.start_teleop()
-            if "error" in result:
-                return (f"Start error: {result['error']}",
-                        gr.update(value="Enter Teleop Mode", variant="secondary"),
-                        gr.update(), gr.update(), gr.update(), gr.update(),
-                        gr.update(), gr.update())
-            # Entering teleop — disable ALL live-view timers via huge intervals.
-            return ("Teleop ON (press button to send deltas)",
-                    gr.update(value="Exit Teleop Mode", variant="stop"),
-                    gr.update(value=86400),  # camera_timer
-                    gr.update(value=86400),  # depth_timer
-                    gr.update(value=86400),  # sensor_timer
-                    gr.update(value=86400),  # teleop_timer
-                    gr.update(value=_GYRO_IFRAME_PAUSED),
-                    gr.update(value=_ACCEL_IFRAME_PAUSED),
-                    gr.update(value=_ANGLE_IFRAME_PAUSED))
 
     # ── Task helpers ──────────────────────────────────────────────────
 
@@ -730,33 +587,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return f"Moved {len(episode_ids)} episode(s)", gr.update(value=rows), move_dd, desc
 
     # ── SLAM ──────────────────────────────────────────────────────────
-
-    def on_slam_run(table_data, repo_id: str):
-        episode_ids = _get_selected_ids(table_data)
-        episode_id = episode_ids[0] if episode_ids else None
-        if not episode_id:
-            return "Select an episode first"
-        if not repo_id:
-            return "Enter a HuggingFace repo ID first"
-        result = client.slam_run(episode_id, repo_id)
-        if "error" in result:
-            return f"Error: {result['error']}"
-        return f"SLAM started (job: {result.get('job_id', '?')})"
-
-    def get_slam_status():
-        jobs = client.hf_list_jobs()
-        slam_jobs = [j for j in jobs if j.get("name", "").startswith("slam:")]
-        if not slam_jobs:
-            return "No SLAM jobs"
-        latest = slam_jobs[-1]
-        status = latest["status"]
-        if status == "completed":
-            return f"Complete: {latest.get('result', '')}"
-        if status == "failed":
-            return f"Failed: {latest.get('error', '')}"
-        if status == "running":
-            return f"Running ({latest.get('progress', 0):.0f}%): {latest.get('message', '')}"
-        return f"Pending: {latest.get('message', '')}"
 
     # ── Replay ────────────────────────────────────────────────────────
 
@@ -1290,7 +1120,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Angle Sensors"))
                 angle_box = gr.Markdown("*—*")
-                angle_iframe = gr.HTML(value=_ANGLE_IFRAME_HTML)
+                gr.HTML(value=_ANGLE_IFRAME_HTML)
             with gr.Column(scale=1):
                 gr.HTML(_section_label("3D Model"))
                 gr.HTML(
@@ -1315,11 +1145,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Gyroscope"))
                 gyro_box = gr.Markdown("*—*")
-                gyro_iframe = gr.HTML(value=_GYRO_IFRAME_HTML)
+                gr.HTML(value=_GYRO_IFRAME_HTML)
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Accelerometer"))
                 accel_box = gr.Markdown("*—*")
-                accel_iframe = gr.HTML(value=_ACCEL_IFRAME_HTML)
+                gr.HTML(value=_ACCEL_IFRAME_HTML)
 
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
