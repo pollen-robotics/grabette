@@ -5,12 +5,13 @@ regression: has_imu must be True for real OAK-D episodes (which write
 oakd_imu.json), not only for legacy/mock episodes (imu_data.json).
 """
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from grabette.config import settings
-from grabette.task import UNASSIGNED_ID, TaskManager
+from grabette.task import UNASSIGNED_REPORT_LIMIT, UNASSIGNED_ID, TaskManager
 
 
 def _make_episode(data_dir: Path, episode_id: str, files, meta=None) -> Path:
@@ -244,3 +245,196 @@ def test_solo_episode_is_reported_with_its_role(tmp_path, left_hand):
     entry = next(t for t in tm.report_tasks() if t["name"] == "Reported Solo")
     assert entry["device_signature"] == ["left"]
     assert entry["groups"] == [{"members": left_hand, "episode_ids": ["ep_rep"]}]
+
+
+# Membership lives on the dict of the task that HOLDS the episode, so every path
+# that refiles an episode has to carry it across. Otherwise the role stamped at
+# record time is silently dropped exactly when a loose recording gets filed —
+# the one moment it matters.
+
+PAIR = {"left": {"device_id": "dev-left-1", "name": "grabette-left"},
+        "right": {"device_id": "dev-right-1", "name": "grabette-right"}}
+
+
+def _fleet_episode(tm, task_id, episode_id, members=PAIR, signature=("left", "right")):
+    """An episode recorded through the fleet: it arrives fully described."""
+    tm.create_episode(task_id, episode_id=episode_id, members=members,
+                      signature=list(signature))
+    tm.register_episode(episode_id)
+
+
+def test_move_carries_members_and_seeds_the_signature(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    _button_press(tm, "ep_loose")  # lands in Unassigned, self-stamped
+    tid = tm.create_task("Filed Task")
+
+    tm.move_episodes(["ep_loose"], tid)
+
+    task = tm._find_task(tid)
+    assert task["episode_members"]["ep_loose"] == left_hand
+    # A fresh task with no signature would expose no roles at all, and dataset
+    # generation refuses such a task — so filing has to seed it.
+    assert task["device_signature"] == ["left"]
+    # And nothing is left stranded on the source.
+    assert "ep_loose" not in tm._find_task(UNASSIGNED_ID).get("episode_members", {})
+
+
+def test_move_never_replaces_an_existing_signature(tmp_path, left_hand):
+    # Filing a mono episode into a bimanual task is the half-rig case. The device
+    # stays mechanical about it — refusing belongs to the fleet, which knows both
+    # sides — but it must not rewrite the task's signature to ["left"].
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.get_or_create_task("Bimanual Task")
+    _fleet_episode(tm, tid, "ep_pair")
+    _button_press(tm, "ep_loose")
+
+    tm.move_episodes(["ep_loose"], tid)
+
+    task = tm._find_task(tid)
+    assert task["device_signature"] == ["left", "right"]
+    assert task["episode_members"]["ep_loose"] == left_hand
+    assert task["episode_members"]["ep_pair"] == PAIR
+
+
+def test_move_legacy_episode_without_members_invents_nothing(tmp_path):
+    # Migrated episodes are registered as bare ids (see _migrate_legacy), with no
+    # membership: moving one must neither crash nor fabricate a signature.
+    _make_episode(tmp_path, "ep_old", ["oakd_imu.json"])
+    tm = TaskManager(data_dir=tmp_path)
+    tm._find_task(UNASSIGNED_ID)["episode_ids"].append("ep_old")
+    tid = tm.create_task("Target")
+
+    tm.move_episodes(["ep_old"], tid)
+
+    task = tm._find_task(tid)
+    assert task["episode_ids"] == ["ep_old"]
+    assert task.get("episode_members", {}) == {}
+    assert "device_signature" not in task
+
+
+def test_move_into_the_holding_task_preserves_members(tmp_path, left_hand):
+    # The trap: the source lookup finds the TARGET as holder, so a naive
+    # implementation strips its members and then skips the re-add.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Task")
+    tm.active_task_id = tid
+    _button_press(tm, "ep_a")
+
+    tm.move_episodes(["ep_a"], tid)
+
+    task = tm._find_task(tid)
+    assert task["episode_ids"] == ["ep_a"]
+    assert task["episode_members"]["ep_a"] == left_hand
+
+
+def test_move_with_divergent_roles_leaves_the_signature_unset(tmp_path, left_hand):
+    # Unassigned can legitimately hold episodes of different shapes: a bimanual
+    # one that fell back when its task was deleted, plus a mono button press.
+    # Their union ["left","right"] would describe neither, so nothing is claimed.
+    tm = TaskManager(data_dir=tmp_path)
+    doomed = tm.get_or_create_task("Doomed")
+    _fleet_episode(tm, doomed, "ep_pair")
+    tm.delete_task(doomed)
+    _button_press(tm, "ep_solo")
+
+    tid = tm.create_task("Mixed")
+    tm.move_episodes(["ep_pair", "ep_solo"], tid)
+
+    task = tm._find_task(tid)
+    assert "device_signature" not in task
+    assert task["episode_members"]["ep_pair"] == PAIR
+    assert task["episode_members"]["ep_solo"] == left_hand
+
+
+def test_delete_task_carries_members_to_unassigned(tmp_path, left_hand):
+    # delete_task drops the task dict, so its episode_members go with it unless
+    # they are carried over — an unrecoverable loss, not just a stranded entry.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Task A")
+    tm.active_task_id = tid
+    _button_press(tm, "ep_a")
+
+    tm.delete_task(tid)
+
+    unassigned = tm._find_task(UNASSIGNED_ID)
+    assert "ep_a" in unassigned["episode_ids"]
+    assert unassigned["episode_members"]["ep_a"] == left_hand
+
+
+def test_moving_into_unassigned_never_sets_a_signature(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Task")
+    tm.active_task_id = tid
+    _button_press(tm, "ep_a")
+
+    tm.move_episodes(["ep_a"], UNASSIGNED_ID)
+
+    unassigned = tm._find_task(UNASSIGNED_ID)
+    assert unassigned["episode_members"]["ep_a"] == left_hand
+    assert "device_signature" not in unassigned
+
+
+# The inbox travels on its own channel, never as a task: tasks get merged across
+# devices by name on the fleet, which would make every device's stray takes
+# indistinguishable — and would let them reach dataset generation.
+
+def test_report_unassigned_describes_loose_episodes(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    _button_press(tm, "ep_loose")
+    (tmp_path / "episodes" / "ep_loose" / "raw_video.mp4").write_text("x")
+    (tmp_path / "episodes" / "ep_loose" / "metadata.json").write_text(
+        json.dumps({"duration_seconds": 12.5}))
+
+    report = tm.report_unassigned()
+
+    assert report["total"] == 1
+    assert report["episodes"] == [{
+        "episode_id": "ep_loose",
+        "members": left_hand,          # who recorded it — this device, self-stamped
+        "duration_seconds": 12.5,      # enough to tell a real take from a misfire
+        "has_video": True,
+    }]
+
+
+def test_report_unassigned_is_empty_when_everything_is_filed(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Filed")
+    tm.active_task_id = tid
+    _button_press(tm, "ep_filed")
+
+    assert tm.report_unassigned() == {"total": 0, "episodes": []}
+
+
+def test_loose_episodes_stay_out_of_the_task_report(tmp_path, left_hand):
+    # The two channels must not overlap: report_tasks still skips Unassigned, so
+    # a loose episode can never be selected for a dataset.
+    tm = TaskManager(data_dir=tmp_path)
+    _button_press(tm, "ep_loose")
+
+    assert tm.report_tasks() == []
+    assert tm.report_unassigned()["total"] == 1
+
+
+def test_report_unassigned_skips_episodes_without_data(tmp_path, left_hand):
+    # A registry entry whose directory is gone can't be triaged — offering it
+    # would only produce actions that fail.
+    tm = TaskManager(data_dir=tmp_path)
+    _button_press(tm, "ep_gone")
+    shutil.rmtree(tmp_path / "episodes" / "ep_gone")
+
+    assert tm.report_unassigned() == {"total": 0, "episodes": []}
+
+
+def test_report_unassigned_caps_the_payload_but_not_the_count(tmp_path, left_hand):
+    # Truncation must stay visible: `total` is the honest count, and the entries
+    # kept are the most recent ones an operator would actually triage.
+    tm = TaskManager(data_dir=tmp_path)
+    n = UNASSIGNED_REPORT_LIMIT + 5
+    for i in range(n):
+        _button_press(tm, f"ep_{i:04d}")
+
+    report = tm.report_unassigned()
+
+    assert report["total"] == n
+    assert len(report["episodes"]) == UNASSIGNED_REPORT_LIMIT
+    assert report["episodes"][-1]["episode_id"] == f"ep_{n - 1:04d}"

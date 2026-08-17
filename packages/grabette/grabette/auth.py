@@ -59,7 +59,7 @@ def _write_secret(path: Path, text: str) -> None:
 
 _HOSTNAME = socket.gethostname()
 
-_DEFAULT_RELAY_URL = "https://pollen-robotics-grabette-fleet.hf.space"
+_DEFAULT_RELAY_URL = "https://glannuzel-fleet-test.hf.space"
 _RELAY_URL = os.environ.get("GRABETTE_RELAY_URL", _DEFAULT_RELAY_URL).rstrip("/")
 OAUTH_CALLBACK_PATH = "/api/hf-auth/oauth/callback"
 

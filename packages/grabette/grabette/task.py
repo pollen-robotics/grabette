@@ -31,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 UNASSIGNED_ID = "unassigned"
 
+# How many loose episodes a single report describes. The inbox is meant to be
+# exceptional, but a device recorded at the button for a week must not grow the
+# register payload without bound — nor pay a metadata.json read per episode on
+# every report (report_tasks deliberately reads none). The newest takes are the
+# ones an operator triages; `total` is sent alongside so the UI can say
+# "50 of 137" instead of quietly truncating.
+UNASSIGNED_REPORT_LIMIT = 50
+
 
 def local_identity() -> tuple[dict, list[str]]:
     """This device's own (members, signature), for a capture it made alone.
@@ -512,6 +520,44 @@ class TaskManager:
             })
         return out
 
+    def report_unassigned(self) -> dict:
+        """Loose episodes — recorded outside any task — for the fleet's inbox.
+
+        Sent on a channel of its OWN, deliberately not as a task (report_tasks
+        skips Unassigned, and keeps doing so). Tasks are cross-device and merged
+        by NAME on the fleet, which is exactly wrong here: a loose episode was
+        recorded alone and belongs to this device only, so merging every device's
+        stray takes under one name would make them indistinguishable. Staying off
+        that channel also means these episodes can never leak into task selection
+        or dataset generation, which both walk the reported tasks.
+
+        Each entry carries enough to triage without downloading anything: who
+        recorded it (always this device — see local_identity), how long the take
+        was, and whether it has video. That's the difference between a 1s misfire
+        and a real recording, which is the whole decision the operator makes.
+
+        Episodes whose directory is gone are skipped: nothing can be done with an
+        entry that no longer has data behind it.
+        """
+        t = self._find_task(UNASSIGNED_ID)
+        if t is None:
+            return {"total": 0, "episodes": []}
+        members_by_ep = t.get("episode_members", {})
+        # Episode ids are UTC timestamps, so a plain sort is chronological; the
+        # tail is therefore the most recent (legacy non-timestamp ids just sort
+        # lexicographically, which is stable and good enough for a cap).
+        eids = sorted(eid for eid in t["episode_ids"] if self.episode_dir(eid).exists())
+        episodes = []
+        for eid in eids[-UNASSIGNED_REPORT_LIMIT:]:
+            info = self._get_episode_info(eid)
+            episodes.append({
+                "episode_id": eid,
+                "members": members_by_ep.get(eid, {}),
+                "duration_seconds": info.duration_seconds,
+                "has_video": info.has_video,
+            })
+        return {"total": len(eids), "episodes": episodes}
+
     # ── Task operations ────────────────────────────────────────────────
 
     def create_task(self, name: str, description: str = "") -> str:
@@ -572,11 +618,19 @@ class TaskManager:
         if t is None:
             raise FileNotFoundError(f"Task {task_id} not found")
 
-        # Move episodes back to Unassigned
+        # Move episodes back to Unassigned, WITH their membership. The task dict
+        # — and the episode_members it carries — is dropped just below, so
+        # leaving them behind wouldn't merely strand them: it would destroy the
+        # record of who recorded each episode, which nothing on the device could
+        # rebuild afterwards. (delete_task_by_name has no such need: it deletes
+        # the episodes themselves.)
         unassigned = self._find_task(UNASSIGNED_ID)
+        members = t.get("episode_members", {})
         for eid in t["episode_ids"]:
             if eid not in unassigned["episode_ids"]:
                 unassigned["episode_ids"].append(eid)
+            if members.get(eid):
+                unassigned.setdefault("episode_members", {})[eid] = members[eid]
 
         self._tasks.remove(t)
         self._save()
@@ -632,21 +686,62 @@ class TaskManager:
         return [self._to_task_detail(t) for t in self._tasks]
 
     def move_episodes(self, episode_ids: list[str], target_task_id: str) -> None:
+        """Refile episodes into another task, carrying their membership along.
+
+        An episode's members (role → {device_id, name}) live on the dict of the
+        task that holds it, so moving the ids alone would strand them: the target
+        would report the episode role-less — flagged incomplete by the fleet, and
+        left out of any dataset — while a dead entry piled up on the source. This
+        is the path that files a loose Unassigned recording into a real task, so
+        the role stamped at record time has to survive it.
+        """
         target = self._find_task(target_task_id)
         if target is None:
             raise FileNotFoundError(f"Target task {target_task_id} not found")
 
+        filed: list[dict] = []  # membership of each episode filed here, for the signature
         for eid in episode_ids:
-            # Remove from current task
-            for t in self._tasks:
-                if eid in t["episode_ids"]:
-                    t["episode_ids"].remove(eid)
-                    break
-            # Add to target
+            source = next((t for t in self._tasks if eid in t["episode_ids"]), None)
+            if source is target:
+                # Already filed here, so stop before touching anything: the
+                # lookup found the TARGET as the holder, and removing its members
+                # would strip them while the guard below skipped the re-add —
+                # losing data on what is supposed to be a no-op.
+                filed.append(target.get("episode_members", {}).get(eid) or {})
+                continue
+            members = None
+            if source is not None:
+                source["episode_ids"].remove(eid)
+                members = source.get("episode_members", {}).pop(eid, None)
             if eid not in target["episode_ids"]:
                 target["episode_ids"].append(eid)
+            if members:
+                target.setdefault("episode_members", {})[eid] = members
+            filed.append(members or {})
 
+        self._adopt_signature(target, filed)
         self._save()
+
+    def _adopt_signature(self, target: dict, filed: list[dict]) -> None:
+        """Give a signature-less task the role set of the episodes just filed in.
+
+        Without this, filing loose episodes into a fresh task leaves it with no
+        signature at all — and a task with no signature exposes no usable roles,
+        so dataset generation refuses it outright. Same conservative rules as
+        register_episode: fill only what is absent (an existing signature
+        describes the episodes already recorded there and must never be
+        rewritten), and never on Unassigned, a bucket of mixed provenance.
+
+        Only when every filed episode agrees on ONE role set: a batch mixing a
+        left-only episode with a bimanual one would otherwise be described as
+        ["left","right"], which the left-only episode does not satisfy.
+        """
+        if target["id"] == UNASSIGNED_ID or target.get("device_signature"):
+            return
+        role_sets = {tuple(sorted(m)) for m in filed if m}
+        if len(role_sets) != 1:
+            return
+        target["device_signature"] = list(role_sets.pop())
 
     # ── Helpers ────────────────────────────────────────────────────────
 

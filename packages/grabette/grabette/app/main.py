@@ -698,6 +698,9 @@ async def lifespan(app: FastAPI):
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
+            # Loose episodes (recorded outside any task) — their own channel, so
+            # the fleet can offer them for triage without them ever passing for tasks.
+            unassigned_provider=get_task_manager().report_unassigned,
             tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
             activity_provider=_device_activity,  # device state, reported via heartbeat
         )
