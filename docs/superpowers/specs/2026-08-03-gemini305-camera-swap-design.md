@@ -717,6 +717,77 @@ on this rig.
 Still outstanding: the same-motion A/B against the OAK-D itself, which is the
 only thing that can say whether the 305 is as good, not merely good.
 
+## The same-scene A/B: OAK-D SR vs Gemini 305 (2026-08-17)
+
+Four episodes per camera, same kitchen scene (striped mug, fan grille, printed
+box, tiled wall), same operator, same pace, cameras physically swapped, daemon
+restarted between batches, `MALLOC_ARENA_MAX=2` active for both. Episode shapes
+matched: 4.7-6.7 s / 143-202 frames for the OAK-D, 4.8-7.0 s / 138-202 for the
+Gemini.
+
+### Verdict: equal on trajectory quality, OAK-D better on margin
+
+| metric | OAK-D SR | Gemini 305 | winner |
+|---|---|---|---|
+| `check_trajectory` grades | 4/4 GOOD | 4/4 GOOD | tie |
+| tracking | 100 / 99.5 / 100 / 100 % | **100 / 100 / 100 / 100 %** | tie |
+| median step | 3.9-4.8 mm | 3.0-5.3 mm | tie (matched motion) |
+| jumps > 50 mm | 1 across 4 episodes | **0** | tie |
+| **frames dropped** | **0.0%** (0/725) | 4.0% (29/719) | **OAK-D** |
+| **effective fps** | **30.00** | 28.6-29.0 | **OAK-D** |
+| **arducam headroom** | **49.5-49.7 fps** | 40.8-45.9 fps | **OAK-D** |
+| image sharpness | **2604** | 391 | **OAK-D** |
+| image brightness | 107.1 | 60.0 | (AE target, not comparable) |
+| depth coverage | 61.5% | **67.9%** | Gemini |
+| `check_dataset` | **4/4 clean** | 4 warnings (no right stream) | OAK-D (cosmetic) |
+
+**On trajectory quality the two are indistinguishable.** In a well-lit, textured
+scene the Gemini tracked every frame of every episode; the OAK-D lost one.
+
+**The OAK-D's advantage is margin, not accuracy.** It drops no frames where the
+Gemini drops 4%, holds an exact 30.00 fps, leaves the Arducam ~5 fps more
+headroom, and produces markedly sharper frames. All of that traces to the same
+root: the OAK-D encodes on its own ASIC, so the Pi does less work, and its
+shorter exposure means less motion blur.
+
+### The noise floor cannot separate them, and n=1 was misleading
+
+Re-running SLAM on every episode to get a per-episode noise floor:
+
+| | noise floor, as % of a mean step |
+|---|---|
+| OAK-D | 36%, **259%**, 44%, 135% — mean **119%** |
+| Gemini | 150%, 115%, 47%, **26%** — mean **84%** |
+
+The Gemini is *lower* on average, and the spread is 26-259%. An initial single-
+episode comparison suggested the Gemini was 2.6x worse; that was an artefact of
+comparing the OAK-D's best episode against the Gemini's second-worst. **The
+figure is dominated by RTAB-Map's RANSAC variance, not by the camera**, and four
+episodes per camera cannot separate them. Any future claim here needs far more
+episodes, or a deterministic odometry configuration.
+
+### Caveats
+
+- n=4 per camera, one scene, one operator, one lighting condition — and a
+  deliberately favourable one, chosen after try3/try4 showed the Gemini failing
+  in dim and backlit scenes.
+- The two batches are different motions, so only distributional comparison is
+  valid; no pairwise trajectory RMSE between cameras is possible.
+- Median depth differed (0.544 m OAK-D vs 1.133 m Gemini), so the rig was not
+  held identically. A confound on the depth-coverage row.
+- Sharpness and brightness are not rigorously comparable across different
+  sensors and ISPs; treat the 6.7x sharpness gap as indicative, not measured.
+
+### What this means for the decision
+
+The Gemini 305 is a viable second source. It reaches the same trajectory quality
+in a good workspace, at a lower price, smaller, lighter and lower-power, with no
+IMU needed. What you give up is **headroom**: 4% of frames, a little Arducam
+throughput, noticeably softer images, and a documented tendency to fail first
+when light or texture runs short. For a rig operating in controlled, lit
+workspaces that is an acceptable trade. For uncontrolled conditions the OAK-D
+still has more margin.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.
