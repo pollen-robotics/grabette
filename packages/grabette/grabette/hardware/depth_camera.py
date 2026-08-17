@@ -31,6 +31,25 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
+# Human-readable names, keyed by the `depth_camera` config value. Lives here
+# rather than in the UI so the API can serve one authoritative label and every
+# consumer agrees; the UI would otherwise have to duplicate this mapping in the
+# status badge, the toggle button and the initialising message.
+DISPLAY_NAMES = {
+    "oakd": "OAK-D",
+    "gemini305": "Gemini 305",
+}
+
+# Shown when the backend cannot say which camera it has (the mock backend, or a
+# model added to config without being added above).
+GENERIC_DISPLAY_NAME = "Depth camera"
+
+
+def display_name(model: str | None) -> str:
+    """Label for a `depth_camera` value, falling back to a generic name."""
+    return DISPLAY_NAMES.get(model or "", GENERIC_DISPLAY_NAME)
+
+
 @runtime_checkable
 class DepthCameraCapture(Protocol):
     """Depth camera driving one episode's depth (+ optionally IMU) streams.

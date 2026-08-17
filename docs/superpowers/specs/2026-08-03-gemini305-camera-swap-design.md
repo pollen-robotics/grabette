@@ -518,31 +518,37 @@ measurable: re-run SLAM on clamped depth and compare with
 `compare_trajectories.py --noise`. Until measured, the conservative default
 (no clamp) stands.
 
-## Pre-merge TODO: generic camera naming in the dashboard
+## DONE: generic camera naming in the dashboard (2026-08-17)
 
-Requested 2026-08-12, to be done before this branch merges. The UI hardcodes
-"OAK-D" in user-visible strings and should instead show whichever depth camera
-is configured.
+The UI hardcoded "OAK-D" in the status badge, the toggle button and two 501
+messages, so a device running a Gemini 305 told the operator it was talking to an
+OAK-D — a wrong-but-plausible label, which is the expensive kind when two cameras
+behave differently.
 
-The clean seam is `app/routers/oakd.py::_status()`, which already returns
-`supported/enabled/initialized/initializing` and is what the dashboard polls.
-Adding a `model` field (`"oakd"` / `"gemini305"`) — or better, a display label —
-lets the UI name itself with no new endpoint.
+**One authoritative name, served by the API.** `hardware/depth_camera.py` owns
+`DISPLAY_NAMES` (`oakd` → "OAK-D", `gemini305` → "Gemini 305") plus a
+`display_name()` fallback; `RpiBackend` exposes `depth_camera_model`; and
+`/api/oakd/status` now returns both `model` and `label`. The UI consumes `label`
+rather than mapping it again, so the badge, the button and the messages cannot
+drift apart.
 
-Known user-visible sites:
+Changed: `ui/app.py` status badge (5 states) and toggle button, the
+"Initializing depth camera…" message, the initial button label (generic, since
+it is built before any API call can name the model), the two
+`501 "backend has no depth camera"` messages, and the depth endpoint docstrings
+that surface in the OpenAPI schema.
 
-- `ui/app.py:264-272` — five `_badge("OAK-D", ...)` calls (N/A / Connected /
-  Starting… / Error / Off).
-- `ui/app.py:484` — toggle button appearance and the OAK data-row visibility.
-- `app/routers/oakd.py:42,53` — `HTTPException(501, "backend has no OAK-D")`.
-- `app/routers/camera.py:51,60` — docstrings for the depth endpoints (these
-  surface in the OpenAPI schema).
+**Deliberately unchanged:** the `/api/oakd/*` route paths and the `oakd_*` output
+filenames. Renaming routes breaks the UI client and any external caller;
+renaming files breaks `convert.py`, `checks/*`, `dataset.py`, the OpenArm
+integration and every existing HuggingFace dataset. Both belong in their own PR
+with a compatibility shim.
 
-**Not** in scope for that change, deliberately: the `/api/oakd/*` route paths and
-the `oakd_*` output filenames. Renaming routes breaks the UI client and any
-external caller; renaming files breaks convert.py, checks/*, dataset.py, the
-OpenArm integration and every existing HuggingFace dataset. Both are separate
-mechanical PRs with a compatibility shim, not part of a hardware swap.
+`tests/test_depth_camera_naming.py` pins both ends — the mapping, what `_status()`
+serves, and what `_status_bar_html()` renders. Verified to discriminate:
+reintroducing the hardcoded badge fails 3 of them. One test asserts every
+`depth_camera` config choice has a display name, which is the real drift risk
+when a third camera is added.
 
 ## First real recordings exposed two bugs (2026-08-12)
 

@@ -175,6 +175,15 @@ class RpiBackend(Backend):
     # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
 
     @property
+    def depth_camera_model(self) -> str:
+        """Which depth camera this backend drives ("oakd" / "gemini305").
+
+        Surfaced so the UI can name the hardware it is actually talking to
+        instead of hardcoding "OAK-D".
+        """
+        return self._depth_camera
+
+    @property
     def is_oakd_enabled(self) -> bool:
         return self._enable_oakd
 
