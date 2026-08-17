@@ -340,7 +340,13 @@ class ButtonListener:
         # the peers stop within ~1 poll interval of us, keeping the group's stop
         # spread small. notify_group_stop never raises and returns fast when
         # solo/unreachable, so this doesn't meaningfully delay a standalone stop.
-        await notify_group_stop()
+        # A transient failure is retried in the background (see notify_group_stop);
+        # by the time a retry runs, our stop_capture below has completed, so a
+        # device that is capturing again is necessarily a NEW episode — which the
+        # retry must not stop.
+        await notify_group_stop(
+            should_abort=lambda: self._backend.is_capturing or scheduler.is_scheduled(),
+        )
         status = await self._backend.stop_capture()
         sm.register_episode(getattr(status, "episode_id", None))
         logger.info(

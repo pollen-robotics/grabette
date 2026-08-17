@@ -57,6 +57,23 @@ logger = logging.getLogger("grabette.relay_client")
 CommandHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 TokenProvider = Callable[[], Optional[str]]
 
+# The relay's live HTTP session, published for the other device-side callers that
+# have to reach the fleet (fleet_sync's group start/stop). Borrowing it means those
+# calls ride an already-open keep-alive connection instead of paying DNS + TCP +
+# TLS on a brand-new ClientSession — which, on a Pi whose CPU and WiFi are both
+# saturated by an in-flight capture, is what pushed a group stop past its timeout
+# and left a peer recording. The held long-poll does NOT block them: aiohttp's
+# connector allows unlimited connections per host, so a stop opens its own rather
+# than queueing behind the poll.
+_live_session: Optional[aiohttp.ClientSession] = None
+
+
+def get_relay_session() -> Optional[aiohttp.ClientSession]:
+    """The relay's live session, or None when the relay isn't running (callers
+    then open their own). Borrowed — never close the returned session."""
+    s = _live_session
+    return s if (s is not None and not s.closed) else None
+
 
 class RelayClient:
     def __init__(
@@ -184,8 +201,12 @@ class RelayClient:
         One exception to that serialization: _FAST_PATH_TYPES (cancels) are run
         immediately, beside the worker. A cancel queued behind the multi-minute
         upload it is cancelling would be pointless."""
+        global _live_session
         timeout = aiohttp.ClientTimeout(total=15)
         async with aiohttp.ClientSession(timeout=timeout) as session:
+            # Publish it for fleet_sync (see get_relay_session), so a group stop
+            # doesn't pay a cold TLS handshake at the worst possible moment.
+            _live_session = session
             queue: "asyncio.Queue[dict]" = asyncio.Queue()
             inflight: set[str] = set()  # command ids queued/running (dedup)
             # Strong refs to fast-path tasks: asyncio only weakly references tasks,
@@ -344,6 +365,8 @@ class RelayClient:
                     if delay:
                         await asyncio.sleep(delay)
             finally:
+                # Stop handing out a session that's about to be closed.
+                _live_session = None
                 worker_task.cancel()
                 heartbeat_task.cancel()
                 battery_task.cancel()

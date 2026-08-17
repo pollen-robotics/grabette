@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -222,10 +221,18 @@ async def stop_capture(
         return {"status": "cancelled"}
     if not backend.is_capturing:
         raise HTTPException(status_code=409, detail="Not capturing")
+    # Notify BEFORE stopping locally, exactly like the physical-button path:
+    # stop_capture() muxes the mp4 synchronously and blocks the event loop, so a
+    # notification sent after it only leaves the box once the mux is done — the
+    # peers would keep recording for its whole duration. This used to be fired
+    # afterwards through a bare create_task, whose task asyncio only referenced
+    # weakly: the GC could cancel it in flight and the peers were never told.
+    await notify_group_stop(
+        should_abort=lambda: backend.is_capturing or scheduler.is_scheduled(),
+    )
     status = await backend.stop_capture()
     # File the episode into its task only now that its data is written.
     tm.register_episode(getattr(status, "episode_id", None))
-    asyncio.create_task(notify_group_stop())  # best-effort; must not delay this response
     return status
 
 
