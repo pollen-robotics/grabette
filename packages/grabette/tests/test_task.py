@@ -7,6 +7,9 @@ oakd_imu.json), not only for legacy/mock episodes (imu_data.json).
 import json
 from pathlib import Path
 
+import pytest
+
+from grabette.config import settings
 from grabette.task import UNASSIGNED_ID, TaskManager
 
 
@@ -150,3 +153,94 @@ def test_explicit_local_selection_survives_a_recording(tmp_path):
 
     assert tm.active_task_id == tid
     assert tm.get_task_detail(tid).episode_ids == ["ep_b1", "ep_b2"]
+
+
+# A solo/offline capture gets no membership from the fleet, but the device knows
+# its own role (settings.hand is its slot). It stamps that itself, so the episode
+# reaches the fleet fully described instead of role-less — role-less episodes are
+# flagged incomplete and are SILENTLY skipped by dataset generation.
+
+@pytest.fixture
+def left_hand(monkeypatch):
+    """Pin this device's identity so the expected members map is deterministic."""
+    monkeypatch.setattr(settings, "hand", "left")
+    monkeypatch.setattr(settings, "device_id", "dev-left-1")
+    monkeypatch.setattr(settings, "device_name", "grabette-left")
+    return {"left": {"device_id": "dev-left-1", "name": "grabette-left"}}
+
+
+def test_solo_episode_stamps_its_own_role(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Solo Task")
+    tm.active_task_id = tid
+
+    _button_press(tm, "ep_solo")
+
+    task = tm._find_task(tid)
+    assert task["episode_members"]["ep_solo"] == left_hand
+    # First episode of a signature-less task → the signature is filled in, which
+    # is what makes the task usable for dataset generation at all.
+    assert task["device_signature"] == ["left"]
+
+
+def test_solo_episode_in_unassigned_stamps_members_but_no_signature(tmp_path, left_hand):
+    # Unassigned holds episodes of any provenance, so it must never carry a
+    # signature — but the members are kept, ready for when the episode is filed.
+    tm = TaskManager(data_dir=tmp_path)
+
+    _button_press(tm, "ep_loose")
+
+    unassigned = tm._find_task(UNASSIGNED_ID)
+    assert unassigned["episode_members"]["ep_loose"] == left_hand
+    assert "device_signature" not in unassigned
+
+
+def test_solo_episode_never_overwrites_a_known_signature(tmp_path, left_hand):
+    # The regression this guards: a solo press into a bimanual task must not
+    # rewrite its signature to ["left"] — that would misdescribe every episode
+    # already recorded there.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.get_or_create_task("Bimanual Task")
+    tm.create_episode(tid, episode_id="ep_pair",
+                      members={"left": {"device_id": "dev-left-1", "name": "grabette-left"},
+                               "right": {"device_id": "dev-right-1", "name": "grabette-right"}},
+                      signature=["left", "right"])
+    tm.register_episode("ep_pair")
+    tm.active_task_id = tid
+
+    _button_press(tm, "ep_half_rig")
+
+    task = tm._find_task(tid)
+    assert task["device_signature"] == ["left", "right"]
+    # The half-rig episode still says truthfully what recorded it.
+    assert task["episode_members"]["ep_half_rig"] == left_hand
+
+
+def test_fleet_membership_wins_over_self_reporting(tmp_path, left_hand):
+    # When the fleet describes the episode, its view is authoritative — the
+    # self-stamp must not narrow a group episode down to this one device.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.get_or_create_task("Group Task")
+    members = {"left": {"device_id": "dev-left-1", "name": "grabette-left"},
+               "casquette": {"device_id": "dev-cap-1", "name": "casquette"}}
+    tm.create_episode(tid, episode_id="ep_grp", members=members,
+                      signature=["left", "casquette"])
+    tm.register_episode("ep_grp")
+
+    task = tm._find_task(tid)
+    assert task["episode_members"]["ep_grp"] == members
+    assert task["device_signature"] == ["left", "casquette"]
+
+
+def test_solo_episode_is_reported_with_its_role(tmp_path, left_hand):
+    # End to end: report_tasks is what the fleet aggregates, so the role has to
+    # survive into the report for the episode to count as complete there.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Reported Solo")
+    tm.active_task_id = tid
+
+    _button_press(tm, "ep_rep")
+
+    entry = next(t for t in tm.report_tasks() if t["name"] == "Reported Solo")
+    assert entry["device_signature"] == ["left"]
+    assert entry["groups"] == [{"members": left_hand, "episode_ids": ["ep_rep"]}]

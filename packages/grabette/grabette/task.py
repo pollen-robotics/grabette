@@ -32,6 +32,28 @@ logger = logging.getLogger(__name__)
 UNASSIGNED_ID = "unassigned"
 
 
+def local_identity() -> tuple[dict, list[str]]:
+    """This device's own (members, signature), for a capture it made alone.
+
+    A solo or offline recording gets no membership from the fleet, but the device
+    needs none to describe itself: `hand` IS its slot (the fleet only derives the
+    same value from the same field, see _device_slot there), and
+    device_id/device_name are exactly what it registers under — so the result is
+    byte-for-byte what the fleet would have sent for a one-member session.
+
+    Without this, a solo episode reached the fleet with no roles at all: flagged
+    "incomplete" in the task view and, worse, silently dropped from dataset
+    generation (an episode with no roles is skipped). Stamping it here means the
+    device answers that question at record time, from what it already knows,
+    instead of depending on a later fill-devices repair that could only ever
+    reconstruct this very information — and cannot run at all while offline.
+    """
+    from grabette.config import settings
+
+    slot = settings.hand  # Literal["left","right"] → always a valid fleet slot
+    return {slot: {"device_id": settings.device_id, "name": settings.device_name}}, [slot]
+
+
 def episode_id_for(ts: datetime) -> str:
     """Canonical episode-id format, derived from a UTC instant.
 
@@ -232,6 +254,15 @@ class TaskManager:
         if episode_id is not None and episode_id != eid:
             eid = episode_id
 
+        # No membership from the fleet ⇒ this device recorded alone (button press
+        # outside a session, or the fleet was unreachable). Describe the episode
+        # with our own role rather than leaving it role-less. Kept separate from
+        # `signature` below: a self-reported signature must never overwrite one
+        # the fleet gave us.
+        own_signature: list[str] | None = None
+        if not members:
+            members, own_signature = local_identity()
+
         if self._session_active and self._session_task_id:
             target_id = self._session_task_id
         else:
@@ -245,6 +276,16 @@ class TaskManager:
         # account still surfaces the task and names its (possibly offline) peers.
         if signature:
             target["device_signature"] = list(signature)
+        elif own_signature and target["id"] != UNASSIGNED_ID and not target.get("device_signature"):
+            # Self-reported: fill a signature only where there is none, never
+            # replace one. A solo press into an existing bimanual task must not
+            # rewrite it to ["left"] — that would misdescribe every episode
+            # already recorded there, and would bypass the fleet's own rule that
+            # a signature is locked once the task has recordings. Unassigned is
+            # excluded: it is a bucket holding episodes of any provenance, so a
+            # signature there would be a claim about nothing (and it is never
+            # reported to the fleet anyway).
+            target["device_signature"] = list(own_signature)
         if members:
             target.setdefault("episode_members", {})[eid] = members
         # active_task_id is deliberately NOT moved onto the task we just filed
