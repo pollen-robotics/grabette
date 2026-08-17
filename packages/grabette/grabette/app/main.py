@@ -480,6 +480,26 @@ async def _handle_relay_command(cmd: dict) -> dict:
         deleted = get_task_manager().delete_task_by_name(name)
         return {"status": "ok", "deleted": name if deleted else None}
 
+    if ctype == "assign_episodes":
+        # Fleet "file these recordings under task X", keyed by task NAME (local ids
+        # mean nothing across devices). Serves both triaging the unassigned inbox
+        # and repairing a split — a fleet-wide dispatch that makes every device
+        # agree on one task name for the episode. Idempotent, and safe to send to a
+        # device that never had these episodes: move_episodes skips ids it knows
+        # nothing about rather than inventing them.
+        from grabette.app.routers.tasks import get_task_manager
+
+        args = cmd.get("args") or {}
+        name = (args.get("task_name") or "").strip()
+        episode_ids = args.get("episode_ids") or []
+        if not name:
+            return {"status": "error", "message": "task_name is required"}
+        if not episode_ids:
+            return {"status": "error", "message": "episode_ids is required"}
+        tm = get_task_manager()
+        result = tm.move_episodes(episode_ids, tm.get_or_create_task(name))
+        return {"status": "ok", "task": name, **result}
+
     if ctype == "set_episode_members":
         # Fleet "fill devices": backfill who recorded episodes (role →
         # {device_id, name}) saved before members were persisted. Accepts a batch
@@ -694,7 +714,7 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
                           "delete_episode", "edit_task", "delete_task",
-                          "prepare_capture"],
+                          "assign_episodes", "prepare_capture"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect

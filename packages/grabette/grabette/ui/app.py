@@ -582,9 +582,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if "error" in result:
             return f"Error: {result['error']}", gr.update(), gr.update(), gr.update()
         rows, move_dd, _th, desc, *_ = _refresh_episode_table(current_session_id)
+        msg = f"Moved {len(result.get('moved', episode_ids))} episode(s)"
+        if result.get("skipped"):
+            msg += f" ({len(result['skipped'])} not found here)"
+        # An episode recorded with another grabette only gets refiled HERE. Unless
+        # the peer is refiled too, the two devices end up reporting the same
+        # episode under different tasks, which the fleet flags as a split.
+        shared = result.get("shared") or []
+        if shared:
+            peers = ", ".join(sorted({p for s in shared for p in s["peers"]}))
+            msg += (f" — warning: {len(shared)} of them were recorded with {peers};"
+                    " refile them there too, or the pair ends up split across tasks")
         # gr.update(value=...) forces the interactive dataframe to drop its
         # dirty checkbox state so the moved rows actually disappear.
-        return f"Moved {len(episode_ids)} episode(s)", gr.update(value=rows), move_dd, desc
+        return msg, gr.update(value=rows), move_dd, desc
 
     # ── SLAM ──────────────────────────────────────────────────────────
 

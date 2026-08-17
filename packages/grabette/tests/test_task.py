@@ -247,6 +247,64 @@ def test_solo_episode_is_reported_with_its_role(tmp_path, left_hand):
     assert entry["groups"] == [{"members": left_hand, "episode_ids": ["ep_rep"]}]
 
 
+# move_episodes reports what it did, because two callers need to know: the local UI
+# warns when a refiled episode has a peer copy left behind (that's how a pair ends
+# up split across tasks), and the fleet dispatches assign_episodes to EVERY device,
+# most of which never held the episode.
+
+def test_move_reports_a_peer_recorded_episode(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.get_or_create_task("Bimanual")
+    _fleet_episode(tm, tid, "ep_pair")
+    dest = tm.create_task("Elsewhere")
+
+    result = tm.move_episodes(["ep_pair"], dest)
+
+    assert result["moved"] == ["ep_pair"]
+    assert result["skipped"] == []
+    # The peer is named so the operator can be told to refile it there too.
+    assert result["shared"] == [{"episode_id": "ep_pair", "peers": ["grabette-right"]}]
+
+
+def test_move_reports_nothing_shared_for_a_solo_episode(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    _button_press(tm, "ep_solo")
+    dest = tm.create_task("Filed")
+
+    result = tm.move_episodes(["ep_solo"], dest)
+
+    assert result["moved"] == ["ep_solo"]
+    assert result["shared"] == []  # only this device recorded it — nothing to split
+
+
+def test_move_skips_episodes_this_device_never_had(tmp_path, left_hand):
+    # A fleet assign_episodes reaches every device. Registering an id for a device
+    # that has neither a registry entry nor files would report an episode that
+    # doesn't exist — so it must be skipped, not invented.
+    tm = TaskManager(data_dir=tmp_path)
+    dest = tm.create_task("Target")
+
+    result = tm.move_episodes(["ep_from_a_peer"], dest)
+
+    assert result == {"moved": [], "skipped": ["ep_from_a_peer"], "shared": []}
+    assert tm.get_task_detail(dest).episode_ids == []
+    assert "device_signature" not in tm._find_task(dest)
+
+
+def test_move_files_an_episode_present_on_disk_but_in_no_task(tmp_path, left_hand):
+    # The flip side of the skip: files with no registry entry (a corrupt registry
+    # was reset) are real data, and filing them is the repair.
+    _make_episode(tmp_path, "ep_orphaned_files", ["oakd_imu.json"])
+    tm = TaskManager(data_dir=tmp_path)
+    dest = tm.create_task("Recovered")
+
+    result = tm.move_episodes(["ep_orphaned_files"], dest)
+
+    assert result["moved"] == ["ep_orphaned_files"]
+    assert result["skipped"] == []
+    assert tm.get_task_detail(dest).episode_ids == ["ep_orphaned_files"]
+
+
 # Membership lives on the dict of the task that HOLDS the episode, so every path
 # that refiles an episode has to carry it across. Otherwise the role stamped at
 # record time is silently dropped exactly when a loose recording gets filed —

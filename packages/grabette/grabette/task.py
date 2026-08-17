@@ -685,7 +685,7 @@ class TaskManager:
     def list_tasks(self) -> list[TaskDetail]:
         return [self._to_task_detail(t) for t in self._tasks]
 
-    def move_episodes(self, episode_ids: list[str], target_task_id: str) -> None:
+    def move_episodes(self, episode_ids: list[str], target_task_id: str) -> dict:
         """Refile episodes into another task, carrying their membership along.
 
         An episode's members (role → {device_id, name}) live on the dict of the
@@ -694,33 +694,66 @@ class TaskManager:
         left out of any dataset — while a dead entry piled up on the source. This
         is the path that files a loose Unassigned recording into a real task, so
         the role stamped at record time has to survive it.
+
+        Returns {"moved", "skipped", "shared"}:
+          * moved   — episode ids now filed in the target (already-there included,
+                      so a repeated call reports the same end state).
+          * skipped — ids this device knows nothing about (see below).
+          * shared  — [{"episode_id", "peers"}] for episodes recorded WITH another
+                      device. Refiling only this device's copy leaves the peer
+                      filing the same episode under the old task, which the fleet
+                      then sees as a split. Reported, not refused: reorganising
+                      both devices is legitimate, and a hard refusal here would
+                      block doing it on either side. Callers surface it as a
+                      warning.
         """
         target = self._find_task(target_task_id)
         if target is None:
             raise FileNotFoundError(f"Target task {target_task_id} not found")
+        from grabette.config import settings  # our own id, to tell peers apart
 
+        own = settings.device_id
+        moved: list[str] = []
+        skipped: list[str] = []
+        shared: list[dict] = []
         filed: list[dict] = []  # membership of each episode filed here, for the signature
         for eid in episode_ids:
             source = next((t for t in self._tasks if eid in t["episode_ids"]), None)
+            if source is None and not self.episode_dir(eid).exists():
+                # Nothing here holds it and there are no files either. A fleet
+                # dispatch reaches every device, and most never recorded a given
+                # episode — registering the id for them would invent an episode
+                # that doesn't exist, which the fleet would then report. (An
+                # episode present on disk but in no task is NOT skipped: filing it
+                # repairs a lost registry entry.)
+                skipped.append(eid)
+                continue
             if source is target:
                 # Already filed here, so stop before touching anything: the
                 # lookup found the TARGET as the holder, and removing its members
                 # would strip them while the guard below skipped the re-add —
                 # losing data on what is supposed to be a no-op.
-                filed.append(target.get("episode_members", {}).get(eid) or {})
-                continue
-            members = None
-            if source is not None:
-                source["episode_ids"].remove(eid)
-                members = source.get("episode_members", {}).pop(eid, None)
-            if eid not in target["episode_ids"]:
-                target["episode_ids"].append(eid)
-            if members:
-                target.setdefault("episode_members", {})[eid] = members
-            filed.append(members or {})
+                members = target.get("episode_members", {}).get(eid) or {}
+            else:
+                members = None
+                if source is not None:
+                    source["episode_ids"].remove(eid)
+                    members = source.get("episode_members", {}).pop(eid, None)
+                if eid not in target["episode_ids"]:
+                    target["episode_ids"].append(eid)
+                if members:
+                    target.setdefault("episode_members", {})[eid] = members
+                members = members or {}
+            moved.append(eid)
+            filed.append(members)
+            peers = sorted({w.get("name") or w.get("device_id") for w in members.values()
+                            if w.get("device_id") and w.get("device_id") != own})
+            if peers:
+                shared.append({"episode_id": eid, "peers": peers})
 
         self._adopt_signature(target, filed)
         self._save()
+        return {"moved": moved, "skipped": skipped, "shared": shared}
 
     def _adopt_signature(self, target: dict, filed: list[dict]) -> None:
         """Give a signature-less task the role set of the episodes just filed in.
