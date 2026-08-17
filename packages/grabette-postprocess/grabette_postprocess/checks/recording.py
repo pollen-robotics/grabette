@@ -6,13 +6,13 @@ full-video decodes and count/drift heuristics an exhaustive audit would run.
 
 What it verifies:
   - SLAM inputs (all required):
-      oakd_left.mp4               — video present, non-empty, decodable
-      oakd_left_timestamps.json   — has samples
-      oakd_depth.mkv | oakd_depth/ — depth present, non-empty
-      oakd_depth_timestamps.json  — has samples
-      oakd_imu.json               — accel + gyro present (rotation warned if absent);
+      dcam_left.mp4               — video present, non-empty, decodable
+      dcam_left_timestamps.json   — has samples
+      dcam_depth.mkv | dcam_depth/ — depth present, non-empty
+      dcam_depth_timestamps.json  — has samples
+      dcam_imu.json               — accel + gyro present (rotation warned if absent);
                                     absent entirely is fine for an IMU-less camera
-      oakd_calib_offline.json     — required keys + positive intrinsics
+      dcam_calib_offline.json     — required keys + positive intrinsics
   - Dataset inputs (required):
       angle_data.json             — has samples; each joint actually moves
       raw_video.mp4 (Arducam)     — video present, non-empty, decodable
@@ -24,6 +24,8 @@ scripts/checks/check_dataset.py (CLI) and the HF Space pipeline use it.
 
 import json
 from pathlib import Path
+
+from grabette_postprocess.episode_files import resolve
 
 import numpy as np
 import av
@@ -87,37 +89,37 @@ def _check_arducam(ep_dir: Path, status: dict) -> None:
 def _check_oak_cameras(ep_dir: Path, require_right: bool, status: dict) -> None:
     """OAK left video + its timestamps (SLAM inputs). The right camera is not a
     SLAM/dataset input, so it's only checked (non-fatally) when require_right."""
-    _check_video(ep_dir / "oakd_left.mp4", "oak_left", status, required=True)
-    lt = ep_dir / "oakd_left_timestamps.json"
+    _check_video(resolve(ep_dir, "dcam_left.mp4"), "dcam_left", status, required=True)
+    lt = resolve(ep_dir, "dcam_left_timestamps.json")
     if not (lt.is_file() and _samples(lt)):
-        status["errors"].append("oakd_left_timestamps.json missing or empty")
+        status["errors"].append("dcam_left_timestamps.json missing or empty")
     if require_right:
-        _check_video(ep_dir / "oakd_right.mp4", "oak_right", status, required=False)
+        _check_video(resolve(ep_dir, "dcam_right.mp4"), "dcam_right", status, required=False)
 
 
 def _check_depth(ep_dir: Path, status: dict) -> None:
-    """Depth stream (SLAM input): a packed lossless video (oakd_depth.mkv) or a
+    """Depth stream (SLAM input): a packed lossless video (dcam_depth.mkv) or a
     legacy PNG dir, plus non-empty timestamps."""
     err, info = status["errors"], status["info"]
-    depth_mkv = ep_dir / "oakd_depth.mkv"
-    depth_dir = ep_dir / "oakd_depth"
-    depth_ts = ep_dir / "oakd_depth_timestamps.json"
+    depth_mkv = resolve(ep_dir, "dcam_depth.mkv")
+    depth_dir = resolve(ep_dir, "dcam_depth")
+    depth_ts = resolve(ep_dir, "dcam_depth_timestamps.json")
     has_mkv = depth_mkv.is_file() and depth_mkv.stat().st_size > 0
     has_dir = depth_dir.is_dir() and any(depth_dir.glob("*.png"))
     n_ts = len(_samples(depth_ts)) if depth_ts.is_file() else 0
     info.append(f"depth {'mkv' if has_mkv else 'png' if has_dir else 'none'}/{n_ts}ts")
     if not has_mkv and not has_dir:
-        err.append("missing depth (oakd_depth.mkv or non-empty oakd_depth/)")
+        err.append("missing depth (dcam_depth.mkv or non-empty dcam_depth/)")
     if not n_ts:
-        err.append("oakd_depth_timestamps.json missing or empty")
+        err.append("dcam_depth_timestamps.json missing or empty")
 
 
 def _check_seq_overlap(ep_dir: Path, status: dict) -> None:
     """left∩depth seq overlap drives the SLAM frame count. Cheap (the timestamp
     JSONs are already small); warn only when the streams share no frames at all —
     the data is present but would yield an empty SLAM run."""
-    lt = ep_dir / "oakd_left_timestamps.json"
-    depth_ts = ep_dir / "oakd_depth_timestamps.json"
+    lt = resolve(ep_dir, "dcam_left_timestamps.json")
+    depth_ts = resolve(ep_dir, "dcam_depth_timestamps.json")
     if not (lt.is_file() and depth_ts.is_file()):
         return
     left_seqs = {int(s["seq"]) for s in _samples(lt)}
@@ -130,7 +132,7 @@ def _check_seq_overlap(ep_dir: Path, status: dict) -> None:
 
 
 def _check_imu(ep_dir: Path, status: dict) -> None:
-    """IMU (oakd_imu.json): accel + gyro when present; rotation only warns.
+    """IMU (dcam_imu.json): accel + gyro when present; rotation only warns.
 
     An absent file is NOT an error — the Orbbec Gemini 305 has no IMU at all, so
     its episodes legitimately carry none. Phase 0 measured IMU-free odometry as
@@ -138,7 +140,7 @@ def _check_imu(ep_dir: Path, status: dict) -> None:
     offline_vslam handle the absence. If the file IS present it is still checked
     fully, so a genuinely broken OAK-D capture is caught as before."""
     err, warn, info = status["errors"], status["warnings"], status["info"]
-    imu_path = ep_dir / "oakd_imu.json"
+    imu_path = resolve(ep_dir, "dcam_imu.json")
     if not imu_path.is_file():
         info.append("imu: none (IMU-less camera)")
         return
@@ -214,11 +216,11 @@ def _check_gripper(ep_dir: Path, status: dict) -> None:
 
 
 def _check_calib(ep_dir: Path, status: dict) -> None:
-    """Offline calibration (oakd_calib_offline.json): required keys + intrinsics."""
+    """Offline calibration (dcam_calib_offline.json): required keys + intrinsics."""
     err = status["errors"]
-    calib = ep_dir / "oakd_calib_offline.json"
+    calib = resolve(ep_dir, "dcam_calib_offline.json")
     if not calib.is_file():
-        err.append("missing oakd_calib_offline.json")
+        err.append("missing dcam_calib_offline.json")
         return
     c = _load_json(calib)
     # imu_to_cam is absent for an IMU-less camera; offline_vslam probes for it
@@ -260,9 +262,9 @@ def check_recording(ep_dir: Path, require_right: bool = True) -> dict:
     keeping this fast is what lets the Space check every episode up front.
 
     require_right: when False, the right OAK camera is not checked at all. The
-    pipeline never consumes oakd_right.mp4 (SLAM is RGB-D on left+depth), so a
+    pipeline never consumes dcam_right.mp4 (SLAM is RGB-D on left+depth), so a
     caller that intentionally skips downloading it (e.g. the Space) sets this to
-    avoid a spurious "missing oakd_right.mp4" report.
+    avoid a spurious "missing dcam_right.mp4" report.
     """
     ep_dir = Path(ep_dir)
     status = {"name": ep_dir.name, "errors": [], "warnings": [], "info": []}

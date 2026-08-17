@@ -30,6 +30,8 @@ and passed into both the trajectory and gripper checks via the `flow` argument.
 import json
 from pathlib import Path
 
+from grabette_postprocess.episode_files import resolve
+
 import cv2
 import numpy as np
 from scipy.spatial.transform import Rotation
@@ -110,7 +112,7 @@ def compute_optical_flow_magnitude(
 def load_oak_gyro_norm(imu_path: Path) -> tuple[np.ndarray, np.ndarray]:
     """Load the OAK gyroscope and return (timestamps_s, angular_velocity_norm).
 
-    Reads oakd_imu.json (flat schema, kind == "gyro"). Timestamps use the OAK
+    Reads dcam_imu.json (flat schema, kind == "gyro"). Timestamps use the OAK
     device clock (device_us), which the cameras and IMU share on the OAK
     hardware, so the camera↔gyro comparison reflects true capture timing rather
     than USB-arrival (host_ms) jitter. Falls back to host_ms for legacy
@@ -128,10 +130,10 @@ def load_oak_gyro_norm(imu_path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def oak_left_frame_ts(episode_dir: Path) -> np.ndarray | None:
-    """Per-frame device_us timestamps (seconds) for oakd_left.mp4 — the OAK
+    """Per-frame device_us timestamps (seconds) for dcam_left.mp4 — the OAK
     hardware clock, matching the gyro from load_oak_gyro_norm. Falls back to
     host_ms when device_us is absent. None when the file is missing."""
-    ts_path = episode_dir / "oakd_left_timestamps.json"
+    ts_path = resolve(episode_dir, "dcam_left_timestamps.json")
     if not ts_path.is_file():
         return None
     samples = _samples(ts_path)
@@ -313,8 +315,8 @@ def _result(label: str, ref_label: str, cam_ts, cam_sig, ref_ts, ref_sig,
 def check_oak_imu(episode_dir: Path, max_frames: int = 300) -> dict | None:
     """OAK left camera ↔ OAK gyro (SLAM VIO health). None when inputs missing."""
     episode_dir = Path(episode_dir)
-    video = episode_dir / "oakd_left.mp4"
-    imu = episode_dir / "oakd_imu.json"
+    video = resolve(episode_dir, "dcam_left.mp4")
+    imu = resolve(episode_dir, "dcam_imu.json")
     if not video.is_file() or not imu.is_file():
         return None
     try:

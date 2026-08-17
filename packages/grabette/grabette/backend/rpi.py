@@ -580,7 +580,9 @@ class RpiBackend(Backend):
             "urdf": urdf_name,
         }
         if oakd_stats:
-            meta["oakd"] = oakd_stats
+            # Per-stream capture stats. Key is "dcam" since the camera may be an
+            # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
+            meta["dcam"] = oakd_stats
 
         # Snapshot session_dir + clear so a fast restart doesn't collide.
         session_dir = self._capture_session_dir

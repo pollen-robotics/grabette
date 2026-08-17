@@ -1,13 +1,15 @@
 """Session and episode management for capture data.
 
 Sessions are named groups of episodes. Episodes are individual captures
-(raw_video.mp4 + oakd_imu.json). The registry lives in sessions.json;
+(raw_video.mp4 + dcam_imu.json). The registry lives in sessions.json;
 episode directories are flat under episodes/.
 """
 
 from __future__ import annotations
 
 import json
+
+from grabette.hardware.episode_files import DCAM_IMU, metadata_stats, resolve
 import logging
 import os
 import shutil
@@ -330,8 +332,11 @@ class SessionManager:
     def _get_episode_info(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)
         video_path = ep_dir / "raw_video.mp4"
-        # Real (OAK-D) episodes write oakd_imu.json; mock/legacy write imu_data.json.
-        imu_present = (ep_dir / "oakd_imu.json").exists() or (ep_dir / "imu_data.json").exists()
+        # A real capture writes dcam_imu.json (or legacy oakd_imu.json); the mock
+        # backend writes imu_data.json. A Gemini 305 episode has none of them —
+        # that camera has no IMU — which is a legitimate absence, not a fault.
+        imu_present = (resolve(ep_dir, DCAM_IMU).exists()
+                       or (ep_dir / "imu_data.json").exists())
 
         duration = 0.0
         frame_count = 0
@@ -342,7 +347,8 @@ class SessionManager:
             meta = json.loads(meta_path.read_text())
             duration = meta.get("duration_seconds", 0.0)
             frame_count = meta.get("frame_count", 0)
-            imu_sample_count = meta.get("imu_sample_count") or meta.get("oakd", {}).get("imu_samples", 0)
+            imu_sample_count = (meta.get("imu_sample_count")
+                                or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
 
         return EpisodeInfo(

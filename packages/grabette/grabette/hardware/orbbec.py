@@ -10,7 +10,7 @@ only write to disk while `_recording` is set.
 Two differences from the OAK-D, both verified on hardware:
 
 1. **No IMU.** The 305 exposes only COLOR/DEPTH/LEFT_IR/RIGHT_IR. No
-   `oakd_imu.json` is written and `get_latest_imu()` returns None forever.
+   `dcam_imu.json` is written and `get_latest_imu()` returns None forever.
    Phase 0 measured IMU-free odometry as indistinguishable from re-running the
    same pipeline, and convert.py/offline_vslam both tolerate the absent CSVs.
 
@@ -24,16 +24,16 @@ Streams LEFT_IR (Y8) + Depth (Y16) with D2C off. Verified by stereo NCC on real
 frames: LEFT_IR is the rectified left image, row-rectified against RIGHT_IR and
 sharing depth's pixel grid, so no host undistortion is needed.
 
-Output layout matches oakd.py's `oakd_*` names on purpose — convert.py,
-checks/*, dataset.py and every existing HuggingFace dataset key on them:
-    oakd_left.mp4               H.264, rectified left (from LEFT_IR)
-    oakd_depth.mkv              uint16 mm, lossless FFV1, encoded live
-    oakd_left_timestamps.json   per-frame device_us + host_ms
-    oakd_depth_timestamps.json
-    oakd_calib_offline.json     fx/fy/cx/cy/baseline (no imu_to_cam)
-    oakd_calib.json             device info + intrinsics/distortion dump
-    oakd_clock_pairs.json       first device_us <-> host_ms pair per stream
-    oak_mask.png                body mask (copied from hardware/oak_mask.png)
+Output layout matches oakd.py's `dcam_*` names on purpose: the postprocess
+pipeline reads whichever camera produced the episode without caring which:
+    dcam_left.mp4               H.264, rectified left (from LEFT_IR)
+    dcam_depth.mkv              uint16 mm, lossless FFV1, encoded live
+    dcam_left_timestamps.json   per-frame device_us + host_ms
+    dcam_depth_timestamps.json
+    dcam_calib_offline.json     fx/fy/cx/cy/baseline (no imu_to_cam)
+    dcam_calib.json             device info + intrinsics/distortion dump
+    dcam_clock_pairs.json       first device_us <-> host_ms pair per stream
+    dcam_mask.png                body mask (copied from hardware/dcam_mask.png)
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
 
-_MASK_PATH = Path(__file__).parent / "oak_mask.png"
+_MASK_PATH = Path(__file__).parent / "dcam_mask.png"
 
 # Raw depth above this (in millimetres, after depth_scale) is discarded. The 305
 # is rated 4-100cm and returns progressively noisier values further out; 65535
@@ -273,7 +273,7 @@ class OrbbecCapture:
 
     def _load_mask(self) -> None:
         if not _MASK_PATH.exists():
-            logger.warning("oak_mask.png not found at %s — capturing without mask",
+            logger.warning("dcam_mask.png not found at %s — capturing without mask",
                            _MASK_PATH)
             return
         mask = cv2.imread(str(_MASK_PATH), cv2.IMREAD_GRAYSCALE)
@@ -285,7 +285,7 @@ class OrbbecCapture:
             # never changes.
             self._mask_mul = (mask > 0).astype(np.uint16)
         else:
-            logger.warning("oak_mask.png shape %s != depth_resolution %s — mask disabled",
+            logger.warning("dcam_mask.png shape %s != depth_resolution %s — mask disabled",
                            None if mask is None else mask.shape, self.depth_resolution)
 
     def _dump_calibration(self) -> dict:
@@ -371,26 +371,26 @@ class OrbbecCapture:
 
 
         if self._calibration_json:
-            (self._output_dir / "oakd_calib.json").write_text(
+            (self._output_dir / "dcam_calib.json").write_text(
                 json.dumps(self._calibration_json, indent=2))
         if self._calib_offline:
-            (self._output_dir / "oakd_calib_offline.json").write_text(
+            (self._output_dir / "dcam_calib_offline.json").write_text(
                 json.dumps(self._calib_offline, indent=2))
         if self._mask is not None:
             try:
-                shutil.copyfile(_MASK_PATH, self._output_dir / "oak_mask.png")
+                shutil.copyfile(_MASK_PATH, self._output_dir / "dcam_mask.png")
             except OSError as e:
-                logger.warning("Could not copy oak_mask.png to session dir: %s", e)
+                logger.warning("Could not copy dcam_mask.png to session dir: %s", e)
 
         self._left_ts.clear()
         self._depth_ts.clear()
         self._clock_pairs.clear()
 
         with self._files_lock:
-            self._encoder = self._spawn_encoder(self._output_dir / "oakd_left.mp4")
+            self._encoder = self._spawn_encoder(self._output_dir / "dcam_left.mp4")
             if self.enable_depth:
                 self._depth_encoder = self._spawn_depth_encoder(
-                    self._output_dir / "oakd_depth.mkv")
+                    self._output_dir / "dcam_depth.mkv")
             self._recording = True
 
         logger.info("OrbbecCapture recording → %s", self._output_dir)
@@ -427,7 +427,7 @@ class OrbbecCapture:
         the loop on a Pi 4 and was the main reason two thirds of frames were
         dropped once picamera2 was encoding concurrently. Piping to ffmpeg moves
         the compression onto its own process, drops the separate packing pass,
-        and produces exactly the same oakd_depth.mkv.
+        and produces exactly the same dcam_depth.mkv.
 
         Lossless is right here, unlike the left stream: depth values are
         measurements RTAB-Map reads numerically.
@@ -467,12 +467,12 @@ class OrbbecCapture:
                 proc.kill()
 
         if self._output_dir:
-            (self._output_dir / "oakd_left_timestamps.json").write_text(
+            (self._output_dir / "dcam_left_timestamps.json").write_text(
                 json.dumps({"samples": self._left_ts}))
             if self.enable_depth:
-                (self._output_dir / "oakd_depth_timestamps.json").write_text(
+                (self._output_dir / "dcam_depth_timestamps.json").write_text(
                     json.dumps({"samples": self._depth_ts}))
-            (self._output_dir / "oakd_clock_pairs.json").write_text(
+            (self._output_dir / "dcam_clock_pairs.json").write_text(
                 json.dumps({"pairs": self._clock_pairs}))
 
         stats = {

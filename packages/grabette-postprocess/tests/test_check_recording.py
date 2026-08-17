@@ -128,9 +128,12 @@ def test_check_calib_without_imu_to_cam_is_valid(tmp_path):
 def test_check_recording_empty_dir_reports_missing(tmp_path):
     status = check_recording(tmp_path)
     errs = " ".join(status["errors"])
-    for expected in ("oakd_left.mp4", "angle_data.json",
-                     "oakd_calib_offline.json"):
+    # Messages name the CANONICAL files, so an operator is told what to produce
+    # now rather than the legacy name a fresh recording will never write.
+    for expected in ("dcam_left.mp4", "angle_data.json",
+                     "dcam_calib_offline.json"):
         assert expected in errs
-    # oakd_imu.json is deliberately NOT required — see
+    # The IMU is deliberately NOT required — see
     # test_check_imu_missing_file_is_not_an_error.
+    assert "dcam_imu.json" not in errs
     assert "oakd_imu.json" not in errs
