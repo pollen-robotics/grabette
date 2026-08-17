@@ -38,7 +38,7 @@ def main(dataset_dir, verbose):
     # on oakd_imu.json makes every 305 episode invisible to this check.
     episodes = find_episodes(dataset_dir, anchor="oakd_left.mp4")
     if not episodes:
-        print(f"No episodes (oakd_imu.json) found under {dataset_dir}")
+        print(f"No episodes (oakd_left.mp4) found under {dataset_dir}")
         return
 
     print(f"Checking {len(episodes)} episode(s) in {dataset_dir}\n")
