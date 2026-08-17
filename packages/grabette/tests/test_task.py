@@ -91,3 +91,62 @@ def test_delete_task_by_name_absent_is_noop(tmp_path):
     # a device that never had the task still reports success-as-absent.
     tm = TaskManager(data_dir=tmp_path)
     assert tm.delete_task_by_name("Never Existed") is False
+
+
+# A recording started outside any session must land in Unassigned — visibly
+# untriaged — never inside the task that was last recorded to. Two paths used to
+# leak: the local session lock kept its task selected after stop_session(), and
+# register_episode() moved active_task_id onto every task it filed into (so a
+# fleet-driven session, which never calls start/stop_session on the device, left
+# it pointing at the group's task once closed).
+
+def _button_press(tm, episode_id):
+    """Simulate a physical-button press outside a session: the listener resolves
+    the target from active_task_id, then files the episode on stop."""
+    tm.create_episode(tm.active_task_id, episode_id=episode_id)
+    tm.register_episode(episode_id)
+
+
+def test_button_press_after_local_session_goes_to_unassigned(tmp_path):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Task A")
+    tm.start_session(tid)
+    tm.create_episode(tid, episode_id="ep_in_session")
+    tm.register_episode("ep_in_session")
+    tm.stop_session()
+
+    _button_press(tm, "ep_after_session")
+
+    assert tm.active_task_id == UNASSIGNED_ID
+    assert "ep_after_session" in tm.get_task_detail(UNASSIGNED_ID).episode_ids
+    assert tm.get_task_detail(tid).episode_ids == ["ep_in_session"]
+
+
+def test_button_press_after_fleet_session_goes_to_unassigned(tmp_path):
+    # Fleet-driven session: episodes are filed against the group's task without
+    # the device's session lock ever being used, and closing the session on the
+    # fleet sends the device nothing. The next press must still be Unassigned.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.get_or_create_task("Group Task")
+    tm.create_episode(tid, episode_id="ep_group")
+    tm.register_episode("ep_group")
+
+    _button_press(tm, "ep_after_group")
+
+    assert tm.active_task_id == UNASSIGNED_ID
+    assert "ep_after_group" in tm.get_task_detail(UNASSIGNED_ID).episode_ids
+    assert tm.get_task_detail(tid).episode_ids == ["ep_group"]
+
+
+def test_explicit_local_selection_survives_a_recording(tmp_path):
+    # The flip side: an explicitly selected task (local UI) stays selected, so
+    # hands-free recording of several episodes into it keeps working.
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Task B")
+    tm.active_task_id = tid
+
+    _button_press(tm, "ep_b1")
+    _button_press(tm, "ep_b2")
+
+    assert tm.active_task_id == tid
+    assert tm.get_task_detail(tid).episode_ids == ["ep_b1", "ep_b2"]

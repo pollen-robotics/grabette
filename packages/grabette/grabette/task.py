@@ -247,7 +247,16 @@ class TaskManager:
             target["device_signature"] = list(signature)
         if members:
             target.setdefault("episode_members", {})[eid] = members
-        self.active_task_id = target["id"]
+        # active_task_id is deliberately NOT moved onto the task we just filed
+        # into: it is the operator's EXPLICIT local selection (PUT
+        # /api/tasks/active, start_session), never a side effect of recording.
+        # Making it sticky is what hid episodes: a fleet-driven session records
+        # into its group task through this method, and closing that session on
+        # the fleet never touches the device (the fleet dispatches start/stop
+        # commands, not start_session/stop_session). The device therefore kept
+        # pointing at that task, so the next physical-button press — which the
+        # fleet answers "solo" — silently appended a new episode to it instead
+        # of leaving it in Unassigned, where an untriaged recording belongs.
         if self._session_active:
             self._session_count += 1
         self._save()
@@ -276,6 +285,13 @@ class TaskManager:
         self.active_task_id = task_id
 
     def stop_session(self) -> None:
+        # Drop the selection with the lock: once the session is over, a physical
+        # button press must record a solo episode into Unassigned — where it is
+        # visibly untriaged — instead of quietly extending the task the session
+        # was recording for. Only when a session was actually running, so a
+        # stray /api/session/stop doesn't wipe an explicit local selection.
+        if self._session_active:
+            self.active_task_id = UNASSIGNED_ID
         self._session_active = False
         self._session_task_id = None
         self._session_count = 0
