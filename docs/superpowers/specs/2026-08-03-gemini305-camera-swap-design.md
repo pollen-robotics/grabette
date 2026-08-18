@@ -794,6 +794,85 @@ when light or texture runs short. For a rig operating in controlled, lit
 workspaces that is an acceptable trade. For uncontrolled conditions the OAK-D
 still has more margin.
 
+## Episode filenames: `oakd_*` → `dcam_*` (2026-08-17)
+
+A Gemini 305 recording was writing `oakd_left.mp4`, `oakd_imu.json` and
+`oak_mask.png` — naming the episode after hardware that produced none of it.
+The canonical prefix is now `dcam_` ("depth camera"), true whichever camera
+recorded it. `metadata.json`'s per-stream stats key moves `"oakd"` → `"dcam"`.
+
+**Option chosen: neutral names going forward, readers accept both.** The
+alternatives were a hard cutover with a migration script (would have meant
+rewriting 65 datasets, with anything missed failing silently) and
+camera-specific names like `gemini_*` (cost grows with every camera). Doing
+nothing was the fourth option.
+
+### Compatibility is the design
+
+Episodes recorded before this use `oakd_*`, plenty are already on the Hub, and
+they are **not** being rewritten. Every reader goes through
+`episode_files.resolve()`, which prefers the canonical name and falls back to the
+legacy one. `metadata_stats()` does the same for the metadata key. Both layouts
+process identically.
+
+The resolver is duplicated in `grabette` and `grabette-postprocess` deliberately:
+they are independent distributions — neither depends on the other, and the SLAM
+Space vendors only postprocess — so sharing one table of twelve strings would
+mean a new dependency edge. Both copies have their own tests.
+
+The mask is the one irregular rename (`oak_mask.png`, not `oakd_mask.png`), so a
+blind prefix swap misses it. There is a test pinning exactly that.
+
+### Verified on real data, not just unit tests
+
+| episode | layout | result |
+|---|---|---|
+| 305, as recorded | `oakd_*` | 158 frames, **158/158 tracked** |
+| same episode, renamed | `dcam_*` | 158 frames, **158/158 tracked** |
+| OAK-D, as recorded | `oakd_*` | **4/4 clean**, 1426 IMU samples, **198/198** |
+| 305 recorded by the patched daemon | `dcam_*` | 295 frames, **295/295, GOOD** |
+
+The live daemon writes only `dcam_*` and the `dcam` metadata key — confirmed by
+recording on `grabette-simsim` and listing the output directory.
+
+Error messages name the **canonical** file, so an operator is told what to
+produce now rather than a legacy name a fresh recording will never write.
+
+### Left alone deliberately
+
+The `oak/` intermediate directory, `oak_slam.py`, `run_oak_slam.py`,
+`OAK_VSLAM_BINARY`, the `/api/oakd/*` routes and internal identifiers such as
+`oakd_status`. None appears in a recording, so none misleads anyone reading
+data, and folding them in would break the Space's env contract.
+
+## Propagating to the SLAM Space: three near-misses
+
+The Space vendors its own copy of `grabette-postprocess`, so all of the above had
+to be synced there. Diffing each vendored file against our `develop` baseline —
+rather than copying the tree — caught three things a bulk copy would have broken:
+
+1. **`pyproject.toml` pins `lerobot==0.5.1`** with a comment explaining that a
+   later release moved `datasets` to an extra and dropped the `vcodec` kwarg,
+   which "broke the pipeline". Our repo has `0.6.0`. **Not synced.**
+2. **`dataset.py` is a 561-line fork** against that pinned 0.5.1 API
+   (`LeRobotDataset.create(vcodec=…, streaming_encoding=True)`) versus our 360-line
+   0.6.0 version using `RGBEncoderConfig`, plus functions ours does not have.
+   Overwriting it would have broken the Space outright. **Patched surgically
+   instead** — only the two `resolve()` calls, plus one more in its Space-only
+   `build_dataset_multi` path.
+3. **`README.md` diverges on purpose** (GitHub URL not a relative path, no uv
+   workspace note, different Python floor). **Filenames patched in place.**
+
+A fourth was in the Space's own code rather than the vendored copy:
+`pipeline.py` called `find_episodes(root, anchor="oakd_left.mp4")`. Since
+`legacy_name()` maps canonical→legacy, passing a *legacy* anchor searches only
+that name — every new `dcam_*` episode would have been **invisible to the
+Space**, with no error. Now uses the default anchor, which searches both.
+
+Benign divergences that were safe to overwrite: the Space's `offline_vslam.cpp`
+was merely missing our SPDX licence header, and its
+`visualize_rgbd_trajectory.py` had stale `f""` prefixes.
+
 ### Phase 3 — mechanical, explicitly deferred
 
 - New CAD mount (42×42×23 vs 56×36×25.5 mm) in Onshape.
