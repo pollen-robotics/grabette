@@ -439,21 +439,36 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": f"processing failed: {_exc_text(e)}"}
 
     if ctype == "delete_episode":
-        # Fleet "delete last episode": remove this device's local files + registry
-        # entry for the given episode. Needs no capture hardware. Absent locally
-        # (never recorded here / already gone) → treated as success (idempotent).
+        # Fleet "delete last episode" / "discard these takes": remove this device's
+        # local files + registry entries. Needs no capture hardware. Absent locally
+        # (never recorded here / already gone) → success (idempotent).
+        #
+        # Accepts a batch ("episode_ids": [...]) as well as a single episode_id,
+        # like set_episode_members does: discarding a triage selection is one
+        # operator gesture, and one command per episode would queue fifty of them
+        # through a serial relay worker.
         from grabette.app.routers.tasks import get_task_manager
 
-        eid = (cmd.get("args") or {}).get("episode_id")
-        if not eid:
-            return {"status": "error", "message": "episode_id is required"}
-        try:
-            get_task_manager().delete_episode(eid)
-            return {"status": "ok", "deleted": eid}
-        except FileNotFoundError:
-            return {"status": "ok", "deleted": None, "note": "not present on this device"}
-        except Exception as e:  # noqa: BLE001
-            return {"status": "error", "message": str(e)}
+        args = cmd.get("args") or {}
+        eids = args.get("episode_ids")
+        if not isinstance(eids, list):
+            eids = [args.get("episode_id")] if args.get("episode_id") else []
+        if not eids:
+            return {"status": "error", "message": "episode_id or episode_ids is required"}
+        tm = get_task_manager()
+        deleted, absent, errors = [], [], []
+        for eid in eids:
+            try:
+                tm.delete_episode(eid)
+                deleted.append(eid)
+            except FileNotFoundError:
+                absent.append(eid)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{eid}: {e}")
+        if errors:
+            return {"status": "error", "message": "; ".join(errors),
+                    "deleted": deleted, "absent": absent}
+        return {"status": "ok", "deleted": deleted, "absent": absent}
 
     if ctype == "edit_task":
         # Fleet task edit (rename / re-describe), keyed by task name. Idempotent.
