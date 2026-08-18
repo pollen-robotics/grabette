@@ -354,20 +354,37 @@ def test_move_never_replaces_an_existing_signature(tmp_path, left_hand):
     assert task["episode_members"]["ep_pair"] == PAIR
 
 
-def test_move_legacy_episode_without_members_invents_nothing(tmp_path):
+def test_move_stamps_the_holder_role_on_an_episode_that_has_none(tmp_path, left_hand):
     # Migrated episodes are registered as bare ids (see _migrate_legacy), with no
-    # membership: moving one must neither crash nor fabricate a signature.
+    # membership. That role is not unknown though: this device holds the files, so
+    # its own slot is what it contributed. Filing is the moment to record it —
+    # otherwise the target task reaches the fleet role-less, so unusable for a
+    # dataset. Only our own role is asserted, never a claim about a peer.
     _make_episode(tmp_path, "ep_old", ["oakd_imu.json"])
     tm = TaskManager(data_dir=tmp_path)
     tm._find_task(UNASSIGNED_ID)["episode_ids"].append("ep_old")
     tid = tm.create_task("Target")
 
-    tm.move_episodes(["ep_old"], tid)
+    result = tm.move_episodes(["ep_old"], tid)
 
     task = tm._find_task(tid)
     assert task["episode_ids"] == ["ep_old"]
-    assert task.get("episode_members", {}) == {}
-    assert "device_signature" not in task
+    assert task["episode_members"]["ep_old"] == left_hand
+    assert task["device_signature"] == ["left"]
+    assert result["shared"] == []  # nothing suggests a peer was involved
+
+
+def test_the_inbox_reports_a_role_for_an_episode_that_has_none(tmp_path, left_hand):
+    # Same reasoning on the report side: the operator must not be told "device not
+    # recorded" for a take this very grabette is holding.
+    _make_episode(tmp_path, "ep_old", ["oakd_imu.json"])
+    tm = TaskManager(data_dir=tmp_path)
+    tm._find_task(UNASSIGNED_ID)["episode_ids"].append("ep_old")
+
+    entry = tm.report_unassigned()["episodes"][0]
+
+    assert entry["episode_id"] == "ep_old"
+    assert entry["members"] == left_hand
 
 
 def test_move_into_the_holding_task_preserves_members(tmp_path, left_hand):

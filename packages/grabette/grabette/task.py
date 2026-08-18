@@ -543,6 +543,13 @@ class TaskManager:
         if t is None:
             return {"total": 0, "episodes": []}
         members_by_ep = t.get("episode_members", {})
+        # An inbox episode with no stored membership predates the self-stamp, or was
+        # migrated from the old layout. Its role is not unknown: we hold the files,
+        # so OUR slot is what we contributed — the same inference the fleet already
+        # makes for task episodes (_online_episode_reporters: "the reporting device
+        # IS a member, and its role is its slot"). Asserting only our own role never
+        # over-claims: the fleet unions members across devices.
+        own_members = local_identity()[0]
         # Episode ids are UTC timestamps, so a plain sort is chronological; the
         # tail is therefore the most recent (legacy non-timestamp ids just sort
         # lexicographically, which is stable and good enough for a cap).
@@ -552,7 +559,7 @@ class TaskManager:
             info = self._get_episode_info(eid)
             episodes.append({
                 "episode_id": eid,
-                "members": members_by_ep.get(eid, {}),
+                "members": members_by_ep.get(eid) or own_members,
                 "duration_seconds": info.duration_seconds,
                 "has_video": info.has_video,
             })
@@ -744,6 +751,17 @@ class TaskManager:
                 if members:
                     target.setdefault("episode_members", {})[eid] = members
                 members = members or {}
+            if not members:
+                # Nothing recorded about who made it (predates the self-stamp, or
+                # migrated). Filing it is the moment to assert the one role we know
+                # for certain: ours. We hold the files, so our slot is what this
+                # device contributed — never a claim about anyone else, and the
+                # fleet unions members across devices, so a peer filing the same
+                # episode adds its own role. Without this, filing an old episode
+                # produced a task the fleet reports as role-less, hence unusable
+                # for a dataset.
+                members = local_identity()[0]
+                target.setdefault("episode_members", {})[eid] = members
             moved.append(eid)
             filed.append(members)
             peers = sorted({w.get("name") or w.get("device_id") for w in members.values()
