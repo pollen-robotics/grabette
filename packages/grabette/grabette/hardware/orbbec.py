@@ -631,6 +631,17 @@ class OrbbecCapture:
         self._initialized = False
         logger.info("OrbbecCapture shut down")
 
+    def camera_info(self) -> dict:
+        """Identity of the attached Gemini 305, for episode provenance."""
+        c = self._calibration_json or {}
+        return {
+            "name": c.get("name"),
+            "serial": c.get("serial_number"),
+            "firmware": c.get("firmware_version"),
+            "link": c.get("connection_type"),
+            "imu": None,      # this camera has none
+        }
+
     @property
     def is_recording(self) -> bool:
         return self._recording

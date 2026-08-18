@@ -25,7 +25,7 @@ scripts/checks/check_dataset.py (CLI) and the HF Space pipeline use it.
 import json
 from pathlib import Path
 
-from grabette_postprocess.episode_files import resolve
+from grabette_postprocess.episode_files import describe_camera, resolve
 
 import numpy as np
 import av
@@ -248,6 +248,24 @@ def _check_existing_trajectory(ep_dir: Path, status: dict) -> None:
         status["trajectory"] = f"traj:{tracked}/{len(df)} ({pct:.0f}%)"
 
 
+def _check_camera(ep_dir: Path, status: dict) -> None:
+    """Report which depth camera recorded the episode.
+
+    Informational, never an error: episodes predating this field legitimately do
+    not carry it. Surfaced because filenames are vendor-neutral now, so a mixed
+    dataset otherwise gives no hint which trajectories came from which hardware
+    — and the two cameras differ in IMU availability and frame-drop rate.
+    """
+    meta_path = ep_dir / "metadata.json"
+    if not meta_path.is_file():
+        return
+    try:
+        meta = _load_json(meta_path)
+    except Exception:
+        return
+    status["info"].append(f"camera {describe_camera(meta)}")
+
+
 def check_recording(ep_dir: Path, require_right: bool = True) -> dict:
     """Check one raw episode directory for content completeness, return a status
     dict.
@@ -276,6 +294,7 @@ def check_recording(ep_dir: Path, require_right: bool = True) -> dict:
     _check_imu(ep_dir, status)
     _check_gripper(ep_dir, status)
     _check_calib(ep_dir, status)
+    _check_camera(ep_dir, status)
     _check_existing_trajectory(ep_dir, status)
 
     return status

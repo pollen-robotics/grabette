@@ -119,6 +119,21 @@ class DepthCameraCapture(Protocol):
         Returns None before the first depth frame arrives.
         """
 
+    def camera_info(self) -> dict:
+        """Which physical camera this is, for episode provenance.
+
+        Recorded into `metadata.json` under `depth_camera`. Filenames are
+        vendor-neutral (`dcam_*`), so without this an episode does not say what
+        produced it — and the two cameras differ in ways that matter later (the
+        Gemini has no IMU and drops ~4% of frames; the OAK-D drops none). Once
+        datasets mix both, "which camera was this?" has to be answerable from
+        the episode itself.
+
+        Keys are best-effort and camera-specific beyond `name`; return `{}`
+        rather than raising if the device cannot be queried. `rpi.py` adds the
+        configured `model` on top.
+        """
+
     # -------------------------------------------------------------- properties
 
     @property

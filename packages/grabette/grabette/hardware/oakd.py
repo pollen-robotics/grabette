@@ -146,6 +146,13 @@ class OakdCapture:
         self._threads: list[threading.Thread] = []
         self._stop_event = threading.Event()
 
+        # Device identity, filled by init_device(). Kept so an episode can record
+        # which physical camera produced it.
+        self._device_id = None
+        self._product_name = None
+        self._usb_speed = None
+        self._imu_type = None
+
         self._calibration_json: dict | None = None
         self._calib_offline: dict | None = None
         # 8-bit GRAY mask (depth_resolution-sized) that blacks out the
@@ -793,6 +800,15 @@ class OakdCapture:
 
         self._initialized = False
         logger.info("OakdCapture shut down")
+
+    def camera_info(self) -> dict:
+        """Identity of the attached OAK-D, for episode provenance."""
+        return {
+            "name": self._product_name,
+            "serial": self._device_id,
+            "link": self._usb_speed,
+            "imu": self._imu_type,
+        }
 
     @property
     def is_recording(self) -> bool:

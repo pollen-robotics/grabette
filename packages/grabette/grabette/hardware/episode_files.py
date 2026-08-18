@@ -78,6 +78,14 @@ def resolve(ep_dir: Path, name: str) -> Path:
     return canonical
 
 
+def camera_info(meta: dict) -> dict:
+    """Which depth camera recorded this episode, from metadata.json.
+
+    `{}` for episodes recorded before this was captured.
+    """
+    return meta.get("depth_camera") or {}
+
+
 def metadata_stats(meta: dict) -> dict:
     """Per-stream capture stats from metadata.json, under either key."""
     return meta.get(CANONICAL_META_KEY) or meta.get(LEGACY_META_KEY) or {}

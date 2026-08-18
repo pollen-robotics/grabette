@@ -72,6 +72,27 @@ def metadata_stats(meta: dict) -> dict:
     return meta.get(CANONICAL_META_KEY) or meta.get(LEGACY_META_KEY) or {}
 
 
+def camera_info(meta: dict) -> dict:
+    """Which depth camera recorded this episode, from metadata.json.
+
+    Returns `{}` for episodes recorded before this was captured — honest, since
+    those genuinely do not say. Callers that need a label can fall back to
+    sniffing `dcam_calib.json`, whose identity fields are vendor-specific
+    (`productName` on an OAK-D, `name` on an Orbbec).
+    """
+    return meta.get("depth_camera") or {}
+
+
+def describe_camera(meta: dict) -> str:
+    """One-line camera description for reports; "unknown" when unrecorded."""
+    info = camera_info(meta)
+    if not info:
+        return "unknown"
+    label = info.get("name") or info.get("model") or "unknown"
+    serial = info.get("serial")
+    return f"{label} ({serial})" if serial else label
+
+
 def is_legacy_episode(ep_dir: Path) -> bool:
     """True when this episode uses the old `oakd_*` layout.
 

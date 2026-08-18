@@ -39,6 +39,7 @@ REQUIRED_METHODS = [
     "stop_recording",
     "get_latest_imu",
     "get_depth_jpeg",
+    "camera_info",
 ]
 REQUIRED_PROPERTIES = ["is_initialized", "is_recording", "imu_sample_count"]
 
@@ -101,3 +102,27 @@ def test_orbbec_reports_no_imu():
     cap = OrbbecCapture(None)
     assert cap.get_latest_imu() is None
     assert cap.imu_sample_count == 0
+
+
+# ── camera identity for episode provenance ───────────────────────────────────
+
+@pytest.mark.parametrize("cls", IMPLS, ids=lambda c: c.__name__)
+def test_camera_info_present_and_returns_a_dict(cls):
+    # rpi.py writes this into metadata.json. Both cameras must answer it, and
+    # answer it BEFORE init_device() too — stop_capture calls it on whatever
+    # state the device is in.
+    cap = cls(None)
+    info = cap.camera_info()
+    assert isinstance(info, dict)
+
+
+def test_orbbec_camera_info_reports_no_imu():
+    # The absence has to be recorded, not merely implied by a missing file.
+    cap = OrbbecCapture(None)
+    assert cap.camera_info()["imu"] is None
+
+
+def test_camera_info_is_in_the_protocol():
+    from grabette.hardware.depth_camera import DepthCameraCapture
+
+    assert hasattr(DepthCameraCapture, "camera_info")

@@ -26,7 +26,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         ├── dcam_calib.json             # camera calibration dump (OAK-D EEPROM / Orbbec params)
         ├── dcam_calib_offline.json     # Flat fx/fy/cx/cy/baseline (+imu_to_cam if the camera has an IMU)
         ├── dcam_clock_pairs.json       # device ↔ SyncManager clock alignment
-        └── metadata.json               # Duration, counts, hand, angle_convention, device_id, urdf
+        └── metadata.json               # Duration, counts, hand, angle_convention, device_id, urdf, depth_camera
 ```
 
 The `dcam_*` files are present when the depth camera was enabled for the capture
@@ -53,6 +53,15 @@ Added by the rpi backend at capture stop:
 - **Camera intrinsics** — `rpi_camera_intrinsics.json`, copied from `config/rpi_camera_intrinsics.json` (KannalaBrandt8 fisheye model, ~0.32px reproj). Ships as a single canonical file for all devices; per-device calibration is a separate open task.
 - **Camera ↔ depth-camera geometry** — `frames.json`, computed from `urdf/grabette_{hand}/robot.urdf` at capture stop. Contains each frame's 4×4 transform in the `grip_r` link frame (`camera`, `oak_l`, `oak_r`, `gripper_center`, `thumb_tip`) plus the pre-composed `T_camera_in_oak_l` (so SLAM poses produced in the `oak_l` frame can be re-expressed in the primary camera frame without URDF parsing on the consumer side).
 - **URDF traceability** — `metadata.json.urdf` records which URDF was used (`grabette_left` / `grabette_right`).
+- **Which camera recorded it** — `metadata.json.depth_camera`, e.g.
+  `{"model": "gemini305", "name": "Orbbec Gemini 305", "serial": "CV275610003C",
+  "firmware": "1.0.70", "link": "USB3.2", "imu": null}`. `model` is the
+  `GRABETTE_DEPTH_CAMERA` value; the rest is read from the device and is
+  best-effort. This exists because the `dcam_*` filenames are deliberately
+  vendor-neutral — without it a mixed dataset gives no hint which trajectories
+  came from which hardware, and the two cameras differ in IMU availability and
+  frame-drop rate. Absent on episodes recorded before it was added; readers get
+  `{}` from `episode_files.camera_info()` rather than a guess.
 - **Angle sensor offsets** — captured by `scripts/calibrate_angles.py`, stored in `~/.grabette/angle_calibration.json`.
 
 ## IMU format

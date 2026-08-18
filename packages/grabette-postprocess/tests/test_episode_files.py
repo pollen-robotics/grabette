@@ -131,3 +131,52 @@ def test_check_recording_accepts_canonical_names(tmp_path):
     }))
     _check_calib(tmp_path, status)
     assert not status["errors"], status["errors"]
+
+
+# ── which camera recorded this episode ───────────────────────────────────────
+
+def test_camera_info_absent_for_older_episodes():
+    # Episodes predating the field genuinely do not say. Empty, not a guess.
+    from grabette_postprocess.episode_files import camera_info
+
+    assert camera_info({}) == {}
+    assert camera_info({"backend": "rpi"}) == {}
+
+
+def test_describe_camera_reads_name_and_serial():
+    from grabette_postprocess.episode_files import describe_camera
+
+    meta = {"depth_camera": {"model": "gemini305", "name": "Orbbec Gemini 305",
+                             "serial": "CV275610003C"}}
+    assert describe_camera(meta) == "Orbbec Gemini 305 (CV275610003C)"
+
+
+def test_describe_camera_falls_back_to_model_then_unknown():
+    from grabette_postprocess.episode_files import describe_camera
+
+    assert describe_camera({"depth_camera": {"model": "oakd"}}) == "oakd"
+    assert describe_camera({}) == "unknown"
+
+
+def test_check_recording_reports_the_camera(tmp_path):
+    # A mixed dataset is the reason this exists: an auditor must be able to see
+    # which trajectories came from which hardware.
+    import json
+
+    from grabette_postprocess.checks.recording import check_recording
+
+    (tmp_path / "metadata.json").write_text(json.dumps({
+        "depth_camera": {"model": "gemini305", "name": "Orbbec Gemini 305",
+                         "serial": "CV275610003C"}}))
+    status = check_recording(tmp_path)
+    assert any("Orbbec Gemini 305" in i for i in status["info"]), status["info"]
+
+
+def test_check_recording_says_unknown_for_older_episodes(tmp_path):
+    import json
+
+    from grabette_postprocess.checks.recording import check_recording
+
+    (tmp_path / "metadata.json").write_text(json.dumps({"backend": "rpi"}))
+    status = check_recording(tmp_path)
+    assert any("camera unknown" in i for i in status["info"]), status["info"]
