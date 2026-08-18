@@ -126,3 +126,32 @@ def test_camera_info_is_in_the_protocol():
     from grabette.hardware.depth_camera import DepthCameraCapture
 
     assert hasattr(DepthCameraCapture, "camera_info")
+
+
+def test_camera_metadata_preserves_a_meaningful_null():
+    # Regression: an earlier version filtered None out of the metadata block,
+    # which deleted the Gemini's "imu": None — the one field that records the
+    # camera has no IMU rather than leaving it inferred from a missing file.
+    from grabette.backend.rpi import _camera_metadata
+
+    meta = _camera_metadata("gemini305", OrbbecCapture(None))
+    assert meta["model"] == "gemini305"
+    assert "imu" in meta, "the explicit no-IMU marker was dropped"
+    assert meta["imu"] is None
+
+
+def test_camera_metadata_survives_a_camera_that_raises():
+    # stop_capture must never fail because identity could not be read.
+    from grabette.backend.rpi import _camera_metadata
+
+    class Broken:
+        def camera_info(self):
+            raise RuntimeError("device gone")
+
+    assert _camera_metadata("oakd", Broken()) == {"model": "oakd"}
+
+
+def test_camera_metadata_without_a_camera():
+    from grabette.backend.rpi import _camera_metadata
+
+    assert _camera_metadata("oakd", None) == {"model": "oakd"}

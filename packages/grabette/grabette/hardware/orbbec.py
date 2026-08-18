@@ -632,15 +632,22 @@ class OrbbecCapture:
         logger.info("OrbbecCapture shut down")
 
     def camera_info(self) -> dict:
-        """Identity of the attached Gemini 305, for episode provenance."""
+        """Identity of the attached Gemini 305, for episode provenance.
+
+        Unreadable fields are omitted, but `imu` is deliberately reported as
+        None: this camera has none, and that is a fact worth recording rather
+        than leaving to be inferred from a missing dcam_imu.json.
+        """
         c = self._calibration_json or {}
-        return {
+        fields = {
             "name": c.get("name"),
             "serial": c.get("serial_number"),
             "firmware": c.get("firmware_version"),
             "link": c.get("connection_type"),
-            "imu": None,      # this camera has none
         }
+        info = {k: v for k, v in fields.items() if v is not None}
+        info["imu"] = None
+        return info
 
     @property
     def is_recording(self) -> bool:

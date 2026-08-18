@@ -37,6 +37,28 @@ FPS = 46
 OAKD_READY_TIMEOUT_S = 5.0
 
 
+def _camera_metadata(model: str, cap) -> dict:
+    """The `depth_camera` block for metadata.json.
+
+    Filenames are vendor-neutral, so without this an episode does not say what
+    recorded it — and the two cameras differ in ways that matter downstream (IMU
+    or not, frame-drop rate). `model` is the configured value; the rest comes
+    from the device.
+
+    Values are NOT filtered here. Each camera already omits fields it could not
+    read, so a null that reaches this dict is meaningful: the Gemini reports
+    `"imu": None` to say the hardware has none, and filtering nulls out
+    (as an earlier version did) silently deleted exactly that signal.
+    """
+    info = {"model": model}
+    if cap is not None:
+        try:
+            info.update(cap.camera_info())
+        except Exception as e:
+            logger.warning("Could not read camera info: %s", e)
+    return info
+
+
 class RpiBackend(Backend):
     """Backend using real RPi camera + AS5600 angle sensors + OAK-D SR."""
 
@@ -584,19 +606,7 @@ class RpiBackend(Backend):
             # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
             meta["dcam"] = oakd_stats
 
-        # Which physical camera produced this episode. Filenames are
-        # vendor-neutral now, so without this the episode does not say — and the
-        # two cameras differ in ways that matter downstream (IMU or not, frame
-        # drop rate). `model` is the configured value; the rest is best-effort
-        # from the device and may be absent if it could not be queried.
-        cam_info = {"model": self._depth_camera}
-        if self._oakd is not None:
-            try:
-                cam_info.update({k: v for k, v in self._oakd.camera_info().items()
-                                 if v is not None})
-            except Exception as e:
-                logger.warning("Could not read camera info: %s", e)
-        meta["depth_camera"] = cam_info
+        meta["depth_camera"] = _camera_metadata(self._depth_camera, self._oakd)
 
         # Snapshot session_dir + clear so a fast restart doesn't collide.
         session_dir = self._capture_session_dir

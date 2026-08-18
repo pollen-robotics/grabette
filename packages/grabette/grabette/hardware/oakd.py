@@ -802,13 +802,19 @@ class OakdCapture:
         logger.info("OakdCapture shut down")
 
     def camera_info(self) -> dict:
-        """Identity of the attached OAK-D, for episode provenance."""
-        return {
+        """Identity of the attached OAK-D, for episode provenance.
+
+        Fields it could not read (called before a successful init_device) are
+        omitted rather than reported as null, so a null in the episode always
+        means "known to be absent" rather than "we did not look".
+        """
+        fields = {
             "name": self._product_name,
             "serial": self._device_id,
             "link": self._usb_speed,
             "imu": self._imu_type,
         }
+        return {k: v for k, v in fields.items() if v is not None}
 
     @property
     def is_recording(self) -> bool:
