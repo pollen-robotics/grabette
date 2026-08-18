@@ -96,6 +96,17 @@ MAX_PIN_ATTEMPTS = 5
 PIN_LOCKOUT_SECONDS = 30
 MAX_PIN_LOCKOUT_SECONDS = 3600
 
+# ---- Stale-bond deadlock recovery ----
+
+# A bond desynced (one peer lost its key) kills every reconnect in SMP before
+# any GATT work, looping connect→drop forever with no agent call. This service
+# is the only route onto a robot not yet on WiFi, so it must self-heal offline.
+# A real session always writes a command, so a link this short carrying no GATT
+# traffic isn't one; after DEADLOCK_STRIKES we drop our bond and let the central
+# re-pair (Just Works). See _check_bond_deadlock.
+DEADLOCK_MAX_CONN_SECONDS = 2.0
+DEADLOCK_STRIKES = 3
+
 
 # =====================================================================
 # BLE Agent — "Just Works" pairing (no user interaction on device side)
@@ -705,6 +716,13 @@ class BluetoothWifiService:
         # ungraceful drops like an app crash) so the device stays reconnectable.
         self._hci_index = None
         self._connected_device_path = None
+        # Adapter proxy, kept so a stale bond can be purged via RemoveDevice.
+        self._adapter = None
+        # Stale-bond deadlock tracking (see _check_bond_deadlock).
+        self._conn_started_at = 0.0
+        self._saw_gatt_traffic = False
+        self._deadlock_strikes = 0
+        self._deadlock_peer = None
         # Serializes advertise attempts so a disconnect-triggered re-advertise
         # can't overlap an in-progress (retrying) attempt.
         self._adv_lock = threading.Lock()
@@ -720,6 +738,11 @@ class BluetoothWifiService:
         """Dispatch a BLE command and return response string."""
         command_str = value.decode("utf-8").strip()
         logger.info("Received command: %s", command_str)
+
+        # Proves the link is usable, so this is a real session and not a
+        # stale-bond flap. Racing the mainloop's reset is fail-safe: a lost
+        # update can only add a strike, never purge a healthy bond.
+        self._saw_gatt_traffic = True
 
         upper = command_str.upper()
 
@@ -882,6 +905,7 @@ class BluetoothWifiService:
         if not adapter:
             raise RuntimeError("No Bluetooth adapter found")
 
+        self._adapter = adapter
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
         # Adapter alias = advertised name (e.g. "Grabette (grabette-01)") so the
@@ -950,6 +974,8 @@ class BluetoothWifiService:
             return
         if bool(changed["Connected"]):
             self._connected_device_path = path
+            self._conn_started_at = time.monotonic()
+            self._saw_gatt_traffic = False
             logger.info("BLE central connected: %s", path)
         else:
             logger.info("BLE central disconnected: %s", path)
@@ -957,21 +983,75 @@ class BluetoothWifiService:
             # can't clobber a client that just reconnected.
             if self._connected_device_path in (None, path):
                 self._connected_device_path = None
-                self._on_central_disconnected()
+                self._on_central_disconnected(path)
 
-    def _on_central_disconnected(self):
+    def _on_central_disconnected(self, path=None):
         """Reset auth and re-assert advertising after a central drops.
 
-        Bonds are intentionally LEFT in place: a central that bonds will
+        Bonds are normally LEFT in place: a central that bonds will
         auto-reconnect and re-encrypt with its stored key, so unilaterally
-        deleting our side here desyncs the pair (the central keeps requesting an
-        LTK we no longer have) and the link loops connect→AuthFailure→reconnect
-        every second. Persisting the bond lets reconnection just work.
+        deleting our side desyncs the pair (the central keeps requesting an LTK
+        we no longer have) and the link loops connect→AuthFailure→reconnect
+        every second. Persisting the bond lets reconnection just work. The
+        exception is an ALREADY desynced bond — see _check_bond_deadlock.
         """
         self.authenticated = False
+        self._check_bond_deadlock(path)
         # A connectable advertisement stops once a central connects, so it must
         # be re-added to stay reconnectable — including after ungraceful drops.
         self._start_advertising()
+
+    def _check_bond_deadlock(self, path):
+        """Purge our bond once a peer keeps dropping before any GATT traffic.
+
+        Runs on the mainloop thread, so it is serialized against itself.
+        Purging our side helps even when the stale key is the central's: we
+        then accept a fresh pairing, and that side is fixable by hand.
+        """
+        held = time.monotonic() - self._conn_started_at
+        if self._saw_gatt_traffic or held > DEADLOCK_MAX_CONN_SECONDS:
+            self._deadlock_strikes = 0
+            self._deadlock_peer = None
+            return
+
+        # Strikes must come from ONE peer: a different central in between means
+        # the pattern isn't a single stuck bond.
+        if path != self._deadlock_peer:
+            self._deadlock_peer = path
+            self._deadlock_strikes = 0
+        self._deadlock_strikes += 1
+        logger.warning(
+            "BLE link dropped after %.2fs with no GATT traffic "
+            "(%d/%d) — suspecting a stale bond: %s",
+            held, self._deadlock_strikes, DEADLOCK_STRIKES, path,
+        )
+        if self._deadlock_strikes < DEADLOCK_STRIKES:
+            return
+
+        self._deadlock_strikes = 0
+        self._deadlock_peer = None
+        self._purge_bond(path)
+
+    def _purge_bond(self, path):
+        """Drop our pairing keys for one peer so it can bond again from scratch."""
+        if self._adapter is None or not path:
+            return
+        try:
+            # Explicit ObjectPath: the signature is "o", and a bare str is
+            # only coerced once introspection has resolved.
+            dbus.Interface(self._adapter, "org.bluez.Adapter1").RemoveDevice(
+                dbus.ObjectPath(path)
+            )
+        except dbus.DBusException as exc:
+            # Already gone (BlueZ pruned it first) — nothing left to purge.
+            logger.warning("Could not purge bond for %s: %s", path, exc)
+            return
+        logger.warning(
+            "Purged our bond for %s to break the reconnect loop. If it "
+            "persists, the CENTRAL holds the stale key — forget this device "
+            "there (on Chrome, also in chrome://bluetooth-internals).",
+            path,
+        )
 
     def _start_advertising(self):
         """Kick off (re-)advertising on a daemon thread.
