@@ -180,9 +180,9 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
         shutil.rmtree(oak_dir)
 
     # --- Required inputs ---
-    # Depth comes either as a compact lossless video (oakd_depth.mkv, the format
+    # Depth comes either as a compact lossless video (dcam_depth.mkv, the format
     # the uploader now produces) or, for older recordings, a directory of
-    # per-frame PNGs (oakd_depth/). Either is accepted.
+    # per-frame PNGs (dcam_depth/). Either is accepted.
     left_mp4 = resolve(ep_dir, "dcam_left.mp4")
     depth_dir = resolve(ep_dir, "dcam_depth")
     depth_mkv = resolve(ep_dir, "dcam_depth.mkv")
