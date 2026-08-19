@@ -318,6 +318,36 @@ def _space_quality_summary(quality) -> str:
     return "; ".join(f"{reason} ({n} episode(s))" for reason, n in ranked)
 
 
+def _space_excluded_episodes(quality) -> list[dict]:
+    """The episodes the Space left out, one entry each, with its reason.
+
+    The summary string above answers "why did this fail"; this answers "WHICH of
+    my takes are not in the dataset". They are different questions and the second
+    is the one an operator asks after a build that succeeded — a dataset quietly
+    assembled from 17 of 20 recordings is worse than one that names the 3.
+
+    The Space labels a role-layout episode "20250101_120000/left" (its
+    episode_label), so the recording id and the arm are split back apart here:
+    the fleet keys everything by episode id, and "which arm" is what tells the
+    operator which grabette to go and look at.
+    """
+    if not isinstance(quality, list):
+        return []
+    out = []
+    for ep in quality:
+        if not isinstance(ep, dict) or not ep.get("excluded"):
+            continue
+        name = str(ep.get("name") or "").strip()
+        if not name:
+            continue
+        episode_id, _, role = name.partition("/")
+        reasons = [str(r).strip() for r in (ep.get("errors") or []) if str(r).strip()]
+        out.append({"episode_id": episode_id, "role": role,
+                    "reason": reasons[0] if reasons else
+                              f"excluded by the conversion ({ep.get('verdict') or 'no verdict'})"})
+    return out
+
+
 async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: bool,
                               is_cancelled) -> None:
     """Upload one episode dir, bounded and retried. Raises on final failure.
@@ -744,7 +774,11 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                                                      " (see the Space log for details)"))}
                         res = {"status": "ok", "result_url": result_url}
                         # Succeeded, but some episodes may still have been
-                        # dropped; pass the reasons up so the build can say so.
+                        # dropped. Pass BOTH the summary (why) and the per-episode
+                        # list (which), because the fleet has to answer both.
+                        excluded = _space_excluded_episodes(st.get("quality"))
+                        if excluded:
+                            res["excluded"] = excluded
                         if why:
                             res["message"] = f"some episodes were excluded: {why}"
                         return res
@@ -758,7 +792,8 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                         detail = st.get("error") or (
                             lost if sstatus == "not_found" else "the Space reported a failure")
                         return {"status": "error",
-                                "message": f"{detail} — {why}" if why else detail}
+                                "message": f"{detail} — {why}" if why else detail,
+                                "excluded": _space_excluded_episodes(st.get("quality"))}
         except _CommandCancelled:
             return {"status": "cancelled"}
         except Exception as e:  # noqa: BLE001

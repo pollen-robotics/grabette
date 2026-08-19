@@ -39,6 +39,48 @@ def test_quality_summary_names_the_dominant_reason():
     assert "SLAM failed: no trajectory produced (1 episode(s))" in summary
 
 
+def test_excluded_episodes_are_split_back_into_recording_and_arm():
+    # The Space labels a role-layout episode "20250101_120000/left". The fleet
+    # keys everything by episode id, and "which arm" is what tells the operator
+    # which grabette to go and look at — so the label has to come apart.
+    out = main._space_excluded_episodes([
+        {"name": "20250101_120000/left", "excluded": True,
+         "errors": ["missing oakd_calib_offline.json"]},
+        {"name": "20250101_120100", "excluded": True, "verdict": "FAIL", "errors": []},
+        {"name": "20250101_120200/right", "excluded": False, "errors": ["a warning"]},
+    ])
+
+    assert out[0] == {"episode_id": "20250101_120000", "role": "left",
+                      "reason": "missing oakd_calib_offline.json"}
+    # No error text: still nameable, via the verdict.
+    assert out[1]["episode_id"] == "20250101_120100" and out[1]["role"] == ""
+    assert "FAIL" in out[1]["reason"]
+    # Kept episodes are not exclusions, however flagged they are.
+    assert len(out) == 2
+
+
+def test_excluded_episodes_tolerate_junk():
+    assert main._space_excluded_episodes(None) == []
+    assert main._space_excluded_episodes(["nope", {"excluded": True}]) == []
+
+
+def test_a_partial_conversion_forwards_the_episode_list(monkeypatch):
+    # The count the operator was missing is built from this list, so a successful
+    # build must carry it and not only the summary sentence.
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    res = _process_result({
+        "status": "done", "result": "https://hf.co/datasets/u/ds",
+        "quality": [{"name": "ep1/left", "excluded": True,
+                     "errors": ["missing oakd_calib_offline.json"]}],
+    })
+
+    assert res["status"] == "ok"
+    assert res["excluded"] == [{"episode_id": "ep1", "role": "left",
+                               "reason": "missing oakd_calib_offline.json"}]
+
+
 def test_quality_summary_tolerates_junk():
     # The Space's payload is data from another service; a shape change must not
     # turn a reportable failure into an exception inside the error path.
