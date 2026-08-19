@@ -3,9 +3,68 @@
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# --- socket timeouts on every Hub call ----------------------------------------
+# huggingface_hub builds its httpx client with timeout=None — no connect, read or
+# write deadline at any layer. A link that DEGRADES rather than drops therefore
+# leaves an upload waiting on a socket that never delivers, forever, inside a
+# thread nothing can interrupt. That is the whole reason a grabette could stay
+# pinned as "uploading" until the fleet Space was restarted.
+#
+# These are per-SOCKET-OPERATION budgets, not deadlines for the whole transfer:
+# httpx counts them between chunks, so a legitimately slow multi-gigabyte upload
+# over a weak link keeps running as long as it keeps making progress, and only a
+# genuine stall trips them. When one does trip, it surfaces as
+# httpx.TimeoutException INSIDE the worker thread — which hf_hub's own
+# http_backoff already retries on, and which lets the thread DIE instead of
+# lingering. That distinction is the point: an abandoned upload thread is far
+# worse on a Pi than a slow one (see _UPLOAD_EXECUTOR in app/main.py).
+_HUB_CONNECT_TIMEOUT_S = 20.0
+_HUB_READ_TIMEOUT_S = 60.0
+_HUB_WRITE_TIMEOUT_S = 60.0   # no progress writing a chunk for this long = stalled
+_HUB_POOL_TIMEOUT_S = 20.0
+
+_client_factory_lock = threading.Lock()
+_client_factory_installed = False
+
+
+def install_hub_timeouts() -> None:
+    """Give every huggingface_hub call a socket timeout. Idempotent, best effort.
+
+    set_client_factory is process-wide and public API. Called from _get_api so it
+    covers every Hub user on the device (episode upload, SLAM push, whoami)
+    without each of them having to remember."""
+    global _client_factory_installed
+    with _client_factory_lock:
+        if _client_factory_installed:
+            return
+        try:
+            import httpx
+            from huggingface_hub import set_client_factory
+            from huggingface_hub.utils._http import hf_request_event_hook
+
+            timeout = httpx.Timeout(
+                connect=_HUB_CONNECT_TIMEOUT_S, read=_HUB_READ_TIMEOUT_S,
+                write=_HUB_WRITE_TIMEOUT_S, pool=_HUB_POOL_TIMEOUT_S,
+            )
+            set_client_factory(lambda: httpx.Client(
+                event_hooks={"request": [hf_request_event_hook]},
+                follow_redirects=True, timeout=timeout,
+            ))
+            logger.info("Hub client timeouts installed (connect=%.0fs read=%.0fs "
+                        "write=%.0fs)", _HUB_CONNECT_TIMEOUT_S, _HUB_READ_TIMEOUT_S,
+                        _HUB_WRITE_TIMEOUT_S)
+        except Exception as e:  # noqa: BLE001 — never block Hub access over this
+            # A future hf_hub could drop set_client_factory or move the event
+            # hook. Losing the timeouts is a regression, not an outage: uploads
+            # still work, they are just unbounded again (and app/main.py's own
+            # attempt bound remains the backstop).
+            logger.warning("Could not install Hub client timeouts: %s", e)
+        _client_factory_installed = True
 
 
 class HuggingFaceClient:
@@ -48,6 +107,7 @@ class HuggingFaceClient:
     def _get_api(self):
         from huggingface_hub import HfApi, get_token
 
+        install_hub_timeouts()
         token = get_token()
         if token != self._cached_token:
             self._api = None

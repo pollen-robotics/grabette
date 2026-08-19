@@ -49,7 +49,15 @@ class CaptureScheduler:
         return self._start_at_utc if self.is_scheduled() else None
 
     async def schedule(self, backend, sm, episode_dir: Path, start_at_utc: datetime) -> None:
-        """Start a background wait-then-start task for a synchronized start."""
+        """Start a background wait-then-start task for a synchronized start.
+
+        Refuses up front if the device can't record (hardware fault, or busy
+        with dataset work). start_capture checks again at T0 — that is the
+        authoritative gate — but a refusal only surfacing then would reach the
+        operator as a group start that was accepted and then quietly didn't
+        happen, seconds later, in a background task. Checking here turns it into
+        an immediate, attributable error at the press."""
+        backend.raise_if_capture_blocked()
         self._start_at_utc = start_at_utc
         self._task = asyncio.create_task(
             self._wait_and_start(backend, sm, episode_dir, start_at_utc),

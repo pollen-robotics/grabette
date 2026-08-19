@@ -147,6 +147,12 @@ class Daemon:
             "state": self.state.value,
             "backend": type(self.backend).__name__,
             "error": self._error,
+            # A backend-detected fault that makes capture refuse ("" = none).
+            # Distinct from "error" above, which is the daemon's own start-up
+            # failure: here the daemon runs fine, the HARDWARE can't produce
+            # usable episodes. Rides on the status dict so it reaches the local
+            # dashboard and the fleet's get_state without a second endpoint.
+            "hardware_error": getattr(self.backend, "hardware_error", ""),
         }
         if self.state == DaemonState.RUNNING:
             result["sensor"] = self.latest_state().model_dump()

@@ -54,6 +54,10 @@ class RpiBackend(Backend):
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
         self._oakd_initializing = False
+        # Non-empty when this grabette is in a state where recording would
+        # produce unusable data (currently: no OAK-D offline calibration). It
+        # BLOCKS capture and drives the error LED — see hardware_error.
+        self._hw_error = ""
         self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
@@ -103,12 +107,29 @@ class RpiBackend(Backend):
         logger.info("RpiBackend started")
 
     def _init_oakd(self) -> None:
-        """Initialize OAK-D SR (always-on pipeline, used for live view + recording)."""
+        """Initialize OAK-D SR (always-on pipeline, used for live view + recording).
+
+        A missing/unusable offline calibration is singled out from every other
+        init failure: the OAK-D is reachable, so the device looks healthy, yet
+        every episode it records is unconvertible (the SLAM Space rejects them
+        with "missing oakd_calib_offline.json"). That one is latched as a
+        hardware error, which refuses capture and blinks the error pattern.
+        Other failures keep the historical behaviour (log + carry on without the
+        OAK-D) so a deliberately OAK-less bench setup still works.
+        """
+        from grabette.hardware.oakd import OakdCalibrationError, OakdCapture
         try:
-            from grabette.hardware.oakd import OakdCapture
             self._oakd = OakdCapture(self._sync)
             self._oakd.init_device()
+            self._hw_error = ""
             logger.info("OAK-D SR initialized")
+        except OakdCalibrationError as e:
+            self._oakd = None
+            self._hw_error = (
+                f"{e} — this grabette cannot record convertible episodes. "
+                "Power-cycle it; if it persists the OAK-D needs re-flashing."
+            )
+            logger.error("OAK-D calibration unusable — recording disabled: %s", e)
         except Exception as e:
             logger.warning("OAK-D not available, continuing without it: %s", e)
             self._oakd = None
@@ -385,6 +406,10 @@ class RpiBackend(Backend):
         if not self.is_oakd_initialized:
             await self.set_oakd_enabled(True)
             self._oakd_auto_enabled = True
+        # Refuse the warm-up too, not just start_capture: this runs BEFORE a
+        # group's shared T0, so failing here lets the peer/fleet learn this
+        # device is out before the synchronized start rather than at T0.
+        self.raise_if_capture_blocked()
         if self._needs_reinit:
             self._reinit_hardware()
         if self._oakd and self._oakd.is_initialized:
@@ -416,6 +441,16 @@ class RpiBackend(Backend):
             if not self.is_oakd_initialized:
                 await self.set_oakd_enabled(True)
                 self._oakd_auto_enabled = True
+            # Hard gate: a grabette that cannot produce oakd_calib_offline.json
+            # records episodes no one can convert. Refusing here — rather than
+            # discovering it on the SLAM Space, after the upload — is the whole
+            # point: the operator finds out while the take can still be redone.
+            #
+            # Checked AFTER the bring-up above, never before: the bring-up IS the
+            # retry, and a fault latched at boot would otherwise refuse every
+            # start without ever re-reading the calibration, leaving a reboot as
+            # the only way out. Reseat the cable, press again, and it clears.
+            self.raise_if_capture_blocked()
 
             # Safety net: the previous stop_capture schedules the camera re-init
             # to run during idle (see stop_capture). If a restart beats it, do
@@ -681,9 +716,14 @@ class RpiBackend(Backend):
         angle_count = self._angle.sample_count if self._angle else 0
         imu_count = self._oakd.imu_sample_count if (self._oakd and self._oakd.is_recording) else 0
 
+        # NB: this runs on the daemon's 50 Hz poll loop (get_state builds it), so
+        # everything here must stay in-memory and cheap. busy_reason measures
+        # ~1 us — keep it that way rather than caching it, since the gate reads
+        # the same value and must not answer from a stale one.
         return CaptureStatus(
             is_capturing=self._capturing,
             is_starting=self._starting,
+            blocked_reason=self._hw_error or self.busy_reason,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,
@@ -702,6 +742,16 @@ class RpiBackend(Backend):
     @property
     def is_stopping(self) -> bool:
         return self._stopping
+
+    @property
+    def hardware_error(self) -> str:
+        """Why this grabette must not record right now ("" = fine).
+
+        Set by _init_oakd when the OAK-D can't produce an offline calibration.
+        Read by start_capture/prepare_capture (which refuse) and by the button
+        listener's LED monitor (which blinks the error pattern), so the fault is
+        visible on the device itself and not only in the logs."""
+        return self._hw_error
 
     def get_frame_jpeg(self) -> bytes | None:
         """Capture a JPEG frame from picamera2.

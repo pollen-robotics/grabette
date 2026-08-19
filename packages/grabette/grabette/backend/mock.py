@@ -72,6 +72,7 @@ class MockBackend(Backend):
     async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
+        self.raise_if_capture_blocked()
         self._capturing = True
         self._capture_start = time.time()
         self._episode_dir = episode_dir

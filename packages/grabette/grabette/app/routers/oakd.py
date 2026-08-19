@@ -28,6 +28,11 @@ def _status(backend: Backend) -> dict:
         "enabled": bool(enabled),
         "initialized": bool(initialized),
         "initializing": bool(initializing),
+        # Why capture is currently refused ("" = fine). The badge already turned
+        # red for enabled-but-not-initialized; what it could not say is WHICH
+        # failure, and "the OAK-D is red" sends an operator hunting for a cable
+        # when the fault is a calibration the device can't read.
+        "hardware_error": getattr(backend, "hardware_error", ""),
     }
 
 

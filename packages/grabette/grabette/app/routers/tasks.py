@@ -155,6 +155,12 @@ async def start_capture(
     scheduler = get_capture_scheduler()
     if scheduler.is_scheduled():
         raise HTTPException(status_code=409, detail="A start is already scheduled")
+    # Hardware fault or dataset work in progress. Checked BEFORE the episode is
+    # created so a refusal leaves no half-made episode to discard, and reported
+    # as a conflict with the device's state rather than a server error.
+    blocked = backend.hardware_error or backend.busy_reason
+    if blocked:
+        raise HTTPException(status_code=409, detail=blocked)
 
     # If this device is grouped, a start here behaves like the fleet "start
     # group recording" button: the GROUP's task wins and the start is
@@ -189,17 +195,24 @@ async def start_capture(
     )
     episode_dir = tm.episode_dir(episode_id)
 
-    if target is not None:
-        await scheduler.schedule(backend, tm, episode_dir, target)
-        return {
-            "episode_id": episode_id,
-            "status": "scheduled",
-            "start_at_utc": sync["scheduled_start_utc"],
-            "peers": sync.get("peers", []),
-        }
-
+    # Both start paths can still be refused here — the up-front check above can
+    # race work that begins right after it. RuntimeError is the gate's (and
+    # "Already capturing"'s) language, and it is a conflict with the device's
+    # state: without this it reaches the dashboard as the global handler's
+    # "Internal server error", which tells the operator nothing to act on.
     try:
+        if target is not None:
+            await scheduler.schedule(backend, tm, episode_dir, target)
+            return {
+                "episode_id": episode_id,
+                "status": "scheduled",
+                "start_at_utc": sync["scheduled_start_utc"],
+                "peers": sync.get("peers", []),
+            }
         await backend.start_capture(episode_dir)
+    except RuntimeError as e:
+        tm.discard_pending_episode()
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception:
         tm.discard_pending_episode()
         raise
