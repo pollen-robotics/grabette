@@ -1045,6 +1045,11 @@ async def lifespan(app: FastAPI):
             unassigned_provider=get_task_manager().report_unassigned,
             tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
             activity_provider=_device_activity,  # device state, reported via heartbeat
+            # Hardware faults (no OAK-D calibration, no angle sensors) — the
+            # device refuses to record in these states, and an operator who can
+            # only find that out by walking up to the grabette and reading its
+            # LED will find it out too late.
+            fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
