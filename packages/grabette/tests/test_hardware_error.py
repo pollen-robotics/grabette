@@ -236,17 +236,24 @@ class _FakeOakd:
         self.is_initialized = True
 
 
-def _backend(monkeypatch, *, fail):
+def _backend(monkeypatch, *, fail, angle_fail=False, enable_angle=True):
     from grabette.backend import rpi
+    from grabette.hardware import angle as angle_mod
     from grabette.hardware import oakd as oakd_mod
 
-    state = {"fail": fail}
+    state = {"fail": fail, "angle_fail": angle_fail}
 
     def _factory(sync):
         return _FakeOakd(sync, fail=state["fail"])
 
+    def _angle_factory(sync):
+        if state["angle_fail"]:
+            raise OSError("[Errno 121] Remote I/O error")
+        return types.SimpleNamespace(init_sensors=lambda: None)
+
     monkeypatch.setattr(oakd_mod, "OakdCapture", _factory)
-    b = rpi.RpiBackend()
+    monkeypatch.setattr(angle_mod, "AngleCapture", _angle_factory)
+    b = rpi.RpiBackend(enable_angle=enable_angle)
     return b, state
 
 
@@ -306,3 +313,99 @@ def test_a_plain_missing_oakd_is_not_a_fault(monkeypatch):
 def asyncio_run(coro):
     import asyncio
     return asyncio.run(coro)
+
+
+# --- the angle sensors: the same defect, a different sensor -------------------
+# stop_capture only writes angle_data.json when there are samples, and that file
+# is a REQUIRED conversion input. So "angle sensors not available, continuing
+# without them" was the OAK-D calibration incident again: a grabette filling its
+# card with episodes the Space rejects one by one.
+
+def test_angle_init_failure_latches_a_fault(monkeypatch):
+    b, _ = _backend(monkeypatch, fail=False, angle_fail=True)
+
+    b._init_angle_sensors()
+
+    assert "angle_data.json" in b.hardware_error
+    assert "I2C" in b.hardware_error  # names where to look
+    assert b._angle is None
+
+
+def test_capture_is_refused_without_angle_sensors(monkeypatch, tmp_path):
+    b, _ = _backend(monkeypatch, fail=False, angle_fail=True)
+    b._init_angle_sensors()
+
+    with pytest.raises(RuntimeError, match="angle"):
+        asyncio_run(b.start_capture(tmp_path / "ep"))
+
+    assert not b.is_capturing
+
+
+def test_a_deliberately_angle_less_setup_is_not_a_fault(monkeypatch):
+    # enable_angle=False is a choice (bench rig), not a broken sensor.
+    b, _ = _backend(monkeypatch, fail=False, angle_fail=True, enable_angle=False)
+
+    b._note_angle_output(None)
+
+    assert b.hardware_error == ""
+
+
+def test_zero_samples_over_a_whole_recording_latches_the_fault(monkeypatch):
+    # The second door: the sensors initialised fine and then produced nothing,
+    # so no angle_data.json is written — unconvertible, and silent.
+    b, _ = _backend(monkeypatch, fail=False)
+
+    b._note_angle_output(None)
+
+    assert "no samples" in b.hardware_error
+
+
+def test_samples_coming_back_clear_the_fault(monkeypatch):
+    # Samples are the only proof the sensors actually work — an init alone
+    # cannot give it.
+    b, _ = _backend(monkeypatch, fail=False)
+    b._note_angle_output(None)
+
+    b._note_angle_output([{"cts": 0, "value": [0.1, 0.2]}])
+
+    assert b.hardware_error == ""
+
+
+def test_the_angle_fault_clears_when_the_sensors_come_back(monkeypatch, tmp_path):
+    # Self-healing through the start path: the bring-up IS the retry.
+    b, state = _backend(monkeypatch, fail=False, angle_fail=True)
+    b._init_angle_sensors()
+    assert b.hardware_error
+
+    state["angle_fail"] = False
+    b._init_angle_sensors()
+
+    assert b.hardware_error == ""
+
+
+def test_the_two_faults_are_independent(monkeypatch):
+    # THE regression a single _hw_error string would cause: a successful OAK-D
+    # bring-up quietly wiping a live angle fault, and the device recording again
+    # with no gripper channel.
+    b, state = _backend(monkeypatch, fail=True, angle_fail=True)
+    b._init_oakd()
+    b._init_angle_sensors()
+    assert "calibration" in b.hardware_error and "angle" in b.hardware_error
+
+    state["fail"] = False
+    b._init_oakd()  # OAK-D fixed — the angle sensors are still dead
+
+    assert "calibration" not in b.hardware_error
+    assert "angle_data.json" in b.hardware_error
+
+
+def test_both_faults_are_reported_in_a_stable_order(monkeypatch):
+    # Fixing one and still being refused, with no clue about the other, is a
+    # maddening way to spend an afternoon.
+    b, _ = _backend(monkeypatch, fail=True, angle_fail=True)
+    b._init_angle_sensors()
+    b._init_oakd()
+
+    first, second = b.hardware_error, b.hardware_error
+    assert first == second
+    assert first.index("calibration") < first.index("angle_data.json")

@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from grabette.config import settings
 from grabette.daemon import Daemon
+from grabette.errors import exc_text as _exc_text
 
 # Route Gradio's internal file cache to the SD card. Gradio copies every
 # callback-returned file path into its cache dir (defaulting to
@@ -182,16 +183,6 @@ class _CommandCancelled(Exception):
     """The operator cancelled this command while it waited on something."""
 
 
-def _exc_text(e: BaseException) -> str:
-    """Never-empty description of an exception.
-
-    `str(asyncio.TimeoutError())` is the EMPTY STRING, so interpolating an
-    exception straight into a message can report only "processing failed:" —
-    leaving the operator nothing to act on, and the failure that says the least is
-    the most common one. Fall back to the class name, which at least names the
-    failure mode.
-    """
-    return str(e).strip() or type(e).__name__
 
 
 def _space_stage(space_repo: str, token: str | None) -> str | None:
