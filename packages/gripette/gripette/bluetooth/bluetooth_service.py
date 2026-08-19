@@ -980,6 +980,17 @@ class BluetoothWifiService:
             path_keyword="path",
         )
 
+        # A central BlueZ has never seen before has no Device1 object to change
+        # yet: it is announced here, already carrying Connected=true, and no
+        # PropertiesChanged follows. Without this the connect edge is missed for
+        # every first-time client — no log line, and the drop timings the
+        # deadlock detector reads stay at their initial values.
+        self.bus.add_signal_receiver(
+            self._on_interfaces_added,
+            dbus_interface=DBUS_OM_IFACE,
+            signal_name="InterfacesAdded",
+        )
+
         # Periodic network status refresh (every 10s)
         GLib.timeout_add_seconds(10, self.app.status_service.update_network_status)
 
@@ -989,13 +1000,18 @@ class BluetoothWifiService:
         self, interface, changed, invalidated, path=None
     ):
         """React to BlueZ Device1 connect/disconnect transitions."""
-        if interface != "org.bluez.Device1" or "Connected" not in changed:
+        if interface != "org.bluez.Device1":
+            return
+        # Service discovery IS ATT traffic, so reaching it proves the link got
+        # through SMP — which is exactly what a desynced bond never does.
+        # Without this, a healthy central that connects, discovers and leaves
+        # inside DEADLOCK_MAX_CONN_SECONDS scores strikes like a stale bond.
+        if changed.get("ServicesResolved"):
+            self._saw_gatt_traffic = True
+        if "Connected" not in changed:
             return
         if bool(changed["Connected"]):
-            self._connected_device_path = path
-            self._conn_started_at = time.monotonic()
-            self._saw_gatt_traffic = False
-            logger.info("BLE central connected: %s", path)
+            self._on_central_connected(path)
         else:
             logger.info("BLE central disconnected: %s", path)
             # Only act on the device we tracked, so a stale disconnect signal
@@ -1003,6 +1019,19 @@ class BluetoothWifiService:
             if self._connected_device_path in (None, path):
                 self._connected_device_path = None
                 self._on_central_disconnected(path)
+
+    def _on_interfaces_added(self, path, interfaces):
+        """Catch a first-time central, announced here instead of via a change."""
+        props = interfaces.get("org.bluez.Device1")
+        if props and bool(props.get("Connected", False)):
+            self._on_central_connected(path)
+
+    def _on_central_connected(self, path):
+        """Record the connect edge. Idempotent: either signal may deliver it."""
+        self._connected_device_path = path
+        self._conn_started_at = time.monotonic()
+        self._saw_gatt_traffic = False
+        logger.info("BLE central connected: %s", path)
 
     def _on_central_disconnected(self, path=None):
         """Reset auth and re-assert advertising after a central drops.
@@ -1024,11 +1053,23 @@ class BluetoothWifiService:
         """Purge our bond once a peer keeps dropping before any GATT traffic.
 
         Runs on the mainloop thread, so it is serialized against itself.
-        Purging our side helps even when the stale key is the central's: we
-        then accept a fresh pairing, and that side is fixable by hand.
+        Scoped to peers we are bonded with (see _peer_is_bonded): a key only
+        this side holds is the half we can fix, and a purge is meaningless
+        without one. When the stale key is the CENTRAL's instead, the link flaps
+        the same way but the fix has to happen there — by hand, as the setup
+        doc says.
         """
         held = time.monotonic() - self._conn_started_at
         if self._saw_gatt_traffic or held > DEADLOCK_MAX_CONN_SECONDS:
+            self._deadlock_strikes = 0
+            self._deadlock_peer = None
+            return
+
+        # Only a bond we actually hold can desync into the deadlock, and only
+        # that is ours to purge. Without this, ordinary churn scores strikes:
+        # a probe or a closed chooser connects for a second and leaves, exactly
+        # like a stale bond from here.
+        if not self._peer_is_bonded(path):
             self._deadlock_strikes = 0
             self._deadlock_peer = None
             return
@@ -1050,6 +1091,21 @@ class BluetoothWifiService:
         self._deadlock_strikes = 0
         self._deadlock_peer = None
         self._purge_bond(path)
+
+    def _peer_is_bonded(self, path):
+        """True when we still hold pairing keys for this peer.
+
+        Unknown counts as not bonded: failing to purge costs one manual unpair,
+        purging wrongly breaks a pairing that was working.
+        """
+        try:
+            props = dbus.Interface(
+                self.bus.get_object(BLUEZ_SERVICE_NAME, path), DBUS_PROP_IFACE
+            )
+            return bool(props.Get("org.bluez.Device1", "Bonded"))
+        except Exception as exc:
+            logger.warning("Could not read Bonded for %s: %s", path, exc)
+            return False
 
     def _purge_bond(self, path):
         """Drop our pairing keys for one peer so it can bond again from scratch."""
