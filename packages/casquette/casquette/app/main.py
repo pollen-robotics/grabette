@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from casquette.config import settings
-from casquette.daemon import Daemon
+from casquette.daemon import Daemon, DaemonState
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -18,6 +21,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _daemon: Daemon | None = None
+
+# A synchronized (group) start delivered more than this many seconds past its T0
+# is too late to be usable as multi-device data — refuse rather than keep a
+# desynced episode. (Mirrors grabette's MAX_START_LATENESS_S.)
+MAX_START_LATENESS_S = 1.0
 
 
 def get_daemon_instance() -> Daemon | None:
@@ -46,6 +54,187 @@ def _create_backend():
             return MockBackend()
 
 
+async def _handle_relay_command(cmd: dict) -> dict:
+    """Map fleet commands to casquette daemon actions (recording subset).
+
+    Casquette is a pure fleet PEER (no physical button): it receives group
+    start/stop from the fleet and records in lockstep via the shared
+    capture_scheduler (same T0 mechanism grabette uses). upload_episodes /
+    process_dataset are intentionally NOT handled yet — they need the HF dataset
+    client + a job manager (a follow-up); the device simply doesn't advertise
+    them, so the fleet won't send them.
+    """
+    from casquette.fleet.cancel import get_cancel_registry
+    from casquette.fleet.capture_scheduler import get_capture_scheduler
+    from casquette.task import episode_id_for, get_task_manager
+
+    ctype = cmd.get("type")
+    cancels = get_cancel_registry()
+
+    if ctype == "cancel_dataset":
+        # Above the daemon check on purpose: cancelling touches no capture
+        # hardware and must work even when the daemon is down.
+        args = cmd.get("args", {})
+        marked = cancels.cancel(args.get("command_ids") or [])
+        return {"status": "ok", "cancelled": marked, "job_id": args.get("job_id", "")}
+
+    daemon = get_daemon_instance()
+    if daemon is None:
+        return {"status": "error", "message": "daemon not running"}
+    scheduler = get_capture_scheduler()
+
+    if ctype == "get_state":
+        status = daemon.status
+        if scheduler.is_scheduled():
+            status["scheduled_start_utc"] = scheduler.scheduled_start_utc.isoformat()
+        return {"status": "ok", "state": status}
+
+    if ctype == "logout":
+        from huggingface_hub import logout as hf_logout
+        hf_logout()
+        return {"status": "ok"}
+
+    if ctype == "delete_episode":
+        eid = (cmd.get("args") or {}).get("episode_id")
+        if not eid:
+            return {"status": "error", "message": "episode_id is required"}
+        try:
+            get_task_manager().delete_episode(eid)
+            return {"status": "ok", "deleted": eid}
+        except FileNotFoundError:
+            return {"status": "ok", "deleted": None, "note": "not present on this device"}
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": str(e)}
+
+    if ctype == "edit_task":
+        args = cmd.get("args") or {}
+        name = args.get("name")
+        if not name:
+            return {"status": "error", "message": "name is required"}
+        get_task_manager().rename_task(
+            name, new_name=args.get("new_name"), description=args.get("description"),
+            device_signature=args.get("device_signature"),
+        )
+        return {"status": "ok"}
+
+    if ctype == "delete_task":
+        name = (cmd.get("args") or {}).get("name")
+        if not name:
+            return {"status": "error", "message": "name is required"}
+        deleted = get_task_manager().delete_task_by_name(name)
+        return {"status": "ok", "deleted": name if deleted else None}
+
+    if ctype == "set_episode_members":
+        # Fleet backfill of role→{device_id,name} on episodes. Batch or single.
+        args = cmd.get("args") or {}
+        tm = get_task_manager()
+        sig = args.get("device_signature")
+        if isinstance(args.get("episodes"), list):
+            updated = tm.set_episodes_members(args["episodes"], device_signature=sig)
+            return {"status": "ok", "updated": updated}
+        eid = args.get("episode_id")
+        if not eid:
+            return {"status": "error", "message": "episode_id or episodes is required"}
+        updated = tm.set_episode_members(eid, args.get("members") or {}, device_signature=sig)
+        return {"status": "ok", "updated": 1 if updated else 0}
+
+    if daemon.state != DaemonState.RUNNING:
+        return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
+
+    backend = daemon.backend
+
+    if ctype == "prepare_capture":
+        # Warm the hardware ahead of a synchronized start. No-op/fast on casquette
+        # (camera stays warm across captures).
+        await backend.prepare_capture()
+        return {"status": "ok"}
+
+    if ctype == "start_capture":
+        if backend.is_capturing:
+            return {"status": "error", "message": "already capturing"}
+        if scheduler.is_scheduled():
+            return {"status": "error", "message": "a start is already scheduled"}
+        tm = get_task_manager()
+        args = cmd.get("args", {})
+        task_name = args.get("task_name")
+        task_id = tm.get_or_create_task(task_name) if task_name else args.get("task_id")
+        start_at_utc = args.get("start_at_utc")
+        members = args.get("members")
+        signature = args.get("signature")
+
+        # Resolve T0 BEFORE creating the episode: a group-synchronized start
+        # derives the episode id from the shared T0 (episode_id_for), so every
+        # device's episode folder for this recording has the same name.
+        target = None
+        if start_at_utc:
+            try:
+                target = datetime.fromisoformat(start_at_utc)
+            except ValueError:
+                return {"status": "error", "message": f"invalid start_at_utc: {start_at_utc!r}"}
+            if target.tzinfo is None:
+                target = target.replace(tzinfo=timezone.utc)
+            late_s = (datetime.now(timezone.utc) - target).total_seconds()
+            if late_s > MAX_START_LATENESS_S:
+                return {"status": "error",
+                        "message": f"start_at_utc is {late_s:.1f}s late (> {MAX_START_LATENESS_S}s); refusing"}
+            if late_s > 0:
+                logger.warning("scheduled start %.2fs late; starting best-effort", late_s)
+
+        episode_id = tm.create_episode(
+            task_id,
+            episode_id=episode_id_for(target) if target else None,
+            members=members,
+            signature=signature,
+        )
+        episode_dir = tm.episode_dir(episode_id)
+
+        if target is None:
+            try:
+                await backend.start_capture(episode_dir)
+            except Exception:
+                tm.discard_pending_episode()
+                raise
+            return {"status": "ok", "episode_id": episode_id}
+
+        # Scheduled (synchronized group) start: wait for T0 in the background
+        # and ack immediately so the fleet dispatch round-trip doesn't block.
+        await scheduler.schedule(backend, tm, episode_dir, target)
+        return {"status": "scheduled", "episode_id": episode_id, "start_at_utc": target.isoformat()}
+
+    if ctype == "stop_capture":
+        tm = get_task_manager()
+        try:
+            outcome = await scheduler.cancel_or_wait(backend)
+        except RuntimeError as e:
+            return {"status": "error", "message": str(e)}
+        if outcome == "cancelled":
+            tm.discard_pending_episode()
+            return {"status": "cancelled"}
+        if not backend.is_capturing:
+            return {"status": "error", "message": "not capturing"}
+
+        args = cmd.get("args", {})
+        stop_at_utc = args.get("stop_at_utc")
+        if stop_at_utc:
+            try:
+                stop_target = datetime.fromisoformat(stop_at_utc)
+            except ValueError:
+                return {"status": "error", "message": f"invalid stop_at_utc: {stop_at_utc!r}"}
+            if stop_target.tzinfo is None:
+                stop_target = stop_target.replace(tzinfo=timezone.utc)
+            await scheduler.schedule_stop(backend, tm, stop_target)
+            return {"status": "scheduled_stop", "stop_at_utc": stop_target.isoformat()}
+
+        result = await backend.stop_capture()
+        tm.register_episode(getattr(result, "episode_id", None))
+        # Return a plain dict (the relay json.dumps this — a pydantic object
+        # would raise TypeError and kill the relay loop).
+        return {"status": "ok",
+                "result": result.model_dump() if hasattr(result, "model_dump") else result}
+
+    return {"status": "error", "message": f"unknown command '{ctype}'"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _daemon
@@ -54,8 +243,60 @@ async def lifespan(app: FastAPI):
     _daemon = Daemon(backend)
     await _daemon.start()
 
+    # HF auth (PAT-only): best-effort check that a token is present so the relay
+    # can authenticate. No periodic refresh — a PAT is long-lived. The async
+    # ensure_authenticated is kept so a later OAuth port slots in here.
+    if settings.relay_enabled:
+        from casquette.fleet.auth import get_hf_auth
+        try:
+            if not await get_hf_auth().ensure_authenticated():
+                logger.warning(
+                    "no HF token — fleet relay will idle until one is set "
+                    "(save a PAT or run `huggingface-cli login` on the device)"
+                )
+        except Exception:
+            logger.debug("startup HF auth check failed", exc_info=True)
+
+    # Fleet relay loop. Casquette is a pure peer — NO button listener, and no
+    # PiSugar battery / hand providers (grabette-only hardware).
+    relay_task = None
+    if settings.relay_enabled:
+        from huggingface_hub import get_token
+        from casquette.fleet.relay_client import RelayClient
+        from casquette.task import get_task_manager
+
+        def _device_activity() -> str:
+            """idle | capturing — casquette has no upload/process jobs yet."""
+            try:
+                d = get_daemon_instance()
+                if d is not None and d.state == DaemonState.RUNNING and d.backend.is_capturing:
+                    return "capturing"
+            except Exception:
+                pass
+            return "idle"
+
+        tm = get_task_manager()
+        relay = RelayClient(
+            base_url=settings.relay_url,
+            token_provider=get_token,
+            device_id=settings.device_id,
+            name=settings.device_name,
+            capabilities=["get_state", "start_capture", "stop_capture", "prepare_capture",
+                          "cancel_dataset", "delete_episode", "edit_task", "delete_task",
+                          "logout"],
+            tasks_provider=tm.report_tasks,
+            tasks_rev_provider=tm.revision,
+            activity_provider=_device_activity,
+        )
+        relay_task = asyncio.create_task(relay.run(_handle_relay_command))
+        logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
+
     yield
 
+    if relay_task is not None:
+        relay_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await relay_task
     await _daemon.stop()
     _daemon = None
 
@@ -63,7 +304,6 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     from casquette.app.routers.camera import router as camera_router
     from casquette.app.routers.daemon import router as daemon_router
-    from casquette.app.routers.sessions import router as sessions_router
     from casquette.app.routers.state import router as state_router
     from casquette.app.routers.system import router as system_router
 
@@ -92,8 +332,9 @@ def create_app() -> FastAPI:
 
     app.include_router(daemon_router)
     app.include_router(state_router)
-    app.include_router(sessions_router)
     app.include_router(camera_router)
     app.include_router(system_router)
+    # NOTE: the local "sessions" router is intentionally dropped in this fleet
+    # prototype (record store moved to the task model; local web UI deferred).
 
     return app

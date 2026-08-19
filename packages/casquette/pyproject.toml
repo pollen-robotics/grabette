@@ -36,3 +36,8 @@ rpi = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+# auto → async tests/fixtures run under asyncio without per-item markers.
+asyncio_mode = "auto"
+testpaths = ["tests"]
