@@ -107,6 +107,25 @@ MAX_PIN_LOCKOUT_SECONDS = 3600
 DEADLOCK_MAX_CONN_SECONDS = 2.0
 DEADLOCK_STRIKES = 3
 
+# ---- Advertising interval ----
+
+# In units of 0.625 ms: 160 = 100 ms, 240 = 150 ms. This MUST be stated
+# explicitly. The MGMT "Add Advertising" command carries no interval, so the
+# kernel applies its own default of 0x0800 (1.28 s) — and at that rate a
+# central not only discovers the robot erratically, it cannot connect at all:
+# a connection is only ever opened in answer to an advertisement, so the
+# central's attempt times out and is cancelled locally
+# (le-connection-abort-by-local) without the robot ever seeing it. Measured on
+# grabette-simsim (Pi 4 / CYW4345): 1.28 s gave 4 advertisement reports per 45 s
+# and no usable connection, 100-150 ms gives ~19 and connects on the first try.
+ADV_MIN_INTERVAL = 160
+ADV_MAX_INTERVAL = 240
+
+# The kernel default above, which is all the add-adv fallback can influence —
+# it is settable only through debugfs. Formatted with the adapter index and
+# the bound ("min"/"max").
+ADV_INTERVAL_DEBUGFS = "/sys/kernel/debug/bluetooth/hci{index}/adv_{bound}_interval"
+
 
 # =====================================================================
 # BLE Agent — "Just Works" pairing (no user interaction on device side)
@@ -1078,14 +1097,32 @@ class BluetoothWifiService:
 
         Runs on a daemon thread (see _start_advertising); the lock keeps a
         disconnect-triggered re-advertise from overlapping the initial one.
+
+        The interval is the part that must not be left to the kernel — see
+        ADV_MIN_INTERVAL for what a defaulted 1.28 s does to provisioning.
         """
         if not self._adv_lock.acquire(blocking=False):
             return  # an advertise attempt is already running
         try:
-            # Clear any prior/lingering instance, then add ours: -c connectable,
-            # -g general-discoverable, with the name in the scan response (-s)
-            # because the legacy MGMT path doesn't read the adapter alias.
+            # Clear any prior/lingering instance before adding ours.
             self._btmgmt("rm-adv", "1")
+            if self._add_adv_with_interval():
+                logger.info(
+                    "BLE advertisement registered via MGMT (interval %.0f-%.0fms)",
+                    ADV_MIN_INTERVAL * 0.625,
+                    ADV_MAX_INTERVAL * 0.625,
+                )
+                return
+            # Fall back to the interval-less command rather than go silent: a
+            # robot that advertises slowly is still provisionable, one that
+            # doesn't advertise has no route onto WiFi at all. The ext-params
+            # attempt can leave a half-built instance (params accepted, data
+            # rejected), so clear it again first.
+            logger.warning(
+                "Extended advertising params rejected; falling back to add-adv"
+            )
+            self._btmgmt("rm-adv", "1")
+            self._set_kernel_adv_interval()
             out = self._btmgmt(
                 "add-adv", "-c", "-g", "-s", self._advertised_scan_rsp_hex(), "1"
             )
@@ -1095,6 +1132,53 @@ class BluetoothWifiService:
                 logger.error("Failed to register advertisement via MGMT")
         finally:
             self._adv_lock.release()
+
+    def _add_adv_with_interval(self):
+        """Register instance 1 with an explicit interval. True if it took.
+
+        Splits the advertisement across the two MGMT commands that do accept an
+        interval (Add Extended Advertising Parameters / Data, BlueZ >= 5.65):
+        -c connectable, -g general-discoverable, -r/-x the interval bounds, and
+        the name in the scan response (-s) because this path doesn't read the
+        adapter alias. Despite the "extended" name the kernel still drives a
+        controller without HCI extended advertising through the LEGACY HCI
+        commands — verified on CYW4345, whose rejection of the genuinely
+        extended path is why bluetoothd is bypassed at all (see _mgmt_advertise).
+        """
+        out = self._btmgmt(
+            "add-ext-adv-params", "-c", "-g",
+            "-r", str(ADV_MIN_INTERVAL), "-x", str(ADV_MAX_INTERVAL), "1",
+        )
+        # This subcommand reports controller capabilities rather than a status
+        # line, so treat anything but an explicit failure as accepted.
+        if not out or "fail" in out.lower():
+            return False
+        out = self._btmgmt(
+            "add-ext-adv-data", "-s", self._advertised_scan_rsp_hex(), "1"
+        )
+        return bool(out and "Instance added" in out)
+
+    def _set_kernel_adv_interval(self):
+        """Retune the kernel's own advertising default. True if both writes took.
+
+        Only the add-adv fallback needs this: that command carries no interval,
+        so the kernel default is the one knob left. Write min before max — the
+        kernel rejects a min above the current max, and we only ever lower them
+        from the 1.28 s default.
+        """
+        for bound, value in (("min", ADV_MIN_INTERVAL), ("max", ADV_MAX_INTERVAL)):
+            path = ADV_INTERVAL_DEBUGFS.format(index=self._hci_index, bound=bound)
+            try:
+                with open(path, "w") as handle:
+                    handle.write(str(value))
+            except OSError as exc:
+                # debugfs isn't guaranteed mounted, and this runs on the
+                # mainloop thread: raising would stop re-advertising for good.
+                logger.warning(
+                    "Could not set kernel %s advertising interval: %s", bound, exc
+                )
+                return False
+        return True
 
     def _btmgmt(self, *args):
         """Run a btmgmt subcommand; return stdout (or None on timeout).
