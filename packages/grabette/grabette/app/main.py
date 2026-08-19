@@ -439,21 +439,36 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": f"processing failed: {_exc_text(e)}"}
 
     if ctype == "delete_episode":
-        # Fleet "delete last episode": remove this device's local files + registry
-        # entry for the given episode. Needs no capture hardware. Absent locally
-        # (never recorded here / already gone) → treated as success (idempotent).
+        # Fleet "delete last episode" / "discard these takes": remove this device's
+        # local files + registry entries. Needs no capture hardware. Absent locally
+        # (never recorded here / already gone) → success (idempotent).
+        #
+        # Accepts a batch ("episode_ids": [...]) as well as a single episode_id,
+        # like set_episode_members does: discarding a triage selection is one
+        # operator gesture, and one command per episode would queue fifty of them
+        # through a serial relay worker.
         from grabette.app.routers.tasks import get_task_manager
 
-        eid = (cmd.get("args") or {}).get("episode_id")
-        if not eid:
-            return {"status": "error", "message": "episode_id is required"}
-        try:
-            get_task_manager().delete_episode(eid)
-            return {"status": "ok", "deleted": eid}
-        except FileNotFoundError:
-            return {"status": "ok", "deleted": None, "note": "not present on this device"}
-        except Exception as e:  # noqa: BLE001
-            return {"status": "error", "message": str(e)}
+        args = cmd.get("args") or {}
+        eids = args.get("episode_ids")
+        if not isinstance(eids, list):
+            eids = [args.get("episode_id")] if args.get("episode_id") else []
+        if not eids:
+            return {"status": "error", "message": "episode_id or episode_ids is required"}
+        tm = get_task_manager()
+        deleted, absent, errors = [], [], []
+        for eid in eids:
+            try:
+                tm.delete_episode(eid)
+                deleted.append(eid)
+            except FileNotFoundError:
+                absent.append(eid)
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{eid}: {e}")
+        if errors:
+            return {"status": "error", "message": "; ".join(errors),
+                    "deleted": deleted, "absent": absent}
+        return {"status": "ok", "deleted": deleted, "absent": absent}
 
     if ctype == "edit_task":
         # Fleet task edit (rename / re-describe), keyed by task name. Idempotent.
@@ -479,6 +494,26 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "name is required"}
         deleted = get_task_manager().delete_task_by_name(name)
         return {"status": "ok", "deleted": name if deleted else None}
+
+    if ctype == "assign_episodes":
+        # Fleet "file these recordings under task X", keyed by task NAME (local ids
+        # mean nothing across devices). Serves both triaging the unassigned inbox
+        # and repairing a split — a fleet-wide dispatch that makes every device
+        # agree on one task name for the episode. Idempotent, and safe to send to a
+        # device that never had these episodes: move_episodes skips ids it knows
+        # nothing about rather than inventing them.
+        from grabette.app.routers.tasks import get_task_manager
+
+        args = cmd.get("args") or {}
+        name = (args.get("task_name") or "").strip()
+        episode_ids = args.get("episode_ids") or []
+        if not name:
+            return {"status": "error", "message": "task_name is required"}
+        if not episode_ids:
+            return {"status": "error", "message": "episode_ids is required"}
+        tm = get_task_manager()
+        result = tm.move_episodes(episode_ids, tm.get_or_create_task(name))
+        return {"status": "ok", "task": name, **result}
 
     if ctype == "set_episode_members":
         # Fleet "fill devices": backfill who recorded episodes (role →
@@ -694,10 +729,13 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
                           "delete_episode", "edit_task", "delete_task",
-                          "prepare_capture"],
+                          "assign_episodes", "prepare_capture"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
+            # Loose episodes (recorded outside any task) — their own channel, so
+            # the fleet can offer them for triage without them ever passing for tasks.
+            unassigned_provider=get_task_manager().report_unassigned,
             tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
             activity_provider=_device_activity,  # device state, reported via heartbeat
         )

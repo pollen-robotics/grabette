@@ -31,6 +31,36 @@ logger = logging.getLogger(__name__)
 
 UNASSIGNED_ID = "unassigned"
 
+# How many loose episodes a single report describes. The inbox is meant to be
+# exceptional, but a device recorded at the button for a week must not grow the
+# register payload without bound — nor pay a metadata.json read per episode on
+# every report (report_tasks deliberately reads none). The newest takes are the
+# ones an operator triages; `total` is sent alongside so the UI can say
+# "50 of 137" instead of quietly truncating.
+UNASSIGNED_REPORT_LIMIT = 50
+
+
+def local_identity() -> tuple[dict, list[str]]:
+    """This device's own (members, signature), for a capture it made alone.
+
+    A solo or offline recording gets no membership from the fleet, but the device
+    needs none to describe itself: `hand` IS its slot (the fleet only derives the
+    same value from the same field, see _device_slot there), and
+    device_id/device_name are exactly what it registers under — so the result is
+    byte-for-byte what the fleet would have sent for a one-member session.
+
+    Without this, a solo episode reached the fleet with no roles at all: flagged
+    "incomplete" in the task view and, worse, silently dropped from dataset
+    generation (an episode with no roles is skipped). Stamping it here means the
+    device answers that question at record time, from what it already knows,
+    instead of depending on a later fill-devices repair that could only ever
+    reconstruct this very information — and cannot run at all while offline.
+    """
+    from grabette.config import settings
+
+    slot = settings.hand  # Literal["left","right"] → always a valid fleet slot
+    return {slot: {"device_id": settings.device_id, "name": settings.device_name}}, [slot]
+
 
 def episode_id_for(ts: datetime) -> str:
     """Canonical episode-id format, derived from a UTC instant.
@@ -232,6 +262,15 @@ class TaskManager:
         if episode_id is not None and episode_id != eid:
             eid = episode_id
 
+        # No membership from the fleet ⇒ this device recorded alone (button press
+        # outside a session, or the fleet was unreachable). Describe the episode
+        # with our own role rather than leaving it role-less. Kept separate from
+        # `signature` below: a self-reported signature must never overwrite one
+        # the fleet gave us.
+        own_signature: list[str] | None = None
+        if not members:
+            members, own_signature = local_identity()
+
         if self._session_active and self._session_task_id:
             target_id = self._session_task_id
         else:
@@ -245,9 +284,28 @@ class TaskManager:
         # account still surfaces the task and names its (possibly offline) peers.
         if signature:
             target["device_signature"] = list(signature)
+        elif own_signature and target["id"] != UNASSIGNED_ID and not target.get("device_signature"):
+            # Self-reported: fill a signature only where there is none, never
+            # replace one. A solo press into an existing bimanual task must not
+            # rewrite it to ["left"] — that would misdescribe every episode
+            # already recorded there, and would bypass the fleet's own rule that
+            # a signature is locked once the task has recordings. Unassigned is
+            # excluded: it is a bucket holding episodes of any provenance, so a
+            # signature there would be a claim about nothing (and it is never
+            # reported to the fleet anyway).
+            target["device_signature"] = list(own_signature)
         if members:
             target.setdefault("episode_members", {})[eid] = members
-        self.active_task_id = target["id"]
+        # active_task_id is deliberately NOT moved onto the task we just filed
+        # into: it is the operator's EXPLICIT local selection (PUT
+        # /api/tasks/active, start_session), never a side effect of recording.
+        # Making it sticky is what hid episodes: a fleet-driven session records
+        # into its group task through this method, and closing that session on
+        # the fleet never touches the device (the fleet dispatches start/stop
+        # commands, not start_session/stop_session). The device therefore kept
+        # pointing at that task, so the next physical-button press — which the
+        # fleet answers "solo" — silently appended a new episode to it instead
+        # of leaving it in Unassigned, where an untriaged recording belongs.
         if self._session_active:
             self._session_count += 1
         self._save()
@@ -276,6 +334,13 @@ class TaskManager:
         self.active_task_id = task_id
 
     def stop_session(self) -> None:
+        # Drop the selection with the lock: once the session is over, a physical
+        # button press must record a solo episode into Unassigned — where it is
+        # visibly untriaged — instead of quietly extending the task the session
+        # was recording for. Only when a session was actually running, so a
+        # stray /api/session/stop doesn't wipe an explicit local selection.
+        if self._session_active:
+            self.active_task_id = UNASSIGNED_ID
         self._session_active = False
         self._session_task_id = None
         self._session_count = 0
@@ -455,6 +520,51 @@ class TaskManager:
             })
         return out
 
+    def report_unassigned(self) -> dict:
+        """Loose episodes — recorded outside any task — for the fleet's inbox.
+
+        Sent on a channel of its OWN, deliberately not as a task (report_tasks
+        skips Unassigned, and keeps doing so). Tasks are cross-device and merged
+        by NAME on the fleet, which is exactly wrong here: a loose episode was
+        recorded alone and belongs to this device only, so merging every device's
+        stray takes under one name would make them indistinguishable. Staying off
+        that channel also means these episodes can never leak into task selection
+        or dataset generation, which both walk the reported tasks.
+
+        Each entry carries enough to triage without downloading anything: who
+        recorded it (always this device — see local_identity), how long the take
+        was, and whether it has video. That's the difference between a 1s misfire
+        and a real recording, which is the whole decision the operator makes.
+
+        Episodes whose directory is gone are skipped: nothing can be done with an
+        entry that no longer has data behind it.
+        """
+        t = self._find_task(UNASSIGNED_ID)
+        if t is None:
+            return {"total": 0, "episodes": []}
+        members_by_ep = t.get("episode_members", {})
+        # An inbox episode with no stored membership predates the self-stamp, or was
+        # migrated from the old layout. Its role is not unknown: we hold the files,
+        # so OUR slot is what we contributed — the same inference the fleet already
+        # makes for task episodes (_online_episode_reporters: "the reporting device
+        # IS a member, and its role is its slot"). Asserting only our own role never
+        # over-claims: the fleet unions members across devices.
+        own_members = local_identity()[0]
+        # Episode ids are UTC timestamps, so a plain sort is chronological; the
+        # tail is therefore the most recent (legacy non-timestamp ids just sort
+        # lexicographically, which is stable and good enough for a cap).
+        eids = sorted(eid for eid in t["episode_ids"] if self.episode_dir(eid).exists())
+        episodes = []
+        for eid in eids[-UNASSIGNED_REPORT_LIMIT:]:
+            info = self._get_episode_info(eid)
+            episodes.append({
+                "episode_id": eid,
+                "members": members_by_ep.get(eid) or own_members,
+                "duration_seconds": info.duration_seconds,
+                "has_video": info.has_video,
+            })
+        return {"total": len(eids), "episodes": episodes}
+
     # ── Task operations ────────────────────────────────────────────────
 
     def create_task(self, name: str, description: str = "") -> str:
@@ -515,11 +625,19 @@ class TaskManager:
         if t is None:
             raise FileNotFoundError(f"Task {task_id} not found")
 
-        # Move episodes back to Unassigned
+        # Move episodes back to Unassigned, WITH their membership. The task dict
+        # — and the episode_members it carries — is dropped just below, so
+        # leaving them behind wouldn't merely strand them: it would destroy the
+        # record of who recorded each episode, which nothing on the device could
+        # rebuild afterwards. (delete_task_by_name has no such need: it deletes
+        # the episodes themselves.)
         unassigned = self._find_task(UNASSIGNED_ID)
+        members = t.get("episode_members", {})
         for eid in t["episode_ids"]:
             if eid not in unassigned["episode_ids"]:
                 unassigned["episode_ids"].append(eid)
+            if members.get(eid):
+                unassigned.setdefault("episode_members", {})[eid] = members[eid]
 
         self._tasks.remove(t)
         self._save()
@@ -574,22 +692,107 @@ class TaskManager:
     def list_tasks(self) -> list[TaskDetail]:
         return [self._to_task_detail(t) for t in self._tasks]
 
-    def move_episodes(self, episode_ids: list[str], target_task_id: str) -> None:
+    def move_episodes(self, episode_ids: list[str], target_task_id: str) -> dict:
+        """Refile episodes into another task, carrying their membership along.
+
+        An episode's members (role → {device_id, name}) live on the dict of the
+        task that holds it, so moving the ids alone would strand them: the target
+        would report the episode role-less — flagged incomplete by the fleet, and
+        left out of any dataset — while a dead entry piled up on the source. This
+        is the path that files a loose Unassigned recording into a real task, so
+        the role stamped at record time has to survive it.
+
+        Returns {"moved", "skipped", "shared"}:
+          * moved   — episode ids now filed in the target (already-there included,
+                      so a repeated call reports the same end state).
+          * skipped — ids this device knows nothing about (see below).
+          * shared  — [{"episode_id", "peers"}] for episodes recorded WITH another
+                      device. Refiling only this device's copy leaves the peer
+                      filing the same episode under the old task, which the fleet
+                      then sees as a split. Reported, not refused: reorganising
+                      both devices is legitimate, and a hard refusal here would
+                      block doing it on either side. Callers surface it as a
+                      warning.
+        """
         target = self._find_task(target_task_id)
         if target is None:
             raise FileNotFoundError(f"Target task {target_task_id} not found")
+        from grabette.config import settings  # our own id, to tell peers apart
 
+        own = settings.device_id
+        moved: list[str] = []
+        skipped: list[str] = []
+        shared: list[dict] = []
+        filed: list[dict] = []  # membership of each episode filed here, for the signature
         for eid in episode_ids:
-            # Remove from current task
-            for t in self._tasks:
-                if eid in t["episode_ids"]:
-                    t["episode_ids"].remove(eid)
-                    break
-            # Add to target
-            if eid not in target["episode_ids"]:
-                target["episode_ids"].append(eid)
+            source = next((t for t in self._tasks if eid in t["episode_ids"]), None)
+            if source is None and not self.episode_dir(eid).exists():
+                # Nothing here holds it and there are no files either. A fleet
+                # dispatch reaches every device, and most never recorded a given
+                # episode — registering the id for them would invent an episode
+                # that doesn't exist, which the fleet would then report. (An
+                # episode present on disk but in no task is NOT skipped: filing it
+                # repairs a lost registry entry.)
+                skipped.append(eid)
+                continue
+            if source is target:
+                # Already filed here, so stop before touching anything: the
+                # lookup found the TARGET as the holder, and removing its members
+                # would strip them while the guard below skipped the re-add —
+                # losing data on what is supposed to be a no-op.
+                members = target.get("episode_members", {}).get(eid) or {}
+            else:
+                members = None
+                if source is not None:
+                    source["episode_ids"].remove(eid)
+                    members = source.get("episode_members", {}).pop(eid, None)
+                if eid not in target["episode_ids"]:
+                    target["episode_ids"].append(eid)
+                if members:
+                    target.setdefault("episode_members", {})[eid] = members
+                members = members or {}
+            if not members:
+                # Nothing recorded about who made it (predates the self-stamp, or
+                # migrated). Filing it is the moment to assert the one role we know
+                # for certain: ours. We hold the files, so our slot is what this
+                # device contributed — never a claim about anyone else, and the
+                # fleet unions members across devices, so a peer filing the same
+                # episode adds its own role. Without this, filing an old episode
+                # produced a task the fleet reports as role-less, hence unusable
+                # for a dataset.
+                members = local_identity()[0]
+                target.setdefault("episode_members", {})[eid] = members
+            moved.append(eid)
+            filed.append(members)
+            peers = sorted({w.get("name") or w.get("device_id") for w in members.values()
+                            if w.get("device_id") and w.get("device_id") != own})
+            if peers:
+                shared.append({"episode_id": eid, "peers": peers})
 
+        self._adopt_signature(target, filed)
         self._save()
+        return {"moved": moved, "skipped": skipped, "shared": shared}
+
+    def _adopt_signature(self, target: dict, filed: list[dict]) -> None:
+        """Give a signature-less task the role set of the episodes just filed in.
+
+        Without this, filing loose episodes into a fresh task leaves it with no
+        signature at all — and a task with no signature exposes no usable roles,
+        so dataset generation refuses it outright. Same conservative rules as
+        register_episode: fill only what is absent (an existing signature
+        describes the episodes already recorded there and must never be
+        rewritten), and never on Unassigned, a bucket of mixed provenance.
+
+        Only when every filed episode agrees on ONE role set: a batch mixing a
+        left-only episode with a bimanual one would otherwise be described as
+        ["left","right"], which the left-only episode does not satisfy.
+        """
+        if target["id"] == UNASSIGNED_ID or target.get("device_signature"):
+            return
+        role_sets = {tuple(sorted(m)) for m in filed if m}
+        if len(role_sets) != 1:
+            return
+        target["device_signature"] = list(role_sets.pop())
 
     # ── Helpers ────────────────────────────────────────────────────────
 
