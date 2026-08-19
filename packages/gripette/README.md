@@ -103,6 +103,10 @@ If `make install-rpi` fails (e.g. unusual OS), the equivalent manual steps are:
 3. **Venv**: from the workspace root, `uv venv --python /usr/bin/python3 --system-site-packages && uv sync --package gripette --extra rpi --no-install-package numpy`.
 4. **Hand config**: `sudo mkdir -p /etc/gripette && echo "GRIPPER_HAND=right" | sudo tee /etc/gripette/env` (or `=left`).
 
+## Calibration
+
+Before using Gripette, you need to calibrate the encoders to set the zero offset. See [Calibration](docs/calibration.md) for instructions.
+
 ## Usage
 
 Drive a running gripette over gRPC with the Python client:
