@@ -15,7 +15,7 @@ from pathlib import Path
 from grabette.backend.base import Backend
 from grabette.config import settings
 from grabette.hardware.frames import build_frames_payload
-from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
+from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState, TactileSample
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class RpiBackend(Backend):
 
     def __init__(
         self, enable_angle: bool = False, enable_oakd: bool = True,
-        oakd_keepalive_s: float = 30.0,
+        oakd_keepalive_s: float = 30.0, enable_tactile: bool = False,
     ) -> None:
         super().__init__()
         self._running = False
@@ -56,12 +56,14 @@ class RpiBackend(Backend):
         self._oakd_initializing = False
         self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
+        self._enable_tactile = enable_tactile
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
 
         self._sync = None
         self._camera = None
         self._angle = None
+        self._tactile = None
         self._oakd = None
         # True when the OAK-D is on because a capture auto-enabled it (the
         # daemon owns its power and will auto-power-down when idle). Survives
@@ -95,6 +97,9 @@ class RpiBackend(Backend):
         if self._enable_angle:
             self._init_angle_sensors()
 
+        if self._enable_tactile:
+            self._init_tactile_sensors()
+
         if self._enable_oakd:
             self._init_oakd()
 
@@ -122,6 +127,23 @@ class RpiBackend(Backend):
         except Exception:
             logger.warning("Angle sensors not available, continuing without them")
             self._angle = None
+
+    def _init_tactile_sensors(self) -> None:
+        try:
+            from grabette.hardware.tactile import TactileCapture
+            self._tactile = TactileCapture(
+                self._sync,
+                port=settings.tactile_port,
+                baudrate=settings.tactile_baudrate,
+                addresses=settings.tactile_address_list,
+                array=settings.tactile_array,
+                sample_rate_hz=settings.tactile_sample_rate_hz,
+            )
+            self._tactile.init_sensors()
+            logger.info("Tactile sensors initialized")
+        except Exception as e:
+            logger.warning("Tactile sensors not available, continuing without them: %s", e)
+            self._tactile = None
 
     async def stop(self) -> None:
         if self._capturing:
@@ -361,13 +383,36 @@ class RpiBackend(Backend):
                 except Exception:
                     pass
 
+        tactile = None
+        if self._tactile is not None:
+            now_ms = time.time() * 1000
+            samples: list[TactileSample] = []
+            if self._capturing:
+                # During capture, read from capture buffers (no bus contention)
+                for addr, buf in self._tactile._samples.sensors.items():
+                    if buf:
+                        last = buf[-1]
+                        samples.append(TactileSample(
+                            timestamp_ms=last["cts"], address=addr, cells=last["value"],
+                        ))
+            else:
+                # When idle, poll the sensors directly
+                try:
+                    for addr, cells in self._tactile.read_latest().items():
+                        samples.append(TactileSample(
+                            timestamp_ms=now_ms, address=addr, cells=cells,
+                        ))
+                except Exception:
+                    pass
+            tactile = samples or None
+
         imu = None
         if self._oakd is not None and self._oakd.is_initialized:
             raw_imu = self._oakd.get_latest_imu()
             if raw_imu is not None:
                 imu = IMUSample(**raw_imu)
 
-        return SensorState(imu=imu, angle=angle, capture=self.get_capture_status())
+        return SensorState(imu=imu, angle=angle, tactile=tactile, capture=self.get_capture_status())
 
     async def prepare_capture(self) -> None:
         """Warm the OAK-D (init if needed + wait until it produces valid,
@@ -443,6 +488,8 @@ class RpiBackend(Backend):
             self._sync.start()
             if self._angle:
                 self._angle.start_capture()
+            if self._tactile:
+                self._tactile.start_capture()
             if self._oakd and self._oakd.is_initialized:
                 self._oakd.start_recording(episode_dir)
             self._camera.start_recording(episode_dir / "raw_video.mp4")
@@ -482,6 +529,28 @@ class RpiBackend(Backend):
             angle_count = len(angle_data.samples)
             angle_samples = angle_data.samples if angle_data.samples else None
         t_phases["angle_stop"] = (time.monotonic() - _t) * 1000
+
+        _t = time.monotonic()
+        tactile_data = None
+        tactile_count = 0
+        if self._tactile:
+            tac = self._tactile.stop()
+            tactile_count = tac.count
+            if tac.count:
+                tactile_data = {
+                    "sample_rate_hz": tac.sample_rate_hz,
+                    "order": "row_major",
+                    "sensors": {
+                        str(a): {
+                            "array": tac.arrays.get(a),
+                            "rows": tac.shapes.get(a, (None, None))[0],
+                            "cols": tac.shapes.get(a, (None, None))[1],
+                            "samples": s,
+                        }
+                        for a, s in tac.sensors.items()
+                    },
+                }
+        t_phases["tactile_stop"] = (time.monotonic() - _t) * 1000
 
         # Finalize OAK and RPi camera concurrently. Both flip their "recording"
         # flag immediately (capture stops at once) and then spend ~1-2s muxing
@@ -531,6 +600,7 @@ class RpiBackend(Backend):
             frame_count=self._camera.frame_count,
             imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
             angle_sample_count=angle_count,
+            tactile_sample_count=tactile_count,
         )
 
         # Build the metadata dict now so all values are captured while state
@@ -542,6 +612,7 @@ class RpiBackend(Backend):
             "frame_count": status.frame_count,
             "imu_sample_count": status.imu_sample_count,
             "angle_sample_count": status.angle_sample_count,
+            "tactile_sample_count": status.tactile_sample_count,
             "fps": actual_fps,
             "backend": "rpi",
             # Identity + convention tags — let downstream readers know which
@@ -579,7 +650,7 @@ class RpiBackend(Backend):
         # REST endpoint) sees stop_capture complete immediately.
         loop.call_soon(
             self._finalize_and_reinit,
-            episode_dir, frame_timestamps, angle_samples, meta, urdf_path,
+            episode_dir, frame_timestamps, angle_samples, tactile_data, meta, urdf_path,
         )
 
         total_ms = t_phases.get("angle_stop", 0) + t_phases.get("muxes_wallclock", 0)
@@ -595,6 +666,7 @@ class RpiBackend(Backend):
         episode_dir,
         frame_timestamps,
         angle_samples,
+        tactile_data,
         meta,
         urdf_path,
     ) -> None:
@@ -614,6 +686,10 @@ class RpiBackend(Backend):
                 if angle_samples is not None:
                     (episode_dir / "angle_data.json").write_text(
                         json.dumps({"samples": angle_samples})
+                    )
+                if tactile_data is not None:
+                    (episode_dir / "tactile_data.json").write_text(
+                        json.dumps(tactile_data)
                     )
                 # Canonical RPi fisheye calibration (KannalaBrandt8).
                 if _CAMERA_INTRINSICS_SRC.is_file():
@@ -670,6 +746,8 @@ class RpiBackend(Backend):
         self._camera.init_camera()
         if self._enable_angle:
             self._init_angle_sensors()
+        if self._enable_tactile:
+            self._init_tactile_sensors()
         self._needs_reinit = False
 
     def get_capture_status(self) -> CaptureStatus:
@@ -679,6 +757,7 @@ class RpiBackend(Backend):
 
         frame_count = self._camera.frame_count if self._camera else 0
         angle_count = self._angle.sample_count if self._angle else 0
+        tactile_count = self._tactile.sample_count if self._tactile else 0
         imu_count = self._oakd.imu_sample_count if (self._oakd and self._oakd.is_recording) else 0
 
         return CaptureStatus(
@@ -689,6 +768,7 @@ class RpiBackend(Backend):
             frame_count=frame_count,
             imu_sample_count=imu_count,
             angle_sample_count=angle_count,
+            tactile_sample_count=tactile_count,
         )
 
     @property

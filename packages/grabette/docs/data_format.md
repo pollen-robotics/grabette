@@ -16,6 +16,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         ├── frame_timestamps.json       # Per-frame timestamps for raw_video
         ├── oakd_imu.json               # OAK-D IMU: accel + gyro + rotation vector (200Hz)
         ├── angle_data.json             # AS5600L joint angles (~85–100Hz)
+        ├── tactile_data.json           # SEN0704 6x6 tactile ADC arrays (50Hz, when enabled)
         ├── rpi_camera_intrinsics.json  # Fisheye KB8 calibration for the primary cam
         ├── frames.json                 # URDF-derived frame transforms, incl. T_camera_in_oak_l
         ├── oakd_left.mp4               # OAK-D left, rectified mono H.264 (default 640×400)
@@ -28,6 +29,20 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         ├── oakd_clock_pairs.json       # OAK-D ↔ SyncManager clock alignment
         └── metadata.json               # Duration, counts, hand, angle_convention, device_id, urdf
 ```
+
+`tactile_data.json` is present only when tactile sensors are enabled (`GRABETTE_TACTILE_SENSORS=true`). It holds one entry per Modbus device address, each carrying its own shape (sensors on one bus may differ, e.g. a 6x6 SEN0704 next to a 4x8 SEN0705). Each sample `value` is a canonical `rows x cols` grid of raw 12-bit ADC ints (0-4095), row-major top-to-bottom:
+
+```json
+{
+  "sample_rate_hz": 50,
+  "order": "row_major",
+  "sensors": {
+    "1": {"array": 36, "rows": 6, "cols": 6, "samples": [{"cts": 0.0, "value": [[0, 0, 0, 0, 0, 0], "... 6 rows ..."]}]}
+  }
+}
+```
+
+`metadata.json` gains a matching `tactile_sample_count`.
 
 The `oakd_*` files are present when the OAK-D was enabled for the capture (it's toggled on demand, default off to save battery); SLAM needs them, so a recording intended for the pipeline is made with the OAK-D on.
 

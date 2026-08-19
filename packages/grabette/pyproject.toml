@@ -29,6 +29,8 @@ rpi = [
     "opencv-python-headless>=4.8",
     "scipy",  # quaternion + rotation math (teleop, dataset processing)
     "rerun-sdk",  # live trajectory visualization for teleop
+    "pyserial",  # UART transport for the tactile sensors
+    "modbus-tk",  # Modbus RTU master for DFRobot SEN0704 tactile sensors
 ]
 hf = [
     "huggingface-hub>=0.20.0",

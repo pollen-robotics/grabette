@@ -67,6 +67,7 @@ def _create_backend():
             enable_angle=settings.angle_sensors,
             enable_oakd=settings.enable_oakd,
             oakd_keepalive_s=settings.oakd_keepalive_s,
+            enable_tactile=settings.tactile_sensors,
         )
     else:  # auto
         try:
@@ -77,6 +78,7 @@ def _create_backend():
                 enable_angle=settings.angle_sensors,
                 enable_oakd=settings.enable_oakd,
                 oakd_keepalive_s=settings.oakd_keepalive_s,
+                enable_tactile=settings.tactile_sensors,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend

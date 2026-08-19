@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     # Angle sensors (AS5600 on I2C buses 4 & 5)
     angle_sensors: bool = True
 
+    # Tactile sensors (DFRobot SEN0704 6x6, Modbus RTU multi-drop on one UART).
+    # Off by default — opt in per device. Multiple sensors share one bus and
+    # are addressed by their Modbus device address (CSV, e.g. "1,2").
+    tactile_sensors: bool = False
+    tactile_port: str = "/dev/ttyAMA0"
+    tactile_baudrate: int = 115200
+    tactile_addresses: str = "1"
+    tactile_array: int = 36
+    tactile_sample_rate_hz: int = 50
+
     # ------------------------------------------------------------------
     # Robot-frame angle convention (matches the gripette runtime):
     #   0 rad        = fingers fully open
@@ -123,6 +133,10 @@ class Settings(BaseSettings):
         if self.proximal_sign is None:
             self.proximal_sign = default["proximal"]
         return self
+
+    @property
+    def tactile_address_list(self) -> list[int]:
+        return [int(a) for a in self.tactile_addresses.split(",") if a.strip()]
 
 
 settings = Settings()
