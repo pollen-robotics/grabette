@@ -293,31 +293,6 @@ async def _wake_space(session, space_url: str, headers: dict,
             f"Open it once in a browser, then retry.")
 
 
-def _space_quality_summary(quality) -> str:
-    """Why the Space rejected episodes, as one line ("" when it says nothing).
-
-    The Space returns per-episode quality data — the actual reasons, e.g.
-    "missing oakd_calib_offline.json" — and this used to be dropped on the floor
-    here, so a conversion that produced nothing reached the operator as either
-    silence or a bare "processing failed". Reasons are counted rather than
-    listed: twenty episodes failing the same way is one fact, not twenty.
-    """
-    if not isinstance(quality, list):
-        return ""
-    counts: dict[str, int] = {}
-    for ep in quality:
-        if not isinstance(ep, dict):
-            continue
-        for reason in (ep.get("errors") or []):
-            key = str(reason).strip()
-            if key:
-                counts[key] = counts.get(key, 0) + 1
-    if not counts:
-        return ""
-    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:3]
-    return "; ".join(f"{reason} ({n} episode(s))" for reason, n in ranked)
-
-
 def _space_excluded_episodes(quality) -> list[dict]:
     """The episodes the Space left out, one entry each, with its reason.
 
@@ -617,23 +592,16 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                 continue
             present.append((eid, ep_dir))
 
-        def _incomplete_summary() -> str:
-            """One line naming what is wrong and how often — the operator needs
-            the failing FILE, not a count of failing episodes."""
-            counts: dict[str, int] = {}
-            for item in incomplete:
-                for name in item["missing"]:
-                    counts[name] = counts.get(name, 0) + 1
-            return ", ".join(f"{name} ({n})" for name, n in
-                             sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
-
         # Nothing left to send: fail NOW instead of uploading zero episodes and
         # letting the build discover it has nothing to convert half an hour later,
         # after every other device has finished pushing.
         if not present and incomplete:
+            # The message says WHAT happened; `incomplete` says which episodes and
+            # why, and the fleet renders that per episode. Naming the files here
+            # too just made the operator read the same causes twice.
             return {"status": "error", "role": role,
-                    "message": (f"none of this device's {len(incomplete)} episode(s) can be "
-                                f"converted — {_incomplete_summary()}"),
+                    "message": (f"none of this device's {len(incomplete)} "
+                                f"episode(s) can be converted"),
                     "uploaded": uploaded, "missing": missing, "incomplete": incomplete}
 
         for eid, ep_dir in present:
@@ -672,8 +640,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                "missing": missing, "incomplete": incomplete}
         if incomplete:
             res["message"] = (f"uploaded {len(uploaded)} episode(s); skipped "
-                              f"{len(incomplete)} that cannot be converted — "
-                              f"{_incomplete_summary()}")
+                              f"{len(incomplete)} that cannot be converted")
         return res
 
     if ctype == "process_dataset":
@@ -758,7 +725,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     sstatus = st.get("status", "running")
                     if sstatus == "done":
                         result_url = st.get("result")
-                        why = _space_quality_summary(st.get("quality"))
+                        excluded = _space_excluded_episodes(st.get("quality"))
                         if not result_url:
                             # "done" with no dataset is NOT a success. The Space
                             # finishes this way when every episode was rejected
@@ -768,19 +735,21 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                             # that was never created, so the operator got a green
                             # "Open <dataset>" leading to a 404. Fail it here, and
                             # carry the Space's own reasons across.
-                            return {"status": "error", "message": (
+                            # The per-episode reasons ride in `excluded`, which
+                            # the fleet reports on its own. The pointer to the log
+                            # is only for the case where the Space told us nothing
+                            # structured at all — otherwise it would send the
+                            # operator hunting for what is already on their screen.
+                            return {"status": "error", "excluded": excluded, "message": (
                                 "the conversion produced no dataset — no episode "
-                                "made it through" + (f": {why}" if why else
-                                                     " (see the Space log for details)"))}
+                                "made it through"
+                                + ("" if excluded else " (see the Space log for details)"))}
+                        # Succeeded, though episodes may still have been dropped:
+                        # `excluded` names them, and that is the only place they
+                        # need naming.
                         res = {"status": "ok", "result_url": result_url}
-                        # Succeeded, but some episodes may still have been
-                        # dropped. Pass BOTH the summary (why) and the per-episode
-                        # list (which), because the fleet has to answer both.
-                        excluded = _space_excluded_episodes(st.get("quality"))
                         if excluded:
                             res["excluded"] = excluded
-                        if why:
-                            res["message"] = f"some episodes were excluded: {why}"
                         return res
                     if sstatus in ("error", "not_found"):
                         # not_found = the Space forgot the job. Its job list lives in
@@ -788,11 +757,9 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                         # redeploy) — say so, rather than echoing "not_found".
                         lost = (f"the Space no longer knows job {space_jid} — it restarted "
                                 f"mid-conversion (its job list is kept in memory)")
-                        why = _space_quality_summary(st.get("quality"))
                         detail = st.get("error") or (
                             lost if sstatus == "not_found" else "the Space reported a failure")
-                        return {"status": "error",
-                                "message": f"{detail} — {why}" if why else detail,
+                        return {"status": "error", "message": detail,
                                 "excluded": _space_excluded_episodes(st.get("quality"))}
         except _CommandCancelled:
             return {"status": "cancelled"}

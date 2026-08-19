@@ -25,20 +25,6 @@ from grabette.app import main
 
 # --- 1. the Space said "done" but pushed nothing -----------------------------
 
-def test_quality_summary_names_the_dominant_reason():
-    quality = [
-        {"name": "a", "errors": ["missing oakd_calib_offline.json"]},
-        {"name": "b", "errors": ["missing oakd_calib_offline.json"]},
-        {"name": "c", "errors": ["SLAM failed: no trajectory produced"]},
-    ]
-
-    summary = main._space_quality_summary(quality)
-
-    # Counted, not listed, and the most frequent reason leads.
-    assert summary.startswith("missing oakd_calib_offline.json (2 episode(s))")
-    assert "SLAM failed: no trajectory produced (1 episode(s))" in summary
-
-
 def test_excluded_episodes_are_split_back_into_recording_and_arm():
     # The Space labels a role-layout episode "20250101_120000/left". The fleet
     # keys everything by episode id, and "which arm" is what tells the operator
@@ -79,14 +65,6 @@ def test_a_partial_conversion_forwards_the_episode_list(monkeypatch):
     assert res["status"] == "ok"
     assert res["excluded"] == [{"episode_id": "ep1", "role": "left",
                                "reason": "missing oakd_calib_offline.json"}]
-
-
-def test_quality_summary_tolerates_junk():
-    # The Space's payload is data from another service; a shape change must not
-    # turn a reportable failure into an exception inside the error path.
-    assert main._space_quality_summary(None) == ""
-    assert main._space_quality_summary([]) == ""
-    assert main._space_quality_summary(["nope", {"errors": []}]) == ""
 
 
 def _process_result(status_payload):
@@ -147,14 +125,33 @@ def test_done_without_a_dataset_is_an_error_not_a_success(monkeypatch):
     monkeypatch.setattr(main, "_wake_space", _awake)
     monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
 
+    # Shape as the Space really emits it: a pre-check failure is recorded with
+    # excluded=True (see _run_pipeline_headless there).
     res = _process_result({"status": "done", "result": None, "quality": [
-        {"name": "20250101_120000/left", "errors": ["missing oakd_calib_offline.json"]},
+        {"name": "20250101_120000/left", "kind": "pre_check", "verdict": "ERROR",
+         "excluded": True, "errors": ["missing oakd_calib_offline.json"]},
     ]})
 
     assert res["status"] == "error"
     assert "no episode made it through" in res["message"].lower()
-    # And it carries the reason, so the operator doesn't have to open the Space.
-    assert "missing oakd_calib_offline.json" in res["message"]
+    # The reasons ride in `excluded`, per episode — the fleet reports them under
+    # the result line, so repeating them in the message only made the operator
+    # read the same causes twice.
+    assert res["excluded"] == [{"episode_id": "20250101_120000", "role": "left",
+                                "reason": "missing oakd_calib_offline.json"}]
+    assert "oakd_calib_offline.json" not in res["message"]
+
+
+def test_a_conversion_that_says_nothing_at_all_points_at_the_log(monkeypatch):
+    # The one case where the message has to carry the operator further: the Space
+    # gave us nothing structured, so there is no panel to send them to.
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    res = _process_result({"status": "done", "result": None})
+
+    assert res["status"] == "error"
+    assert "see the Space log" in res["message"]
 
 
 def test_done_with_a_dataset_is_still_a_success(monkeypatch):
@@ -172,25 +169,33 @@ def test_partial_success_reports_what_was_excluded(monkeypatch):
 
     res = _process_result({
         "status": "done", "result": "https://hf.co/datasets/u/ds",
-        "quality": [{"name": "b", "errors": ["missing oakd_calib_offline.json"]}],
+        "quality": [{"name": "b", "excluded": True,
+                     "errors": ["missing oakd_calib_offline.json"]}],
     })
 
     assert res["status"] == "ok"
-    assert "excluded" in res["message"]
+    assert res["excluded"][0]["episode_id"] == "b"
+    # A successful build needs no message: the panel names the episodes.
+    assert "message" not in res
 
 
-def test_space_error_is_enriched_with_the_reasons(monkeypatch):
+def test_a_space_error_says_what_happened_and_lists_which(monkeypatch):
+    # Split on purpose: the message answers "what went wrong", the list answers
+    # "which of my takes are gone, and why". Putting both in the message was the
+    # redundancy — the operator read the causes once in the error line and again
+    # in the panel right below it.
     monkeypatch.setattr(main, "_wake_space", _awake)
     monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
 
     res = _process_result({
         "status": "error", "error": "No recording has all the arms (left+right)",
-        "quality": [{"name": "a/left", "errors": ["missing oakd_calib_offline.json"]}],
+        "quality": [{"name": "a/left", "excluded": True,
+                     "errors": ["missing oakd_calib_offline.json"]}],
     })
 
     assert res["status"] == "error"
-    assert "No recording has all the arms" in res["message"]
-    assert "missing oakd_calib_offline.json" in res["message"]
+    assert res["message"] == "No recording has all the arms (left+right)"
+    assert res["excluded"][0]["reason"] == "missing oakd_calib_offline.json"
 
 
 async def _awake(*a, **kw):
@@ -315,11 +320,12 @@ def test_an_episode_missing_its_calibration_is_never_uploaded(tmp_path, monkeypa
 
     assert res["status"] == "ok"
     assert hf.calls == ["ep_ok/left"]
+    # A build quietly assembled from a subset is the failure this accounting
+    # exists to prevent — but the naming happens in `incomplete`, which the fleet
+    # renders per episode, not a second time in the message.
     assert res["incomplete"] == [
         {"episode_id": "ep_bad", "missing": ["oakd_calib_offline.json"]}]
-    # And it SAYS so — a build quietly assembled from a subset is the failure
-    # this accounting exists to prevent.
-    assert "oakd_calib_offline.json" in res["message"]
+    assert res["message"] == "uploaded 1 episode(s); skipped 1 that cannot be converted"
 
 
 def test_nothing_convertible_fails_immediately(tmp_path, monkeypatch):
@@ -332,8 +338,8 @@ def test_nothing_convertible_fails_immediately(tmp_path, monkeypatch):
 
     assert res["status"] == "error"
     assert hf.calls == []
-    assert "can be converted" in res["message"]
-    assert "oakd_calib_offline.json (1)" in res["message"]
+    assert res["message"] == "none of this device's 1 episode(s) can be converted"
+    assert res["incomplete"][0]["missing"] == ["oakd_calib_offline.json"]
 
 
 def test_a_complete_batch_uploads_untouched(tmp_path, monkeypatch):
