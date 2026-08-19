@@ -46,7 +46,7 @@ Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. N
 #### Prerequisites
 
 <details>
-<summary> Flash the SD card</summary>
+<summary> 1. Flash the SD card</summary>
 
 1. Download the latest Raspberry Pi Imager from <a href="https://www.raspberrypi.com/software/">here</a>.
 2. Plug in your SD card and select Raspberry Pi OS Lite (64-bit) for Raspberry Pi 4.
@@ -60,7 +60,7 @@ Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. N
 </details>
 
 
-Install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (requires reboot):
+2. Install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (requires reboot):
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh 
 sudo cp config/config.txt /boot/firmware
@@ -92,17 +92,24 @@ If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using 
 
 #### systemd (auto-start on boot)
 
-`make install-systemd` installs **both** services (`grabette.service` and `grabette-bluetooth.service`), runs `ensure-ble-only` to set BlueZ to `ControllerMode = le`, then `enable --now`s them so they're up immediately and across reboots.
-
 ```bash
 make install-systemd
 journalctl -u grabette -f               # daemon logs
 journalctl -u grabette-bluetooth -f     # BLE WiFi-setup service logs
 ```
+`make install-systemd` installs **both** services (`grabette.service` and `grabette-bluetooth.service`), runs `ensure-ble-only` to set BlueZ to `ControllerMode = le`, then `enable --now`s them so they're up immediately and across reboots.
 
 If you re-run `install-systemd` while the services are already up, `enable --now` does NOT restart them — issue `sudo systemctl restart grabette grabette-bluetooth` to pick up updated unit files.
 
 To put the device on WiFi without a screen or SSH, use the BLE setup service — see **[docs/bluetooth_setup.md](docs/bluetooth_setup.md)**.
+
+## Calibration
+
+Before using Grabette, calibrate the angle sensors. For that, open completely the gripper (Both joints must be fully extended when opening), then run the calibration script:
+```bash
+python3 scripts/calibrate_angles.py
+sudo reboot
+```
 
 ## Usage
 
