@@ -16,6 +16,9 @@ dependencies = [
     # build on a 64-bit Pi Zero 2W OS (a 32-bit armv7l OS would build from
     # source via Rust, ~slow; deploy 64-bit Pi OS).
     "cryptography>=42.0",
+    # Fleet client: async HTTP for the relay poll loop; HF token + auth.
+    "aiohttp>=3.9",
+    "huggingface-hub>=0.20.0",
 ]
 
 [project.optional-dependencies]
