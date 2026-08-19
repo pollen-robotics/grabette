@@ -10,6 +10,7 @@ import pandas as pd
 
 from grabette_postprocess.trajectory import (
     interpolate_angles,
+    load_tactile_streams,
     quaternion_to_axis_angle,
     trajectory_to_poses,
 )
@@ -81,3 +82,26 @@ def test_interpolate_angles_clamps_out_of_range(tmp_path):
     out = interpolate_angles(tmp_path / "angle_data.json", np.array([-5.0, 99.0]))
     np.testing.assert_allclose(out[0], [0.0, 0.0], atol=1e-6)   # clamp to first
     np.testing.assert_allclose(out[1], [2.0, 1.0], atol=1e-6)   # clamp to last
+
+
+def test_load_tactile_streams(tmp_path):
+    (tmp_path / "tactile_data.json").write_text(json.dumps({
+        "sample_rate_hz": 50, "order": "row_major",
+        "sensors": {
+            "1": {"array": 36, "rows": 6, "cols": 6, "samples": [
+                {"cts": 0, "value": [[0] * 6 for _ in range(6)]},
+                {"cts": 1000, "value": [[7] * 6 for _ in range(6)]},
+            ]},
+            "2": {"array": 32, "rows": 4, "cols": 8, "samples": [
+                {"cts": 500, "value": [[3] * 8 for _ in range(4)]},
+            ]},
+        }}))
+    streams = load_tactile_streams(tmp_path / "tactile_data.json")
+    assert set(streams) == {1, 2}
+    cts1, vals1 = streams[1]
+    np.testing.assert_allclose(cts1, [0.0, 1.0])  # ms -> s
+    assert vals1.shape == (2, 6, 6)
+    np.testing.assert_array_equal(vals1[1], 7)
+    cts2, vals2 = streams[2]
+    np.testing.assert_allclose(cts2, [0.5])
+    assert vals2.shape == (1, 4, 8)

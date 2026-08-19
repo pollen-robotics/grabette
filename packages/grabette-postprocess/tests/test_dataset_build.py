@@ -46,6 +46,11 @@ def _make_episode(ep_dir):
         json.dumps({"samples": [{"host_ms": t} for t in TS_MS]}))
     (ep_dir / "angle_data.json").write_text(json.dumps({"samples": [
         {"cts": t, "value": [0.1 * i, 0.2 * i]} for i, t in enumerate(TS_MS)]}))
+    (ep_dir / "tactile_data.json").write_text(json.dumps({
+        "sample_rate_hz": 50, "order": "row_major",
+        "sensors": {"1": {"array": 36, "rows": 6, "cols": 6, "samples": [
+            {"cts": t, "value": [[i] * 6 for _ in range(6)]}
+            for i, t in enumerate(TS_MS)]}}}))
     # trajectory: 4 tracked frames, moving along +x, identity rotation
     rows = [[i, TS_MS[i] / 1000.0, "OK", 0, 0, 0.01 * i, 0.0, 0.0, 0, 0, 0, 1]
             for i in range(N)]
@@ -69,6 +74,8 @@ def test_build_dataset_roundtrip(tmp_path):
     assert feats["observation.images.cam1"]["dtype"] == "video"
     assert tuple(feats["action"]["shape"]) == (8,)
     assert "is_lost" in feats
+    assert tuple(feats["observation.tactile.sensor_1"]["shape"]) == (6, 6)
+    assert feats["observation.tactile.sensor_1"]["dtype"] == "int16"
 
     assert ds.meta.total_episodes == 1
     assert ds.meta.total_frames == N
@@ -79,3 +86,8 @@ def test_build_dataset_roundtrip(tmp_path):
     action = np.asarray(sample["action"]).ravel()
     assert action.shape == (8,)
     np.testing.assert_allclose(action[:6], 0.0, atol=1e-5)  # first pose = origin+identity
+
+    # tactile: frame 0 -> all zeros (sample i=0), 6x6 grid
+    tactile0 = np.asarray(sample["observation.tactile.sensor_1"])
+    assert tactile0.shape == (6, 6)
+    np.testing.assert_array_equal(tactile0, 0)
