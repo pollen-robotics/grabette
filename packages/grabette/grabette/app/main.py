@@ -588,7 +588,12 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                 continue
             lacks = missing_files(ep_dir)
             if lacks:
-                incomplete.append({"episode_id": eid, "missing": lacks})
+                # The arm matters as much as the recording: it says which
+                # grabette to go and look at, and it is what lets the fleet
+                # recognise the SAME arm being reported again by the conversion
+                # (which drops the whole recording once an arm is absent) instead
+                # of listing one lost take twice.
+                incomplete.append({"episode_id": eid, "role": role, "missing": lacks})
                 continue
             present.append((eid, ep_dir))
 

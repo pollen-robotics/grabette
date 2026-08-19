@@ -324,7 +324,7 @@ def test_an_episode_missing_its_calibration_is_never_uploaded(tmp_path, monkeypa
     # exists to prevent — but the naming happens in `incomplete`, which the fleet
     # renders per episode, not a second time in the message.
     assert res["incomplete"] == [
-        {"episode_id": "ep_bad", "missing": ["oakd_calib_offline.json"]}]
+        {"episode_id": "ep_bad", "role": "left", "missing": ["oakd_calib_offline.json"]}]
     assert res["message"] == "uploaded 1 episode(s); skipped 1 that cannot be converted"
 
 
