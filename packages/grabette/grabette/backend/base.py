@@ -1,59 +1,16 @@
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 from grabette.models import CaptureStatus, SensorState
 
-logger = logging.getLogger(__name__)
-
 
 class Backend(ABC):
-    def __init__(self) -> None:
-        # Optional capture-state LED, registered by the physical-button daemon
-        # (see ButtonListener). The backend drives it on the shared capture
-        # path so every trigger source — physical button, dashboard REST, fleet
-        # relay — gets the same LED feedback. None when no LED hardware exists.
-        self._led = None
-
-    def set_led_controller(self, led) -> None:
-        """Register the capture-state LED (object with led_on/off/blink).
-
-        The owner (ButtonListener) keeps the hardware lifecycle; the backend
-        only drives feedback during start_capture/stop_capture.
-        """
-        self._led = led
-
-    # -- LED feedback helpers (no-op when no LED is registered) -----------------
-    # All swallow errors: an LED/GPIO glitch must never break a capture.
-
-    def _led_recording(self) -> None:
-        """Solid LED — recording is live."""
-        if self._led is None:
-            return
-        try:
-            self._led.led_on()
-        except Exception:
-            logger.exception("LED on failed")
-
-    def _led_saving(self) -> None:
-        """Blinking LED — warming up / saving (capture not yet, or no longer, live)."""
-        if self._led is None:
-            return
-        try:
-            self._led.led_blink()
-        except Exception:
-            logger.exception("LED blink failed")
-
-    def _led_idle(self) -> None:
-        """LED off — idle / ready / error."""
-        if self._led is None:
-            return
-        try:
-            self._led.led_off()
-        except Exception:
-            logger.exception("LED off failed")
+    # The capture-state LED is NOT driven from here: ButtonListener owns it and
+    # keeps it in sync with the capture state from its own monitor thread, so a
+    # capture started by the button, the dashboard or the fleet all light up the
+    # same way. See button_listener._desired_led.
 
     @abstractmethod
     async def start(self) -> None: ...
@@ -65,7 +22,37 @@ class Backend(ABC):
     def get_state(self) -> SensorState: ...
 
     @abstractmethod
-    async def start_capture(self, session_dir: Path) -> None: ...
+    async def start_capture(self, episode_dir: Path) -> None: ...
+
+    def set_sync_metadata(self, meta: dict) -> None:
+        """Attach multi-device sync info to the NEXT episode's metadata.json.
+
+        Set by the CaptureScheduler around a synchronized start (the shared
+        scheduled_start_utc, the actual capture-start instant, skew). stop_capture
+        folds it into metadata.json so a workstation can (a) pair the per-device
+        episodes by the common scheduled_start_utc and (b) convert each stream to
+        absolute UTC to align them. Consumed once (cleared after)."""
+        self._sync_metadata = dict(meta or {})
+
+    def _take_sync_metadata(self) -> dict:
+        """Return and clear the pending sync metadata (so a later solo capture
+        never inherits a previous synchronized episode's data)."""
+        meta = getattr(self, "_sync_metadata", {})
+        self._sync_metadata = {}
+        return meta
+
+    async def prepare_capture(self) -> None:
+        """Warm the hardware (init + wait until it produces valid frames)
+        WITHOUT starting a recording, so a later start_capture can begin the
+        recording clock immediately.
+
+        This exists for synchronized multi-device starts: if each device only
+        warms up at the shared T0 (inside start_capture), the recording clock
+        lands at T0 + a VARIABLE warmup, so devices drift apart (the OAK-D
+        cold-boot alone is several seconds). Calling this before T0 removes
+        that variance from the start. Idempotent, fast when already warm.
+        Default: no-op (backends with no slow init)."""
+        return None
 
     @abstractmethod
     async def stop_capture(self) -> CaptureStatus: ...

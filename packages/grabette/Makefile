@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff ensure-ble-only help
+.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff install-ntp ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -13,6 +13,7 @@ help:
 	@echo "  ensure-ble-only       Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
 	@echo "  install-poweroff      Allow 'rasp' user to power off the Pi from the web UI"
+	@echo "  install-ntp           Pin NTP to a shared time service (tight multi-device start sync)"
 	@echo ""
 	@echo "HAND must be 'left' or 'right' — this grabette's hand. Determines the per-sensor"
 	@echo "sign mapping in grabette/hardware/angle.py, written to /etc/grabette/env as"
@@ -21,7 +22,7 @@ help:
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: check-hand install-udev-oak
+install-rpi: check-hand install-udev-oak install-ntp
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
@@ -124,6 +125,20 @@ install-poweroff:
 		echo "sudoers syntax check failed, aborting"; rm -f $$tmp; exit 1; \
 	fi; \
 	rm -f $$tmp
+
+# Pin systemd-timesyncd to a single coordinated (anycast) time service, shared
+# by every grabette, so their clocks track each other tightly — required for
+# tight multi-device recording start sync (each device waits out the shared T0
+# on its own clock, so any inter-device clock offset becomes a start offset).
+# Idempotent. See config/timesyncd-grabette.conf for the why + the local-server
+# alternative for sub-ms.
+install-ntp:
+	sudo mkdir -p /etc/systemd/timesyncd.conf.d
+	sudo install -m 0644 -o root -g root config/timesyncd-grabette.conf \
+	  /etc/systemd/timesyncd.conf.d/grabette.conf
+	sudo systemctl restart systemd-timesyncd
+	@echo "Installed NTP drop-in. timesync status:"
+	@timedatectl timesync-status 2>/dev/null | grep -Ei 'Server|Offset' || true
 
 # Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
 ensure-ble-only:

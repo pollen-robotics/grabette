@@ -76,7 +76,14 @@ jobs:
       - name: Device-package unit tests
         # Behavioural regression tests (grabette SessionManager, ...), run
         # against a temp-dir/mock path — no hardware. Extend per package.
-        run: uv run --package grabette --extra test pytest packages/grabette/tests -q
+        #
+        # --extra hf installs the fleet/HF feature set (aiohttp, huggingface-hub).
+        # It is optional at RUNTIME — a grabette with no fleet doesn't need it —
+        # but the group start/stop tests exercise exactly that code, and
+        # relay_client imports aiohttp at module level. The alternative, putting a
+        # runtime library in the `test` extra, would blur what that extra means:
+        # test tooling, installed on top of the feature set under test.
+        run: uv run --package grabette --extra test --extra hf pytest packages/grabette/tests -q
 
       - name: Postprocess unit tests
         # Trajectory math + SLAM-quality / recording checks + episode tags.

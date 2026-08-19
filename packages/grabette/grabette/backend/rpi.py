@@ -49,11 +49,12 @@ class RpiBackend(Backend):
         self._start_time: float | None = None
         self._capturing = False
         self._starting = False
+        self._stopping = False  # True during stop_capture teardown (drives the fast-blink LED)
         # True while the OAK-D device is being brought up (init in progress).
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
         self._oakd_initializing = False
-        self._capture_session_dir: Path | None = None
+        self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
@@ -368,17 +369,37 @@ class RpiBackend(Backend):
 
         return SensorState(imu=imu, angle=angle, capture=self.get_capture_status())
 
-    async def start_capture(self, session_dir: Path) -> None:
+    async def prepare_capture(self) -> None:
+        """Warm the OAK-D (init if needed + wait until it produces valid,
+        post-warmup frames) without starting a recording. Called before a
+        synchronized T0 so start_capture at T0 only starts the recording clock
+        — the multi-second, variable OAK-D bring-up no longer sits between T0
+        and the first frame. Idempotent; fast no-op when already warm."""
+        if self._capturing:
+            return
+        import asyncio
+        loop = asyncio.get_event_loop()
+        # Keep it warm for the imminent capture (don't let a keep-alive power
+        # it down between now and T0).
+        self._cancel_oakd_keepalive()
+        if not self.is_oakd_initialized:
+            await self.set_oakd_enabled(True)
+            self._oakd_auto_enabled = True
+        if self._needs_reinit:
+            self._reinit_hardware()
+        if self._oakd and self._oakd.is_initialized:
+            await loop.run_in_executor(
+                None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
+            )
+
+    async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
 
+        # _starting drives the LED (blink = warming up) via ButtonListener's
+        # state monitor; the finally below clears it whether the start path
+        # succeeds or fails.
         self._starting = True
-        # Blink while the start path runs — it may spend several seconds warming
-        # up the OAK-D before the recording clock starts. Driven here (not in the
-        # button daemon) so dashboard- and fleet-initiated captures get the same
-        # LED feedback as a physical button press. Goes solid only once recording
-        # is genuinely live; off on failure.
-        self._led_saving()
         import asyncio
         loop = asyncio.get_event_loop()
 
@@ -410,7 +431,7 @@ class RpiBackend(Backend):
                     None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
                 )
 
-            self._capture_session_dir = session_dir
+            self._episode_dir = episode_dir
 
             # Set flag BEFORE starting streams so the daemon poll loop
             # (get_state) reads from capture buffers instead of doing
@@ -423,35 +444,21 @@ class RpiBackend(Backend):
             if self._angle:
                 self._angle.start_capture()
             if self._oakd and self._oakd.is_initialized:
-                self._oakd.start_recording(session_dir)
-            self._camera.start_recording(session_dir / "raw_video.mp4")
-        except Exception:
-            self._led_idle()
-            raise
+                self._oakd.start_recording(episode_dir)
+            self._camera.start_recording(episode_dir / "raw_video.mp4")
         finally:
             self._starting = False
 
-        # Recording is live — solid LED.
-        self._led_recording()
-        logger.info("RpiBackend capture started → %s", session_dir)
+        logger.info("RpiBackend capture started → %s", episode_dir)
 
     async def stop_capture(self) -> CaptureStatus:
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
         self._starting = False
-        # Acknowledge the stop immediately: capture ends at once, but the mp4
-        # mux below takes a few seconds. Blink to show "saving" instead of a
-        # solid LED (which would read as "still recording"). The finally turns
-        # it off when the save completes. Driven here so dashboard/fleet stops
-        # get the same feedback as a button press.
-        self._led_saving()
-        try:
-            return await self._stop_capture()
-        finally:
-            self._led_idle()
-
-    async def _stop_capture(self) -> CaptureStatus:
+        # Mark stopping now (before the ~1-2s stream teardown + mux) so the LED
+        # fast-blinks from the moment stop begins until the capture is fully down.
+        self._stopping = True
         # Keep _capturing = True until ALL streams have stopped, to
         # prevent the daemon poll loop (get_state) from doing direct
         # I2C reads while the angle capture thread is still running.
@@ -498,6 +505,7 @@ class RpiBackend(Backend):
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
+        self._stopping = False  # teardown done → LED goes off (idle)
 
         # If the daemon auto-enabled the OAK-D for this capture, keep it warm
         # for the grace period so a back-to-back recording starts instantly,
@@ -518,7 +526,7 @@ class RpiBackend(Backend):
 
         status = CaptureStatus(
             is_capturing=False,
-            session_id=self._capture_session_dir.name if self._capture_session_dir else None,
+            episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=duration,
             frame_count=self._camera.frame_count,
             imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
@@ -551,10 +559,15 @@ class RpiBackend(Backend):
         }
         if oakd_stats:
             meta["oakd"] = oakd_stats
+        # Drain the sync metadata while state is still live — _take_sync_metadata
+        # consumes it, so it has to happen here and not in the deferred writer.
+        sync_meta = self._take_sync_metadata()
+        if sync_meta:
+            meta["sync"] = sync_meta
 
-        # Snapshot session_dir + clear so a fast restart doesn't collide.
-        session_dir = self._capture_session_dir
-        self._capture_session_dir = None
+        # Snapshot episode_dir + clear so a fast restart doesn't collide.
+        episode_dir = self._episode_dir
+        self._episode_dir = None
         self._sync.reset()
 
         # Defer file writes AND hardware re-init OUT of the stop path. The
@@ -566,7 +579,7 @@ class RpiBackend(Backend):
         # REST endpoint) sees stop_capture complete immediately.
         loop.call_soon(
             self._finalize_and_reinit,
-            session_dir, frame_timestamps, angle_samples, meta, urdf_path,
+            episode_dir, frame_timestamps, angle_samples, meta, urdf_path,
         )
 
         total_ms = t_phases.get("angle_stop", 0) + t_phases.get("muxes_wallclock", 0)
@@ -579,7 +592,7 @@ class RpiBackend(Backend):
 
     def _finalize_and_reinit(
         self,
-        session_dir,
+        episode_dir,
         frame_timestamps,
         angle_samples,
         meta,
@@ -594,17 +607,17 @@ class RpiBackend(Backend):
         """
         _t = time.monotonic()
         try:
-            if session_dir:
-                (session_dir / "frame_timestamps.json").write_text(
+            if episode_dir:
+                (episode_dir / "frame_timestamps.json").write_text(
                     json.dumps(frame_timestamps)
                 )
                 if angle_samples is not None:
-                    (session_dir / "angle_data.json").write_text(
+                    (episode_dir / "angle_data.json").write_text(
                         json.dumps({"samples": angle_samples})
                     )
                 # Canonical RPi fisheye calibration (KannalaBrandt8).
                 if _CAMERA_INTRINSICS_SRC.is_file():
-                    (session_dir / "rpi_camera_intrinsics.json").write_bytes(
+                    (episode_dir / "rpi_camera_intrinsics.json").write_bytes(
                         _CAMERA_INTRINSICS_SRC.read_bytes()
                     )
                 else:
@@ -616,7 +629,7 @@ class RpiBackend(Backend):
                 if urdf_path.is_file():
                     try:
                         frames_payload = build_frames_payload(urdf_path)
-                        (session_dir / "frames.json").write_text(
+                        (episode_dir / "frames.json").write_text(
                             json.dumps(frames_payload, indent=2)
                         )
                     except Exception as e:
@@ -627,7 +640,7 @@ class RpiBackend(Backend):
                     )
                 # metadata.json goes last so its presence signals the episode
                 # is fully saved to any watcher.
-                (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+                (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
         except Exception:
             logger.exception("Deferred file writes failed")
         writes_ms = (time.monotonic() - _t) * 1000
@@ -671,7 +684,7 @@ class RpiBackend(Backend):
         return CaptureStatus(
             is_capturing=self._capturing,
             is_starting=self._starting,
-            session_id=self._capture_session_dir.name if self._capture_session_dir else None,
+            episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,
             imu_sample_count=imu_count,
@@ -681,6 +694,14 @@ class RpiBackend(Backend):
     @property
     def is_capturing(self) -> bool:
         return self._capturing
+
+    @property
+    def is_starting(self) -> bool:
+        return self._starting
+
+    @property
+    def is_stopping(self) -> bool:
+        return self._stopping
 
     def get_frame_jpeg(self) -> bytes | None:
         """Capture a JPEG frame from picamera2.
