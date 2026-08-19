@@ -76,6 +76,7 @@ class HuggingFaceClient:
         episode_dir: Path,
         repo_id: str,
         progress_callback=None,
+        path_in_repo: str | None = None,
         private: bool = False,
     ) -> str:
         """Upload an episode directory to HuggingFace Hub.
@@ -84,19 +85,26 @@ class HuggingFaceClient:
             episode_dir: Path to the episode directory (the entire folder is uploaded)
             repo_id: HuggingFace repo ID (e.g., "username/grabette-data")
             progress_callback: Optional callable(percent: float, message: str)
+            path_in_repo: Destination path inside the repo. Defaults to the
+                episode id (the dir name). For a multi-device raw dataset pass
+                "{episode_id}/{role}" so each device's stream for the SAME
+                episode lands in its own subfolder instead of colliding.
             private: Whether the repository should be created as private
 
         Returns:
             URL of the uploaded data on HuggingFace Hub.
         """
         api = self._get_api()
-        episode_id = episode_dir.name
+        dest = path_in_repo or episode_dir.name
 
         if progress_callback:
             progress_callback(0.0, "Creating repository...")
 
-        # Create repo if it doesn't exist
-        api.create_repo(repo_id, repo_type="dataset", exist_ok=True, private=private)
+        # Create repo if it doesn't exist. `private` takes effect only on the
+        # FIRST create (exist_ok=True won't flip an existing repo's visibility);
+        # since all of a job's devices pass the same value, whichever creates it
+        # first sets it correctly.
+        api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
 
         if progress_callback:
             progress_callback(10.0, "Uploading files...")
@@ -106,17 +114,12 @@ class HuggingFaceClient:
             folder_path=str(episode_dir),
             repo_id=repo_id,
             repo_type="dataset",
-            path_in_repo=episode_id,
+            path_in_repo=dest,
         )
 
         if progress_callback:
             progress_callback(100.0, "Upload complete")
 
-        url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{episode_id}"
-        logger.info("Episode %s uploaded to %s", episode_id, url)
+        url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{dest}"
+        logger.info("Episode %s uploaded to %s", episode_dir.name, url)
         return url
-
-    def delete_dataset(self, repo_id: str) -> None:
-        api = self._get_api()
-        api.delete_repo(repo_id, repo_type="dataset")
-        logger.info("Deleted dataset %s", repo_id)

@@ -26,7 +26,7 @@ class MockBackend(Backend):
         self._start_time: float | None = None
         self._capturing = False
         self._capture_start: float | None = None
-        self._capture_session_dir: Path | None = None
+        self._episode_dir: Path | None = None
         self._capture_task: asyncio.Task | None = None
         self._frame_count = 0
         self._imu_sample_count = 0
@@ -69,17 +69,17 @@ class MockBackend(Backend):
             capture=self.get_capture_status(),
         )
 
-    async def start_capture(self, session_dir: Path) -> None:
+    async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
         self._capturing = True
         self._capture_start = time.time()
-        self._capture_session_dir = session_dir
+        self._episode_dir = episode_dir
         self._frame_count = 0
         self._imu_sample_count = 0
         self._angle_sample_count = 0
         self._capture_task = asyncio.create_task(self._mock_capture_loop())
-        logger.info("MockBackend capture started → %s", session_dir)
+        logger.info("MockBackend capture started → %s", episode_dir)
 
     async def _mock_capture_loop(self) -> None:
         """Simulate capture by incrementing counters."""
@@ -107,11 +107,11 @@ class MockBackend(Backend):
         status = self.get_capture_status()
 
         # Write mock output files
-        if self._capture_session_dir:
-            self._write_mock_outputs(self._capture_session_dir, status)
+        if self._episode_dir:
+            self._write_mock_outputs(self._episode_dir, status)
 
         self._capture_start = None
-        self._capture_session_dir = None
+        self._episode_dir = None
         self._frame_count = 0
         self._imu_sample_count = 0
         self._angle_sample_count = 0
@@ -124,7 +124,7 @@ class MockBackend(Backend):
             duration = time.time() - self._capture_start
         return CaptureStatus(
             is_capturing=self._capturing,
-            session_id=self._capture_session_dir.name if self._capture_session_dir else None,
+            episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=self._frame_count,
             imu_sample_count=self._imu_sample_count,
@@ -134,6 +134,14 @@ class MockBackend(Backend):
     @property
     def is_capturing(self) -> bool:
         return self._capturing
+
+    @property
+    def is_starting(self) -> bool:
+        return False  # mock starts instantly — no warm-up window
+
+    @property
+    def is_stopping(self) -> bool:
+        return False  # mock stops instantly — no teardown window
 
     @property
     def is_camera_connected(self) -> bool:
@@ -197,7 +205,7 @@ class MockBackend(Backend):
 
         return bytes(bmp_data)
 
-    def _write_mock_outputs(self, session_dir: Path, status: CaptureStatus) -> None:
+    def _write_mock_outputs(self, episode_dir: Path, status: CaptureStatus) -> None:
         # Mock IMU data
         n_samples = status.imu_sample_count or 100
         duration_ms = status.duration_seconds * 1000
@@ -217,12 +225,12 @@ class MockBackend(Backend):
                 angle_samples.append({"cts": t, "value": [0.0, 0.0]})
 
         write_imu_json(
-            accel_samples, gyro_samples, FPS, session_dir / "imu_data.json",
+            accel_samples, gyro_samples, FPS, episode_dir / "imu_data.json",
             angle_samples=angle_samples,
         )
 
         # Placeholder video file
-        (session_dir / "raw_video.mp4").write_bytes(b"MOCK_VIDEO")
+        (episode_dir / "raw_video.mp4").write_bytes(b"MOCK_VIDEO")
 
         # Metadata — mirror the rpi backend's identity + convention tags so
         # dev-mode recordings have the same shape as production ones.
@@ -242,4 +250,7 @@ class MockBackend(Backend):
             # schema uniform across backends.
             "urdf": f"grabette_{settings.hand}",
         }
-        (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        sync_meta = self._take_sync_metadata()
+        if sync_meta:
+            meta["sync"] = sync_meta
+        (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))

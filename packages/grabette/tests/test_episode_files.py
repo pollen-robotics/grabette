@@ -1,7 +1,7 @@
 """The on-device readers must handle both episode layouts.
 
 Captures write `dcam_*` now. Episodes already sitting in ~/grabette-data on
-deployed devices use `oakd_*`, and the dashboard and replay engine read them
+deployed devices use `oakd_*`, and the dashboard (TaskManager) and replay engine read them
 directly — so if the fallback breaks, an operator's existing episodes start
 reporting "no IMU" and replaying without accelerometer data.
 
@@ -60,26 +60,26 @@ def _episode(root, name, files, meta=None):
 
 @pytest.mark.parametrize("imu_file", ["dcam_imu.json", "oakd_imu.json"])
 def test_session_reports_has_imu_for_either_layout(tmp_path, imu_file):
-    from grabette.session import SessionManager
+    from grabette.task import TaskManager
 
     _episode(tmp_path, "ep", [imu_file, "raw_video.mp4"])
-    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep")
+    info = TaskManager(data_dir=tmp_path)._get_episode_info("ep")
     assert info.has_imu is True
 
 
 def test_session_reports_no_imu_for_an_imu_less_camera(tmp_path):
     # A Gemini 305 episode has neither file. That is a legitimate absence.
-    from grabette.session import SessionManager
+    from grabette.task import TaskManager
 
     _episode(tmp_path, "ep", ["dcam_left.mp4", "raw_video.mp4"])
-    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep")
+    info = TaskManager(data_dir=tmp_path)._get_episode_info("ep")
     assert info.has_imu is False
 
 
 @pytest.mark.parametrize("meta_key", ["dcam", "oakd"])
 def test_session_imu_count_from_either_metadata_key(tmp_path, meta_key):
-    from grabette.session import SessionManager
+    from grabette.task import TaskManager
 
     _episode(tmp_path, "ep", ["dcam_imu.json"], meta={meta_key: {"imu_samples": 2115}})
-    info = SessionManager(data_dir=tmp_path)._get_episode_info("ep")
+    info = TaskManager(data_dir=tmp_path)._get_episode_info("ep")
     assert info.imu_sample_count == 2115

@@ -18,7 +18,7 @@ class AngleSample(BaseModel):
 class CaptureStatus(BaseModel):
     is_capturing: bool = False
     is_starting: bool = False
-    session_id: str | None = None
+    episode_id: str | None = None  # id of the episode being / just captured
     duration_seconds: float = 0.0
     frame_count: int = 0
     imu_sample_count: int = 0

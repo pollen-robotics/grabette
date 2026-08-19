@@ -1,15 +1,15 @@
-"""Gradio dashboard for Grabette — camera view, capture controls, session/episode management."""
+"""Gradio dashboard for Grabette — camera view, capture controls, task/session/episode management."""
 
 from __future__ import annotations
 
 import io
 import logging
 import math
-import time
 
 import gradio as gr
 from PIL import Image
 
+from grabette.config import settings
 from grabette.ui.api_client import GrabetteClient
 
 logger = logging.getLogger(__name__)
@@ -73,26 +73,6 @@ _ANGLE_IFRAME_HTML = (
     'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
-# Replacement HTML used while teleop is active. gr.update(value="") doesn't
-# seem to force a DOM swap (Gradio may treat empty as no-op), so we use an
-# explicit non-empty placeholder. Same height as the real iframes to avoid
-# layout shift; src=about:blank guarantees no /api/state/history polling.
-_GYRO_IFRAME_PAUSED = (
-    '<iframe src="about:blank" '
-    'style="width:100%;height:28vh;border:none;'
-    'border-radius:8px;background:#1a1a1a;"></iframe>'
-)
-_ACCEL_IFRAME_PAUSED = (
-    '<iframe src="about:blank" '
-    'style="width:100%;height:28vh;border:none;'
-    'border-radius:8px;background:#1a1a1a;"></iframe>'
-)
-_ANGLE_IFRAME_PAUSED = (
-    '<iframe src="about:blank" '
-    'style="width:100%;height:28vh;border:none;'
-    'border-radius:8px;background:#1a1a1a;"></iframe>'
-)
-
 _WIFI_SETTINGS_HTML = (
     '<iframe src="/api/wifi/setup" id="wifi-iframe" scrolling="no"'
     ' onload="var f=this;(function r(){'
@@ -282,60 +262,11 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     )
 
 
-def _text_bar(pct: float, width: int = 22) -> str:
-    """Render a fixed-width text progress bar like ██████░░░░ for markdown."""
-    pct = max(0.0, min(100.0, pct))
-    filled = int(round(pct / 100.0 * width))
-    return "`" + "█" * filled + "░" * (width - filled) + f"` {pct:.0f}%"
-
-
-def _upload_progress_md(repo_id: str, rows: list[dict], finished: bool) -> str:
-    """Build the markdown shown while/after pushing episodes to HF Hub.
-
-    rows: list of {episode_id, status, progress, message}. A pure function so
-    it's easy to reason about — the polling loop just feeds it fresh job state.
-    """
-    total = len(rows)
-    done = sum(1 for r in rows if r["status"] in ("completed", "failed"))
-    ok = sum(1 for r in rows if r["status"] == "completed")
-    # Overall %: finished jobs count as 100, in-flight contribute their own %.
-    overall = (
-        sum(100.0 if r["status"] in ("completed", "failed") else r.get("progress", 0.0)
-            for r in rows) / total
-        if total else 0.0
-    )
-
-    icon = {"completed": "✅", "failed": "❌", "running": "⏳", "pending": "⏳"}
-    lines: list[str] = []
-    if finished:
-        lines.append(f"### {'✅' if ok == total else '⚠️'} Pushed {ok}/{total} episode(s) to HuggingFace")
-        if ok:
-            lines.append(
-                f"\n**[Open dataset → {repo_id}](https://huggingface.co/datasets/{repo_id})**\n"
-            )
-    else:
-        lines.append(f"### Pushing {total} episode(s) to `{repo_id}` …")
-        lines.append(f"\n{_text_bar(overall)} — {done}/{total} done\n")
-
-    for r in rows:
-        mark = icon.get(r["status"], "⏳")
-        eid = r["episode_id"]
-        if r["status"] == "failed":
-            detail = r.get("message") or r.get("error") or "failed"
-        elif r["status"] == "completed":
-            detail = "uploaded"
-        else:
-            detail = f"{r.get('message', '')} ({r.get('progress', 0):.0f}%)"
-        lines.append(f"- {mark} `{eid}` — {detail}")
-    return "\n".join(lines)
-
-
 def create_ui(api_url: str | None = None) -> gr.Blocks:
     # Route downloaded episode archives to the SD-card-backed data_dir
     # instead of the OS /tmp (which on Pi OS is a small tmpfs). Same reason
     # as the SessionManager staging; the SessionManager's startup sweep
     # cleans this same directory across daemon restarts.
-    from grabette.config import settings
     client = GrabetteClient(
         base_url=api_url,
         download_dir=settings.data_dir / ".downloads",
@@ -425,7 +356,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cap = state.get("capture", {})
         if cap.get("is_capturing", False):
             parts = [
-                f"● RECORDING  {cap.get('session_id', '')}",
+                f"● RECORDING  {cap.get('episode_id', '')}",
                 f"Duration: {cap.get('duration_seconds', 0):.1f}s",
                 f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
             ]
@@ -442,13 +373,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             rows, move_dd, _task_header, desc, *_ = _refresh_episode_table(session_id)
             return gr.update(value="Start Capture", variant="primary"), rows, move_dd, desc
         else:
-            client.start_capture(session_id=session_id or None)
+            client.start_capture(task_id=session_id or None)
             return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update(), gr.update()
 
     def on_start_stop_session(current_task):
-        cap_session = client.get_capture_session_status()
+        cap_session = client.get_session_status()
         if cap_session.get("active"):
-            client.stop_capture_session()
+            client.stop_session()
             _, _, _, _, cap_title, _ = _refresh_episode_table(current_task)
             return (
                 gr.update(value="▶ Start Session", variant="secondary"),
@@ -456,7 +387,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=""),
             )
         else:
-            result = client.start_capture_session(task_id=current_task or None)
+            result = client.start_session(task_id=current_task or None)
             if "error" in result:
                 return gr.update(), gr.skip(), gr.skip()
             task_name = result.get("task_name", "")
@@ -465,23 +396,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=f"### Capture a new episode for *{task_name}*"),
                 gr.update(value=_session_banner_html(task_name, 0)),
             )
-
-    def get_teleop_display():
-        """Polled on a slow (~1 Hz) timer, separately from get_sensor_state.
-
-        Returns the teleop_msg text. When teleop is off, the textbox is
-        cleared so it doesn't visually compete with the capture box.
-        Doing this on the main state_timer caused HTTP backpressure that
-        made the IMU / Angle markdown flicker and bursted the WS stream.
-        """
-        tstatus = client.get_teleop_status() or {}
-        if not tstatus.get("active"):
-            return ""
-        sending = "YES" if tstatus.get("sending") else "no"
-        stats = tstatus.get("stats", {}) or {}
-        hz = stats.get("mean_hz", 0)
-        n = stats.get("n_poses", 0)
-        return f"● TELEOP ON   sending: {sending}   VIO: {hz:.1f} Hz   {n} poses"
 
     def _oakd_button_update():
         """Compute the depth-camera toggle's appearance + data row visibility.
@@ -534,67 +448,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def poll_oakd():
         return _oakd_button_update()
 
-    def on_toggle_teleop():
-        """Single-button toggle: enter teleop mode if off, exit if on.
-
-        Entering teleop pauses ALL UI live-view sources so uvicorn's event
-        loop is free for /api/teleop/stream:
-          - Gradio Timers (camera, depth, sensor, teleop) → interval set to
-            a huge value (Gradio's active=False propagation is unreliable for
-            gr.Timer at runtime; bumping the interval is a deterministic kill)
-          - gyro/accel/angle chart iframes → swapped to about:blank
-            placeholders so their JS stops polling /api/state/history
-
-        Returns: (teleop_msg, teleop_btn, camera_timer, depth_timer,
-        sensor_timer, teleop_timer, gyro_iframe, accel_iframe, angle_iframe).
-        """
-        status = client.get_teleop_status() or {}
-        active = bool(status.get("active"))
-        daemon = client.get_daemon_status() or {}
-        if daemon.get("backend") != "RpiBackend":
-            return ("Teleop not available (mock backend)",
-                    gr.update(value="Enter Teleop Mode", variant="secondary", interactive=False),
-                    gr.update(), gr.update(), gr.update(), gr.update(),
-                    gr.update(), gr.update(), gr.update())
-        if active:
-            result = client.stop_teleop()
-            if "error" in result:
-                return (f"Stop error: {result['error']}",
-                        gr.update(value="Exit Teleop Mode", variant="stop"),
-                        gr.update(), gr.update(), gr.update(), gr.update(),
-                        gr.update(), gr.update())
-            # Exiting teleop — resume live-view timers and restore iframes.
-            return ("Teleop OFF",
-                    gr.update(value="Enter Teleop Mode", variant="secondary"),
-                    gr.update(value=0.2),    # camera_timer
-                    gr.update(value=0.2),    # depth_timer
-                    gr.update(value=0.5),    # sensor_timer
-                    gr.update(value=1.0),    # teleop_timer
-                    gr.update(value=_GYRO_IFRAME_HTML),
-                    gr.update(value=_ACCEL_IFRAME_HTML),
-                    gr.update(value=_ANGLE_IFRAME_HTML))
-        else:
-            result = client.start_teleop()
-            if "error" in result:
-                return (f"Start error: {result['error']}",
-                        gr.update(value="Enter Teleop Mode", variant="secondary"),
-                        gr.update(), gr.update(), gr.update(), gr.update(),
-                        gr.update(), gr.update())
-            # Entering teleop — disable ALL live-view timers via huge intervals.
-            return ("Teleop ON (press button to send deltas)",
-                    gr.update(value="Exit Teleop Mode", variant="stop"),
-                    gr.update(value=86400),  # camera_timer
-                    gr.update(value=86400),  # depth_timer
-                    gr.update(value=86400),  # sensor_timer
-                    gr.update(value=86400),  # teleop_timer
-                    gr.update(value=_GYRO_IFRAME_PAUSED),
-                    gr.update(value=_ACCEL_IFRAME_PAUSED),
-                    gr.update(value=_ANGLE_IFRAME_PAUSED))
-
-    # ── Task (Session) helpers ────────────────────────────────────────
+    # ── Task helpers ──────────────────────────────────────────────────
 
     def _get_sessions():
-        return client.list_sessions()
+        return client.list_tasks()
 
     def _task_choices(sessions):
         return [(s["name"], s["id"]) for s in sessions]
@@ -664,7 +521,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         #   2. otherwise the task this browser had selected (persisted
         #      client-side via BrowserState), so a refresh stays put;
         #   3. otherwise fall back to the first task.
-        cap_session = client.get_capture_session_status()
+        cap_session = client.get_session_status()
         cap_task = cap_session.get("task_id") if cap_session.get("active") else None
         if cap_task in valid_ids:
             value = cap_task
@@ -676,85 +533,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
 
     def on_task_select(session_id):
-        cap_session = client.get_capture_session_status()
+        cap_session = client.get_session_status()
         session_active = cap_session.get("active", False)
         if not session_active and session_id:
-            client.set_active_session(session_id)
+            client.set_active_task(session_id)
         rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id)
         if session_active:
             return task_header, gr.skip(), desc, ep_title, rows, move_dd
         return task_header, cap_title, desc, ep_title, rows, move_dd
-
-    def on_create_task(name, description):
-        if not name:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
-        result = client.create_session(name, description or "")
-        if "error" in result:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
-        new_id = result["id"]
-        # Point the server-side active session at the new task (unless a capture
-        # session owns it). Otherwise the 0.5s capture timer reads the stale
-        # active session and snaps the radio back to the previously-selected
-        # task, so the episode list would keep showing the old task's episodes.
-        if not client.get_capture_session_status().get("active", False):
-            client.set_active_session(new_id)
-        sessions = _get_sessions()
-        choices = _task_choices(sessions)
-        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(new_id, sessions)
-        return gr.update(choices=choices, value=new_id), task_header, cap_title, desc, ep_title, rows, move_dd, gr.update(visible=False)
-
-    # ── Edit Task helpers ─────────────────────────────────────────────
-
-    def on_open_edit_form(session_id):
-        # Always collapse the delete-confirm box: it may have been left open
-        # from a previous edit, and re-opening Edit should start clean.
-        if not session_id:
-            return gr.update(visible=False), "", "", gr.update(visible=False)
-        sessions = _get_sessions()
-        for s in sessions:
-            if s["id"] == session_id:
-                return gr.update(visible=True), s.get("name", ""), s.get("description", ""), gr.update(visible=False)
-        return gr.update(visible=True), "", "", gr.update(visible=False)
-
-    def on_save_task(session_id, new_name, new_desc):
-        if not session_id or not new_name.strip():
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(visible=True)
-        client.update_session(session_id, name=new_name.strip(), description=new_desc)
-        sessions = _get_sessions()
-        choices = _task_choices(sessions)
-        _, _, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id, sessions)
-        return (
-            gr.update(choices=choices, value=session_id),
-            task_header, cap_title, desc, ep_title,
-            gr.update(visible=False),
-        )
-
-    def _delete_task(session_id, delete_episodes):
-        if not session_id:
-            return (gr.update(),) * 9
-        client.delete_session(session_id, delete_episodes=delete_episodes)
-        sessions = _get_sessions()
-        choices = _task_choices(sessions)
-        value = choices[0][1] if choices else None
-        # Sync the server-side active session to the task we land on, so the
-        # 0.5s capture timer doesn't try to restore the just-deleted task.
-        if value and not client.get_capture_session_status().get("active", False):
-            client.set_active_session(value)
-        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
-        return (
-            gr.update(choices=choices, value=value),
-            task_header, cap_title, desc, ep_title, rows, move_dd,
-            gr.update(visible=False),
-            gr.update(visible=False),
-        )
-
-    def on_delete_task_keep(session_id):
-        # Delete the task but keep its episodes (they fall back to Unassigned).
-        return _delete_task(session_id, delete_episodes=False)
-
-    def on_delete_task_purge(session_id):
-        # Delete the task AND permanently remove all of its episodes from disk.
-        return _delete_task(session_id, delete_episodes=True)
 
     def _get_selected_ids(table_data) -> list[str]:
         if table_data is None:
@@ -808,33 +594,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return f"Moved {len(episode_ids)} episode(s)", gr.update(value=rows), move_dd, desc
 
     # ── SLAM ──────────────────────────────────────────────────────────
-
-    def on_slam_run(table_data, repo_id: str):
-        episode_ids = _get_selected_ids(table_data)
-        episode_id = episode_ids[0] if episode_ids else None
-        if not episode_id:
-            return "Select an episode first"
-        if not repo_id:
-            return "Enter a HuggingFace repo ID first"
-        result = client.slam_run(episode_id, repo_id)
-        if "error" in result:
-            return f"Error: {result['error']}"
-        return f"SLAM started (job: {result.get('job_id', '?')})"
-
-    def get_slam_status():
-        jobs = client.hf_list_jobs()
-        slam_jobs = [j for j in jobs if j.get("name", "").startswith("slam:")]
-        if not slam_jobs:
-            return "No SLAM jobs"
-        latest = slam_jobs[-1]
-        status = latest["status"]
-        if status == "completed":
-            return f"Complete: {latest.get('result', '')}"
-        if status == "failed":
-            return f"Failed: {latest.get('error', '')}"
-        if status == "running":
-            return f"Running ({latest.get('progress', 0):.0f}%): {latest.get('message', '')}"
-        return f"Pending: {latest.get('message', '')}"
 
     # ── Replay ────────────────────────────────────────────────────────
 
@@ -1030,138 +789,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f"**IP address:** {ip}"
         )
 
-    # ── HuggingFace ───────────────────────────────────────────────────
-
-    def _ds_upload_btn_update(authenticated: bool):
-        if authenticated:
-            return gr.update(value="Push to HuggingFace Hub", interactive=True, variant="huggingface")
-        return gr.update(
-            value="You need to be authenticated to push to HuggingFace Hub",
-            interactive=False,
-            variant="secondary",
-        )
-
-    def check_hf_auth_on_load(current_ns: str | None = None):
-        result = client.hf_check_auth()
-        authenticated = result.get("authenticated", False)
-        if authenticated:
-            namespaces = client.hf_get_namespaces()
-            ns_choices = [f"{ns}/" for ns in namespaces]
-            # Preserve the user's selection if it's still valid; only reset on
-            # first load (current_ns is None) or if the value disappeared.
-            if current_ns and current_ns in ns_choices:
-                value = current_ns
-            else:
-                value = ns_choices[0] if ns_choices else None
-            ns_update = gr.update(choices=ns_choices, value=value)
-        else:
-            ns_update = gr.update(choices=[], value=None)
-        return gr.update(visible=not authenticated), _ds_upload_btn_update(authenticated), ns_update
-
-    def load_datasets_page():
-        sessions = _get_sessions()
-        task_choices = [(s["name"], s["id"]) for s in sessions]
-        namespaces = client.hf_get_namespaces()
-        ns_choices = [f"{ns}/" for ns in namespaces]
-        ns_update = gr.update(
-            choices=ns_choices,
-            value=ns_choices[0] if ns_choices else None,
-        )
-        return gr.update(choices=task_choices, value=[]), ns_update
-
-    def on_task_selection_count(task_ids):
-        if not task_ids:
-            return ""
-        sessions = _get_sessions()
-        session_map = {s["id"]: s for s in sessions}
-        total = sum(
-            len(s.get("episodes", []))
-            for tid in task_ids
-            if (s := session_map.get(tid))
-        )
-        n_tasks = len(task_ids)
-        return (
-            f'<div style="background:#1e3a5f;border:1px solid #2563eb;border-radius:6px;'
-            f'padding:0.4rem 0.75rem;margin-top:0.5rem;display:inline-block;">'
-            f'<span style="color:#93c5fd;font-size:0.85rem;">'
-            f'{n_tasks} task{"s" if n_tasks != 1 else ""} selected</span>'
-            f'<span style="color:#bfdbfe;font-size:0.85rem;margin:0 0.4rem;">·</span>'
-            f'<span style="color:#ffffff;font-size:0.9rem;font-weight:700;">{total}</span>'
-            f'<span style="color:#93c5fd;font-size:0.85rem;"> episode{"s" if total != 1 else ""}</span>'
-            f'</div>'
-        )
-
-    def on_ds_upload(task_ids, namespace, repo_name, private):
-        """Start one upload job per episode, then poll until all finish,
-        streaming progress + per-episode status, and end on a dataset link.
-
-        A generator: each yield updates the status markdown live."""
-        if not task_ids:
-            yield "Select at least one task"
-            return
-        if not namespace or not repo_name.strip():
-            yield "Enter an owner and a repository name"
-            return
-        name = repo_name.strip()
-        target_repo = f"{namespace}{name}"
-        raw_repo = f"{namespace}{name}-raw"
-
-        # Build task description from all selected tasks
-        sessions = _get_sessions()
-        session_map = {s["id"]: s for s in sessions}
-        descriptions = [
-            s["description"]
-            for tid in task_ids
-            if (s := session_map.get(tid)) and s.get("description")
-        ]
-        task_description = ", ".join(descriptions) if descriptions else name
-
-        yield f"Starting… uploading to {raw_repo}, then processing to {target_repo}"
-
-        result = client.hf_push_and_process(
-            task_ids=list(task_ids),
-            target_repo=target_repo,
-            raw_repo=raw_repo,
-            task_description=task_description,
-            private=bool(private),
-        )
-        if "error" in result:
-            yield f"Error: {result['error']}"
-            return
-
-        job_id = result["job_id"]
-        while True:
-            time.sleep(3)
-            job = client.hf_get_job(job_id)
-            if job is None:
-                yield "Error: job lost"
-                return
-            status = job.get("status", "running")
-            error = job.get("error") or ""
-            msg = (error if status == "failed" else None) or job.get("message") or error
-            pct = job.get("progress", 0)
-            if status == "completed":
-                link = job.get("result") or f"https://huggingface.co/datasets/{target_repo}"
-                yield f"✅ Done! Dataset: [{link}]({link})"
-                return
-            elif status == "failed":
-                yield f"❌ Failed: {msg}"
-                return
-            else:
-                yield f"[{pct:.0f}%] {msg}"
-
-    def on_hf_upload(table_data, repo_id):
-        episode_ids = _get_selected_ids(table_data)
-        episode_id = episode_ids[0] if episode_ids else None
-        if not episode_id:
-            return "Select an episode first"
-        if not repo_id:
-            return "Enter a repo ID (e.g. username/grabette-data)"
-        result = client.hf_upload_episode(episode_id, repo_id)
-        if "error" in result:
-            return f"Error: {result['error']}"
-        return f"Upload started (job: {result.get('job_id', '?')})"
-
     # ── Power off ─────────────────────────────────────────────────────
 
     def _poweroff_notice(text: str, color: str = "#f97316") -> str:
@@ -1206,11 +833,42 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 1 — Episodes
+    # Page 1 — Connection (landing): HF account + link out to the fleet
     # ══════════════════════════════════════════════════════════════════
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
-        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.HTML(_TITLE_HTML)
+        gr.Markdown("## HuggingFace Account")
+        gr.HTML(_HF_AUTH_IFRAME)
+        # Big, obvious way to reach the fleet. We can't embed grabette-fleet
+        # here — it's OAuth-gated and this dashboard is served over plain HTTP,
+        # so its login can't render in an iframe — so we link out in a new tab,
+        # where the HF session and OAuth work normally.
+        gr.HTML(
+            f'<a href="{settings.relay_url}" target="_blank" rel="noopener" '
+            'style="display:block;margin-top:1.2rem;padding:2.6rem 1.5rem;border-radius:16px;'
+            'text-align:center;text-decoration:none;color:#fff;'
+            'background:linear-gradient(135deg,#10b981,#3b82f6);'
+            'box-shadow:0 6px 22px rgba(0,0,0,.28);">'
+            '<div style="font-size:1.7rem;font-weight:800;">Open fleet dashboard ↗</div>'
+            '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
+            'Manage tasks, sessions and datasets on grabette-fleet</div></a>'
+        )
+        batt_popup_cn = gr.HTML(visible=False)
+        batt_beep_cn = gr.Textbox(visible=False)
+        batt_timer_cn = gr.Timer(60.0)
+        batt_timer_cn.tick(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
+        batt_beep_cn.change(fn=None, inputs=batt_beep_cn, outputs=None, js=_BATTERY_BEEP_JS)
+        demo.load(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
+        demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Page 2 — Episodes
+    # ══════════════════════════════════════════════════════════════════
+
+    with demo.route("Episodes") as episodes_demo:
+        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
         episode_status_bar = gr.HTML("")
 
@@ -1227,38 +885,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 selected_task_state = gr.BrowserState(
                     "", storage_key="grabette_selected_task",
                 )
-                new_task_btn = gr.Button("+ New Task", size="sm", variant="primary")
-                with gr.Group(visible=False) as new_task_form:
-                    new_task_name = gr.Textbox(label="Name", placeholder="e.g. Kitchen Pick & Place")
-                    new_task_desc = gr.Textbox(label="Description", placeholder="Optional")
-                    with gr.Row():
-                        create_task_btn = gr.Button("Create", variant="primary", size="sm")
-                        cancel_task_btn = gr.Button("Cancel", size="sm")
-                edit_task_btn = gr.Button("✏ Edit task", size="sm")
-                with gr.Group(visible=False) as edit_task_form:
-                    gr.Markdown("#### Edit Task")
-                    rename_input = gr.Textbox(label="Name", placeholder="Task name…")
-                    desc_edit_input = gr.Textbox(label="Description", placeholder="Description…")
-                    with gr.Row():
-                        delete_task_btn = gr.Button("Delete Task", variant="stop", size="sm")
-                        cancel_edit_btn = gr.Button("Cancel", size="sm")
-                        save_task_btn = gr.Button("Save changes", variant="primary", size="sm")
-                    with gr.Group(visible=False) as delete_confirm:
-                        gr.Markdown(
-                            "⚠ **Delete this task — what about its episodes?**\n\n"
-                            "- **Keep episodes**: the task is removed and its episodes "
-                            "move to *Unassigned*.\n"
-                            "- **Delete everything**: the task *and* all its episodes "
-                            "are permanently deleted. This cannot be undone."
-                        )
-                        with gr.Row():
-                            delete_keep_btn = gr.Button(
-                                "Delete task, keep episodes", variant="secondary", size="sm",
-                            )
-                            confirm_delete_btn = gr.Button(
-                                "Delete everything", variant="stop", size="sm",
-                            )
-                            cancel_delete_btn = gr.Button("Cancel", size="sm")
+                # Tasks are created/edited on the fleet (grabette-fleet), not on
+                # the device — here we only pick a task to view its episodes.
 
             # ── RIGHT: Episodes ──────────────────────────────────────
             with gr.Column(scale=3):
@@ -1328,65 +956,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
                 replay_timer = gr.Timer(0.5, active=False)
 
-        gr.HTML("""
-            <div style="margin-top:2rem;padding:1.25rem 1.5rem;
-                        background:#1e3a5f;border-radius:10px;
-                        border:1px solid #2563eb;display:flex;
-                        align-items:center;justify-content:space-between;gap:1rem;">
-                <span style="color:#e2e8f0;font-size:0.95rem;">
-                    Ready to push your episodes to HuggingFace?
-                </span>
-                <a href="/datasets" style="background:#2563eb;color:#fff;
-                           padding:8px 18px;border-radius:6px;font-weight:600;
-                           font-size:0.9rem;text-decoration:none;white-space:nowrap;">
-                    Create a dataset &#8594;
-                </a>
-            </div>
-        """)
-
         # ── Wire events ───────────────────────────────────────────────
 
-        new_task_btn.click(fn=lambda: gr.update(visible=True), outputs=new_task_form)
-        cancel_task_btn.click(fn=lambda: gr.update(visible=False), outputs=new_task_form)
-        create_task_btn.click(
-            fn=on_create_task,
-            inputs=[new_task_name, new_task_desc],
-            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd, new_task_form],
-        )
         task_list.change(
             fn=on_task_select, inputs=task_list,
             outputs=[task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd],
         )
         # Persist the current selection in the browser so a refresh keeps it.
         task_list.change(fn=lambda v: v, inputs=task_list, outputs=selected_task_state)
-
-        # Edit Task
-        edit_task_btn.click(
-            fn=on_open_edit_form, inputs=task_list,
-            outputs=[edit_task_form, rename_input, desc_edit_input, delete_confirm],
-        )
-        cancel_edit_btn.click(
-            fn=lambda: gr.update(visible=False), outputs=edit_task_form,
-        )
-        save_task_btn.click(
-            fn=on_save_task,
-            inputs=[task_list, rename_input, desc_edit_input],
-            outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, edit_task_form],
-        )
-        delete_task_btn.click(
-            fn=lambda: gr.update(visible=True), outputs=delete_confirm,
-        )
-        cancel_delete_btn.click(
-            fn=lambda: gr.update(visible=False), outputs=delete_confirm,
-        )
-        _delete_outputs = [task_list, task_header_md, capture_title, task_desc_md, episodes_title,
-                           episodes_table, move_target_dd, edit_task_form, delete_confirm]
-        delete_keep_btn.click(
-            fn=on_delete_task_keep, inputs=task_list, outputs=_delete_outputs,
-        )
-        confirm_delete_btn.click(
-            fn=on_delete_task_purge, inputs=task_list, outputs=_delete_outputs,
-        )
 
         session_btn.click(
             fn=on_start_stop_session,
@@ -1430,7 +1007,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         def get_capture_status_and_active_task(current_task):
             state = client.get_state()
-            cap_session = client.get_capture_session_status()
+            cap_session = client.get_session_status()
             cap = (state or {}).get("capture", {})
             is_recording = cap.get("is_capturing", False)
             is_starting = cap.get("is_starting", False)
@@ -1455,7 +1032,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 toggle_btn_update = gr.update(interactive=False, value="Start Capture", variant="primary")
             elif is_recording:
                 parts = [
-                    f"● RECORDING  {cap.get('session_id', '')}",
+                    f"● RECORDING  {cap.get('episode_id', '')}",
                     f"Duration: {cap.get('duration_seconds', 0):.1f}s",
                     f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
                 ]
@@ -1478,11 +1055,25 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 banner = gr.update(value=_session_banner_html(task_name, display_count))
                 task_update = gr.skip()
             else:
-                active = client.get_active_session()
+                active = client.get_active_task()
                 sess_btn = gr.update(value="▶ Start Session", variant="secondary")
                 cap_title = gr.skip()
                 banner = gr.update(value="")
-                task_update = gr.skip() if (active is None or active == current_task) else gr.update(value=active)
+                # The active task can change out-of-band — e.g. a fleet-driven
+                # (physical-button) recording creates a task locally via
+                # get_or_create_task. Pointing the dropdown at it WITHOUT also
+                # refreshing its choices makes Gradio raise "Value ... not in
+                # the list of choices" every tick until reload. So when the
+                # active task changed, refresh the choices in the same update
+                # (and never set a value that isn't among them).
+                if active and active != current_task:
+                    choices = _task_choices(_get_sessions())
+                    if any(cid == active for _n, cid in choices):
+                        task_update = gr.update(choices=choices, value=active)
+                    else:
+                        task_update = gr.skip()
+                else:
+                    task_update = gr.skip()
 
             return status, task_update, sess_btn, cap_title, banner, toggle_btn_update, table_update, move_dd_update, desc_update
 
@@ -1505,119 +1096,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         status_bar_timer = gr.Timer(3.0)
         status_bar_timer.tick(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
-        demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
-        demo.load(fn=get_episode_status_bar, outputs=status_bar_outputs)
+        episodes_demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
+        # One load fills the strip AND the battery popup/beep — get_episode_status_bar
+        # now returns all three from a single system-info read, so no separate
+        # check_battery_warning load is needed here.
+        episodes_demo.load(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
-    # ══════════════════════════════════════════════════════════════════
-    # Page 2 — Datasets (HF auth popup + upload)
-    # ══════════════════════════════════════════════════════════════════
-
-    with demo.route("Datasets") as datasets_demo:
-        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
-
-        # HF Auth popup
-        with gr.Group(visible=False, elem_id="hf-auth-modal") as ds_auth_modal:
-            with gr.Group(elem_id="hf-auth-card"):
-                gr.HTML(_HF_AUTH_IFRAME)
-
-        # ── Page header ───────────────────────────────────────────────
-        gr.HTML("""
-        <div style="padding:2rem 0 1.5rem;">
-          <h1 style="margin:0 0 0.4rem;font-size:1.8rem;">Create a Dataset</h1>
-          <p style="margin:0;color:#94a3b8;font-size:0.95rem;">
-            Package your recorded tasks and push them to HuggingFace Hub.
-          </p>
-        </div>
-        """)
-
-        # ── Step 1 ────────────────────────────────────────────────────
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:0.75rem;margin-bottom:0.5rem;">
-          <span style="background:#f97316;color:#fff;font-weight:700;
-                       border-radius:50%;width:28px;height:28px;display:flex;
-                       align-items:center;justify-content:center;flex-shrink:0;">1</span>
-          <div>
-            <div style="font-weight:600;font-size:1rem;">Select tasks to include</div>
-            <div style="color:#94a3b8;font-size:0.85rem;">
-              All episodes within each selected task will be uploaded.
-            </div>
-          </div>
-        </div>
-        """)
-        ds_task_cbg = gr.CheckboxGroup(choices=[], label=None, container=False)
-        ds_episode_count = gr.HTML("")
-
-        # ── Step 2 ────────────────────────────────────────────────────
-        gr.HTML("""
-        <div style="display:flex;align-items:center;gap:0.75rem;
-                    margin-top:1.5rem;margin-bottom:0.5rem;">
-          <span style="background:#f97316;color:#fff;font-weight:700;
-                       border-radius:50%;width:28px;height:28px;display:flex;
-                       align-items:center;justify-content:center;flex-shrink:0;">2</span>
-          <div>
-            <div style="font-weight:600;font-size:1rem;">Name your destination repository</div>
-            <div style="color:#94a3b8;font-size:0.85rem;">
-              Choose an owner and give a name to the dataset.
-            </div>
-          </div>
-        </div>
-        """)
-        with gr.Row():
-            ds_namespace = gr.Dropdown(
-                label="Owner", choices=[], interactive=True, scale=1,
-            )
-            ds_repo_name = gr.Textbox(
-                label="Repository name", placeholder="grabette-data",
-                scale=2,
-            )
-        ds_private = gr.Checkbox(
-            label="Private repository",
-            value=False,
-        )
-
-        # ── Upload ────────────────────────────────────────────────────
-        gr.HTML("<div style='margin-top:1.5rem;max-width:260px;'>")
-        ds_upload_btn = gr.Button(
-            "You need to be authenticated to push to HuggingFace Hub",
-            variant="secondary",
-            interactive=False,
-        )
-        gr.HTML("</div>")
-        ds_upload_msg = gr.Markdown(container=False)
-        gr.HTML("</div>")
-
-        ds_task_cbg.change(
-            fn=on_task_selection_count,
-            inputs=ds_task_cbg,
-            outputs=ds_episode_count,
-        )
-        ds_upload_btn.click(
-            fn=on_ds_upload,
-            inputs=[ds_task_cbg, ds_namespace, ds_repo_name, ds_private],
-            outputs=ds_upload_msg,
-        )
-        datasets_demo.load(fn=load_datasets_page, outputs=[ds_task_cbg, ds_namespace])
-        datasets_demo.load(fn=check_hf_auth_on_load, outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
-
-        # HF auth state changes rarely — poll gently (was 3 s, unnecessarily hot).
-        ds_auth_timer = gr.Timer(15.0)
-        ds_auth_timer.tick(fn=check_hf_auth_on_load, inputs=[ds_namespace], outputs=[ds_auth_modal, ds_upload_btn, ds_namespace])
-
-        batt_popup_ds = gr.HTML(visible=False)
-        batt_beep_ds = gr.Textbox(visible=False)
-        # No status strip on this page to piggyback on; poll gently on its own.
-        batt_timer_ds = gr.Timer(30.0)
-        batt_timer_ds.tick(fn=check_battery_warning, outputs=[batt_popup_ds, batt_beep_ds])
-        batt_beep_ds.change(fn=None, inputs=batt_beep_ds, outputs=None, js=_BATTERY_BEEP_JS)
-        datasets_demo.load(fn=check_battery_warning, outputs=[batt_popup_ds, batt_beep_ds])
-        datasets_demo.load(fn=None, js=_BATTERY_INIT_JS)
+    # (Datasets page removed — dataset generation is done on the fleet.)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 3 — Live View
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
@@ -1635,7 +1127,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Angle Sensors"))
                 angle_box = gr.Markdown("*—*")
-                angle_iframe = gr.HTML(value=_ANGLE_IFRAME_HTML)
+                gr.HTML(value=_ANGLE_IFRAME_HTML)
             with gr.Column(scale=1):
                 gr.HTML(_section_label("3D Model"))
                 gr.HTML(
@@ -1660,11 +1152,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Gyroscope"))
                 gyro_box = gr.Markdown("*—*")
-                gyro_iframe = gr.HTML(value=_GYRO_IFRAME_HTML)
+                gr.HTML(value=_GYRO_IFRAME_HTML)
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Accelerometer"))
                 accel_box = gr.Markdown("*—*")
-                accel_iframe = gr.HTML(value=_ACCEL_IFRAME_HTML)
+                gr.HTML(value=_ACCEL_IFRAME_HTML)
 
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
@@ -1694,7 +1186,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Settings") as settings_demo:
-        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         with gr.Row(equal_height=False):
@@ -1726,7 +1218,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("🔴 Power Off") as poweroff_demo:
-        gr.Navbar(main_page_name="Episodes", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         gr.HTML(

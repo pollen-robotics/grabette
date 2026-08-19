@@ -1663,6 +1663,7 @@ source = { editable = "packages/grabette-postprocess" }
 dependencies = [
     { name = "av" },
     { name = "click" },
+    { name = "gripette" },
     { name = "lerobot", extra = ["dataset", "viz"], marker = "python_full_version >= '3.12'" },
     { name = "numpy" },
     { name = "opencv-python" },
@@ -1680,6 +1681,7 @@ test = [
 requires-dist = [
     { name = "av" },
     { name = "click" },
+    { name = "gripette", editable = "packages/gripette" },
     { name = "lerobot", extras = ["dataset", "viz"], marker = "python_full_version >= '3.12'", specifier = "==0.6.0" },
     { name = "numpy" },
     { name = "opencv-python" },
