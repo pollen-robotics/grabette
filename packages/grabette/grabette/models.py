@@ -15,6 +15,12 @@ class AngleSample(BaseModel):
     distal: float  # radians
 
 
+class TactileSample(BaseModel):
+    timestamp_ms: float
+    address: int  # Modbus device address of the sensor
+    cells: list[list[int]]  # rows x cols grid of raw 12-bit ADC values (0-4095), row-major
+
+
 class CaptureStatus(BaseModel):
     is_capturing: bool = False
     is_starting: bool = False
@@ -32,11 +38,13 @@ class CaptureStatus(BaseModel):
     # blocked_reason; split out so the dashboard can offer the fix (the
     # "Calibrate my device" button) rather than only quote the refusal.
     needs_calibration: bool = False
+    tactile_sample_count: int = 0
 
 
 class SensorState(BaseModel):
     imu: IMUSample | None = None
     angle: AngleSample | None = None
+    tactile: list[TactileSample] | None = None
     capture: CaptureStatus = CaptureStatus()
 
 

@@ -16,6 +16,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         ├── frame_timestamps.json       # Per-frame timestamps for raw_video
         ├── dcam_imu.json               # depth-cam IMU: accel + gyro + rotation (200Hz, OAK-D only)
         ├── angle_data.json             # AS5600L joint angles (~85–100Hz)
+        ├── tactile_data.json           # SEN0704 6x6 tactile ADC arrays (50Hz, when enabled)
         ├── rpi_camera_intrinsics.json  # Fisheye KB8 calibration for the primary cam
         ├── frames.json                 # URDF-derived frame transforms, incl. T_camera_in_oak_l
         ├── dcam_left.mp4               # depth-cam left, rectified mono H.264 (default 640×400)
@@ -45,6 +46,20 @@ downstream consumes it).
 > Every reader resolves through `episode_files.resolve()`, which prefers the
 > canonical name and falls back to the legacy one, so both layouts process
 > identically. Never hardcode either name in new code.
+
+`tactile_data.json` is present only when tactile sensors are enabled (`GRABETTE_TACTILE_SENSORS=true`). It holds one entry per Modbus device address, each carrying its own shape (sensors on one bus may differ, e.g. a 6x6 SEN0704 next to a 4x8 SEN0705). Each sample `value` is a canonical `rows x cols` grid of raw 12-bit ADC ints (0-4095), row-major top-to-bottom:
+
+```json
+{
+  "sample_rate_hz": 50,
+  "order": "row_major",
+  "sensors": {
+    "1": {"array": 36, "rows": 6, "cols": 6, "samples": [{"cts": 0.0, "value": [[0, 0, 0, 0, 0, 0], "... 6 rows ..."]}]}
+  }
+}
+```
+
+`metadata.json` gains a matching `tactile_sample_count`.
 
 ## Calibration & geometry
 
