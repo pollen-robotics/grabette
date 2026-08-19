@@ -82,4 +82,7 @@ RPi (camera + OAK-D + AS5600L)
 ```
 
 Downstream processing (SLAM → LeRobot dataset) lives in
-[grabette-postprocess](../../grabette-postprocess).
+[grabette-postprocess](../../grabette-postprocess). When every episode in a build
+has `tactile_data.json` with a matching sensor config, tactile is exported as a
+per-sensor integer feature `observation.tactile.sensor_<addr>` (shape `rows x cols`),
+nearest-aligned to the trajectory timestamps.

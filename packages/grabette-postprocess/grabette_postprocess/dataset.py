@@ -17,6 +17,7 @@ from grabette_postprocess.trajectory import (
     load_trajectory_csv,
     trajectory_to_poses,
     interpolate_angles,
+    load_tactile_streams,
 )
 
 # Feature schema for the GRABETTE dataset
@@ -142,6 +143,32 @@ def _episode_actions(df, traj_ts: np.ndarray, ep_dir: Path) -> np.ndarray:
     return np.concatenate([poses, joints], axis=1).astype(np.float32)
 
 
+def _tactile_config(episode_dirs: list[Path]) -> dict[int, tuple[int, int]] | None:
+    """Return {addr: (rows, cols)} if EVERY episode has tactile_data.json with the
+    same sensor config; otherwise None (tactile is omitted from the dataset).
+
+    Keeping the config identical across episodes is required because the LeRobot
+    feature schema is fixed for the whole dataset.
+    """
+    reference: dict[int, tuple[int, int]] | None = None
+    for ep_dir in episode_dirs:
+        path = Path(ep_dir) / "tactile_data.json"
+        if not path.is_file():
+            print("  Tactile: skipping tactile features "
+                  f"({Path(ep_dir).name} has no tactile_data.json)")
+            return None
+        with open(path) as f:
+            sensors = json.load(f).get("sensors", {})
+        cfg = {int(a): (s["rows"], s["cols"]) for a, s in sensors.items()}
+        if reference is None:
+            reference = cfg
+        elif cfg != reference:
+            print("  Tactile: skipping tactile features "
+                  f"({Path(ep_dir).name} sensor config {cfg} != {reference})")
+            return None
+    return reference
+
+
 def build_dataset(
     repo_id: str,
     episode_dirs: list[Path],
@@ -194,6 +221,18 @@ def build_dataset(
         **features["observation.images.cam1"],
         "shape": (3, h, w),
     }
+
+    # Tactile: one integer feature per sensor, only if all episodes agree on the
+    # sensor config (else omitted — see _tactile_config).
+    tactile_cfg = _tactile_config(episode_dirs)
+    if tactile_cfg:
+        for addr, (rows, cols) in tactile_cfg.items():
+            features[f"observation.tactile.sensor_{addr}"] = {
+                "dtype": "int16",  # raw 12-bit ADC (0-4095) fits int16
+                "shape": (rows, cols),
+                "names": ["rows", "columns"],
+            }
+        print(f"  Tactile: {len(tactile_cfg)} sensor(s) {tactile_cfg}")
 
     dataset = LeRobotDataset.create(
         repo_id=repo_id,
@@ -249,6 +288,15 @@ def build_dataset(
         cam1_cache = _load_video_frames_indexed(oak_path, image_size,
                                                 set(cam1_indices.tolist()))
 
+        # --- tactile: nearest-by-timestamp per sensor (int grids) ---
+        tactile_aligned: dict[int, np.ndarray] = {}
+        if tactile_cfg:
+            streams = load_tactile_streams(ep_dir / "tactile_data.json")
+            for addr in tactile_cfg:
+                cts, vals = streams[addr]
+                idx = _nearest_frame_indices(traj_ts, cts)
+                tactile_aligned[addr] = vals[idx].astype(np.int16)
+
         for i in range(n_frames):
             img = cam0_cache.get(cam0_indices[i])
             oak_img = cam1_cache.get(cam1_indices[i])
@@ -259,13 +307,16 @@ def build_dataset(
             img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             oak_rgb = cv2.cvtColor(oak_img, cv2.COLOR_BGR2RGB)
 
-            dataset.add_frame({
+            frame = {
                 "task": task,
                 "observation.images.cam0": img_rgb,
                 "observation.images.cam1": oak_rgb,
                 "action": actions[i],
                 "is_lost": np.array([is_lost[i]], dtype=np.float32),
-            })
+            }
+            for addr, aligned in tactile_aligned.items():
+                frame[f"observation.tactile.sensor_{addr}"] = aligned[i]
+            dataset.add_frame(frame)
 
         dataset.save_episode()
         saved_recordings.append(ep_dir.name)

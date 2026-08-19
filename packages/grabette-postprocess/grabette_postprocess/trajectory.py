@@ -78,6 +78,29 @@ def _load_angle_stream(data: dict) -> tuple[np.ndarray, np.ndarray]:
     return cts, vals
 
 
+def load_tactile_streams(path: Path) -> dict[int, tuple[np.ndarray, np.ndarray]]:
+    """Return per-sensor tactile streams keyed by Modbus device address.
+
+    Schema (tactile_data.json):
+        {"sample_rate_hz", "order", "sensors": {"<addr>": {"rows", "cols",
+         "samples": [{"cts": <ms>, "value": [[...rows x cols...]]}]}}}
+
+    Returns:
+        {addr: (cts_seconds (M,), values (M, rows, cols) int)}. cts is already
+        relative to recording start; converted ms -> s here.
+    """
+    with open(path) as f:
+        data = json.load(f)
+
+    out: dict[int, tuple[np.ndarray, np.ndarray]] = {}
+    for addr_str, sensor in data.get("sensors", {}).items():
+        samples = sensor.get("samples", [])
+        cts = np.array([s["cts"] for s in samples], dtype=np.float64) * 1e-3
+        vals = np.array([s["value"] for s in samples], dtype=np.int64)
+        out[int(addr_str)] = (cts, vals)
+    return out
+
+
 def interpolate_angles(angle_json_path: Path,
                        video_timestamps: np.ndarray) -> np.ndarray:
     """Interpolate the gripper joint-angle stream to video/trajectory timestamps.
