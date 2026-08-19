@@ -9,7 +9,7 @@ from pathlib import Path
 
 from grabette.backend.base import Backend
 from grabette.config import settings
-from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
+from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState, TactileSample
 from grabette.output import write_imu_json, write_json_atomic
 
 logger = logging.getLogger(__name__)
@@ -35,6 +35,7 @@ class MockBackend(Backend):
         # has no zero to write into ~/.grabette.
         from grabette.hardware.angle import load_calibration
         self._calibrated = load_calibration() is not None
+        self._tactile_sample_count = 0
 
     async def start(self) -> None:
         self._running = True
@@ -67,9 +68,20 @@ class MockBackend(Backend):
             proximal=-0.785 + 0.7 * math.sin(t * 0.3),
             distal=-0.785 + 0.7 * math.cos(t * 0.4),
         )
+        # Simulate a 6x6 tactile array with a Gaussian pressure blob that
+        # circles the grid, values in the sensor's raw 12-bit ADC range.
+        cx = 2.5 + 2.0 * math.cos(t * 0.5)
+        cy = 2.5 + 2.0 * math.sin(t * 0.5)
+        cells = [
+            [int(4000 * math.exp(-((col - cx) ** 2 + (row - cy) ** 2) / 2.0)) for col in range(6)]
+            for row in range(6)
+        ]
+        tactile = [TactileSample(timestamp_ms=now_ms, address=1, cells=cells)]
+
         return SensorState(
             imu=imu,
             angle=angle,
+            tactile=tactile,
             capture=self.get_capture_status(),
         )
 
@@ -83,6 +95,7 @@ class MockBackend(Backend):
         self._frame_count = 0
         self._imu_sample_count = 0
         self._angle_sample_count = 0
+        self._tactile_sample_count = 0
         self._capture_task = asyncio.create_task(self._mock_capture_loop())
         logger.info("MockBackend capture started → %s", episode_dir)
 
@@ -93,6 +106,7 @@ class MockBackend(Backend):
                 self._frame_count += int(FPS / 10)
                 self._imu_sample_count += int(IMU_HZ / 10)
                 self._angle_sample_count += 10  # ~100Hz
+                self._tactile_sample_count += 5  # ~50Hz
                 await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             pass
@@ -120,6 +134,7 @@ class MockBackend(Backend):
         self._frame_count = 0
         self._imu_sample_count = 0
         self._angle_sample_count = 0
+        self._tactile_sample_count = 0
         logger.info("MockBackend capture stopped")
         return status
 
@@ -152,6 +167,7 @@ class MockBackend(Backend):
             frame_count=self._frame_count,
             imu_sample_count=self._imu_sample_count,
             angle_sample_count=self._angle_sample_count,
+            tactile_sample_count=self._tactile_sample_count,
         )
 
     @property
@@ -252,6 +268,18 @@ class MockBackend(Backend):
             angle_samples=angle_samples,
         )
 
+        # Mock tactile data — one 6x6 sensor (address 1), row-major grid samples.
+        if status.tactile_sample_count > 0:
+            samples = []
+            for i in range(status.tactile_sample_count):
+                t = (i / status.tactile_sample_count) * duration_ms
+                samples.append({"cts": t, "value": [[0] * 6 for _ in range(6)]})
+            (episode_dir / "tactile_data.json").write_text(json.dumps({
+                "sample_rate_hz": 50,
+                "order": "row_major",
+                "sensors": {"1": {"array": 36, "rows": 6, "cols": 6, "samples": samples}},
+            }))
+
         # Placeholder video file
         (episode_dir / "raw_video.mp4").write_bytes(b"MOCK_VIDEO")
 
@@ -262,6 +290,7 @@ class MockBackend(Backend):
             "frame_count": status.frame_count,
             "imu_sample_count": status.imu_sample_count,
             "angle_sample_count": status.angle_sample_count,
+            "tactile_sample_count": status.tactile_sample_count,
             "fps": FPS,
             "imu_hz": IMU_HZ,
             "backend": "mock",
