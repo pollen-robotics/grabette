@@ -25,7 +25,8 @@ scripts/checks/check_dataset.py (CLI) and the HF Space pipeline use it.
 import json
 from pathlib import Path
 
-from grabette_postprocess.episode_files import describe_camera, resolve
+from grabette_postprocess.episode_files import (describe_camera, metadata_stats,
+                                                 resolve)
 
 import numpy as np
 import av
@@ -248,6 +249,29 @@ def _check_existing_trajectory(ep_dir: Path, status: dict) -> None:
         status["trajectory"] = f"traj:{tracked}/{len(df)} ({pct:.0f}%)"
 
 
+def _expects_right_stream(ep_dir: Path) -> bool:
+    """Whether the camera that recorded this episode produced a right video.
+
+    Read off the recorded per-stream stats rather than a table of model names:
+    oakd.py always writes right_frames (0 when the stream produced nothing),
+    orbbec.py never writes the key at all, so a camera we have not seen before
+    classifies itself. An OAK-D whose right stream failed still reports
+    right_frames: 0, so the check does not fall silent exactly when it matters.
+
+    Defaults to True when metadata is absent or unreadable, which keeps the
+    pre-existing behaviour for episodes recorded before these stats existed.
+    """
+    meta_path = ep_dir / "metadata.json"
+    if not meta_path.is_file():
+        return True
+    try:
+        meta = _load_json(meta_path)
+    except Exception:
+        return True
+    stats = metadata_stats(meta)
+    return "right_frames" in stats if stats else True
+
+
 def _check_camera(ep_dir: Path, status: dict) -> None:
     """Report which depth camera recorded the episode.
 
@@ -266,7 +290,7 @@ def _check_camera(ep_dir: Path, status: dict) -> None:
     status["info"].append(f"camera {describe_camera(meta)}")
 
 
-def check_recording(ep_dir: Path, require_right: bool = True) -> dict:
+def check_recording(ep_dir: Path, require_right: bool | None = None) -> dict:
     """Check one raw episode directory for content completeness, return a status
     dict.
 
@@ -279,13 +303,16 @@ def check_recording(ep_dir: Path, require_right: bool = True) -> dict:
     reconciliation, IMU staleness/rate) — those belong to a separate audit, and
     keeping this fast is what lets the Space check every episode up front.
 
-    require_right: when False, the right OAK camera is not checked at all. The
-    pipeline never consumes dcam_right.mp4 (SLAM is RGB-D on left+depth), so a
-    caller that intentionally skips downloading it (e.g. the Space) sets this to
-    avoid a spurious "missing dcam_right.mp4" report.
+    require_right: None (the default) derives it from the episode itself, so a
+    camera without a right stream is not reported as missing one. Pass False to
+    force the check off for a caller that intentionally skips downloading the
+    file (e.g. the Space); True forces it on.
     """
     ep_dir = Path(ep_dir)
     status = {"name": ep_dir.name, "errors": [], "warnings": [], "info": []}
+
+    if require_right is None:
+        require_right = _expects_right_stream(ep_dir)
 
     _check_arducam(ep_dir, status)
     _check_oak_cameras(ep_dir, require_right, status)

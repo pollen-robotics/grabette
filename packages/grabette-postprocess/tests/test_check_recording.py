@@ -137,3 +137,50 @@ def test_check_recording_empty_dir_reports_missing(tmp_path):
     # test_check_imu_missing_file_is_not_an_error.
     assert "dcam_imu.json" not in errs
     assert "oakd_imu.json" not in errs
+
+
+# ── right-stream expectation derived from the recorded stats ─────────────
+# The Gemini 305 has no right stream, so "missing dcam_right.mp4" is a
+# legitimate absence there and a real signal on an OAK-D. The discriminator
+# is structural rather than a vendor list: oakd.py always writes
+# right_frames (0 if the stream failed), orbbec.py never writes it.
+
+def _episode(tmp_path, stats):
+    """Minimal episode carrying only metadata.json — every other file is
+    absent, which is fine: we assert on the dcam_right warning alone."""
+    _write(tmp_path / "metadata.json", {"dcam": stats})
+    return tmp_path
+
+
+def _right_warned(status):
+    return any("dcam_right" in w for w in status["warnings"])
+
+
+def test_right_not_expected_when_camera_reports_no_right_stream(tmp_path):
+    # Gemini 305: no right_frames key at all.
+    st = check_recording(_episode(tmp_path, {"left_frames": 315, "imu_samples": 0}))
+    assert not _right_warned(st)
+
+
+def test_right_expected_when_camera_reports_a_right_stream(tmp_path):
+    # OAK-D: right_frames present, file missing -> still a real warning.
+    st = check_recording(_episode(tmp_path, {"left_frames": 229, "right_frames": 229}))
+    assert _right_warned(st)
+
+
+def test_right_expected_when_right_stream_failed_to_capture(tmp_path):
+    # OAK-D whose right stream produced nothing: the key is still present,
+    # so the check must not go quiet exactly when something went wrong.
+    st = check_recording(_episode(tmp_path, {"left_frames": 229, "right_frames": 0}))
+    assert _right_warned(st)
+
+
+def test_right_expected_when_metadata_absent(tmp_path):
+    # Legacy episode with no metadata.json: preserve the old behaviour.
+    st = check_recording(tmp_path)
+    assert _right_warned(st)
+
+
+def test_explicit_require_right_false_still_overrides(tmp_path):
+    st = check_recording(_episode(tmp_path, {"right_frames": 229}), require_right=False)
+    assert not _right_warned(st)
