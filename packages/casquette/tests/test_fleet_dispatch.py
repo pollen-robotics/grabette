@@ -94,3 +94,36 @@ async def test_unknown_command(daemon, tm):
     r = await _handle_relay_command({"type": "frobnicate", "id": "c11"})
     assert r["status"] == "error"
     assert "unknown" in r["message"]
+
+
+async def test_upload_episodes_requires_repo_and_role(daemon, tm):
+    r = await _handle_relay_command(
+        {"type": "upload_episodes", "id": "u1", "args": {"episode_ids": ["x"]}}
+    )
+    assert r["status"] == "error"
+    assert "raw_repo" in r["message"]
+
+
+async def test_upload_episodes_uploads_present_flags_missing(daemon, tm, monkeypatch):
+    import casquette.fleet.hf as hfmod
+
+    eid = tm.create_episode(tm.get_or_create_task("pick"))  # creates the dir
+    calls = []
+
+    class FakeHF:
+        def upload_episode(self, ep_dir, repo, cb, path_in_repo, private):
+            calls.append((ep_dir.name, repo, path_in_repo, private))
+            return "https://hf/url"
+
+    monkeypatch.setattr(hfmod, "get_hf_client", lambda: FakeHF())
+
+    r = await _handle_relay_command({
+        "type": "upload_episodes", "id": "u2",
+        "args": {"raw_repo": "org/ds", "role": "casquette",
+                 "episode_ids": [eid, "20990101_000000"]},
+    })
+    assert r["status"] == "ok"
+    assert r["uploaded"] == [eid]
+    assert r["missing"] == ["20990101_000000"]
+    # each stream uploaded under "{episode_id}/{role}"
+    assert calls[0][2] == f"{eid}/casquette"

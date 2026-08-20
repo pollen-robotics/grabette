@@ -28,6 +28,10 @@ _daemon: Daemon | None = None
 MAX_START_LATENESS_S = 1.0
 
 
+def _exc_text(e: BaseException) -> str:
+    return f"{type(e).__name__}: {e}"
+
+
 def get_daemon_instance() -> Daemon | None:
     return _daemon
 
@@ -59,16 +63,16 @@ async def _handle_relay_command(cmd: dict) -> dict:
 
     Casquette is a pure fleet PEER (no physical button): it receives group
     start/stop from the fleet and records in lockstep via the shared
-    capture_scheduler (same T0 mechanism grabette uses). upload_episodes /
-    process_dataset are intentionally NOT handled yet — they need the HF dataset
-    client + a job manager (a follow-up); the device simply doesn't advertise
-    them, so the fleet won't send them.
+    capture_scheduler (same T0 mechanism grabette uses). upload_episodes pushes
+    this device's streams to the shared raw dataset; process_dataset (driving the
+    processing Space) is the one remaining deferred command.
     """
     from casquette.fleet.cancel import get_cancel_registry
     from casquette.fleet.capture_scheduler import get_capture_scheduler
     from casquette.task import episode_id_for, get_task_manager
 
     ctype = cmd.get("type")
+    cmd_id = cmd.get("id")
     cancels = get_cancel_registry()
 
     if ctype == "cancel_dataset":
@@ -137,6 +141,49 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "episode_id or episodes is required"}
         updated = tm.set_episode_members(eid, args.get("members") or {}, device_signature=sig)
         return {"status": "ok", "updated": 1 if updated else 0}
+
+    if ctype == "upload_episodes":
+        # Push THIS device's recorded streams for the given episodes into a
+        # shared raw dataset, each under "{episode_id}/{role}" so peers' streams
+        # for the same episode don't collide. Needs no capture hardware. Uploads
+        # run in a thread so the relay keeps heartbeating; per-episode cancel
+        # checkpoints let a fleet cancel_dataset stop it (see fleet/cancel.py).
+        from casquette.fleet.hf import get_hf_client
+
+        args = cmd.get("args", {})
+        raw_repo = args.get("raw_repo")
+        role = args.get("role")
+        episode_ids = args.get("episode_ids") or []
+        private = bool(args.get("private", False))
+        if not raw_repo or not role:
+            return {"status": "error", "message": "raw_repo and role are required"}
+        tm = get_task_manager()
+        hf = get_hf_client()
+        uploaded, missing = [], []
+        for eid in episode_ids:
+            if cancels.is_cancelled(cmd_id):
+                return {"status": "cancelled", "role": role,
+                        "uploaded": uploaded, "missing": missing}
+            ep_dir = tm.episode_dir(eid)
+            if not ep_dir.exists():
+                missing.append(eid)
+                continue
+            try:
+                await asyncio.to_thread(
+                    hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}", private
+                )
+                uploaded.append(eid)
+            except Exception as e:  # noqa: BLE001
+                if cancels.is_cancelled(cmd_id):
+                    return {"status": "cancelled", "role": role,
+                            "uploaded": uploaded, "missing": missing}
+                return {"status": "error",
+                        "message": f"upload failed for {eid}: {_exc_text(e)}",
+                        "uploaded": uploaded, "missing": missing, "role": role}
+        if cancels.is_cancelled(cmd_id):
+            return {"status": "cancelled", "role": role,
+                    "uploaded": uploaded, "missing": missing}
+        return {"status": "ok", "role": role, "uploaded": uploaded, "missing": missing}
 
     if daemon.state != DaemonState.RUNNING:
         return {"status": "error", "message": f"daemon not ready ({daemon.state.value})"}
@@ -283,7 +330,7 @@ async def lifespan(app: FastAPI):
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "prepare_capture",
                           "cancel_dataset", "delete_episode", "edit_task", "delete_task",
-                          "logout"],
+                          "upload_episodes", "logout"],
             tasks_provider=tm.report_tasks,
             tasks_rev_provider=tm.revision,
             activity_provider=_device_activity,
