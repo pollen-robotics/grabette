@@ -293,7 +293,9 @@ def move_episodes(
     tm: TaskManager = Depends(get_task_manager),
 ):
     try:
-        tm.move_episodes(req.episode_ids, req.target_task_id)
+        result = tm.move_episodes(req.episode_ids, req.target_task_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return {"moved": req.episode_ids, "target_task_id": req.target_task_id}
+    # "moved" is now what was actually filed, and "shared" names the episodes whose
+    # peer copy stays where it was — the caller warns about those.
+    return {"target_task_id": req.target_task_id, **result}

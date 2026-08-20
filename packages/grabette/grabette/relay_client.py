@@ -101,6 +101,13 @@ class RelayClient:
         # of which HF account it runs under — can surface the device's tasks and
         # name each episode's peers. The device is the durable source of truth.
         tasks_provider: Optional[Callable[[], list[dict]]] = None,
+        # Optional callable returning this device's loose episodes — recorded
+        # outside any task (see TaskManager.report_unassigned). Sent on register
+        # beside `tasks` but on its OWN key: they belong to no task, and must not
+        # be merged across devices the way tasks are. No extra freshness wiring
+        # needed — filing an episode bumps the task revision below, which already
+        # triggers a re-report on the next beat.
+        unassigned_provider: Optional[Callable[[], dict]] = None,
         # Optional callable returning a monotonic revision that changes whenever
         # this device's tasks change (see TaskManager.revision). Watched on the
         # heartbeat so a freshly-recorded episode is re-reported to the fleet
@@ -122,6 +129,7 @@ class RelayClient:
         self.poll_interval = poll_interval
         self.battery_provider = battery_provider
         self.tasks_provider = tasks_provider
+        self.unassigned_provider = unassigned_provider
         self.tasks_rev_provider = tasks_rev_provider
         self.activity_provider = activity_provider
         self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
@@ -160,6 +168,11 @@ class RelayClient:
                 body["tasks"] = self.tasks_provider()
             except Exception:
                 logger.debug("tasks_provider failed", exc_info=True)
+        if self.unassigned_provider is not None:
+            try:
+                body["unassigned"] = self.unassigned_provider()
+            except Exception:
+                logger.debug("unassigned_provider failed", exc_info=True)
         async with session.post(
             f"{self.base_url}/api/devices/register", json=body, headers=self._headers(token)
         ) as r:

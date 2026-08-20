@@ -272,7 +272,10 @@ class ButtonListener:
             raise RuntimeError(f"group start refused by fleet: {sync.get('detail', '')}")
         else:
             # "solo" (not in a session) or "unreachable" (standalone) → local
-            # active task, immediate.
+            # active task, immediate. With no session running and no task
+            # explicitly selected on the local UI, that resolves to Unassigned —
+            # a press outside a session records a visibly untriaged solo episode
+            # rather than hiding one inside the last task recorded to.
             task_id = sm.active_task_id
             target = None
 
