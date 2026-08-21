@@ -82,7 +82,7 @@ def load_tactile_streams(path: Path) -> dict[int, tuple[np.ndarray, np.ndarray]]
     """Return per-sensor tactile streams keyed by Modbus device address.
 
     Schema (tactile_data.json):
-        {"sample_rate_hz", "order", "sensors": {"<addr>": {"rows", "cols",
+        {"order", "sensors": {"<addr>": {"rows", "cols", "hz",
          "samples": [{"cts": <ms>, "value": [[...rows x cols...]]}]}}}
 
     Returns:

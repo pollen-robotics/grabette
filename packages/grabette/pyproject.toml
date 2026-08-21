@@ -36,8 +36,7 @@ rpi = [
     "grabette[vision]",
     "scipy",  # quaternion + rotation math (teleop, dataset processing)
     "rerun-sdk",  # live trajectory visualization for teleop
-    "pyserial",  # UART transport for the tactile sensors
-    "modbus-tk",  # Modbus RTU master for DFRobot SEN0704 tactile sensors
+    "pyserial",  # UART transport + Modbus RTU framing for the tactile sensors
 ]
 # The host-installable half of the OAK-D stack. Split out of `rpi` because that
 # extra is unusable off a Pi (picamera2, depthai, gpiod), yet grabette.hardware.oakd
