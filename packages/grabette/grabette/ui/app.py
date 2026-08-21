@@ -260,12 +260,17 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
 
 
 def _tactile_colormap(norm):
-    """Map a normalized (0-1) array to a jet-like RGB heatmap (uint8)."""
+    """Map a normalized (0-1) array to a viridis RGB heatmap (uint8).
+
+    Uses viridis anchor stops sampled at deciles and linearly interpolates
+    between them, so no matplotlib dependency is required.
+    """
     import numpy as np
 
     stops = np.array(
-        [[10, 10, 40], [0, 0, 200], [0, 200, 200],
-         [0, 200, 0], [230, 230, 0], [230, 30, 0]],
+        [[68, 1, 84], [72, 36, 117], [65, 68, 135], [53, 95, 141],
+         [42, 120, 142], [33, 145, 140], [34, 168, 132], [68, 191, 112],
+         [122, 209, 81], [189, 223, 38], [253, 231, 37]],
         dtype=np.float32,
     )
     n = len(stops) - 1
@@ -295,7 +300,9 @@ def _render_tactile(samples, cell_px: int = 36, pad: int = 12, label_h: int = 18
         vmax = max(1.0, float(grid.max()))
         hm = Image.fromarray(
             _tactile_colormap(grid / vmax), "RGB"
-        ).resize((cols * cell_px, rows * cell_px), Image.NEAREST)
+        ).resize(
+            (cols * cell_px, rows * cell_px), Image.NEAREST
+        ).transpose(Image.ROTATE_90)
 
         tile = Image.new("RGB", (hm.width, hm.height + label_h), bg)
         tile.paste(hm, (0, label_h))
