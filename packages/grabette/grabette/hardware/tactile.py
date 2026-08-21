@@ -2,15 +2,14 @@
 
 Each sensor is a Modbus-RTU slave; the Pi is the master. Multiple sensors share
 ONE UART bus (multi-drop) and are addressed individually by their Modbus device
-address, so a single serial port + RtuMaster polls them sequentially. Sensors on
-the same bus may have different shapes (e.g. a 6x6 SEN0704 next to a 4x8 SEN0705);
-each sensor's shape is auto-detected from its model register.
+address, so a single serial port polls them sequentially. Sensors on the same bus
+may have different shapes (e.g. a 6x6 SEN0704 next to a 4x8 SEN0705); each
+sensor's shape (rows, cols) is supplied explicitly in the config.
 
-A frame is one READ_INPUT_REGISTERS call at register 0x0007 (length = array size);
-each cell is a 12-bit ADC value (0-4095). The flat register block is row-major
-with rows in reverse order relative to the physical grid (see DFRobot get_datas),
-so we reshape into a canonical rows x cols grid (row-major, top-to-bottom).
-Protocol reference: DFRobot_Tactile_Sensor.py (github.com/DFRobot/DFRobot_TactileSensor).
+A frame is one READ_INPUT_REGISTERS (function 0x04) call at register 0x0007 with
+length = rows * cols; each cell is a 12-bit ADC value (0-4095) encoded big-endian.
+The flat register block is reshaped row-major directly into a rows x cols grid.
+Framing/decoding mirror the reference visualizer (tactile/src/sensor_visualizer.py).
 """
 
 import logging
@@ -22,22 +21,35 @@ from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
 
-# Input registers
-_INPUTREG_VERSION = 0x0005
-_INPUTREG_GETDATAS = 0x0007
-_INPUTREG_MODEL = 0x002B
-# Holding registers
-_HOLDINGREG_THLD = 0x0006
-_HOLDINGREG_SAMPLE_RATE = 0x0008
+_FUNC_READ_INPUT_REGISTERS = 0x04
+_START_REGISTER = 0x0007
+# Small settle before flushing the bus after a failed/partial transaction.
+_RECOVER_SLEEP_S = 0.0002
 
-_SAMPLE_RATE_20HZ = 0
-_SAMPLE_RATE_50HZ = 1
 
-# array cell-count -> (rows, cols). Mirrors the DFRobot driver's x/y mapping
-# (36 -> 6x6, 32 -> 4x8). Extend here if new array variants are added.
-_ARRAY_SHAPES = {32: (4, 8), 36: (6, 6)}
-# model register value -> array cell count.
-_MODEL_TO_ARRAY = {0: 32, 1: 36}
+def _modbus_crc(data: bytes) -> int:
+    crc = 0xFFFF
+    for byte in data:
+        crc ^= byte
+        for _ in range(8):
+            if crc & 1:
+                crc = (crc >> 1) ^ 0xA001
+            else:
+                crc >>= 1
+    return crc
+
+
+def _build_request(address: int, count: int) -> bytes:
+    packet = bytes([
+        address,
+        _FUNC_READ_INPUT_REGISTERS,
+        (_START_REGISTER >> 8) & 0xFF,
+        _START_REGISTER & 0xFF,
+        (count >> 8) & 0xFF,
+        count & 0xFF,
+    ])
+    crc = _modbus_crc(packet)
+    return packet + bytes([crc & 0xFF, (crc >> 8) & 0xFF])
 
 
 @dataclass
@@ -45,22 +57,30 @@ class TactileSamples:
     """Collected tactile samples from a capture session, keyed by device address.
 
     Each sensor carries its own shape (rows, cols) so mixed arrays on one bus are
-    stored unambiguously. Sample ``value`` is a canonical row-major rows x cols grid.
+    stored unambiguously. Sample ``value`` is a row-major rows x cols grid.
     """
-    sample_rate_hz: int = 50
     shapes: dict[int, tuple[int, int]] = field(default_factory=dict)  # addr -> (rows, cols)
-    arrays: dict[int, int] = field(default_factory=dict)  # addr -> cell count
     sensors: dict[int, list[dict]] = field(default_factory=dict)  # addr -> [{cts, value}]
 
     @property
     def count(self) -> int:
         return sum(len(s) for s in self.sensors.values())
 
+    def effective_hz(self, addr: int) -> float:
+        """Measured per-sensor rate from the first/last sample timestamps (ms)."""
+        s = self.sensors.get(addr, [])
+        if len(s) < 2:
+            return 0.0
+        span_ms = s[-1]["cts"] - s[0]["cts"]
+        return (len(s) - 1) / (span_ms / 1000.0) if span_ms > 0 else 0.0
+
 
 class TactileCapture:
     """Captures pressure data from one or more DFRobot SEN0704 tactile sensors.
 
     All sensors share a single UART bus; each is polled by its Modbus address.
+    ``sensors`` maps device address -> (rows, cols). The bus is polled as fast as
+    possible (no pacing), so the effective per-sensor rate is ~bus_throughput / N.
     """
 
     def __init__(
@@ -68,139 +88,134 @@ class TactileCapture:
         sync_manager: SyncManager,
         port: str = "/dev/ttyAMA0",
         baudrate: int = 115200,
-        addresses: list[int] | None = None,
-        array: int = 36,
-        sample_rate_hz: int = 50,
-        threshold: int = 50,
+        sensors: dict[int, tuple[int, int]] | None = None,
+        timeout: float = 0.02,
     ):
         self.sync = sync_manager
         self.port = port
         self.baudrate = baudrate
-        self.addresses = addresses or [1]
-        self.array = array  # fallback cell count if model auto-detect fails
-        self.sample_rate_hz = sample_rate_hz
-        self.threshold = threshold
+        self.shapes: dict[int, tuple[int, int]] = dict(sensors or {1: (6, 6)})
+        self.timeout = timeout
 
-        # Per-sensor shape, auto-detected from the model register in init_sensors.
-        self._arrays: dict[int, int] = {}
-        self._shapes: dict[int, tuple[int, int]] = {}
+        self._counts = {a: r * c for a, (r, c) in self.shapes.items()}
+        self._requests = {a: _build_request(a, self._counts[a]) for a in self.shapes}
+        self._response_sizes = {a: 3 + self._counts[a] * 2 + 2 for a in self.shapes}
 
-        self._samples = TactileSamples(sample_rate_hz=sample_rate_hz)
+        self._samples = TactileSamples(shapes=dict(self.shapes))
         self._running = False
         self._thread: threading.Thread | None = None
         self._serial = None
-        self._master = None
+
+    @property
+    def addresses(self) -> list[int]:
+        return list(self.shapes.keys())
 
     def init_sensors(self) -> None:
         import serial
-        import modbus_tk.defines as cst  # noqa: F401  (imported lazily for parity)
-        from modbus_tk import modbus_rtu
 
         self._serial = serial.Serial(
-            port=self.port, baudrate=self.baudrate,
-            bytesize=8, parity="N", stopbits=1,
+            port=self.port,
+            baudrate=self.baudrate,
+            bytesize=serial.EIGHTBITS,
+            parity=serial.PARITY_NONE,
+            stopbits=serial.STOPBITS_ONE,
+            timeout=self.timeout,
+            write_timeout=self.timeout,
         )
-        self._master = modbus_rtu.RtuMaster(self._serial)
-        self._master.set_timeout(1.0 / self.sample_rate_hz)
-
-        rate = _SAMPLE_RATE_50HZ if self.sample_rate_hz >= 50 else _SAMPLE_RATE_20HZ
-        for addr in self.addresses:
-            array = self.array
-            try:
-                model = self._read_reg(addr, _INPUTREG_MODEL, 1)[0]
-                array = _MODEL_TO_ARRAY.get(model, self.array)
-                if model not in _MODEL_TO_ARRAY:
-                    logger.warning(
-                        "Tactile addr %d: unknown model %d, falling back to array=%d",
-                        addr, model, self.array,
-                    )
-                self._write_reg(addr, _HOLDINGREG_THLD, self.threshold)
-                self._write_reg(addr, _HOLDINGREG_SAMPLE_RATE, rate)
-            except Exception as e:
-                logger.warning("Tactile addr %d init failed: %s", addr, e)
-            self._arrays[addr] = array
-            self._shapes[addr] = _ARRAY_SHAPES.get(array, (1, array))
+        self._serial.reset_input_buffer()
+        self._serial.reset_output_buffer()
         logger.info(
-            "Tactile sensors initialized at %d Hz (port=%s, shapes=%s)",
-            self.sample_rate_hz, self.port,
-            {a: self._shapes[a] for a in self.addresses},
+            "Tactile sensors initialized (port=%s, shapes=%s)",
+            self.port, self.shapes,
         )
 
-    def _read_reg(self, addr: int, reg: int, length: int) -> list[int]:
-        import modbus_tk.defines as cst
-        return list(self._master.execute(addr, cst.READ_INPUT_REGISTERS, reg, length))
+    def _read_exactly(self, size: int) -> bytearray | None:
+        data = bytearray(size)
+        view = memoryview(data)
+        pos = 0
+        while pos < size:
+            n = self._serial.readinto(view[pos:])
+            if n == 0:  # serial timeout
+                return None
+            pos += n
+        return data
 
-    def _write_reg(self, addr: int, reg: int, value: int) -> None:
-        import modbus_tk.defines as cst
-        # SEN0704 expects the 16-bit payload byte-swapped (see DFRobot driver).
-        payload = [((value >> 8) & 0xFF) | ((value & 0xFF) << 8)]
-        self._master.execute(addr, cst.WRITE_MULTIPLE_REGISTERS, reg, output_value=payload)
+    def _recover_bus(self) -> None:
+        time.sleep(_RECOVER_SLEEP_S)
+        if self._serial is not None:
+            self._serial.reset_input_buffer()
 
-    def _read_frame(self, addr: int) -> list[list[int]]:
-        array = self._arrays.get(addr, self.array)
-        flat = self._read_reg(addr, _INPUTREG_GETDATAS, array)
-        return self._reshape(addr, flat)
+    def _read_frame(self, addr: int) -> list[list[int]] | None:
+        """One Modbus transaction -> row-major rows x cols grid, or None on failure."""
+        count = self._counts[addr]
+        self._serial.write(self._requests[addr])
+        response = self._read_exactly(self._response_sizes[addr])
+        if response is None:
+            return None
+        if (
+            response[0] != addr
+            or response[1] != _FUNC_READ_INPUT_REGISTERS
+            or response[2] != count * 2
+        ):
+            return None
+        recv_crc = response[-2] | (response[-1] << 8)
+        if _modbus_crc(response[:-2]) != recv_crc:
+            return None
 
-    def _reshape(self, addr: int, flat: list[int]) -> list[list[int]]:
-        """Map the flat register block to a canonical row-major rows x cols grid.
-
-        The DFRobot register order is row-major but with rows reversed relative to
-        the physical grid, so grid[r][c] = flat[(rows - 1 - r) * cols + c].
-        """
-        rows, cols = self._shapes.get(addr, (1, len(flat)))
-        return [
-            [flat[(rows - 1 - r) * cols + c] for c in range(cols)]
-            for r in range(rows)
-        ]
+        data = response[3:3 + count * 2]
+        flat = [(data[2 * i] << 8) | data[2 * i + 1] for i in range(count)]
+        rows, cols = self.shapes[addr]
+        return [flat[r * cols:(r + 1) * cols] for r in range(rows)]
 
     def read_latest(self) -> dict[int, list[list[int]]]:
         """Read one frame per sensor directly — for idle live view."""
         out: dict[int, list[list[int]]] = {}
-        if self._master is None:
+        if self._serial is None:
             return out
         for addr in self.addresses:
             try:
-                out[addr] = self._read_frame(addr)
+                grid = self._read_frame(addr)
+                if grid is not None:
+                    out[addr] = grid
+                else:
+                    self._recover_bus()
             except Exception:
                 pass
         return out
 
     def _capture_loop(self) -> None:
+        # Poll continuously with no pacing (matches the reference visualizer):
+        # the bus runs at max throughput, giving each sensor ~throughput / N Hz.
         error_count = 0
         read_count = 0
-        sample_interval = 1.0 / self.sample_rate_hz
 
         while self._running:
-            loop_start = time.monotonic()
             read_count += 1
             for addr in self.addresses:
+                if not self._running:
+                    break
                 try:
                     ts = self.sync.get_timestamp_ms()
                     cells = self._read_frame(addr)
+                    if cells is None:
+                        error_count += 1
+                        self._recover_bus()
+                        continue
                     self._samples.sensors[addr].append({"cts": ts, "value": cells})
                 except Exception:
                     error_count += 1
-
-            elapsed = time.monotonic() - loop_start
-            sleep_time = sample_interval - elapsed
-            if sleep_time > 0:
-                time.sleep(sleep_time)
 
         logger.info("Tactile: %d loops, %d errors", read_count, error_count)
 
     def start_capture(self) -> None:
         if self._running:
             raise RuntimeError("Tactile capture already running")
-        if self._master is None:
+        if self._serial is None:
             raise RuntimeError("Sensors not initialized. Call init_sensors() first.")
         if not self.sync.is_started:
             raise RuntimeError("SyncManager must be started before tactile capture")
 
-        self._samples = TactileSamples(
-            sample_rate_hz=self.sample_rate_hz,
-            shapes=dict(self._shapes),
-            arrays=dict(self._arrays),
-        )
+        self._samples = TactileSamples(shapes=dict(self.shapes))
         for addr in self.addresses:
             self._samples.sensors[addr] = []
         self._running = True
@@ -213,12 +228,6 @@ class TactileCapture:
             self._thread.join(timeout=1.0)
             self._thread = None
 
-        if self._master is not None:
-            try:
-                self._master.close()
-            except Exception:
-                pass
-            self._master = None
         if self._serial is not None:
             try:
                 self._serial.close()
