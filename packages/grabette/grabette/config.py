@@ -49,16 +49,14 @@ class Settings(BaseSettings):
     # Angle sensors (AS5600 on I2C buses 4 & 5)
     angle_sensors: bool = True
 
-    # Tactile sensors (DFRobot SEN0704/SEN0705, Modbus RTU multi-drop on one UART).
-    # Off by default — opt in per device. Multiple sensors share one bus and are
-    # addressed by their Modbus device address (CSV, e.g. "1,2"). tactile_shapes
-    # is "ROWSxCOLS" (e.g. "6x6" or "4x8"); give one shape to apply to all sensors,
-    # or one per address matching tactile_addresses order.
-    tactile_sensors: bool = False
-    tactile_port: str = "/dev/ttyAMA0"
+    # Tactile sensors (DFRobot SEN0704/SEN0705, Modbus RTU on one bus). Defaults to
+    # the V2 rig: addr 1 = 6x6, addr 2 = 4x8 on /dev/ttyACM0 @ 921600. Init is
+    # non-fatal, so a device without them just logs and continues.
+    tactile_sensors: bool = True
+    tactile_port: str = "/dev/ttyACM0"
     tactile_baudrate: int = 921600
-    tactile_addresses: str = "1"
-    tactile_shapes: str = "6x6"
+    tactile_addresses: str = "1,2"
+    tactile_shapes: str = "6x6,4x8"
 
     # ------------------------------------------------------------------
     # Robot-frame angle convention (matches the gripette runtime):
