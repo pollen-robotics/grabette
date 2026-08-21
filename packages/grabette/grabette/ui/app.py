@@ -259,6 +259,65 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     )
 
 
+def _tactile_colormap(norm):
+    """Map a normalized (0-1) array to a jet-like RGB heatmap (uint8)."""
+    import numpy as np
+
+    stops = np.array(
+        [[10, 10, 40], [0, 0, 200], [0, 200, 200],
+         [0, 200, 0], [230, 230, 0], [230, 30, 0]],
+        dtype=np.float32,
+    )
+    n = len(stops) - 1
+    x = np.clip(norm, 0.0, 1.0) * n
+    lo = np.clip(np.floor(x).astype(int), 0, n - 1)
+    frac = (x - lo)[..., None]
+    rgb = stops[lo] * (1.0 - frac) + stops[lo + 1] * frac
+    return rgb.astype(np.uint8)
+
+
+def _render_tactile(samples, cell_px: int = 36, pad: int = 12, label_h: int = 18):
+    """Compose per-sensor pressure grids into one labeled heatmap image.
+
+    Each sensor is autoscaled to its current max so light touches stay visible.
+    Sensors are laid out left-to-right, sorted by Modbus address.
+    """
+    import numpy as np
+    from PIL import ImageDraw
+
+    bg = (17, 24, 39)
+    tiles = []
+    for s in sorted(samples, key=lambda s: s["address"]):
+        grid = np.asarray(s["cells"], dtype=np.float32)
+        if grid.ndim != 2 or grid.size == 0:
+            continue
+        rows, cols = grid.shape
+        vmax = max(1.0, float(grid.max()))
+        hm = Image.fromarray(
+            _tactile_colormap(grid / vmax), "RGB"
+        ).resize((cols * cell_px, rows * cell_px), Image.NEAREST)
+
+        tile = Image.new("RGB", (hm.width, hm.height + label_h), bg)
+        tile.paste(hm, (0, label_h))
+        ImageDraw.Draw(tile).text(
+            (3, 3), f"#{s['address']}  {rows}x{cols}  max={int(vmax)}",
+            fill=(200, 210, 220),
+        )
+        tiles.append(tile)
+
+    if not tiles:
+        return None
+
+    width = sum(t.width for t in tiles) + pad * (len(tiles) + 1)
+    height = max(t.height for t in tiles) + pad * 2
+    canvas = Image.new("RGB", (width, height), bg)
+    x = pad
+    for t in tiles:
+        canvas.paste(t, (x, pad))
+        x += t.width + pad
+    return canvas
+
+
 def create_ui(api_url: str | None = None) -> gr.Blocks:
     # Route downloaded episode archives to the SD-card-backed data_dir
     # instead of the OS /tmp (which on Pi OS is a small tmpfs). Same reason
@@ -286,6 +345,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return None
         try:
             return Image.open(io.BytesIO(data))
+        except Exception:
+            return None
+
+    def get_tactile_frame():
+        state = client.get_state()
+        if not state:
+            return None
+        samples = state.get("tactile")
+        if not samples:
+            return None
+        try:
+            return _render_tactile(samples)
         except Exception:
             return None
 
@@ -1151,11 +1222,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 accel_box = gr.Markdown("*—*")
                 gr.HTML(value=_ACCEL_IFRAME_HTML)
 
+        gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
+
+        # ── Tactile sensors (per-sensor pressure heatmaps) ─────────────
+        gr.HTML(_section_label("Tactile Sensors"))
+        tactile_img = gr.Image(
+            label=None, show_label=False, height="28vh", container=False,
+        )
+
         camera_timer = gr.Timer(0.2)
         camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
         depth_timer = gr.Timer(0.2)
         depth_timer.tick(fn=get_depth_frame, outputs=depth_img)
+
+        tactile_timer = gr.Timer(0.2)
+        tactile_timer.tick(fn=get_tactile_frame, outputs=tactile_img)
 
         sensor_timer = gr.Timer(0.5)
         sensor_timer.tick(fn=get_sensor_state, outputs=[gyro_box, accel_box, angle_box])
