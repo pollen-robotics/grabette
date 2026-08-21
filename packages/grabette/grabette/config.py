@@ -49,15 +49,16 @@ class Settings(BaseSettings):
     # Angle sensors (AS5600 on I2C buses 4 & 5)
     angle_sensors: bool = True
 
-    # Tactile sensors (DFRobot SEN0704 6x6, Modbus RTU multi-drop on one UART).
-    # Off by default — opt in per device. Multiple sensors share one bus and
-    # are addressed by their Modbus device address (CSV, e.g. "1,2").
+    # Tactile sensors (DFRobot SEN0704/SEN0705, Modbus RTU multi-drop on one UART).
+    # Off by default — opt in per device. Multiple sensors share one bus and are
+    # addressed by their Modbus device address (CSV, e.g. "1,2"). tactile_shapes
+    # is "ROWSxCOLS" (e.g. "6x6" or "4x8"); give one shape to apply to all sensors,
+    # or one per address matching tactile_addresses order.
     tactile_sensors: bool = False
     tactile_port: str = "/dev/ttyAMA0"
-    tactile_baudrate: int = 115200
+    tactile_baudrate: int = 921600
     tactile_addresses: str = "1"
-    tactile_array: int = 36
-    tactile_sample_rate_hz: int = 50
+    tactile_shapes: str = "6x6"
 
     # ------------------------------------------------------------------
     # Robot-frame angle convention (matches the gripette runtime):
@@ -135,8 +136,22 @@ class Settings(BaseSettings):
         return self
 
     @property
-    def tactile_address_list(self) -> list[int]:
-        return [int(a) for a in self.tactile_addresses.split(",") if a.strip()]
+    def tactile_sensor_map(self) -> dict[int, tuple[int, int]]:
+        """Map each Modbus address to its (rows, cols) shape."""
+        addrs = [int(a) for a in self.tactile_addresses.split(",") if a.strip()]
+        shape_strs = [s.strip() for s in self.tactile_shapes.split(",") if s.strip()]
+        if len(shape_strs) == 1:
+            shape_strs = shape_strs * len(addrs)
+        if len(shape_strs) != len(addrs):
+            raise ValueError(
+                "tactile_shapes must have one entry (applied to all) or match "
+                f"the number of tactile_addresses ({len(addrs)})"
+            )
+        shapes: list[tuple[int, int]] = []
+        for s in shape_strs:
+            rows, cols = s.lower().split("x")
+            shapes.append((int(rows), int(cols)))
+        return dict(zip(addrs, shapes))
 
 
 settings = Settings()

@@ -30,14 +30,13 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
         └── metadata.json               # Duration, counts, hand, angle_convention, device_id, urdf
 ```
 
-`tactile_data.json` is present only when tactile sensors are enabled (`GRABETTE_TACTILE_SENSORS=true`). It holds one entry per Modbus device address, each carrying its own shape (sensors on one bus may differ, e.g. a 6x6 SEN0704 next to a 4x8 SEN0705). Each sample `value` is a canonical `rows x cols` grid of raw 12-bit ADC ints (0-4095), row-major top-to-bottom:
+`tactile_data.json` is present only when tactile sensors are enabled (`GRABETTE_TACTILE_SENSORS=true`). It holds one entry per Modbus device address, each carrying its own shape (sensors on one bus may differ, e.g. a 6x6 SEN0704 next to a 4x8 SEN0705). The bus is polled at max throughput with no pacing, so the per-sensor rate is roughly `bus_throughput / N` (≈300 Hz for 1 sensor, 150 Hz for 2, …); the measured value is stored per sensor as `hz`. Each sample `value` is a canonical `rows x cols` grid of raw 12-bit ADC ints (0-4095), row-major top-to-bottom, with a `cts` timestamp (ms, shared clock) for exact per-frame timing:
 
 ```json
 {
-  "sample_rate_hz": 50,
   "order": "row_major",
   "sensors": {
-    "1": {"array": 36, "rows": 6, "cols": 6, "samples": [{"cts": 0.0, "value": [[0, 0, 0, 0, 0, 0], "... 6 rows ..."]}]}
+    "1": {"array": 36, "rows": 6, "cols": 6, "hz": 298.7, "samples": [{"cts": 0.0, "value": [[0, 0, 0, 0, 0, 0], "... 6 rows ..."]}]}
   }
 }
 ```

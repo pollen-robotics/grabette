@@ -135,9 +135,7 @@ class RpiBackend(Backend):
                 self._sync,
                 port=settings.tactile_port,
                 baudrate=settings.tactile_baudrate,
-                addresses=settings.tactile_address_list,
-                array=settings.tactile_array,
-                sample_rate_hz=settings.tactile_sample_rate_hz,
+                sensors=settings.tactile_sensor_map,
             )
             self._tactile.init_sensors()
             logger.info("Tactile sensors initialized")
@@ -538,13 +536,13 @@ class RpiBackend(Backend):
             tactile_count = tac.count
             if tac.count:
                 tactile_data = {
-                    "sample_rate_hz": tac.sample_rate_hz,
                     "order": "row_major",
                     "sensors": {
                         str(a): {
-                            "array": tac.arrays.get(a),
-                            "rows": tac.shapes.get(a, (None, None))[0],
-                            "cols": tac.shapes.get(a, (None, None))[1],
+                            "array": tac.shapes[a][0] * tac.shapes[a][1],
+                            "rows": tac.shapes[a][0],
+                            "cols": tac.shapes[a][1],
+                            "hz": round(tac.effective_hz(a), 2),
                             "samples": s,
                         }
                         for a, s in tac.sensors.items()

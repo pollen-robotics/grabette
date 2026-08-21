@@ -251,10 +251,17 @@ class MockBackend(Backend):
             for i in range(status.tactile_sample_count):
                 t = (i / status.tactile_sample_count) * duration_ms
                 samples.append({"cts": t, "value": [[0] * 6 for _ in range(6)]})
+            hz = (
+                (len(samples) - 1) / (samples[-1]["cts"] - samples[0]["cts"]) * 1000.0
+                if len(samples) > 1 and samples[-1]["cts"] > samples[0]["cts"]
+                else 0.0
+            )
             (episode_dir / "tactile_data.json").write_text(json.dumps({
-                "sample_rate_hz": 50,
                 "order": "row_major",
-                "sensors": {"1": {"array": 36, "rows": 6, "cols": 6, "samples": samples}},
+                "sensors": {"1": {
+                    "array": 36, "rows": 6, "cols": 6,
+                    "hz": round(hz, 2), "samples": samples,
+                }},
             }))
 
         # Placeholder video file
