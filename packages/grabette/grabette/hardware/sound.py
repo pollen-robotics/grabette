@@ -103,14 +103,30 @@ CUE_DEBOUNCE_S = 1.5
 # itself is a fraction of a second).
 PLAY_TIMEOUT_S = 5.0
 
+# Minimum total length of a rendered cue, made up with trailing silence. This
+# is NOT an aesthetic choice: ALSA only starts the DMA transfer once the ring
+# buffer passes its start threshold, and aplay negotiates a buffer of several
+# hundred ms with bcm2835-i2s. A clip SHORTER than that buffer can leave the
+# transfer never started, with aplay blocked in drain until something kills it —
+# which is exactly what the 60 ms "saved" blip did, once per recording. Padding
+# with silence costs nothing audible and keeps the clip longer than any
+# plausible buffer. (Forcing `aplay --buffer-time` would attack it from the
+# other end, but it makes us guess a value the driver may refuse.)
+MIN_CUE_S = 0.75
+
 # Linear fade applied to each tone's edges. Without it the abrupt start/stop of
 # the waveform is a step on the DAC output and the speaker clicks audibly.
 _FADE_S = 0.006
 
 
-def _render_wav(path: Path, tones, volume: float, rate: int = SAMPLE_RATE) -> None:
+def _render_wav(
+    path: Path, tones, volume: float, rate: int = SAMPLE_RATE,
+    min_total_s: float = MIN_CUE_S,
+) -> None:
     """Render `tones` to a 16-bit stereo WAV at `rate`, in place of shipping a
-    binary asset (keeps the cue tweakable from config)."""
+    binary asset (keeps the cue tweakable from config), padded with trailing
+    silence to `min_total_s` — see MIN_CUE_S for why that padding is required
+    and not cosmetic."""
     amplitude = max(0.0, min(1.0, volume)) * 32767.0
     samples = array.array("h")
     for freq, duration in tones:
@@ -122,6 +138,9 @@ def _render_wav(path: Path, tones, volume: float, rate: int = SAMPLE_RATE) -> No
             v = int(amplitude * env * math.sin(2.0 * math.pi * freq * i / rate))
             samples.append(v)  # left
             samples.append(v)  # right
+    pad_frames = int(rate * min_total_s) - len(samples) // 2
+    if pad_frames > 0:
+        samples.extend(array.array("h", bytes(4 * pad_frames)))
     if sys.byteorder == "big":
         samples.byteswap()  # WAV frames are little-endian
     with wave.open(str(path), "wb") as w:
@@ -263,9 +282,20 @@ class Speaker:
             _, err = proc.communicate(timeout=PLAY_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             proc.kill()
+            # communicate() again after the kill, as the subprocess docs
+            # require: without it the stderr pipe stays open in this process and
+            # the child stays a zombie until the next cue happens to prune it —
+            # a slow FD leak on a daemon that runs for days.
+            try:
+                proc.communicate(timeout=1.0)
+            except Exception:
+                logger.debug("Speaker: reaping the killed aplay failed", exc_info=True)
+            # Name the CUE, not just the device: the cues differ in length, and
+            # length is what makes a clip fail to start (see MIN_CUE_S), so
+            # which one hung is the diagnosis.
             logger.warning(
-                "Speaker: aplay still running after %.0fs on %s, killed",
-                PLAY_TIMEOUT_S, self._device,
+                "Speaker: aplay stuck >%.0fs playing %s on %s, killed",
+                PLAY_TIMEOUT_S, wav.name, self._device,
             )
             return False
         except Exception:
