@@ -5,10 +5,14 @@ Hardware: the codec hangs off the Pi's I2S bus (control over i2c-1 @ 0x18,
 `config/overlays/tlv320aic3104-overlay.dts` + `scripts/aic3104-init.sh` for the
 devicetree/mixer side, and `make install-audio`.
 
-Used for one thing today: a beep at the instant a recording actually goes live
-(after the OAK-D warm-up), so an operator holding the grabette knows the take
-has started without looking at the LED — and so a whole group of grabettes
-audibly starts in unison at the shared T0.
+Used to mark both ends of a take, so an operator holding the grabette knows
+where the recording actually starts and stops without looking at the LED:
+  • an ASCENDING beep at the instant the recording goes live (after the OAK-D
+    warm-up) — a whole group of grabettes hits that instant at the shared T0,
+    so the rig audibly starts in unison;
+  • a DESCENDING beep the moment the streams stop saving frames — which is the
+    START of the ~1-2s mux, not its end, so it is heard while the daemon is
+    still busy writing the episode.
 
 Playback rules that matter here:
   • It must NEVER delay or break a capture. Every failure path is swallowed and
@@ -43,10 +47,19 @@ CARD_NAME = "aic3104"
 # The codec's only natively clocked rate — see the module docstring.
 SAMPLE_RATE = 48000
 
-# The "recording is live" cue: two short ascending tones. Kept brief so it
-# can't bleed into more than the first few frames of the take.
-# (frequency Hz, duration s)
+# The cues, as (frequency Hz, duration s) sequences. Kept brief so they can't
+# bleed into more than the first/last few frames of a take. Start ASCENDS and
+# stop DESCENDS — the pair has to be told apart by ear alone, and rising vs
+# falling is unmistakable in a way that two different pitches are not.
 START_TONES: tuple[tuple[float, float], ...] = ((880.0, 0.09), (1320.0, 0.11))
+STOP_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.09), (880.0, 0.11))
+
+CUE_START = "capture_start"
+CUE_STOP = "capture_stop"
+CUES: dict[str, tuple[tuple[float, float], ...]] = {
+    CUE_START: START_TONES,
+    CUE_STOP: STOP_TONES,
+}
 
 # Upper bound on one cue playback before we assume aplay is wedged (the cue
 # itself is a fraction of a second).
@@ -101,7 +114,7 @@ class Speaker:
         self._device = device or ""
         self._volume = volume
         self._tmpdir: tempfile.TemporaryDirectory | None = None
-        self._start_wav: Path | None = None
+        self._cues: dict[str, Path] = {}
         self._aplay = shutil.which("aplay")
         self._procs: list[subprocess.Popen] = []
         self._lock = threading.Lock()
@@ -128,21 +141,28 @@ class Speaker:
             self._device = device
         try:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="grabette-sound-")
-            self._start_wav = Path(self._tmpdir.name) / "capture_start.wav"
-            _render_wav(self._start_wav, START_TONES, self._volume)
+            for name, tones in CUES.items():
+                path = Path(self._tmpdir.name) / f"{name}.wav"
+                _render_wav(path, tones, self._volume)
+                self._cues[name] = path
         except Exception:
             logger.warning("Speaker cue rendering failed; sound disabled", exc_info=True)
+            self._cues = {}
             self._enabled = False
             return
         logger.info("Speaker ready on '%s'", self._device)
 
     @property
     def is_available(self) -> bool:
-        return self._enabled and self._start_wav is not None
+        return self._enabled and bool(self._cues)
 
     def play_start(self) -> None:
-        """Beep 'recording is live'. Returns immediately; never raises."""
-        self._play(self._start_wav)
+        """Beep 'recording is live' (ascending). Returns at once; never raises."""
+        self._play(self._cues.get(CUE_START))
+
+    def play_stop(self) -> None:
+        """Beep 'recording over' (descending). Returns at once; never raises."""
+        self._play(self._cues.get(CUE_STOP))
 
     def _play(self, wav: Path | None) -> None:
         if not self._enabled or wav is None:
@@ -206,7 +226,7 @@ class Speaker:
         if self._tmpdir is not None:
             self._tmpdir.cleanup()
             self._tmpdir = None
-        self._start_wav = None
+        self._cues = {}
 
 
 _speaker: Speaker | None = None

@@ -50,11 +50,43 @@ def test_volume_scales_peak_amplitude(tmp_path):
     assert peaks[1] <= 32767
 
 
+def test_start_and_stop_cues_are_distinguishable(tmp_path):
+    """Rising vs falling — the operator has to tell the two apart by ear."""
+    assert sound.START_TONES != sound.STOP_TONES
+    start_freqs = [f for f, _ in sound.START_TONES]
+    stop_freqs = [f for f, _ in sound.STOP_TONES]
+    assert start_freqs == sorted(start_freqs)              # ascending
+    assert stop_freqs == sorted(stop_freqs, reverse=True)  # descending
+
+
+def test_prepare_renders_every_cue(monkeypatch):
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
+    speaker.prepare()
+    assert set(speaker._cues) == {sound.CUE_START, sound.CUE_STOP}
+    assert all(p.exists() for p in speaker._cues.values())
+    speaker.close()
+    assert speaker._cues == {}
+    assert not speaker.is_available
+
+
+def test_play_stop_uses_the_stop_cue(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(calls, FakeProc()))
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
+    speaker.prepare()
+    assert speaker._spawn(speaker._cues[sound.CUE_STOP]) is True
+    speaker.close()
+    assert calls[0][-1].endswith(f"{sound.CUE_STOP}.wav")
+
+
 def test_disabled_speaker_is_inert():
     speaker = sound.Speaker(enabled=False)
     speaker.prepare()
     assert not speaker.is_available
     speaker.play_start()  # must not raise, must not spawn anything
+    speaker.play_stop()
     speaker.close()
 
 
@@ -109,7 +141,7 @@ def test_play_start_spawns_aplay_with_the_named_card(monkeypatch, tmp_path):
     assert speaker.is_available
     # play_start dispatches to a thread; call the spawn directly so the test
     # isn't timing-dependent.
-    assert speaker._spawn(speaker._start_wav) is True
+    assert speaker._spawn(speaker._cues[sound.CUE_START]) is True
     speaker.close()
 
     assert len(calls) == 1
@@ -129,7 +161,7 @@ def test_aplay_failure_is_logged_not_swallowed(monkeypatch, caplog):
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
     speaker.prepare()
     with caplog.at_level("WARNING"):
-        assert speaker._spawn(speaker._start_wav) is False
+        assert speaker._spawn(speaker._cues[sound.CUE_START]) is False
     speaker.close()
     assert "Permission denied" in caplog.text
     assert "exit 1" in caplog.text
@@ -153,7 +185,7 @@ def test_hung_aplay_is_killed(monkeypatch, caplog):
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
     speaker.prepare()
     with caplog.at_level("WARNING"):
-        assert speaker._spawn(speaker._start_wav) is False
+        assert speaker._spawn(speaker._cues[sound.CUE_START]) is False
     speaker.close()
     assert proc.killed
     assert "killed" in caplog.text
@@ -168,5 +200,5 @@ def test_play_never_raises_when_spawn_fails(monkeypatch):
         raise OSError("no such device")
 
     monkeypatch.setattr(sound.subprocess, "Popen", boom)
-    speaker._spawn(speaker._start_wav)  # swallowed + logged, never raised
+    speaker._spawn(speaker._cues[sound.CUE_START])  # swallowed + logged, never raised
     speaker.close()

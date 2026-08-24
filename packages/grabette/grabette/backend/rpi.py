@@ -501,6 +501,16 @@ class RpiBackend(Backend):
         # same clock used by all stream timestamps — no wall-clock drift).
         duration_ms = self._sync.get_timestamp_ms()
 
+        # Audible cue (descending, mirroring the ascending one at start) — HERE,
+        # at the top of the teardown: the stream stops below flip their recording
+        # flag at once and only THEN spend ~1-2s muxing, so this is the instant
+        # frames stop being saved. Being a detached subprocess, it is heard
+        # during that mux even though the mux blocks the event loop. Placing it
+        # after the muxes instead would report "episode written", a second or two
+        # after the take actually ended.
+        if self._speaker is not None:
+            self._speaker.play_stop()
+
         # Stop angle BEFORE camera. camera.stop() runs ffmpeg muxing
         # which takes ~1-2s — if angle capture is still running during
         # muxing, samples extend past the video duration.

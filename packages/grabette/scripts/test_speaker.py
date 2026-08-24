@@ -1,5 +1,5 @@
-"""Speaker bring-up test — plays the exact cue the daemon plays when a
-recording goes live, through the same code path.
+"""Speaker bring-up test — plays the exact cues the daemon plays when a
+recording goes live and when it stops, through the same code path.
 
 Run on the Pi 4, with the SYSTEM python — no venv needed:
     python3 scripts/test_speaker.py
@@ -25,7 +25,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from grabette.hardware.sound import CARD_NAME, Speaker, autodetect_device  # noqa: E402
+from grabette.hardware.sound import (  # noqa: E402
+    CARD_NAME,
+    CUE_START,
+    CUE_STOP,
+    Speaker,
+    autodetect_device,
+)
 
 
 def main() -> int:
@@ -54,10 +60,14 @@ def main() -> int:
               "(aplay missing? apt install alsa-utils)")
         return 1
 
-    print("[..]   playing the capture-start cue")
-    # _spawn (rather than play_start) so we run aplay on THIS thread and any
-    # error it reports lands on screen instead of in a background thread.
-    played = speaker._spawn(speaker._start_wav)
+    # _spawn (rather than play_start/play_stop) so we run aplay on THIS thread
+    # and any error it reports lands on screen instead of in a background thread.
+    print("[..]   playing the capture-START cue (ascending)")
+    played = speaker._spawn(speaker._cues[CUE_START])
+    time.sleep(0.4)
+    if played:
+        print("[..]   playing the capture-STOP cue (descending)")
+        played = speaker._spawn(speaker._cues[CUE_STOP])
     time.sleep(0.2)
     speaker.close()
     if not played:
@@ -66,7 +76,7 @@ def main() -> int:
         print("       Common cause: the invoking user is not in the 'audio' "
               "group (check with: groups).")
         return 1
-    print("[OK]   aplay played the cue without error. If you heard nothing, the")
+    print("[OK]   aplay played both cues without error. If you heard nothing, the")
     print("       mixer is almost certainly still muted — the codec boots with its")
     print("       line outputs off:  sudo /usr/local/bin/aic3104-init.sh")
     return 0

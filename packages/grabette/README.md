@@ -19,7 +19,7 @@
 | **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
-| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — beeps when a recording actually goes live |
+| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — beeps when a recording goes live and when it stops |
 
 **Build the hardware:**
 
@@ -116,12 +116,21 @@ If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using 
 
 ### Speaker: audible recording cue (`make install-audio`)
 
-Each grabette **beeps at the instant its recording actually starts** — i.e. after
-the OAK-D warm-up, once the sync clock is running and every stream is recording,
-not when the button is pressed. On a synchronized group recording all members
-reach that instant at the shared T0, so the whole rig beeps in unison. It's the
-audible counterpart of the LED (blink = initializing, solid = recording), for
-when you're holding the device and not looking at it.
+Each grabette beeps at **both ends of a take** — the audible counterpart of the
+LED (blink = initializing, solid = recording), for when you're holding the device
+and not looking at it:
+
+- **ascending** beep at the instant the recording *actually* starts: after the
+  OAK-D warm-up, once the sync clock is running and every stream is recording —
+  not when the button is pressed. On a synchronized group recording all members
+  reach that instant at the shared T0, so the whole rig beeps in unison.
+- **descending** beep the moment the streams *stop saving frames*. That is the
+  **start** of the ~1-2s mux, not its end: the stream stops flip their recording
+  flag at once and only then write the mp4, so the beep marks the real end of the
+  take rather than "episode written". You hear it while the daemon is still
+  muxing (the LED keeps fast-blinking through that).
+
+Rising vs falling is deliberate — the two have to be told apart by ear alone.
 
 The hardware is a **TLV320AIC3104** codec on the V2 HAT, driven over I2S — the
 same codec on the same HAT as
@@ -159,9 +168,12 @@ is Pi-4-specific lives in `config/config.txt` and in how the card is addressed:
 Check it:
 ```bash
 aplay -l | grep aic3104                 # card registered? if not: config.txt + reboot
-python scripts/test_speaker.py          # plays the exact cue the daemon plays
+python3 scripts/test_speaker.py         # plays both cues, via the daemon's own code path
 sudo /usr/local/bin/aic3104-init.sh     # re-apply the mixer levels (if it's silent)
+journalctl -u grabette | grep -i speaker   # "Speaker ready on '…'", or why it isn't
 ```
+(`test_speaker.py` needs no venv — `grabette.hardware.sound` is stdlib-only, so
+the system `python3` runs it before `install-rpi` has built anything.)
 Turn it off with `GRABETTE_SOUND_ENABLED=false` (in `/etc/grabette/env`), or trim
 the level with `GRABETTE_SOUND_VOLUME` — see [docs/configuration.md](docs/configuration.md).
 A missing or unconfigured codec is never fatal: the daemon logs one line and

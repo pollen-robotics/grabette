@@ -29,18 +29,23 @@ All settings via environment variables with `GRABETTE_` prefix. Persistent per-d
 | `GRABETTE_PROXIMAL_SIGN` | (from `hand`) | Override the hand-derived proximal sensor sign. ±1 |
 | `GRABETTE_UI_ENABLED` | `true` | Enable Gradio dashboard |
 | `GRABETTE_BUTTON_ENABLED` | `true` | Enable hardware button |
-| `GRABETTE_SOUND_ENABLED` | `true` | Beep on the HAT speaker when a recording actually goes live |
+| `GRABETTE_SOUND_ENABLED` | `true` | Beep on the HAT speaker at the start and the end of a recording |
 | `GRABETTE_SOUND_DEVICE` | (auto) | ALSA device. Empty = auto-detect the codec by card name (`plughw:CARD=aic3104`) |
 | `GRABETTE_SOUND_VOLUME` | `0.6` | Amplitude of the generated cue, `0`..`1` (absolute loudness is the codec mixer's job) |
 | `GRABETTE_LOG_LEVEL` | `INFO` | Logging level |
 
 ## Audible recording cue
 
-`GRABETTE_SOUND_*` drives the TLV320AIC3104 codec on the V2 HAT. The cue fires
-from `RpiBackend.start_capture`, at the point where the recording is genuinely
-rolling — OAK-D warmed up, sync clock started, all streams recording — **not**
-when the button is pressed; on a synchronized group start every device reaches
-that point at the shared T0 and they beep together.
+`GRABETTE_SOUND_*` drives the TLV320AIC3104 codec on the V2 HAT. Two cues, both
+placed at the real boundaries of the take rather than at the button press:
+
+- **ascending**, from `RpiBackend.start_capture`, at the point where the
+  recording is genuinely rolling — OAK-D warmed up, sync clock started, all
+  streams recording. On a synchronized group start every device reaches that
+  point at the shared T0 and they beep together.
+- **descending**, from the top of `RpiBackend.stop_capture`, where the streams
+  stop saving frames — i.e. *before* the ~1-2s mux, which it then plays over
+  (the cue is a detached subprocess, the mux blocks the event loop).
 
 The card is always addressed **by name**, never by index: on a Pi 4 the
 `vc4-hdmi` cards are registered too, so the codec's number isn't stable. Setting
