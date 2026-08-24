@@ -257,8 +257,23 @@
         document.getElementById('btnNetStatus').disabled = !connected;
     }
 
+    // Chrome's two wordings for "BlueZ no longer has this device object". A
+    // failed connect makes BlueZ evict the device, so the handle we hold is
+    // dead: only a fresh requestDevice() can replace it, and that needs a new
+    // user gesture. Retrying past this point just buries the real error.
+    function isDeadHandle(e) {
+        return /no longer in range|doesn't exist anymore/i.test(e.message || '');
+    }
+
     async function connectDevice() {
         const targetName = document.getElementById('deviceSelect').value;
+        // Block a second click while the first is still connecting: opening the
+        // chooser again starts a fresh scan, and that scan aborts the
+        // connection already in flight (BlueZ reports
+        // le-connection-abort-by-local), so the extra click breaks the very
+        // attempt it looks like it is helping.
+        const btnConnect = document.getElementById('btnConnect');
+        btnConnect.disabled = true;
         try {
             log('Scanning for ' + targetName + '...');
             // Match by name PREFIX: the device advertises "Grabette (hostname)"
@@ -275,9 +290,12 @@
             });
 
             // GATT can connect then drop immediately (common on Linux/BlueZ),
-            // so retry the connect + service discovery a few times.
+            // so retry the connect + service discovery a few times — but stop
+            // the moment the handle itself is dead, because those retries
+            // cannot succeed and their error replaces the one that explains
+            // what actually went wrong.
             let cmdService;
-            const maxAttempts = 5;
+            const maxAttempts = 3;
             for (let attempt = 1; ; attempt++) {
                 try {
                     log('Connecting GATT (attempt ' + attempt + '/' + maxAttempts + ')...');
@@ -285,7 +303,7 @@
                     cmdService = await server.getPrimaryService(SERVICE_UUID);
                     break;
                 } catch (e) {
-                    if (attempt >= maxAttempts) throw e;
+                    if (attempt >= maxAttempts || isDeadHandle(e)) throw e;
                     log('GATT unstable, retrying: ' + e.message, 'log-err');
                     if (device.gatt.connected) device.gatt.disconnect();
                     await new Promise(r => setTimeout(r, 500));
@@ -313,6 +331,13 @@
             log('Connected to ' + shownName, 'log-ok');
         } catch (e) {
             log('Connection failed: ' + e.message, 'log-err');
+            if (isDeadHandle(e)) {
+                log('The device entry expired — click Connect and pick it again.', 'log-err');
+            }
+        } finally {
+            // setConnected(true) already disabled the button on success; only a
+            // failed attempt needs it back.
+            if (!(device && device.gatt.connected)) btnConnect.disabled = false;
         }
     }
 
