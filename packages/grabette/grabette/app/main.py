@@ -355,7 +355,10 @@ async def _handle_relay_command(cmd: dict) -> dict:
         from huggingface_hub import get_token
 
         args = cmd.get("args", {})
-        space_url = (args.get("space_url") or "").rstrip("/")
+        # A device-pinned Space (settings) takes precedence over the fleet's, so a
+        # device can force its own fork (e.g. one with tactile export).
+        space_url = (settings.slam_space_url or args.get("space_url") or "").rstrip("/")
+        space_repo = settings.slam_space_repo or args.get("space_repo")
         source_repo = args.get("source_repo")
         target_repo = args.get("target_repo")
         if not space_url or not source_repo or not target_repo:
@@ -387,7 +390,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
                 not_awake = await _wake_space(
                     s, space_url, headers,
                     lambda: cancels.is_cancelled(cmd_id),
-                    space_repo=args.get("space_repo"),
+                    space_repo=space_repo,
                     token=token,
                     probe_timeout=aiohttp.ClientTimeout(
                         total=_SPACE_WAKE_PROBE_TIMEOUT_S
