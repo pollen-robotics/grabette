@@ -48,6 +48,10 @@ SAMPLE_RATE = 48000
 # (frequency Hz, duration s)
 START_TONES: tuple[tuple[float, float], ...] = ((880.0, 0.09), (1320.0, 0.11))
 
+# Upper bound on one cue playback before we assume aplay is wedged (the cue
+# itself is a fraction of a second).
+PLAY_TIMEOUT_S = 5.0
+
 # Linear fade applied to each tone's edges. Without it the abrupt start/stop of
 # the waveform is a step on the DAC output and the speaker clicks audibly.
 _FADE_S = 0.006
@@ -150,19 +154,48 @@ class Speaker:
             target=self._spawn, args=(wav,), daemon=True, name="speaker-cue",
         ).start()
 
-    def _spawn(self, wav: Path) -> None:
+    def _spawn(self, wav: Path) -> bool:
+        """Run aplay to completion on this (throwaway) thread, and REPORT what
+        it said. Discarding aplay's stderr makes a silent speaker impossible to
+        diagnose from the journal — a muted mixer, a busy card and a missing
+        /dev/snd permission all look identical (nothing at all). So: capture
+        stderr, check the exit status, log a warning on failure. Still never
+        raises, still off the caller's thread. Returns True if aplay exited 0
+        (which means it PLAYED, not that anything was audible — a muted mixer
+        exits 0 too)."""
         try:
             proc = subprocess.Popen(
                 [self._aplay, "-q", "-D", self._device, str(wav)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
             )
         except Exception:
-            logger.debug("Speaker playback failed", exc_info=True)
-            return
+            logger.warning("Speaker: cannot run %s", self._aplay, exc_info=True)
+            return False
         with self._lock:
-            # Reap finished players so repeated cues don't leave zombies.
+            # Keep a handle so close() can cut a hung player short, and prune
+            # finished ones so repeated cues don't pile up.
             self._procs = [p for p in self._procs if p.poll() is None]
             self._procs.append(proc)
+        try:
+            _, err = proc.communicate(timeout=PLAY_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            logger.warning(
+                "Speaker: aplay still running after %.0fs on %s, killed",
+                PLAY_TIMEOUT_S, self._device,
+            )
+            return False
+        except Exception:
+            logger.debug("Speaker: aplay wait failed", exc_info=True)
+            return False
+        if proc.returncode != 0:
+            logger.warning(
+                "Speaker: aplay failed on %s (exit %s): %s",
+                self._device, proc.returncode,
+                (err or b"").decode("utf-8", "replace").strip() or "(no message)",
+            )
+            return False
+        return True
 
     def close(self) -> None:
         with self._lock:
