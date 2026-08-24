@@ -185,6 +185,12 @@ class RpiBackend(Backend):
                 actual_fps,
                 self._capture_session_dir / "imu_data.json",
             )
+            # Per-frame video timestamps (ms, relative to recording start), same
+            # format grabette writes. The post-process/fusion aligns casquette's
+            # POV frames onto the bimanual episode timeline with these.
+            (self._capture_session_dir / "frame_timestamps.json").write_text(
+                json.dumps(frame_timestamps)
+            )
             meta = {
                 "duration_seconds": status.duration_seconds,
                 "frame_count": status.frame_count,
