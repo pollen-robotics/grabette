@@ -13,6 +13,11 @@ Both incidents these cover were reported from the field:
 
 So: a Space that pushed nothing must be an error, and an upload attempt must be
 bounded and retried rather than allowed to hang.
+
+The bound is on SILENCE, not on elapsed time, and the tests below are written to
+hold that line: abandoning an upload that was still making progress would be a
+second field incident, not a partial fix, so "slow is not stalled" gets a test of
+its own.
 """
 import asyncio
 import threading
@@ -222,6 +227,49 @@ class _Hf:
         return f"https://hf.co/{repo}/{dest}"
 
 
+class _Progressing:
+    """A slow upload that keeps reporting progress — the healthy case."""
+
+    def __init__(self, hf_module, total_s, tick_s=0.02):
+        self._hf = hf_module
+        self._total_s = total_s
+        self._tick_s = tick_s
+        self.calls = []
+
+    def upload_episode(self, ep_dir, repo, cb, dest, private):
+        self.calls.append(dest)
+        waited = 0.0
+        while waited < self._total_s:
+            time.sleep(self._tick_s)
+            waited += self._tick_s
+            self._hf.note_hub_activity()   # bytes are still moving
+        return f"https://hf.co/{repo}/{dest}"
+
+
+@pytest.fixture
+def heartbeat(monkeypatch):
+    """A working heartbeat source, driven by the stubs above.
+
+    Replaces the real marks rather than the real installer: the watchdog only
+    asks grabette.hf two things — is there a source, and how stale is it — so
+    stubbing those two is the whole surface, with no huggingface_hub in the loop.
+    """
+    from grabette import hf as hf_module
+
+    stamp = {"t": time.monotonic()}
+    monkeypatch.setattr(hf_module, "heartbeat_is_complete", lambda: True)
+    monkeypatch.setattr(hf_module, "note_hub_activity",
+                        lambda: stamp.__setitem__("t", time.monotonic()))
+    monkeypatch.setattr(hf_module, "hub_activity_age_s",
+                        lambda: time.monotonic() - stamp["t"])
+    return hf_module
+
+
+def _fast_watchdog(monkeypatch, stall_s=0.15):
+    monkeypatch.setattr(main, "_UPLOAD_STALL_TIMEOUT_S", stall_s)
+    monkeypatch.setattr(main, "_UPLOAD_WATCHDOG_POLL_S", 0.01)
+
+
 def _upload(hf, cancelled=lambda: False, ep_dir="/tmp/ep"):
     return asyncio.run(main._upload_one_episode(
         hf, ep_dir, "u/raw", "ep1/left", False, cancelled))
@@ -249,17 +297,107 @@ def test_retries_are_bounded_and_report_the_last_error(monkeypatch):
     assert "connection reset" in str(e.value)
 
 
-def test_a_hung_attempt_times_out_instead_of_waiting_forever(monkeypatch):
+def test_a_silent_attempt_is_abandoned_instead_of_waiting_forever(monkeypatch, heartbeat):
     # THE regression: an upload that never returns left the device pinned as
-    # "uploading" in the fleet forever. It must give up and report.
-    monkeypatch.setattr(main, "_UPLOAD_ATTEMPT_TIMEOUT_S", 0.05)
+    # "uploading" in the fleet forever. It must give up and report. _Hf(hang=True)
+    # sleeps without ever reporting progress, which is what "wedged" looks like.
+    _fast_watchdog(monkeypatch)
     monkeypatch.setattr(main, "_UPLOAD_RETRY_BASE_S", 0.0)
     monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
 
     with pytest.raises(RuntimeError) as e:
         _upload(_Hf(hang=True))
 
-    assert "TimeoutError" in str(e.value) or "timeout" in str(e.value).lower()
+    assert "no Hub activity" in str(e.value)
+
+
+def test_a_slow_but_progressing_upload_is_never_abandoned(monkeypatch, heartbeat):
+    # The requirement, and the reason the bound is not on elapsed time: this
+    # upload runs many times longer than the stall budget and must still finish.
+    # An elapsed-time cap of any value fails this test as soon as the link is
+    # slower than the throughput that value assumed.
+    _fast_watchdog(monkeypatch, stall_s=0.15)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+    hf = _Progressing(heartbeat, total_s=1.0)   # ~7x the stall budget
+
+    _upload(hf)   # must not raise
+
+    assert hf.calls == ["ep1/left"]
+
+
+def test_the_stall_clock_starts_at_the_submit(monkeypatch, heartbeat):
+    # xet hashes locally before it sends anything, so an upload's first mark can
+    # come well after the submit. Judged against a mark left over from some
+    # earlier, unrelated Hub call, such an upload would be abandoned before it
+    # ever got its chance — so the submit must reset the clock.
+    _fast_watchdog(monkeypatch, stall_s=0.3)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+
+    class _LateFirstByte:
+        def __init__(self):
+            self.calls = []
+
+        def upload_episode(self, ep_dir, repo, cb, dest, private):
+            self.calls.append(dest)
+            time.sleep(0.15)                 # hashing: nothing on the wire yet
+            heartbeat.note_hub_activity()    # first bytes
+            time.sleep(0.15)
+            return f"https://hf.co/{repo}/{dest}"
+
+    heartbeat.note_hub_activity()
+    time.sleep(0.4)   # staler than the whole stall budget, before we submit
+    hf = _LateFirstByte()
+
+    _upload(hf)   # must not raise
+
+    assert hf.calls == ["ep1/left"]
+
+
+def test_a_heartbeat_source_that_appears_late_is_picked_up(monkeypatch):
+    # The source is installed in the WORKER thread (HuggingFaceClient._get_api),
+    # so on the process's FIRST upload it does not exist yet when the wait starts.
+    # Reading it once up front would silently put that one upload on the blind
+    # bound — and installing it from the event loop instead would import the
+    # hf_xet extension there, stalling the daemon's poll.
+    from grabette import hf as hf_module
+
+    stamp = {"t": time.monotonic()}
+    asks = {"n": 0}
+
+    def complete():
+        asks["n"] += 1
+        return asks["n"] > 1
+
+    monkeypatch.setattr(hf_module, "heartbeat_is_complete", complete)
+    monkeypatch.setattr(hf_module, "note_hub_activity",
+                        lambda: stamp.__setitem__("t", time.monotonic()))
+    monkeypatch.setattr(hf_module, "hub_activity_age_s",
+                        lambda: time.monotonic() - stamp["t"])
+    _fast_watchdog(monkeypatch, stall_s=0.05)
+    # Large enough that the blind path could never produce this failure.
+    monkeypatch.setattr(main, "_UPLOAD_BLIND_ATTEMPT_TIMEOUT_S", 3600.0)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+
+    with pytest.raises(RuntimeError) as e:
+        _upload(_Hf(hang=True))
+
+    assert "no Hub activity" in str(e.value), "never left the blind bound"
+
+
+def test_without_a_heartbeat_source_the_watchdog_falls_back_to_elapsed_time(monkeypatch):
+    # No progress signal means silence proves nothing. Falling back to elapsed
+    # time reintroduces the false positive, which is why it is a fallback and
+    # not the mechanism — but no bound at all is the original bug.
+    from grabette import hf as hf_module
+    monkeypatch.setattr(hf_module, "heartbeat_is_complete", lambda: False)
+    monkeypatch.setattr(main, "_UPLOAD_BLIND_ATTEMPT_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(main, "_UPLOAD_WATCHDOG_POLL_S", 0.01)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+
+    with pytest.raises(RuntimeError) as e:
+        _upload(_Hf(hang=True))
+
+    assert "no progress signal available" in str(e.value)
 
 
 def test_a_cancel_during_backoff_does_not_wait_it_out(monkeypatch):
@@ -390,10 +528,10 @@ def test_uploads_run_off_the_default_executor(monkeypatch):
     assert seen["thread"].startswith("hf-upload"), seen["thread"]
 
 
-def test_a_stalled_upload_leaves_the_default_executor_free(monkeypatch):
+def test_a_stalled_upload_leaves_the_default_executor_free(monkeypatch, heartbeat):
     # The regression this guards: an abandoned upload holding a default-executor
     # worker starves the sensor poll and the OAK-D bring-up that share it.
-    monkeypatch.setattr(main, "_UPLOAD_ATTEMPT_TIMEOUT_S", 0.05)
+    _fast_watchdog(monkeypatch, stall_s=0.05)
     monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
     monkeypatch.setattr(main, "_UPLOAD_RETRY_BASE_S", 0.0)
 
@@ -412,8 +550,8 @@ def test_a_stalled_upload_leaves_the_default_executor_free(monkeypatch):
     assert main._stalled_uploads == 1  # counted, not forgotten
 
 
-def test_a_stalled_thread_gives_its_slot_back_when_it_finishes(monkeypatch):
-    monkeypatch.setattr(main, "_UPLOAD_ATTEMPT_TIMEOUT_S", 0.05)
+def test_a_stalled_thread_gives_its_slot_back_when_it_finishes(monkeypatch, heartbeat):
+    _fast_watchdog(monkeypatch, stall_s=0.05)
     monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
     hf = _Hf(hang=True)  # sleeps 0.5s, i.e. finishes well after we give up
 
@@ -426,7 +564,7 @@ def test_a_stalled_thread_gives_its_slot_back_when_it_finishes(monkeypatch):
     assert main._stalled_uploads == 0, "the done callback must release the slot"
 
 
-def test_a_saturated_uploader_refuses_instead_of_queueing_silently(monkeypatch):
+def test_a_saturated_uploader_refuses_instead_of_queueing_silently(monkeypatch, heartbeat):
     # Queueing behind threads that cannot be interrupted looks exactly like the
     # original bug from the operator's seat: an upload that never progresses.
     monkeypatch.setattr(main, "_stalled_uploads", main._UPLOAD_WORKERS)
@@ -439,12 +577,12 @@ def test_a_saturated_uploader_refuses_instead_of_queueing_silently(monkeypatch):
     assert "reboot" in str(e.value)
 
 
-def test_repeated_stalls_leave_no_phantom_count(monkeypatch):
+def test_repeated_stalls_leave_no_phantom_count(monkeypatch, heartbeat):
     # The count gates future uploads, so a leak of even one is a device that
     # slowly refuses to upload at all. Ordering the increment before the release
     # callback is what prevents it — a thread finishing in between would
     # otherwise decrement (clamped at 0) and let the increment linger forever.
-    monkeypatch.setattr(main, "_UPLOAD_ATTEMPT_TIMEOUT_S", 0.02)
+    _fast_watchdog(monkeypatch, stall_s=0.02)
     monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
 
     for _ in range(3):
@@ -453,3 +591,75 @@ def test_repeated_stalls_leave_no_phantom_count(monkeypatch):
         time.sleep(0.7)  # let the abandoned thread finish and release its slot
 
     assert main._stalled_uploads == 0
+
+
+# --- 5. the whole chain: real marking logic + real clock + real watchdog -------
+
+@pytest.fixture
+def real_heartbeat(monkeypatch):
+    """The real hf clock and the real xet updater; only completeness is forced.
+
+    The tests above stub the marks to drive the watchdog in isolation. These two
+    do the opposite: they exercise grabette.hf's actual progress logic through
+    app/main.py's actual watchdog, so a change that breaks the JOIN between them
+    — which each side's own tests would still pass — fails here.
+    """
+    from grabette import hf as hf_module
+
+    monkeypatch.setattr(hf_module, "heartbeat_is_complete", lambda: True)
+    monkeypatch.setattr(hf_module, "_last_activity", 0.0)
+    monkeypatch.setattr(main, "_UPLOAD_WORKERS", 99)  # never hit the stall guard
+    return hf_module
+
+
+class _XetTick:
+    """What hf_xet hands its progress callback."""
+
+    def __init__(self, processed=0, transferred=0):
+        self.total_bytes_completion_increment = processed
+        self.total_transfer_bytes_completion_increment = transferred
+
+
+def test_a_xet_transfer_that_ticks_without_moving_is_abandoned(monkeypatch,
+                                                               real_heartbeat):
+    # hf_xet ticks on a timer, so a wedged transfer keeps calling back. The whole
+    # point of tying the mark to an increment is that this still gets caught.
+    _fast_watchdog(monkeypatch, stall_s=0.15)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+    updater = real_heartbeat._marking_updater(None)
+
+    class _Wedged:
+        def upload_episode(self, ep_dir, repo, cb, dest, private):
+            for _ in range(40):          # 0.8s of ticking, nothing moving
+                time.sleep(0.02)
+                updater(_XetTick(), [])
+
+    with pytest.raises(RuntimeError) as e:
+        _upload(_Wedged())
+
+    assert "no Hub activity" in str(e.value)
+
+
+def test_a_xet_transfer_that_keeps_moving_is_not_abandoned(monkeypatch,
+                                                           real_heartbeat):
+    # The same shape, only the increments differ — and that alone must decide it.
+    _fast_watchdog(monkeypatch, stall_s=0.15)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+    updater = real_heartbeat._marking_updater(None)
+
+    class _Moving:
+        def __init__(self):
+            self.calls = []
+
+        def upload_episode(self, ep_dir, repo, cb, dest, private):
+            self.calls.append(dest)
+            for _ in range(40):          # 0.8s, >5x the stall budget
+                time.sleep(0.02)
+                updater(_XetTick(transferred=65536), [])
+            return f"https://hf.co/{repo}/{dest}"
+
+    hf = _Moving()
+
+    _upload(hf)   # must not raise
+
+    assert hf.calls == ["ep1/left"]

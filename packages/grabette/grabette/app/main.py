@@ -106,18 +106,30 @@ _SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
 # --- episode upload (raw dataset) ---------------------------------------------
 # Three layers, because each catches what the one below it cannot:
 #
-# 1. SOCKET timeouts on the Hub client (grabette.hf.install_hub_timeouts). This
-#    is the real cure: huggingface_hub ships its httpx client with timeout=None,
-#    so a link that DEGRADES rather than drops leaves upload_folder waiting on a
-#    socket that never delivers — forever, inside a thread nothing can interrupt.
-#    With per-operation timeouts a stall raises inside the worker, hf_hub retries
-#    it, and the thread DIES. Nothing is left behind.
+# 1. SOCKET timeouts on the Hub client (grabette.hf.install_hub_timeouts).
+#    huggingface_hub ships its httpx client with timeout=None, so a link that
+#    DEGRADES rather than drops leaves a request waiting on a socket that never
+#    delivers — forever, inside a thread nothing can interrupt. With per-operation
+#    timeouts a stall raises inside the worker, hf_hub retries it, and the thread
+#    DIES, leaving nothing behind. Covers everything that goes through httpx: the
+#    JSON API and LFS uploads. It does NOT cover a xet upload, which is the
+#    default path and does its HTTP in Rust — hence layer 3.
 # 2. Retry with backoff here, so one bad minute doesn't sink a build that other
 #    devices already spent twenty minutes uploading for.
-# 3. _UPLOAD_ATTEMPT_TIMEOUT_S as a last-resort bound, for a hang no socket
-#    timeout can see (a wedged filesystem, a future hf_hub that ignores the
-#    client factory). It lets the COMMAND report back — the fleet frees the
-#    device — but the worker thread cannot be killed, so it runs on.
+# 3. A no-PROGRESS watchdog here, for a stall no socket timeout can see: a wedged
+#    filesystem, or — the case that actually matters — a xet upload, whose bytes
+#    move in a Rust HTTP stack that layer 1 does not touch at all. It lets the
+#    COMMAND report back, so the fleet frees the device; the worker thread cannot
+#    be killed, so it runs on.
+#
+# Layer 3 bounds SILENCE, never elapsed time. A total-elapsed cap cannot express
+# the requirement, because any value it takes encodes an assumed throughput, and
+# a healthy upload on a slower link then dies at the deadline — which is the one
+# outcome we must never produce: an episode killed while it was still uploading
+# fine. "No progress for N minutes" is the same guarantee against hangs with no
+# assumption about speed, so a progressing upload runs as long as it needs to.
+# The progress signal comes from grabette.hf's heartbeat (xet's own byte-level
+# callback, plus httpx request/response hooks).
 #
 # Which is why uploads get their OWN executor. asyncio.to_thread uses the DEFAULT
 # one, shared with the daemon's 50 Hz sensor poll, the OAK-D bring-up and
@@ -127,7 +139,20 @@ _SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
 # and enough of them would starve the capture path itself. Trading frame
 # stability for upload robustness is not a trade worth making, so the two never
 # share a pool: a stalled upload can only ever degrade uploading.
-_UPLOAD_ATTEMPT_TIMEOUT_S = 1800.0  # last-resort bound on ONE episode's attempt
+_UPLOAD_STALL_TIMEOUT_S = 900.0     # no Hub I/O at all for this long = wedged
+_UPLOAD_WATCHDOG_POLL_S = 5.0       # how often staleness is judged. Costs nothing:
+                                    # the wait returns as soon as the upload does,
+                                    # so this only paces the CHECK, not the finish.
+# Used ONLY when grabette.hf reports an INCOMPLETE heartbeat — some upload path
+# is unobservable, so silence there proves nothing and the watchdog above must not
+# rule on it. Partial coverage counts as incomplete on purpose: with only the
+# httpx source wired, a xet transfer emits no marks at all and would read as a
+# stall. Falling back to elapsed time accepts the false positive this whole design
+# exists to avoid, because the alternative — no bound at all — is the original
+# bug: a device pinned as "uploading" until someone restarts the Space.
+# Deliberately far more generous than the 1800s it replaces, being a fallback now
+# rather than the mechanism.
+_UPLOAD_BLIND_ATTEMPT_TIMEOUT_S = 14400.0  # 4 h
 _UPLOAD_MAX_ATTEMPTS = 3
 _UPLOAD_RETRY_BASE_S = 5.0          # backoff: 5s, 10s (doubling per attempt)
 # Deliberately narrow: uploads are sequential within a command, so one worker
@@ -323,6 +348,74 @@ def _space_excluded_episodes(quality) -> list[dict]:
     return out
 
 
+class _UploadStalled(Exception):
+    """An upload stopped making progress and was abandoned."""
+
+
+async def _await_upload(cf, dest: str, attempt: int) -> None:
+    """Wait for one upload, abandoning it only once it goes SILENT.
+
+    Never returns because time passed: the only thing that ends the wait short of
+    completion is the absence of Hub I/O for _UPLOAD_STALL_TIMEOUT_S. An upload
+    that is still moving bytes — however slowly, however large the episode — keeps
+    the heartbeat fresh and is never abandoned. That is the guarantee this
+    function exists to provide.
+
+    Shielded, so a poll that expires does NOT wait for a cancellation the worker
+    thread cannot honour — awaiting that is the very hang being bounded. Nothing
+    here runs off the event loop for longer than a dict lookup: the polling only
+    reads two values from grabette.hf. Raises _UploadStalled, or whatever the
+    upload itself raised.
+    """
+    from grabette import hf as hf_module
+
+    # Mark now, so the clock starts at the submit. Without this, an upload that
+    # never reaches the network at all (a wedged filesystem) would be measured
+    # against whatever unrelated Hub call happened to mark last, or against
+    # nothing at all.
+    hf_module.note_hub_activity()
+    started = time.monotonic()
+    fut = asyncio.wrap_future(cf)
+    try:
+        while True:
+            try:
+                await asyncio.wait_for(asyncio.shield(fut),
+                                       timeout=_UPLOAD_WATCHDOG_POLL_S)
+                return
+            except asyncio.TimeoutError:
+                pass  # just a poll tick, not a verdict
+            # Asked every tick, not once up front. The heartbeat is installed
+            # lazily by HuggingFaceClient._get_api — in the WORKER thread we are
+            # waiting on — so on the process's first upload no source exists yet
+            # when we first get here. Installing it from this coroutine instead
+            # would import the hf_xet extension on the EVENT LOOP (~100ms on x86,
+            # more on a Pi), stalling the daemon's poll for that long. Asking
+            # late costs one poll interval and blocks nothing.
+            if hf_module.heartbeat_is_complete():
+                age = hf_module.hub_activity_age_s()
+                if age is not None and age >= _UPLOAD_STALL_TIMEOUT_S:
+                    raise _UploadStalled(
+                        f"no Hub activity for {age:.0f}s (attempt "
+                        f"{attempt}/{_UPLOAD_MAX_ATTEMPTS}) — the upload is "
+                        f"wedged, not slow; a slow one keeps the heartbeat alive")
+            else:
+                elapsed = time.monotonic() - started
+                if elapsed >= _UPLOAD_BLIND_ATTEMPT_TIMEOUT_S:
+                    logger.error(
+                        "no upload heartbeat source for %s, so the bound fell "
+                        "back to elapsed time — this abandonment MAY be a "
+                        "healthy upload", dest)
+                    raise _UploadStalled(
+                        f"no progress signal available and {elapsed / 3600:.1f}h "
+                        f"elapsed (attempt {attempt}/{_UPLOAD_MAX_ATTEMPTS})")
+    except _UploadStalled:
+        # Nothing will await `fut` again. Consume whatever the abandoned thread
+        # eventually raises, or asyncio logs it as never retrieved — noise that
+        # would land in the operator's journal long after the real error.
+        fut.add_done_callback(lambda f: f.cancelled() or f.exception())
+        raise
+
+
 async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: bool,
                               is_cancelled) -> None:
     """Upload one episode dir, bounded and retried. Raises on final failure.
@@ -333,10 +426,12 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
         a doubling backoff, because the alternative is losing every OTHER
         device's completed upload to one bad minute. Re-uploading the same folder
         is safe: an identical commit is a no-op on the Hub.
-      • an attempt that never returns at all — bounded by
-        _UPLOAD_ATTEMPT_TIMEOUT_S so the COMMAND can report back and the fleet
-        can free this device. The worker thread cannot be killed (upload_folder
-        is not interruptible), so it keeps running; it does so on the upload-only
+      • an attempt that STOPS MAKING PROGRESS — abandoned by _await_upload so the
+        COMMAND can report back and the fleet can free this device. Note what is
+        not in that sentence: how long the attempt has taken. A slow attempt is
+        not a failed one, and killing one is the failure mode this whole layer is
+        built to avoid. The worker thread cannot be killed (upload_folder is not
+        interruptible), so it keeps running; it does so on the upload-only
         executor, where it can never delay a recording. See _UPLOAD_WORKERS.
 
     Runs on _get_upload_executor(), never asyncio.to_thread: to_thread means the
@@ -364,13 +459,9 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
         cf = _get_upload_executor().submit(
             hf.upload_episode, ep_dir, raw_repo, None, dest, private)
         try:
-            # Shielded: on timeout we must NOT wait for a cancellation the thread
-            # cannot honour — wait_for would otherwise block until it returned,
-            # which is the very hang we are bounding.
-            await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(cf)),
-                                   timeout=_UPLOAD_ATTEMPT_TIMEOUT_S)
+            await _await_upload(cf, dest, attempt)
             return
-        except asyncio.TimeoutError as e:
+        except _UploadStalled as e:
             last = e
             # Count the stall BEFORE registering the release, never after: a
             # thread that finishes in between would fire the callback first
@@ -379,10 +470,8 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
             # inline, so the window is real, not theoretical.
             stalled = _mark_stalled(1)
             cf.add_done_callback(lambda _f: _mark_stalled(-1))
-            logger.error("upload of %s did not return after %.0fs — abandoning the "
-                         "thread (attempt %d/%d, %d now stalled)", dest,
-                         _UPLOAD_ATTEMPT_TIMEOUT_S, attempt, _UPLOAD_MAX_ATTEMPTS,
-                         stalled)
+            logger.error("abandoning the upload thread for %s: %s (%d now stalled)",
+                         dest, _exc_text(e), stalled)
         except Exception as e:  # noqa: BLE001 — retry whatever the Hub/network raised
             last = e
             logger.warning("upload of %s failed (attempt %d/%d): %s",
