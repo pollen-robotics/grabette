@@ -1,0 +1,21 @@
+[Unit]
+Description=TLV320AIC3104 mixer init (grabette V2 HAT speaker)
+# The card is created by the devicetree overlay + the codec module, so wait for
+# module loading and for i2c-1 (the codec's control bus) to exist.
+After=systemd-modules-load.service sound.target
+ConditionPathExists=/dev/i2c-1
+# alsa-restore replays /var/lib/alsa/asound.state, which can carry a stale
+# 'Line Playback Switch off' and silence the speaker. Run AFTER it so our
+# levels are the ones that stick.
+After=alsa-restore.service
+# The daemon pre-renders its cue and resolves the card at startup, so the card
+# should be up and un-muted before it starts.
+Before=grabette.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aic3104-init.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

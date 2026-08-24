@@ -19,6 +19,7 @@
 | **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
+| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — beeps when a recording actually goes live |
 
 **Build the hardware:**
 
@@ -64,9 +65,16 @@ Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. N
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh 
 sudo cp config/config.txt /boot/firmware
+make install-audio                 # builds the speaker's devicetree overlay — before the reboot
 make install-netdev
 sudo reboot
 ```
+
+> `make install-audio` must run **before** this reboot: `config.txt` enables
+> `dtoverlay=tlv320aic3104`, which is not a stock Pi overlay — the target
+> compiles it from `config/overlays/` into `/boot/firmware/overlays/`. Without
+> it the line is silently ignored and there's no speaker (everything else still
+> works). See [Speaker](#speaker-audible-recording-cue-make-install-audio).
 
 #### One-shot bringup
 A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
@@ -86,6 +94,7 @@ uv run python -m grabette
 - Runs `uv sync --package grabette --extra rpi --extra ui --extra hf` and verifies all imports succeed.
 - Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
 - Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
+- Runs `install-audio` (below) so the HAT speaker's overlay + mixer init are in place.
 
 Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
 
@@ -104,6 +113,52 @@ relative skew). Verify with `timedatectl timesync-status` (look at `Server:` /
 and point `NTP=` at it (see the comments in `config/timesyncd-grabette.conf`).
 
 If the daemon logs `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the venv setup didn't take — `make install-rpi` will fix it on a re-run.
+
+### Speaker: audible recording cue (`make install-audio`)
+
+Each grabette **beeps at the instant its recording actually starts** — i.e. after
+the OAK-D warm-up, once the sync clock is running and every stream is recording,
+not when the button is pressed. On a synchronized group recording all members
+reach that instant at the shared T0, so the whole rig beeps in unison. It's the
+audible counterpart of the LED (blink = initializing, solid = recording), for
+when you're holding the device and not looking at it.
+
+The hardware is a **TLV320AIC3104** codec on the V2 HAT, driven over I2S — the
+same codec on the same HAT as
+[microduck](https://github.com/apirrone/microduck_runtime/blob/main/rpi_setup/aic3104-init.sh),
+there driven by a Pi Zero 2W. The devicetree overlay is board-independent and is
+used unchanged (it binds `&i2c1` + `&i2s`, identical header pins on a Pi 4); what
+is Pi-4-specific lives in `config/config.txt` and in how the card is addressed:
+
+- `dtparam=audio=off` + `dtparam=i2s=on` — a Pi 4 also registers the `vc4-hdmi`
+  cards, so the codec is **never a stable card index**. Everything therefore
+  addresses it **by name** (`plughw:CARD=aic3104`): the daemon, the mixer-init
+  script (`amixer -c aic3104`), and the `/etc/asound.conf` written by
+  `install-audio`.
+- No DKMS wait in the mixer init — on Pi OS `snd_soc_tlv320aic3x` is in-tree and
+  autoloads from the devicetree match. Playback only: the HAT's onboard
+  microphone routing is dropped, since grabette records no audio.
+
+`make install-audio` (idempotent) does:
+- `apt install device-tree-compiler alsa-utils`;
+- compiles `config/overlays/tlv320aic3104-overlay.dts` → `/boot/firmware/overlays/tlv320aic3104.dtbo`;
+- installs `scripts/aic3104-init.sh` → `/usr/local/bin/` — the codec boots with
+  its line outputs muted, so **without this the card exists and plays silence**;
+- installs + enables `aic3104-init.service`, which applies those mixer levels at
+  every boot, ordered *after* `alsa-restore` (which can otherwise replay a stale
+  mute) and *before* `grabette.service`;
+- writes `/etc/asound.conf` (default card = `aic3104`) if you don't already have one.
+
+Check it:
+```bash
+aplay -l | grep aic3104                 # card registered? if not: config.txt + reboot
+python scripts/test_speaker.py          # plays the exact cue the daemon plays
+sudo /usr/local/bin/aic3104-init.sh     # re-apply the mixer levels (if it's silent)
+```
+Turn it off with `GRABETTE_SOUND_ENABLED=false` (in `/etc/grabette/env`), or trim
+the level with `GRABETTE_SOUND_VOLUME` — see [docs/configuration.md](docs/configuration.md).
+A missing or unconfigured codec is never fatal: the daemon logs one line and
+records silently.
 
 #### systemd (auto-start on boot)
 

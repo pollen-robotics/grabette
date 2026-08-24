@@ -4,11 +4,15 @@
 
 # Uncomment some or all of these to enable the optional hardware interfaces
 dtparam=i2c_arm=on
-#dtparam=i2s=on
 #dtparam=spi=on
 
-# Enable audio (loads snd_bcm2835)
-dtparam=audio=on
+# Onboard BCM audio (3.5mm jack, snd_bcm2835) OFF: the V2 HAT carries a
+# TLV320AIC3104 codec on I2S which is the only audio output we use, and leaving
+# snd_bcm2835 registered just adds another card to disambiguate. I2S on for the
+# codec (BCLK/LRCLK/DIN/DOUT on GPIO 18/19/20/21 — no conflict with the HAT's
+# i2c3/i2c4/switch/LED pins below).
+dtparam=audio=off
+dtparam=i2s=on
 
 # Additional overlays and parameters are documented
 # /boot/firmware/overlays/README
@@ -67,3 +71,8 @@ dtoverlay=i2c3,pins_4_5
 # Angle sensor "proximal" on hardware i2c4 (GPIO 8 SDA / GPIO 9 SCL)
 dtoverlay=i2c4,pins_8_9
 # Switch on GPIO 10 (input), LED on GPIO 11 (output) — handled in software, no overlay needed
+# Speaker: TLV320AIC3104 codec, control on i2c1 @ 0x18, audio over I2S, clocked
+# by the HAT's fixed 12 MHz oscillator. The overlay is NOT a stock Pi one —
+# 'make install-audio' compiles config/overlays/tlv320aic3104-overlay.dts into
+# /boot/firmware/overlays/ and must be run before this line does anything.
+dtoverlay=tlv320aic3104

@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff install-ntp ensure-ble-only help
+.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff install-ntp install-audio ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -14,6 +14,7 @@ help:
 	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
 	@echo "  install-poweroff      Allow 'rasp' user to power off the Pi from the web UI"
 	@echo "  install-ntp           Pin NTP to a shared time service (tight multi-device start sync)"
+	@echo "  install-audio         Build+install the TLV320AIC3104 overlay & mixer init (HAT speaker)"
 	@echo ""
 	@echo "HAND must be 'left' or 'right' — this grabette's hand. Determines the per-sensor"
 	@echo "sign mapping in grabette/hardware/angle.py, written to /etc/grabette/env as"
@@ -22,7 +23,7 @@ help:
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: check-hand install-udev-oak install-ntp
+install-rpi: check-hand install-udev-oak install-ntp install-audio
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
@@ -139,6 +140,50 @@ install-ntp:
 	sudo systemctl restart systemd-timesyncd
 	@echo "Installed NTP drop-in. timesync status:"
 	@timedatectl timesync-status 2>/dev/null | grep -Ei 'Server|Offset' || true
+
+# HAT speaker (TLV320AIC3104 codec on I2S) — the "recording is live" beep.
+# Three pieces, all idempotent:
+#   1. the devicetree overlay: NOT a stock Pi overlay, so we compile our .dts
+#      into /boot/firmware/overlays/ ourselves (config.txt's
+#      `dtoverlay=tlv320aic3104` is a no-op until this exists);
+#   2. the mixer-init script — the codec comes up with its line outputs muted,
+#      so without it the card exists and plays silence;
+#   3. a systemd oneshot that applies (2) at every boot, ordered after
+#      alsa-restore (which can otherwise replay a stale mute) and before the
+#      grabette daemon.
+# Changing the overlay requires a REBOOT to take effect (the mixer script does not).
+install-audio:
+	sudo apt install -y device-tree-compiler alsa-utils
+	dtc -@ -I dts -O dtb -o /tmp/tlv320aic3104.dtbo config/overlays/tlv320aic3104-overlay.dts
+	sudo install -m 0644 -o root -g root /tmp/tlv320aic3104.dtbo \
+	  /boot/firmware/overlays/tlv320aic3104.dtbo
+	@rm -f /tmp/tlv320aic3104.dtbo
+	sudo install -m 0755 -o root -g root scripts/aic3104-init.sh /usr/local/bin/aic3104-init.sh
+	sudo install -m 0644 -o root -g root systemd/aic3104-init.service \
+	  /etc/systemd/system/aic3104-init.service
+	sudo systemctl daemon-reload
+	sudo systemctl enable aic3104-init
+	@# Make the codec the DEFAULT ALSA card, by NAME — on a Pi 4 the vc4-hdmi
+	@# cards are registered too and the index isn't stable, so `aplay` with no
+	@# -D would otherwise land on HDMI. The daemon addresses the card by name
+	@# regardless; this is for speaker-test/aplay by hand. Never clobber an
+	@# existing operator-written config.
+	@if [ ! -f /etc/asound.conf ]; then \
+		printf 'defaults.pcm.card "aic3104"\ndefaults.ctl.card "aic3104"\n' \
+		  | sudo tee /etc/asound.conf >/dev/null; \
+		echo "Wrote /etc/asound.conf (default card = aic3104)"; \
+	else \
+		echo "/etc/asound.conf already present, left untouched."; \
+	fi
+	@echo
+	@if [ -c /dev/snd/controlC0 ] && aplay -l 2>/dev/null | grep -q aic3104; then \
+		sudo /usr/local/bin/aic3104-init.sh; \
+		echo "Test the speaker with:  python scripts/test_speaker.py"; \
+	else \
+		echo "Overlay installed. The aic3104 card is not up yet — make sure"; \
+		echo "config.txt is in place (sudo cp config/config.txt /boot/firmware)"; \
+		echo "and REBOOT, then: aplay -l | grep aic3104"; \
+	fi
 
 # Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
 ensure-ble-only:

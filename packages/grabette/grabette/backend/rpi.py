@@ -81,6 +81,9 @@ class RpiBackend(Backend):
         # Reset to False whenever start_teleop() runs, so entering teleop
         # never immediately drives the robot.
         self._teleop_sending = False
+        # Audible "recording is live" cue (TLV320AIC3104 on the V2 HAT).
+        # Resolved in start(); a no-op when the codec isn't set up.
+        self._speaker = None
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
@@ -98,6 +101,8 @@ class RpiBackend(Backend):
         if self._enable_oakd:
             self._init_oakd()
 
+        self._init_speaker()
+
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
@@ -112,6 +117,17 @@ class RpiBackend(Backend):
         except Exception as e:
             logger.warning("OAK-D not available, continuing without it: %s", e)
             self._oakd = None
+
+    def _init_speaker(self) -> None:
+        """Resolve the HAT codec + pre-render the capture-start beep. Purely
+        cosmetic, so a missing codec/alsa-utils only logs (see hardware/sound.py)."""
+        try:
+            from grabette.hardware.sound import get_speaker
+            self._speaker = get_speaker()
+            self._speaker.prepare()
+        except Exception:
+            logger.warning("Speaker init failed, continuing without sound", exc_info=True)
+            self._speaker = None
 
     def _init_angle_sensors(self) -> None:
         try:
@@ -140,6 +156,12 @@ class RpiBackend(Backend):
                 self._oakd.shutdown()
             except Exception as e:
                 logger.warning("OAK-D shutdown error: %s", e)
+        if self._speaker is not None:
+            try:
+                self._speaker.close()
+            except Exception as e:
+                logger.warning("Speaker shutdown error: %s", e)
+            self._speaker = None
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
@@ -446,6 +468,14 @@ class RpiBackend(Backend):
             if self._oakd and self._oakd.is_initialized:
                 self._oakd.start_recording(episode_dir)
             self._camera.start_recording(episode_dir / "raw_video.mp4")
+
+            # Audible cue — HERE, not at the top of start_capture: this is the
+            # first moment the recording is genuinely rolling (OAK-D warmed up,
+            # sync clock started, all streams recording). On a synchronized
+            # group start every member reaches this line at the shared T0, so
+            # the rig beeps in unison. Non-blocking and never raises.
+            if self._speaker is not None:
+                self._speaker.play_start()
         finally:
             self._starting = False
 
