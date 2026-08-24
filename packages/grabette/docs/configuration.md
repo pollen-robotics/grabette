@@ -51,6 +51,8 @@ The card is always addressed **by name**, never by index: on a Pi 4 the
 `vc4-hdmi` cards are registered too, so the codec's number isn't stable. Setting
 `GRABETTE_SOUND_DEVICE` overrides the auto-detection with any ALSA device string.
 
-Sound is cosmetic and never blocks or fails a capture: a missing codec, missing
-`aplay`, or a playback error logs one line and is otherwise ignored. Setup and
-troubleshooting: [README → Speaker](../README.md#speaker-audible-recording-cue-make-install-audio).
+The speaker is **optional hardware**, and sound is cosmetic: a missing codec, a
+missing `aplay`, or a playback error logs one line and is otherwise ignored —
+`play_start()`/`play_stop()` become no-ops and nothing in the recording path
+branches on it. Setup, the speaker-less case, and troubleshooting:
+[README → Speaker](../README.md#speaker-audible-recording-cue-make-install-audio).

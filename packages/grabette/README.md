@@ -70,11 +70,15 @@ make install-netdev
 sudo reboot
 ```
 
-> `make install-audio` must run **before** this reboot: `config.txt` enables
-> `dtoverlay=tlv320aic3104`, which is not a stock Pi overlay — the target
-> compiles it from `config/overlays/` into `/boot/firmware/overlays/`. Without
-> it the line is silently ignored and there's no speaker (everything else still
-> works). See [Speaker](#speaker-audible-recording-cue-make-install-audio).
+> The `sudo cp` above is the **only** thing that puts `config.txt` in place —
+> no Make target writes it, because that file is this device's boot config and
+> may carry per-device edits (`diff` it against the package copy before
+> overwriting). `make install-audio` must run **before** the reboot: `config.txt`
+> enables `dtoverlay=tlv320aic3104`, which is not a stock Pi overlay — the target
+> compiles it from `config/overlays/` into `/boot/firmware/overlays/`, and warns
+> you if `config.txt` doesn't actually enable it. Without either half the line is
+> silently ignored and there's no speaker (everything else still works). See
+> [Speaker](#speaker-audible-recording-cue-make-install-audio).
 
 #### One-shot bringup
 A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
@@ -153,17 +157,48 @@ is Pi-4-specific lives in `config/config.txt` and in how the card is addressed:
 - adds `rasp` to the `audio` group (`/dev/snd/*` is `root:audio 0660`, and the
   daemon runs as `rasp`);
 - compiles `config/overlays/tlv320aic3104-overlay.dts` → `/boot/firmware/overlays/tlv320aic3104.dtbo`;
+- **checks** (never writes) `/boot/firmware/config.txt` for `dtoverlay=tlv320aic3104`
+  and `dtparam=i2s=on`, and tells you exactly which lines are missing — an
+  overlay in `overlays/` does nothing until `config.txt` asks for it;
 - installs `scripts/aic3104-init.sh` → `/usr/local/bin/` — the codec boots with
   its line outputs muted, so **without this the card exists and plays silence**;
 - installs + enables `aic3104-init.service`, which applies those mixer levels at
   every boot, ordered *after* `alsa-restore` (which can otherwise replay a stale
   mute) and *before* `grabette.service`;
-- writes `/etc/asound.conf` (default card = `aic3104`) if you don't already have
-  one, then **checks that alsa-lib still loads** and removes the file again if it
-  doesn't — a malformed `asound.conf` makes alsa-lib discard its entire
-  configuration, which breaks *every* `aplay` regardless of the `-D` given. Pure
-  convenience for `aplay`/`speaker-test` by hand: the daemon always names the
-  card itself, so having no file at all is fine.
+- **only if the card is actually registered**, writes `/etc/asound.conf`
+  (default card = `aic3104`) and applies the mixer levels straight away. The
+  file is written only when you don't already have one of your own, and is then
+  **checked**: if alsa-lib no longer loads, it's removed again — a malformed
+  `asound.conf` makes alsa-lib discard its *entire* configuration, breaking
+  every `aplay` whatever `-D` you pass. Pure convenience for
+  `aplay`/`speaker-test` by hand: the daemon always names the card itself, so
+  having no file is fine.
+
+### No speaker fitted
+
+The speaker is **optional** — a grabette without one is a supported build, not a
+half-finished install. `make install-audio` is safe to run on it (everything it
+installs is inert without the codec: an overlay whose I2C probe finds nothing
+registers no card), and specifically:
+
+- the daemon logs one `INFO` line at startup and every cue becomes a no-op —
+  nothing in the recording path branches on the speaker;
+- `aic3104-init.service` **succeeds** instead of failing. It checks the
+  devicetree first: no codec declared → it returns in ~2 ms. That matters
+  because it's a `Type=oneshot` ordered `Before=grabette.service`, so anything
+  it waits for is added to the daemon's boot latency, and a non-zero exit would
+  leave a permanently failed unit (and `systemctl is-system-running` =
+  `degraded`) on a device that is working as intended;
+- `/etc/asound.conf` is **not** written: aiming the default ALSA card at an
+  absent device would break every other `aplay` on that Pi.
+
+`config/config.txt` still carries `dtparam=audio=off` / `i2s=on` /
+`dtoverlay=tlv320aic3104` on such a device. That's harmless — an unbound codec
+just never registers — but it does mean the Pi's 3.5 mm jack stays off. Nothing
+in grabette uses it; flip `dtparam=audio=on` back if you want it.
+
+To turn the cues off on a device that *has* a speaker, set
+`GRABETTE_SOUND_ENABLED=false` in `/etc/grabette/env`.
 
 Check it:
 ```bash

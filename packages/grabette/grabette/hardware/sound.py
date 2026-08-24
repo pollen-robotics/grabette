@@ -15,6 +15,11 @@ where the recording actually starts and stops without looking at the LED:
     still busy writing the episode.
 
 Playback rules that matter here:
+  • The speaker is OPTIONAL hardware. A grabette built without one is a
+    supported configuration, not a broken install: no codec (or no alsa-utils,
+    or GRABETTE_SOUND_ENABLED=false) means prepare() logs one line, disables
+    itself, and every play_*() becomes a no-op. Nothing downstream branches on
+    it — the backend calls play_*() unconditionally.
   • It must NEVER delay or break a capture. Every failure path is swallowed and
     logged; the actual play happens on a throwaway thread so the caller (the
     start_capture hot path) is not even charged the fork/exec of `aplay`.
@@ -123,18 +128,24 @@ class Speaker:
         """Resolve the device and pre-render the cue. Called once at backend
         start so the play path is only a fork/exec. Never raises."""
         if not self._enabled:
-            logger.info("Speaker disabled by config")
+            logger.info("Speaker cues disabled by config (GRABETTE_SOUND_ENABLED)")
             return
         if self._aplay is None:
-            logger.info("Speaker unavailable: aplay not found (apt install alsa-utils)")
+            logger.info(
+                "No aplay binary — running without the speaker cues "
+                "(apt install alsa-utils)",
+            )
             self._enabled = False
             return
         if not self._device:
             device = autodetect_device()
             if device is None:
+                # Not a warning: this is the normal state of a grabette with no
+                # speaker fitted, and it must not read as a broken install.
                 logger.info(
-                    "Speaker unavailable: no ALSA card '%s' "
-                    "(codec overlay not loaded? see 'make install-audio')", CARD_NAME,
+                    "No '%s' sound card — running without the speaker cues. "
+                    "Expected if this grabette has no speaker; if it has one, "
+                    "see 'make install-audio'.", CARD_NAME,
                 )
                 self._enabled = False
                 return

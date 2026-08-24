@@ -108,6 +108,24 @@ def test_missing_card_disables_instead_of_raising(monkeypatch, tmp_path):
     assert not speaker.is_available
 
 
+def test_speakerless_device_never_runs_aplay(monkeypatch):
+    """The speaker is optional hardware: with no card, BOTH cues must be inert
+    — no subprocess, no thread, no exception — since the backend calls them
+    unconditionally on every capture start/stop."""
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound, "autodetect_device", lambda: None)
+
+    def must_not_run(*a, **kw):
+        raise AssertionError("aplay must not be spawned without a sound card")
+
+    monkeypatch.setattr(sound.subprocess, "Popen", must_not_run)
+    speaker = sound.Speaker()
+    speaker.prepare()
+    speaker.play_start()
+    speaker.play_stop()
+    speaker.close()  # also fine to close a speaker that never opened anything
+
+
 class FakeProc:
     """Minimal Popen stand-in: exits with `returncode`, says `stderr`."""
 
