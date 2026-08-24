@@ -72,6 +72,20 @@ def test_error_cue_is_low_and_repeated():
     assert total > sum(d for _, d in sound.START_TONES)
 
 
+def test_saved_cue_is_the_slightest(tmp_path):
+    """It fires on every single take, a second after the stop cue, so it must
+    be the shortest and simplest of the four — a confirmation, not an event."""
+    assert len(sound.SAVED_TONES) == 1
+    saved_len = sum(d for _, d in sound.SAVED_TONES)
+    for other in (sound.START_TONES, sound.STOP_TONES, sound.ERROR_TONES):
+        assert saved_len < sum(d for _, d in other)
+    # ...and above the others in pitch, so it can't be mistaken for one of them
+    # arriving clipped.
+    assert min(f for f, _ in sound.SAVED_TONES) > max(
+        f for f, _ in sound.START_TONES + sound.STOP_TONES
+    )
+
+
 def test_silent_gaps_render_as_silence(tmp_path):
     """The error cue's gaps are 0 Hz "tones"; they must be actual silence."""
     path = tmp_path / "gap.wav"
@@ -168,6 +182,7 @@ def test_speakerless_device_never_runs_aplay(monkeypatch):
     speaker.prepare()
     speaker.play_start()
     speaker.play_stop()
+    speaker.play_saved()
     speaker.play_error()
     sound.cue_error()  # the module-level helper used by the non-backend callers
     speaker.close()  # also fine to close a speaker that never opened anything

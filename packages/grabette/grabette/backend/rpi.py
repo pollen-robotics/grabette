@@ -656,6 +656,7 @@ class RpiBackend(Backend):
         the time we reach this point.
         """
         _t = time.monotonic()
+        writes_ok = True
         try:
             if episode_dir:
                 (episode_dir / "frame_timestamps.json").write_text(
@@ -693,7 +694,22 @@ class RpiBackend(Backend):
                 (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
         except Exception:
             logger.exception("Deferred file writes failed")
+            writes_ok = False
         writes_ms = (time.monotonic() - _t) * 1000
+
+        # Audible "the episode is on disk" — the mp4 muxes finished back in
+        # stop_capture, and metadata.json (written last, on purpose, as the
+        # marker that an episode is complete) has just landed. So this is the
+        # point where the device can be moved or powered off. Placed BEFORE the
+        # hardware re-init below, which is preparation for the NEXT capture and
+        # has nothing to do with this episode being saved. A failed write buzzes
+        # instead — an episode that didn't persist is exactly what an operator
+        # must not learn about later from the journal.
+        if self._speaker is not None:
+            if writes_ok:
+                self._speaker.play_saved()
+            else:
+                self._speaker.play_error()
 
         _t = time.monotonic()
         try:

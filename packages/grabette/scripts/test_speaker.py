@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from grabette.hardware.sound import (  # noqa: E402
     CARD_NAME,
     CUE_ERROR,
+    CUE_SAVED,
     CUE_START,
     CUE_STOP,
     Speaker,
@@ -68,6 +69,7 @@ def main() -> int:
     for cue, label in (
         (CUE_START, "START  (ascending — recording is live)"),
         (CUE_STOP, "STOP   (descending — frames no longer saved)"),
+        (CUE_SAVED, "SAVED  (short blip — episode written, mux done)"),
         (CUE_ERROR, "ERROR  (low, repeated — a capture command failed)"),
     ):
         if not played:

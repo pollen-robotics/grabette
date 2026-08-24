@@ -13,6 +13,9 @@ where the recording actually starts and stops without looking at the LED:
   • a DESCENDING beep the moment the streams stop saving frames — which is the
     START of the ~1-2s mux, not its end, so it is heard while the daemon is
     still busy writing the episode;
+  • a SHORT, HIGH blip once the episode is fully written to disk — the mp4 mux
+    and the JSON sidecars are done, so the device can be moved or powered off.
+    That lands ~1-2s after the stop cue, which fires at the START of the mux;
   • a LOW, REPEATED buzz when a capture command fails — the case that actually
     needs sound, since the failure modes are exactly the ones with no screen in
     front of them: you press the button, the LED goes back to idle, and nothing
@@ -71,13 +74,21 @@ STOP_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.09), (880.0, 0.11))
 ERROR_TONES: tuple[tuple[float, float], ...] = (
     (220.0, 0.15), (0.0, 0.07), (220.0, 0.15), (0.0, 0.07), (220.0, 0.22),
 )
+# Saved: one short high blip. Deliberately the slightest of the four — it is a
+# confirmation arriving a second or two after the stop cue, on every single
+# take, so it has to register without competing with the cues that mark the
+# recording itself. Single and very short is what sets it apart from the pair
+# and the triplet above.
+SAVED_TONES: tuple[tuple[float, float], ...] = ((1760.0, 0.06),)
 
 CUE_START = "capture_start"
 CUE_STOP = "capture_stop"
+CUE_SAVED = "capture_saved"
 CUE_ERROR = "capture_error"
 CUES: dict[str, tuple[tuple[float, float], ...]] = {
     CUE_START: START_TONES,
     CUE_STOP: STOP_TONES,
+    CUE_SAVED: SAVED_TONES,
     CUE_ERROR: ERROR_TONES,
 }
 
@@ -198,6 +209,11 @@ class Speaker:
     def play_stop(self) -> None:
         """Beep 'recording over' (descending). Returns at once; never raises."""
         self._play(CUE_STOP)
+
+    def play_saved(self) -> None:
+        """Blip 'episode written to disk' (short, high). Returns at once; never
+        raises."""
+        self._play(CUE_SAVED)
 
     def play_error(self) -> None:
         """Buzz 'that command failed' (low, repeated). Safe to call from every

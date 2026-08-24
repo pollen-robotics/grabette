@@ -19,7 +19,7 @@
 | **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
-| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — cues the start, the stop, and a failed capture command |
+| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — cues the recording start, the stop, the episode being written, and failures |
 
 **Build the hardware:**
 
@@ -134,6 +134,15 @@ and not looking at it:
   take rather than "episode written". You hear it while the daemon is still
   muxing (the LED keeps fast-blinking through that).
 
+- **short high blip** once the episode is **fully written to disk**: the mp4
+  muxes finished back in `stop_capture`, and `metadata.json` — written last, on
+  purpose, as the marker that an episode is complete — has just landed. That is
+  the point where the device can be moved or powered off. It arrives ~1-2 s
+  after the stop cue, and it covers a real gap the LED leaves: the LED goes off
+  as soon as the *streams* are down, deliberately not waiting for the JSON
+  sidecars, so between the two there was nothing telling you the episode was
+  actually complete. A failed write buzzes the error cue instead — an episode
+  that didn't persist must not be something you discover later in the journal.
 - **low, repeated buzz** when a capture command *fails*. This is the case that
   most needs sound: the failures happen where there is no screen — you press the
   button, the LED drops back to idle, and nothing distinguishes "it errored"
@@ -153,8 +162,10 @@ and not looking at it:
   coordinating who owns the beep, the same cue simply won't replay within
   `CUE_DEBOUNCE_S` (1.5 s), so overlapping reports collapse into one buzz.
 
-Rising, falling, low-and-repeated: the three have to be told apart by ear alone,
-so they differ in direction, pitch and length rather than in timbre.
+The four have to be told apart by ear alone, so they differ in direction, pitch,
+count and length rather than in timbre — rising pair, falling pair, single short
+blip, low triplet. In a normal take you hear: *beep-up* (rolling) → *beep-down*
+(frames stopped) → *blip* (saved).
 
 The hardware is a **TLV320AIC3104** codec on the V2 HAT, driven over I2S — the
 same codec on the same HAT as
@@ -223,7 +234,7 @@ To turn the cues off on a device that *has* a speaker, set
 Check it:
 ```bash
 aplay -l | grep aic3104                 # card registered? if not: config.txt + reboot
-python3 scripts/test_speaker.py         # plays all three cues, via the daemon's own code path
+python3 scripts/test_speaker.py         # plays all four cues, via the daemon's own code path
 sudo /usr/local/bin/aic3104-init.sh     # re-apply the mixer levels (if it's silent)
 journalctl -u grabette | grep -i speaker   # "Speaker ready on '…'", or why it isn't
 ```
