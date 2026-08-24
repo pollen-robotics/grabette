@@ -141,6 +141,8 @@ is Pi-4-specific lives in `config/config.txt` and in how the card is addressed:
 
 `make install-audio` (idempotent) does:
 - `apt install device-tree-compiler alsa-utils`;
+- adds `rasp` to the `audio` group (`/dev/snd/*` is `root:audio 0660`, and the
+  daemon runs as `rasp`);
 - compiles `config/overlays/tlv320aic3104-overlay.dts` → `/boot/firmware/overlays/tlv320aic3104.dtbo`;
 - installs `scripts/aic3104-init.sh` → `/usr/local/bin/` — the codec boots with
   its line outputs muted, so **without this the card exists and plays silence**;

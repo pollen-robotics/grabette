@@ -76,27 +76,40 @@ def test_missing_card_disables_instead_of_raising(monkeypatch, tmp_path):
     assert not speaker.is_available
 
 
+class FakeProc:
+    """Minimal Popen stand-in: exits with `returncode`, says `stderr`."""
+
+    def __init__(self, returncode=0, stderr=b""):
+        self.returncode = returncode
+        self._stderr = stderr
+
+    def communicate(self, timeout=None):
+        return (b"", self._stderr)
+
+    def poll(self):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+
+def _fake_popen(calls, proc):
+    def popen(cmd, **kw):
+        calls.append(cmd)
+        return proc
+    return popen
+
+
 def test_play_start_spawns_aplay_with_the_named_card(monkeypatch, tmp_path):
     calls = []
-
-    class FakeProc:
-        def poll(self):
-            return 0
-
-        def terminate(self):
-            pass
-
     monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
-    monkeypatch.setattr(
-        sound.subprocess, "Popen",
-        lambda cmd, **kw: (calls.append(cmd), FakeProc())[1],
-    )
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(calls, FakeProc()))
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
     speaker.prepare()
     assert speaker.is_available
     # play_start dispatches to a thread; call the spawn directly so the test
     # isn't timing-dependent.
-    speaker._spawn(speaker._start_wav)
+    assert speaker._spawn(speaker._start_wav) is True
     speaker.close()
 
     assert len(calls) == 1
@@ -104,6 +117,46 @@ def test_play_start_spawns_aplay_with_the_named_card(monkeypatch, tmp_path):
     assert cmd[0] == "/usr/bin/aplay"
     assert "plughw:CARD=aic3104,DEV=0" in cmd
     assert cmd[-1].endswith(".wav")
+
+
+def test_aplay_failure_is_logged_not_swallowed(monkeypatch, caplog):
+    """A silent speaker must leave a trace in the journal — a muted mixer, a
+    busy card and a /dev/snd permission error are otherwise indistinguishable."""
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(
+        [], FakeProc(returncode=1, stderr=b"aplay: main:831: audio open error: Permission denied"),
+    ))
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
+    speaker.prepare()
+    with caplog.at_level("WARNING"):
+        assert speaker._spawn(speaker._start_wav) is False
+    speaker.close()
+    assert "Permission denied" in caplog.text
+    assert "exit 1" in caplog.text
+
+
+def test_hung_aplay_is_killed(monkeypatch, caplog):
+    class HungProc(FakeProc):
+        def __init__(self):
+            super().__init__()
+            self.killed = False
+
+        def communicate(self, timeout=None):
+            raise sound.subprocess.TimeoutExpired(cmd="aplay", timeout=timeout)
+
+        def kill(self):
+            self.killed = True
+
+    proc = HungProc()
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen([], proc))
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
+    speaker.prepare()
+    with caplog.at_level("WARNING"):
+        assert speaker._spawn(speaker._start_wav) is False
+    speaker.close()
+    assert proc.killed
+    assert "killed" in caplog.text
 
 
 def test_play_never_raises_when_spawn_fails(monkeypatch):

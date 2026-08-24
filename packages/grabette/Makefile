@@ -154,6 +154,13 @@ install-ntp:
 # Changing the overlay requires a REBOOT to take effect (the mixer script does not).
 install-audio:
 	sudo apt install -y device-tree-compiler alsa-utils
+	@# /dev/snd/* is root:audio 0660 and the daemon runs as 'rasp' (see
+	@# systemd/grabette.service), so without this group aplay dies with
+	@# "Permission denied" and only the beep is lost — silently, before the
+	@# _spawn logging was added. Pi OS normally puts the first user in 'audio'
+	@# already; this is for images/users where it isn't. Takes effect on the
+	@# next service start (or re-login).
+	sudo usermod -aG audio rasp
 	dtc -@ -I dts -O dtb -o /tmp/tlv320aic3104.dtbo config/overlays/tlv320aic3104-overlay.dts
 	sudo install -m 0644 -o root -g root /tmp/tlv320aic3104.dtbo \
 	  /boot/firmware/overlays/tlv320aic3104.dtbo
