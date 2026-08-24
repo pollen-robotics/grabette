@@ -24,8 +24,15 @@ gates, and remote deployment.
 ## Requirements
 
 - **Dataset**: produced by the shared pipeline
-  (`../DiffusionPolicy/run_pipeline.sh`): 11D Cartesian deltas + 2D gripper
-  state + natural-language task strings, 480×360 wrist camera.
+  (`../DiffusionPolicy/run_pipeline.sh --grasp-projection`): 11D Cartesian
+  deltas + 2D gripper state + natural-language task strings, 480×360 wrist
+  camera. **Run the pipeline with `--grasp-projection`**: without it the two
+  gripper channels are raw joint angles, and a position servo replaying a
+  demonstrated angle under-closes — the recorded angle is where the human's
+  fingers sat while *pressing* the object. The projected dataset's channels are
+  `(strategy, closure)`; commands below use `_graspproj` for it, and a
+  `_cartesian` id is the unprojected output.
+  See [`docs/grasp_projection.md`](../../docs/grasp_projection.md).
 - **Training GPU**: A100-80GB class for batch 32 (bf16 + gradient
   checkpointing). An HF Jobs `a100-large` run costs ~$30 and ~12 h.
 - **Inference GPU**: ~10 GB in fp32 (RTX 3090/4090/5090) — either on the
@@ -78,7 +85,7 @@ uv run python train.py \
   --policy.scheduler_warmup_steps=4000 \
   --policy.scheduler_decay_steps=100000 \
   --policy.scheduler_decay_lr=1e-5 \
-  --dataset.repo_id=<user>/<dataset>_cartesian \
+  --dataset.repo_id=<user>/<dataset>_graspproj \
   --dataset.eval_split=0.05 --eval_steps=1000 \
   --steps=20000 --batch_size=32 --num_workers=4 \
   --output_dir=outputs/<task>_pi05 \
@@ -104,7 +111,7 @@ hf jobs uv run --flavor a100-large --timeout 1h -s HF_TOKEN \
     --policy.gradient_checkpointing=true --policy.dtype=bfloat16 \
     --policy.compile_model=false \
     --policy.push_to_hub=false \
-    --dataset.repo_id=<user>/<dataset>_cartesian \
+    --dataset.repo_id=<user>/<dataset>_graspproj \
     --dataset.video_backend=pyav \
     --steps=100 --batch_size=32 --num_workers=4 \
     --save_freq=100 --output_dir=/bucket/outputs/<task>_pi05_smoke
@@ -122,7 +129,7 @@ hf jobs uv run --flavor a100-large --timeout 24h -s HF_TOKEN \
     --policy.scheduler_warmup_steps=4000 \
     --policy.scheduler_decay_steps=100000 \
     --policy.scheduler_decay_lr=1e-5 \
-    --dataset.repo_id=<user>/<dataset>_cartesian \
+    --dataset.repo_id=<user>/<dataset>_graspproj \
     --dataset.video_backend=pyav \
     --dataset.eval_split=0.05 --eval_steps=1000 \
     --steps=20000 --batch_size=32 --num_workers=4 \
@@ -194,7 +201,7 @@ fine-tune on real dataset frames, at least two episodes per task:
 ```bash
 uv run python smoke_generation.py \
     --checkpoint <user>/<task>_pi05 --policy_type pi05 --fp32 \
-    --dataset_repo_id <user>/<dataset>_cartesian \
+    --dataset_repo_id <user>/<dataset>_graspproj \
     --episodes 0 80 --frame 60 --task "<your task string>"
 ```
 
@@ -218,7 +225,7 @@ favorite object regardless of what you ask.
 #   --dtype float32     (websocket on :8000) — and pass localhost:8000.
 uv run python probe_task_sensitivity.py \
     --policy_addr <ticket-or-host:port> \
-    --dataset_repo_id <user>/<dataset>_cartesian \
+    --dataset_repo_id <user>/<dataset>_graspproj \
     --episodes 80 300 --frame 60 \
     --tasks "pick up the red can" "pick up the mustard bottle"
 ```
@@ -240,6 +247,7 @@ server needed:
 uv run python examples/evaluate.py \
     --checkpoint <user>/<task>_pi05 \
     --task "<training task string>" \
+    --grasp_projection on \
     --n_action_steps 15 --fps 30 \
     --home_joints <calibrated start pose> --start_gripper <demo first-frame> \
     --num_episodes 10 --ask_success session.jsonl --dump_obs /tmp/dump_pi05
@@ -265,12 +273,26 @@ On the robot machine — same command as A with `--policy_addr` replacing
 uv run python examples/evaluate.py \
     --policy_addr endpointv1... --jpeg_quality 90 \
     --task "<training task string>" \
+    --grasp_projection on \
     --n_action_steps 15 --fps 30 \
     --home_joints <calibrated start pose> --start_gripper <demo first-frame> \
     --num_episodes 10 --ask_success session.jsonl --dump_obs /tmp/dump_pi05
 ```
 
 Deployment settings that matter (each traced to a measured failure):
+
+- `--grasp_projection on` (both modes) — the dataset's gripper channels are
+  `(strategy, closure)`, so the policy's last two outputs must be **decoded to
+  angles** before they reach the servo. The default is `auto`, which works from a
+  local checkpoint (it inspects the saved normaliser) but **exits on the remote
+  path**: with `--policy_addr` there is no checkpoint to inspect, and guessing
+  "raw" would send a closure of 1.0 as 1.0 *radian* — a partial close — with
+  nothing in the log to say so. Confirm the startup line reads
+  `(strategy, closure) -> decoded to angles`.
+- `--grip_torque_limit 0.25` — an unset limit resolves to the server's ceiling
+  (0.5), which crushes light objects: a full close drives into a hard stop and
+  the torque cap is what stops the fingers. 0.25 was sufficient for everything
+  tried. Check the held `load` in the log pegs near 250, not 500.
 
 - `--fps 30` (both modes) — the **control rate**, and it is NOT the dataset's
   fps. Two different devices are involved: demos are recorded by the Grabette
