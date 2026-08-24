@@ -12,7 +12,11 @@ where the recording actually starts and stops without looking at the LED:
     so the rig audibly starts in unison;
   • a DESCENDING beep the moment the streams stop saving frames — which is the
     START of the ~1-2s mux, not its end, so it is heard while the daemon is
-    still busy writing the episode.
+    still busy writing the episode;
+  • a LOW, REPEATED buzz when a capture command fails — the case that actually
+    needs sound, since the failure modes are exactly the ones with no screen in
+    front of them: you press the button, the LED goes back to idle, and nothing
+    tells you whether the take started.
 
 Playback rules that matter here:
   • The speaker is OPTIONAL hardware. A grabette built without one is a
@@ -41,6 +45,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import wave
 from pathlib import Path
 
@@ -58,13 +63,30 @@ SAMPLE_RATE = 48000
 # falling is unmistakable in a way that two different pitches are not.
 START_TONES: tuple[tuple[float, float], ...] = ((880.0, 0.09), (1320.0, 0.11))
 STOP_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.09), (880.0, 0.11))
+# Error: three low buzzes. Deliberately unlike the other two in every dimension
+# a listener can pick up — an octave and a half below them, repeated instead of
+# a glide, and longer overall — because it has to be recognisable as "something
+# went wrong" by someone who is looking at the workspace, not at the device.
+# A 0 Hz "tone" renders as silence (sin(0) = 0), which is how the gaps are made.
+ERROR_TONES: tuple[tuple[float, float], ...] = (
+    (220.0, 0.15), (0.0, 0.07), (220.0, 0.15), (0.0, 0.07), (220.0, 0.22),
+)
 
 CUE_START = "capture_start"
 CUE_STOP = "capture_stop"
+CUE_ERROR = "capture_error"
 CUES: dict[str, tuple[tuple[float, float], ...]] = {
     CUE_START: START_TONES,
     CUE_STOP: STOP_TONES,
+    CUE_ERROR: ERROR_TONES,
 }
+
+# A failure is typically noticed by several layers at once (the backend raises,
+# the scheduler logs it and discards the episode, the button listener reports it
+# to the operator). Every one of them is a legitimate place to ask for the error
+# cue, and none of them can know whether another already did — so instead of
+# coordinating ownership, the same cue simply won't replay within this window.
+CUE_DEBOUNCE_S = 1.5
 
 # Upper bound on one cue playback before we assume aplay is wedged (the cue
 # itself is a fraction of a second).
@@ -123,6 +145,8 @@ class Speaker:
         self._aplay = shutil.which("aplay")
         self._procs: list[subprocess.Popen] = []
         self._lock = threading.Lock()
+        # cue name -> monotonic time it last played (see CUE_DEBOUNCE_S).
+        self._last_played: dict[str, float] = {}
 
     def prepare(self) -> None:
         """Resolve the device and pre-render the cue. Called once at backend
@@ -169,15 +193,27 @@ class Speaker:
 
     def play_start(self) -> None:
         """Beep 'recording is live' (ascending). Returns at once; never raises."""
-        self._play(self._cues.get(CUE_START))
+        self._play(CUE_START)
 
     def play_stop(self) -> None:
         """Beep 'recording over' (descending). Returns at once; never raises."""
-        self._play(self._cues.get(CUE_STOP))
+        self._play(CUE_STOP)
 
-    def _play(self, wav: Path | None) -> None:
-        if not self._enabled or wav is None:
+    def play_error(self) -> None:
+        """Buzz 'that command failed' (low, repeated). Safe to call from every
+        layer that notices the same failure — see CUE_DEBOUNCE_S. Returns at
+        once; never raises."""
+        self._play(CUE_ERROR)
+
+    def _play(self, name: str) -> None:
+        wav = self._cues.get(name) if self._enabled else None
+        if wav is None:
             return
+        now = time.monotonic()
+        with self._lock:
+            if now - self._last_played.get(name, 0.0) < CUE_DEBOUNCE_S:
+                return
+            self._last_played[name] = now
         # Off-thread so the caller (start_capture, right after the streams go
         # live) never pays the fork/exec — cheap, and a stuck aplay can't stall
         # a recording.
@@ -241,6 +277,22 @@ class Speaker:
 
 
 _speaker: Speaker | None = None
+
+
+def cue_error() -> None:
+    """Buzz that a capture command failed, callable from anywhere in the daemon.
+
+    For the failures that never reach RpiBackend.start_capture (a fleet refusal,
+    a scheduled start that doesn't fire, a stop that can't proceed) and that the
+    operator would otherwise learn about only from the journal. Reaches the
+    process-wide speaker directly, so a caller doesn't need a backend handle;
+    no-op when no speaker was ever set up (mock backend, no codec fitted), and
+    never raises. Overlapping callers are handled by the cue debounce, not by
+    coordinating who owns the beep."""
+    try:
+        get_speaker().play_error()
+    except Exception:
+        logger.debug("error cue failed", exc_info=True)
 
 
 def get_speaker() -> Speaker:

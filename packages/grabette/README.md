@@ -19,7 +19,7 @@
 | **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
-| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — beeps when a recording goes live and when it stops |
+| **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — cues the start, the stop, and a failed capture command |
 
 **Build the hardware:**
 
@@ -134,7 +134,27 @@ and not looking at it:
   take rather than "episode written". You hear it while the daemon is still
   muxing (the LED keeps fast-blinking through that).
 
-Rising vs falling is deliberate — the two have to be told apart by ear alone.
+- **low, repeated buzz** when a capture command *fails*. This is the case that
+  most needs sound: the failures happen where there is no screen — you press the
+  button, the LED drops back to idle, and nothing distinguishes "it errored"
+  from "the press didn't register". It fires from three places, so that every
+  failure is covered exactly once:
+  - `RpiBackend.start_capture` — every hardware failure, whichever trigger asked
+    for the recording (button, dashboard, fleet);
+  - the `CaptureScheduler` — a synchronized start/stop that fails *around*
+    `start_capture`. On a group recording this device may be a **peer nobody is
+    looking at**, and a peer that silently fails to join is the whole rig's
+    problem;
+  - the button listener — what never reaches the backend at all: the fleet
+    refusing a group start (a peer offline), a scheduled start that never fired,
+    a stop refused because hardware init is still in flight.
+
+  A single failure is usually noticed by several of those layers. Rather than
+  coordinating who owns the beep, the same cue simply won't replay within
+  `CUE_DEBOUNCE_S` (1.5 s), so overlapping reports collapse into one buzz.
+
+Rising, falling, low-and-repeated: the three have to be told apart by ear alone,
+so they differ in direction, pitch and length rather than in timbre.
 
 The hardware is a **TLV320AIC3104** codec on the V2 HAT, driven over I2S — the
 same codec on the same HAT as
@@ -203,7 +223,7 @@ To turn the cues off on a device that *has* a speaker, set
 Check it:
 ```bash
 aplay -l | grep aic3104                 # card registered? if not: config.txt + reboot
-python3 scripts/test_speaker.py         # plays both cues, via the daemon's own code path
+python3 scripts/test_speaker.py         # plays all three cues, via the daemon's own code path
 sudo /usr/local/bin/aic3104-init.sh     # re-apply the mixer levels (if it's silent)
 journalctl -u grabette | grep -i speaker   # "Speaker ready on '…'", or why it isn't
 ```

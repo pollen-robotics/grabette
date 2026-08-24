@@ -20,6 +20,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from grabette.hardware.sound import cue_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,6 +95,10 @@ class CaptureScheduler:
             raise
         except Exception:
             logger.exception("Scheduled start failed; discarding pending episode")
+            # Buzz: on a group start this device may be a PEER nobody is looking
+            # at, and a peer that silently fails to join is the whole rig's
+            # problem — the operator has to hear it from the device itself.
+            cue_error()
             sm.discard_pending_episode()
         finally:
             self._task = None
@@ -119,6 +125,7 @@ class CaptureScheduler:
             raise
         except Exception:
             logger.exception("Scheduled stop failed")
+            cue_error()
         finally:
             self._stop_task = None
 

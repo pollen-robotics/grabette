@@ -1,5 +1,5 @@
-"""Speaker bring-up test — plays the exact cues the daemon plays when a
-recording goes live and when it stops, through the same code path.
+"""Speaker bring-up test — plays each of the daemon's cues (start, stop, error)
+in turn, through the same code path it uses.
 
 Run on the Pi 4, with the SYSTEM python — no venv needed:
     python3 scripts/test_speaker.py
@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from grabette.hardware.sound import (  # noqa: E402
     CARD_NAME,
+    CUE_ERROR,
     CUE_START,
     CUE_STOP,
     Speaker,
@@ -60,15 +61,20 @@ def main() -> int:
               "(aplay missing? apt install alsa-utils)")
         return 1
 
-    # _spawn (rather than play_start/play_stop) so we run aplay on THIS thread
-    # and any error it reports lands on screen instead of in a background thread.
-    print("[..]   playing the capture-START cue (ascending)")
-    played = speaker._spawn(speaker._cues[CUE_START])
-    time.sleep(0.4)
-    if played:
-        print("[..]   playing the capture-STOP cue (descending)")
-        played = speaker._spawn(speaker._cues[CUE_STOP])
-    time.sleep(0.2)
+    # _spawn (rather than the play_* methods) so we run aplay on THIS thread —
+    # any error it reports lands on screen instead of in a background thread,
+    # and the cue debounce doesn't apply.
+    played = True
+    for cue, label in (
+        (CUE_START, "START  (ascending — recording is live)"),
+        (CUE_STOP, "STOP   (descending — frames no longer saved)"),
+        (CUE_ERROR, "ERROR  (low, repeated — a capture command failed)"),
+    ):
+        if not played:
+            break
+        print(f"[..]   playing {label}")
+        played = speaker._spawn(speaker._cues[cue])
+        time.sleep(0.5)
     speaker.close()
     if not played:
         print("[FAIL] aplay reported an error (above) — the card is there but "
@@ -76,7 +82,7 @@ def main() -> int:
         print("       Common cause: the invoking user is not in the 'audio' "
               "group (check with: groups).")
         return 1
-    print("[OK]   aplay played both cues without error. If you heard nothing, the")
+    print("[OK]   aplay played every cue without error. If you heard nothing, the")
     print("       mixer is almost certainly still muted — the codec boots with its")
     print("       line outputs off:  sudo /usr/local/bin/aic3104-init.sh")
     return 0

@@ -59,11 +59,56 @@ def test_start_and_stop_cues_are_distinguishable(tmp_path):
     assert stop_freqs == sorted(stop_freqs, reverse=True)  # descending
 
 
+def test_error_cue_is_low_and_repeated():
+    """It has to read as "something went wrong" to someone looking at the
+    workspace rather than the device: well below both other cues, and repeated
+    instead of a single glide."""
+    voiced = [f for f, _ in sound.ERROR_TONES if f > 0]
+    assert len(voiced) >= 3                                   # repeated
+    assert max(voiced) < min(f for f, _ in sound.START_TONES)  # lower than both
+    assert max(voiced) < min(f for f, _ in sound.STOP_TONES)
+    # And longer overall, so it isn't mistaken for a clipped start/stop.
+    total = sum(d for _, d in sound.ERROR_TONES)
+    assert total > sum(d for _, d in sound.START_TONES)
+
+
+def test_silent_gaps_render_as_silence(tmp_path):
+    """The error cue's gaps are 0 Hz "tones"; they must be actual silence."""
+    path = tmp_path / "gap.wav"
+    sound._render_wav(path, ((0.0, 0.02),), volume=1.0)
+    with wave.open(str(path), "rb") as w:
+        frames = w.readframes(w.getnframes())
+    assert set(frames) == {0}
+
+
+def test_same_cue_is_debounced_but_a_different_one_is_not(monkeypatch):
+    """Several layers report the same failure; only one buzz should come out.
+    A different cue must still get through — a stop right after a start, say."""
+    calls = []
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(calls, FakeProc()))
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
+    speaker.prepare()
+
+    now = [1000.0]
+    monkeypatch.setattr(sound.time, "monotonic", lambda: now[0])
+
+    speaker.play_error()
+    speaker.play_error()          # same cue, same instant → suppressed
+    speaker.play_start()          # different cue → allowed
+    assert len(calls) == 2
+
+    now[0] += sound.CUE_DEBOUNCE_S + 0.01
+    speaker.play_error()          # window elapsed → allowed again
+    assert len(calls) == 3
+    speaker.close()
+
+
 def test_prepare_renders_every_cue(monkeypatch):
     monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
     speaker.prepare()
-    assert set(speaker._cues) == {sound.CUE_START, sound.CUE_STOP}
+    assert set(speaker._cues) == set(sound.CUES)
     assert all(p.exists() for p in speaker._cues.values())
     speaker.close()
     assert speaker._cues == {}
@@ -123,6 +168,8 @@ def test_speakerless_device_never_runs_aplay(monkeypatch):
     speaker.prepare()
     speaker.play_start()
     speaker.play_stop()
+    speaker.play_error()
+    sound.cue_error()  # the module-level helper used by the non-backend callers
     speaker.close()  # also fine to close a speaker that never opened anything
 
 

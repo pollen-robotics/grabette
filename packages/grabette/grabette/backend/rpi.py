@@ -476,6 +476,16 @@ class RpiBackend(Backend):
             # the rig beeps in unison. Non-blocking and never raises.
             if self._speaker is not None:
                 self._speaker.play_start()
+        except Exception:
+            # One error cue for EVERY trigger: button, dashboard and fleet all
+            # come through here, so the hardware failures (camera re-init,
+            # OAK-D bring-up, a stream refusing to start) are covered once.
+            # Failures that never reach start_capture — a fleet refusal, a
+            # scheduled start that doesn't fire — are cued by their own
+            # handlers; the debounce keeps overlaps to a single buzz.
+            if self._speaker is not None:
+                self._speaker.play_error()
+            raise
         finally:
             self._starting = False
 
