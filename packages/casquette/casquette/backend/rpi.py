@@ -143,6 +143,17 @@ class RpiBackend(Backend):
         frame_timestamps = self._camera.stop()
         t_phases["camera_stop"] = (time.monotonic() - _t) * 1000
 
+        # Fail LOUD on a wedged camera: 0 frames while the IMU kept running means
+        # the camera frontend timed out. Without this the episode silently uploads
+        # a 0-frame clip that only fails much later in the dataset build.
+        camera_ok = len(frame_timestamps) > 0
+        if not camera_ok:
+            logger.error(
+                "CAMERA PRODUCED 0 FRAMES — likely a frontend-timeout wedge; this "
+                "recording is unusable (IMU=%d samples). Check camera / retry.",
+                len(imu_samples.accel),
+            )
+
         self._capturing = False
 
         duration = round(duration_ms / 1000.0, 2)
@@ -200,6 +211,7 @@ class RpiBackend(Backend):
                 "backend": "rpi",
                 "device_id": settings.device_id,
                 "wall_clock_start_utc": self._wall_clock_start,
+                "camera_ok": camera_ok,
             }
             sync_meta = self.get_sync_metadata()
             if sync_meta:
