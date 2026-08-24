@@ -92,6 +92,14 @@ CUES: dict[str, tuple[tuple[float, float], ...]] = {
     CUE_ERROR: ERROR_TONES,
 }
 
+# Consecutive playback failures after which the cues switch THEMSELVES off for
+# the rest of the process. Wedged audio hardware — a codec that stopped
+# answering on i2c-1, say, which blocks the ASoC register writes so aplay hangs
+# until the watchdog below kills it — would otherwise burn a thread and log a
+# warning on every single capture, indefinitely, for a feature that is pure
+# decoration. Any success resets the count; a daemon restart re-arms it.
+MAX_CONSECUTIVE_FAILURES = 3
+
 # A failure is typically noticed by several layers at once (the backend raises,
 # the scheduler logs it and discards the episode, the button listener reports it
 # to the operator). Every one of them is a legitimate place to ask for the error
@@ -103,15 +111,13 @@ CUE_DEBOUNCE_S = 1.5
 # itself is a fraction of a second).
 PLAY_TIMEOUT_S = 5.0
 
-# Minimum total length of a rendered cue, made up with trailing silence. This
-# is NOT an aesthetic choice: ALSA only starts the DMA transfer once the ring
-# buffer passes its start threshold, and aplay negotiates a buffer of several
-# hundred ms with bcm2835-i2s. A clip SHORTER than that buffer can leave the
-# transfer never started, with aplay blocked in drain until something kills it —
-# which is exactly what the 60 ms "saved" blip did, once per recording. Padding
-# with silence costs nothing audible and keeps the clip longer than any
-# plausible buffer. (Forcing `aplay --buffer-time` would attack it from the
-# other end, but it makes us guess a value the driver may refuse.)
+# Minimum total length of a rendered cue, made up with trailing silence. Not an
+# aesthetic choice, and not a fix for any bug seen on this hardware: it guards a
+# known ALSA behaviour. The DMA transfer only starts once the ring buffer passes
+# its start threshold, so a clip SHORTER than the buffer aplay negotiates can
+# leave the transfer never started, with aplay blocked in drain. A 60 ms cue is
+# squarely in that risky range; padding it costs nothing audible. Keep any new
+# cue above this.
 MIN_CUE_S = 0.75
 
 # Linear fade applied to each tone's edges. Without it the abrupt start/stop of
@@ -177,6 +183,8 @@ class Speaker:
         self._lock = threading.Lock()
         # cue name -> monotonic time it last played (see CUE_DEBOUNCE_S).
         self._last_played: dict[str, float] = {}
+        # Consecutive playback failures (see MAX_CONSECUTIVE_FAILURES).
+        self._failures = 0
 
     def prepare(self) -> None:
         """Resolve the device and pre-render the cue. Called once at backend
@@ -272,6 +280,7 @@ class Speaker:
             )
         except Exception:
             logger.warning("Speaker: cannot run %s", self._aplay, exc_info=True)
+            self._note_failure()
             return False
         with self._lock:
             # Keep a handle so close() can cut a hung player short, and prune
@@ -297,6 +306,7 @@ class Speaker:
                 "Speaker: aplay stuck >%.0fs playing %s on %s, killed",
                 PLAY_TIMEOUT_S, wav.name, self._device,
             )
+            self._note_failure()
             return False
         except Exception:
             logger.debug("Speaker: aplay wait failed", exc_info=True)
@@ -307,8 +317,29 @@ class Speaker:
                 self._device, proc.returncode,
                 (err or b"").decode("utf-8", "replace").strip() or "(no message)",
             )
+            self._note_failure()
             return False
+        with self._lock:
+            self._failures = 0
         return True
+
+    def _note_failure(self) -> None:
+        """Count a failed playback and give up entirely once they pile up."""
+        with self._lock:
+            self._failures += 1
+            tripped = self._failures >= MAX_CONSECUTIVE_FAILURES and self._enabled
+            if tripped:
+                self._enabled = False
+        if tripped:
+            logger.warning(
+                "Speaker: %d playbacks in a row failed on %s — disabling the cues "
+                "for this run (recording is unaffected). The card is registered but "
+                "will not play: check 'sudo i2cdetect -y 1' for 0x18 and "
+                "'dmesg | grep -iE \'tlv320|i2c\'' for bus errors, then restart "
+                "the service. A codec wedged by a power glitch (e.g. hot-plugging "
+                "the OAK-D) can need the Pi fully unpowered, not just rebooted.",
+                self._failures, self._device,
+            )
 
     def close(self) -> None:
         with self._lock:
