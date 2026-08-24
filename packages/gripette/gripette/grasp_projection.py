@@ -99,6 +99,24 @@ REACHABLE_DISTAL = math.radians(102.0)
 # Guard against a zero-variance (synthetic) input in the segmenter's noise floor.
 _EPS = 1e-12
 
+# Where a converted dataset records the projection it was built with, relative to
+# the dataset root. NOT a key in meta/info.json: that file is parsed into a
+# fixed-field dataclass whose unknown keys are dropped on the next write (verified
+# — `DatasetInfo.from_dict` warns and discards), so a custom key there would
+# survive until the first LeRobot rewrite and then vanish, leaving some copies of
+# the dataset annotated and others not. A sidecar is outside that schema and is
+# copied with the rest of meta/.
+PROJECTION_SIDECAR = "meta/grasp_projection.json"
+
+# Value of the sidecar's "representation" field for a projected dataset. The raw
+# alternative is not written at all — absence means raw angles.
+REPRESENTATION = "strategy_closure"
+
+# How far a recorded limit may differ from this module's constants before decode
+# would land somewhere materially different. 1e-4 rad is ~0.006 deg, far below the
+# servo's resolution, so anything above it is a real change rather than float noise.
+LIMIT_MATCH_TOL = 1e-4
+
 
 @dataclass(frozen=True)
 class GraspProjection:
@@ -138,6 +156,45 @@ class GraspProjection:
         u = _clamp01(prox / self.lim_prox)
         v = _clamp01(dist / self.lim_dist)
         return v, u
+
+    def to_metadata(self, **extra) -> dict:
+        """The record a converted dataset carries, so decode can be checked.
+
+        The channel NAMES in info.json say which representation a dataset is in;
+        they cannot say which CALIBRATION produced it. Decode must use the same
+        limits encode did, and those limits are constants in this module — the
+        distal one explicitly provisional, since it came from a torque-capped stall
+        rather than a measured geometric stop. Re-measure it and every existing
+        dataset silently decodes differently, with nothing recording the change.
+        This is that record.
+        """
+        return {
+            "representation": REPRESENTATION,
+            "lim_prox_rad": float(self.lim_prox),
+            "lim_dist_rad": float(self.lim_dist),
+            **extra,
+        }
+
+    def matches_metadata(self, meta: dict) -> str | None:
+        """None if `meta` describes this projection, else why it does not.
+
+        Compares the limits, not just the representation label: a dataset built
+        with different travel constants decodes to different angles, which is
+        silent — the commands stay in range and the grasp is simply wrong.
+        """
+        if meta.get("representation") != REPRESENTATION:
+            return (f"representation is {meta.get('representation')!r}, "
+                    f"expected {REPRESENTATION!r}")
+        for key, mine in (("lim_prox_rad", self.lim_prox),
+                          ("lim_dist_rad", self.lim_dist)):
+            theirs = meta.get(key)
+            if theirs is None:
+                return f"missing {key}"
+            if abs(float(theirs) - float(mine)) > LIMIT_MATCH_TOL:
+                return (f"{key}={float(theirs):.6f} but this build uses "
+                        f"{float(mine):.6f} — decode would not match encode "
+                        f"({math.degrees(abs(float(theirs) - float(mine))):.2f} deg off)")
+        return None
 
     def full_close(self, s: float) -> tuple[float, float]:
         """Joint angles (rad) for a complete close along strategy `s`.
