@@ -10,6 +10,15 @@
 #                                   ──▶  resize_dataset_videos.py  (480x360 training copy: the policy
 #                                        consumes 236x236 internally, so training on full-res video is a
 #                                        measured 2-3x cost for nothing; --no-resize to skip)
+#                                   ──▶  grasp_projection_convert   (--grasp-projection: re-express the two
+#                                        gripper angles as (strategy, closure) so the policy can command a
+#                                        FULL close and let the object stop the fingers)
+#
+# WITHOUT --grasp-projection the gripper channels stay RAW JOINT ANGLES, and a
+# position servo replaying a demonstrated angle under-closes: the recorded angle
+# is where the human's fingers sat while PRESSING the object, so reproducing it
+# stops just short and grips nothing (demos use only 38-60% of the proximal
+# range). See docs/grasp_projection.md.
 #
 # Training is intentionally NOT run here — it's long-running and you'll want to
 # launch it deliberately (GPU, steps, wandb, ...). The script prints the exact
@@ -38,6 +47,21 @@
 #                         they double training decode cost and can crash training
 #                         if corrupt, even though the policy never reads them.
 #                         Pass --cameras all to keep everything.
+#   --grasp-projection    re-express the gripper channels as (strategy, closure).
+#                         Recommended: it is what lets the policy command a full
+#                         close. Measured on hardware, 5/5 Diffusion grasps
+#                         reached 60-68 deg of proximal travel against 48-51 deg
+#                         demonstrated, with no grasp assist.
+#   --rest-is-closed      --grasp-projection: recording convention where the
+#                         operator holds the gripper CLOSED when idle. Must match
+#                         how the episodes were actually recorded — see
+#                         docs/grasp_projection_recording_procedure.md.
+#   --projection-repo-id ID
+#                         --grasp-projection: repo_id used to open the converted
+#                         dataset for its (mandatory) stats pass. Defaults to the
+#                         raw input's id. Must RESOLVE on the Hub — LeRobotDataset
+#                         queries revisions even for a local root, so an invented
+#                         id 404s. The data always comes from the local root.
 #   --no-qa               skip the analyze_dataset.py QA step
 #   --no-resize           skip the 480x360 training copy (train on full res —
 #                         debugging only; costs 2-3x more per training step)
@@ -49,9 +73,12 @@
 
 set -euo pipefail
 
-usage() { sed -n '2,42p' "$0" | sed 's/^# \{0,1\}//'; }
+# Print the whole leading comment block, however long it is. A fixed line range
+# silently truncates the help text the moment the header grows (it did).
+usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
 
 RAW="" RAW_ROOT="" WORK="" PROPRIO="none" MAX_LOST_RUN="" CAMERAS="cam0" SMOOTH_POSES="" DO_QA=1 DO_RESIZE=1
+DO_PROJECTION=0 REST_IS_CLOSED=0 PROJ_REPO_ID=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,6 +90,9 @@ while [[ $# -gt 0 ]]; do
     --cameras)        CAMERAS="$2"; shift 2 ;;
     --no-qa)          DO_QA=0; shift ;;
     --no-resize)      DO_RESIZE=0; shift ;;
+    --grasp-projection) DO_PROJECTION=1; shift ;;
+    --rest-is-closed) REST_IS_CLOSED=1; shift ;;
+    --projection-repo-id) PROJ_REPO_ID="$2"; shift 2 ;;
     -h|--help)        usage; exit 0 ;;
     -*)               echo "Unknown option: $1" >&2; exit 1 ;;
     *)                if [[ -z "$RAW" ]]; then RAW="$1"; shift; else echo "Unexpected arg: $1" >&2; exit 1; fi ;;
@@ -173,10 +203,56 @@ if [[ "$DO_RESIZE" == 1 ]]; then
   TRAIN_ROOT="$RESIZE_ROOT"
 fi
 
+if [[ "$DO_PROJECTION" == 1 ]]; then
+  PROJ_ID="local/${BASE}_graspproj"
+  PROJ_ROOT="$WORK/graspproj"
+  PROJ_EXTRA=(); [[ "$REST_IS_CLOSED" == 1 ]] && PROJ_EXTRA=(--rest_is_closed)
+  # The converter's stats pass opens the dataset through LeRobotDataset, which
+  # queries the Hub for revisions even when `root` is local — so the id has to be
+  # one that RESOLVES. An invented `local/..._graspproj` 404s. The raw input's id
+  # is the right one (the data still comes from --dst_root); override with
+  # --projection-repo-id when the raw input is itself local-only.
+  PROJ_REPO_ID="${PROJ_REPO_ID:-$RAW}"
+  echo; echo "==> [7] grasp projection — gripper angles -> (strategy, closure)"
+  # Runs in the grabette-postprocess project, not this one: the converter and the
+  # projection itself live there (and in gripette), and this uv project carries
+  # neither.
+  if ! uv run --project ../../packages/grabette-postprocess \
+      python -m grabette_postprocess.grasp_projection_convert \
+      --src_root "$TRAIN_ROOT" --dst_root "$PROJ_ROOT" --overwrite \
+      --repo_id "$PROJ_REPO_ID" "${PROJ_EXTRA[@]}"; then
+    echo "ERROR: the grasp projection step failed." >&2
+    echo "       If it 404'd on '$PROJ_REPO_ID': the stats pass needs a repo_id that" >&2
+    echo "       resolves on the Hub. Pass --projection-repo-id <a real dataset id>." >&2
+    echo "       Stats are NOT optional here — closure is 0..1 where the raw angle" >&2
+    echo "       was 0..1.6 rad, so stale stats mis-normalise the channel." >&2
+    exit 1
+  fi
+  TRAIN_ID="$PROJ_ID"
+  TRAIN_ROOT="$PROJ_ROOT"
+fi
+
 echo; echo "════════════════════════════════════════════════════════════════"
 echo "  Data prep complete. Training dataset:"
 echo "    repo_id : $TRAIN_ID"
 echo "    root    : $TRAIN_ROOT"
+# State the gripper representation EVERY time. Getting this wrong is silent in
+# both directions and is the single most expensive mistake available here.
+if [[ "$DO_PROJECTION" == 1 ]]; then
+  echo "    gripper : (strategy, closure) — projected"
+  echo "              eval with: evaluate.py --grasp_projection on"
+else
+  echo "    gripper : RAW JOINT ANGLES (radians) — not projected"
+  echo
+  echo "  NOTE: a policy trained on raw angles UNDER-CLOSES. The demonstrated"
+  echo "        angle is where the human's fingers sat while pressing the object;"
+  echo "        a position servo replaying it stops short and grips nothing."
+  echo "        Re-run with --grasp-projection, or project this dataset with:"
+  echo "          uv run --project ../../packages/grabette-postprocess \\"
+  echo "            python -m grabette_postprocess.grasp_projection_convert \\"
+  echo "            --src_root $TRAIN_ROOT --dst_root $WORK/graspproj \\"
+  echo "            --repo_id local/${BASE}_graspproj"
+fi
 [[ "$DO_RESIZE" == 1 ]] && echo "    (full-res converted copy kept at: $CART_ROOT)"
 echo
 # Persist the full certified train command — the console print gets lost in
