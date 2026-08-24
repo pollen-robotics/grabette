@@ -134,7 +134,7 @@ class Speaker:
             logger.warning("Speaker cue rendering failed; sound disabled", exc_info=True)
             self._enabled = False
             return
-        logger.info("Speaker ready on %s", self._device)
+        logger.info("Speaker ready on '%s'", self._device)
 
     @property
     def is_available(self) -> bool:

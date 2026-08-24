@@ -172,15 +172,48 @@ install-audio:
 	sudo systemctl enable aic3104-init
 	@# Make the codec the DEFAULT ALSA card, by NAME — on a Pi 4 the vc4-hdmi
 	@# cards are registered too and the index isn't stable, so `aplay` with no
-	@# -D would otherwise land on HDMI. The daemon addresses the card by name
-	@# regardless; this is for speaker-test/aplay by hand. Never clobber an
-	@# existing operator-written config.
-	@if [ ! -f /etc/asound.conf ]; then \
-		printf 'defaults.pcm.card "aic3104"\ndefaults.ctl.card "aic3104"\n' \
+	@# -D would otherwise land on HDMI. Convenience only: the daemon always
+	@# names the card explicitly, so a missing (or removed, see below) file
+	@# costs nothing.
+	@#
+	@# The name MUST go on a `type hw` slave. `defaults.pcm.card "aic3104"` is
+	@# invalid — that key is an integer card index, and a string there doesn't
+	@# just get ignored, it fails to parse and alsa-lib DROPS ITS WHOLE
+	@# CONFIGURATION ("hooks failed, removing configuration"), so every aplay
+	@# fails, whatever -D you pass. An earlier version of this target wrote
+	@# exactly that; the grep below recognises it as ours so a re-run repairs
+	@# an affected device instead of skipping it as "operator's file".
+	@#
+	@# Then VERIFY: a bad asound.conf breaks all audio, so if alsa-lib can't
+	@# load after our write, we take the file back out — no config at all is a
+	@# working state, a broken one is not.
+	@if [ ! -f /etc/asound.conf ] || \
+	   grep -qE 'grabette install-audio|defaults\.pcm\.card "aic3104"' /etc/asound.conf; then \
+		printf '%s\n' \
+		  '# Written by grabette install-audio — safe to delete.' \
+		  '# Default playback/control card = the TLV320AIC3104 HAT codec, BY NAME' \
+		  '# (its index moves: a Pi 4 also registers the vc4-hdmi cards).' \
+		  'pcm.!default {' \
+		  '    type plug' \
+		  '    slave.pcm {' \
+		  '        type hw' \
+		  '        card "aic3104"' \
+		  '    }' \
+		  '}' \
+		  'ctl.!default {' \
+		  '    type hw' \
+		  '    card "aic3104"' \
+		  '}' \
 		  | sudo tee /etc/asound.conf >/dev/null; \
-		echo "Wrote /etc/asound.conf (default card = aic3104)"; \
+		if aplay -l >/dev/null 2>&1; then \
+			echo "Wrote /etc/asound.conf (default card = aic3104)"; \
+		else \
+			sudo rm -f /etc/asound.conf; \
+			echo "WARNING: the /etc/asound.conf we wrote upset alsa-lib, so it was"; \
+			echo "         removed again. Not fatal: grabette names the card itself."; \
+		fi; \
 	else \
-		echo "/etc/asound.conf already present, left untouched."; \
+		echo "/etc/asound.conf was not written by us — left untouched."; \
 	fi
 	@echo
 	@if [ -c /dev/snd/controlC0 ] && aplay -l 2>/dev/null | grep -q aic3104; then \

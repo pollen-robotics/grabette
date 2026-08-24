@@ -149,7 +149,12 @@ is Pi-4-specific lives in `config/config.txt` and in how the card is addressed:
 - installs + enables `aic3104-init.service`, which applies those mixer levels at
   every boot, ordered *after* `alsa-restore` (which can otherwise replay a stale
   mute) and *before* `grabette.service`;
-- writes `/etc/asound.conf` (default card = `aic3104`) if you don't already have one.
+- writes `/etc/asound.conf` (default card = `aic3104`) if you don't already have
+  one, then **checks that alsa-lib still loads** and removes the file again if it
+  doesn't — a malformed `asound.conf` makes alsa-lib discard its entire
+  configuration, which breaks *every* `aplay` regardless of the `-D` given. Pure
+  convenience for `aplay`/`speaker-test` by hand: the daemon always names the
+  card itself, so having no file at all is fine.
 
 Check it:
 ```bash
