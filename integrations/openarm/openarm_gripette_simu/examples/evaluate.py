@@ -54,6 +54,14 @@ def _load_policy_any(checkpoint: str):
     if cfg.type in ("pi05", "pi0"):
         policy = policy.to(dtype=torch.float32)
     return policy
+
+
+def _policy_img_hw(policy):
+    """(H, W) the checkpoint was trained on. ACT has no internal resize
+    (diffusion/pi0 do), so live frames must be brought to this size."""
+    for ft in policy.config.image_features.values():
+        return int(ft.shape[1]), int(ft.shape[2])
+    return None
 from scipy.spatial.transform import Rotation
 from openarm_gripette_simu.rotation import (
     rotation_6d_to_matrix as rotation_6d_to_rotation_matrix_numpy,
@@ -1117,6 +1125,9 @@ def run_episode(
     if dump_dir is not None:
         dump_dir = _Path(dump_dir)
         dump_dir.mkdir(parents=True, exist_ok=True)
+    # Training resolution for local inference (remote mode resizes to the
+    # server-advertised remote_img_wh in its own branch below).
+    img_hw = _policy_img_hw(policy) if client is None else None
     # Latency bookkeeping. frame_ts is the SERVER's monotonic clock, so an
     # absolute frame→local age is unknowable; instead track (a) inter-frame
     # timestamp deltas = true camera rate + stale-duplicate detection, and
@@ -1163,6 +1174,11 @@ def run_episode(
         frame_staleness = (recv_ms - frame_ts_ms) - lat_min_offset
         frame_dts = (frame_ts_ms - lat_prev_ts) if lat_prev_ts is not None else None
         lat_prev_ts = frame_ts_ms
+
+        # Resize to training res BEFORE the dump so it stays the exact policy input.
+        if img_hw is not None and camera_image.shape[:2] != img_hw:
+            camera_image = cv2.resize(camera_image, img_hw[::-1],
+                                      interpolation=cv2.INTER_AREA)
 
         # Dump the exact observation fed to the policy (pre-normalization), for
         # offline train/deploy distribution checks (DiffusionPolicy/ood_check.py).
@@ -1601,6 +1617,7 @@ def run_episode_async(
     if dump_dir is not None:
         dump_dir = _Path(dump_dir)
         dump_dir.mkdir(parents=True, exist_ok=True)
+    img_hw = _policy_img_hw(policy)  # training resolution, see _policy_img_hw
 
     def make_batch(img, grip):
         state = torch.from_numpy(np.asarray(grip, dtype=np.float32))
@@ -1630,6 +1647,9 @@ def run_episode_async(
     try:
         while executor.sent_count < max_steps and executor.frozen is None:
             (img_prev, grip_prev, _ts_prev), (img_now, grip_now, ts_now) = camera.get_pair()
+            if img_hw is not None and img_now.shape[:2] != img_hw:
+                img_prev = cv2.resize(img_prev, img_hw[::-1], interpolation=cv2.INTER_AREA)
+                img_now = cv2.resize(img_now, img_hw[::-1], interpolation=cv2.INTER_AREA)
             sent_at_obs = executor.sent_count
             recv_ms = time.perf_counter() * 1000.0
             lat_min_offset = min(lat_min_offset, recv_ms - ts_now)
