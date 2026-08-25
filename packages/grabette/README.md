@@ -17,6 +17,7 @@
 | **Board** | Raspberry Pi 4 |
 | **Primary camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
 | **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
+| **Depth camera (alt.)** | Orbbec Gemini 305 — supported as a second source so the rig is not single-sourced. Passive stereo, no IMU; SLAM runs IMU-free. Opt in with `GRABETTE_DEPTH_CAMERA=gemini305` ([setup](#depth-camera-using-an-orbbec-gemini-305-make-install-orbbec-sdk)). |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
 
@@ -88,6 +89,49 @@ uv run python -m grabette
 - Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
 
 Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
+
+### Depth camera: using an Orbbec Gemini 305 (`make install-orbbec-sdk`)
+
+The depth camera is pluggable. `oakd` (Luxonis OAK-D SR) is the default and needs
+no configuration; `gemini305` (Orbbec Gemini 305) is a second option so the rig
+is not single-sourced on one vendor. `make install-rpi` already installs the
+Orbbec udev rule, but the SDK and the setting are opt-in:
+
+```bash
+make install-orbbec-sdk                                            # pyorbbecsdk2
+sudo sh -c 'echo GRABETTE_DEPTH_CAMERA=gemini305 >> /etc/grabette/env'
+sudo systemctl restart grabette
+```
+
+Then **turn the camera on in the dashboard** — it is off by default to save
+battery, and it is the same toggle whichever camera is configured. A successful
+start logs `Gemini 305 ready: Orbbec Gemini 305 id=... fw=... conn=USB3.2`, and
+the dashboard shows "Gemini 305".
+
+If the camera is not found, the daemon says so and keeps running without it
+rather than failing to start — check `lsusb | grep 2bc5` and, if the device is
+present but not opened, re-run `make install-udev-orbbec` and replug it.
+
+`pyorbbecsdk2` is installed with `--no-deps` on purpose: its declared
+requirements (`opencv-python`, `numpy>=2.1.0`) exist for the SDK's bundled
+examples and would shadow the system numpy that picamera2 links against. See the
+comment on the target in the Makefile.
+
+Two behavioural differences worth knowing before recording:
+
+- **No IMU.** The 305 has none, so no `dcam_imu.json` is written and SLAM runs
+  IMU-free. This is measured, not assumed: removing the IMU perturbs odometry no
+  more than re-running the identical pipeline does. `metadata.json` records
+  `"imu": null`, which means "known absent" rather than "not read".
+- **Passive stereo, IR-cut, no projector.** It needs a lit, textured workspace
+  and degrades first when either runs short. `GRABETTE_ORBBEC_IR_EXPOSURE_US`
+  (with `GRABETTE_ORBBEC_IR_GAIN`) pins a shorter IR exposure to reduce motion
+  blur at the cost of depth coverage; both default to 0, meaning leave the
+  camera's auto-exposure alone.
+
+Episode files are named `dcam_*` ("depth camera") regardless of which camera
+recorded them, and `metadata.json.depth_camera` records the model, serial,
+firmware and link. Older `oakd_*` episodes are still read as-is.
 
 ### Clock sync for multi-device recording (`make install-ntp`)
 
