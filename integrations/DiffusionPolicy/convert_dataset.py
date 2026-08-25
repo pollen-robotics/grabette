@@ -539,11 +539,36 @@ def main():
     )
 
     # --- 3. Recompute stats ---
-    logger.info("Recomputing stats...")
-    from lerobot.datasets import recompute_stats
+    # Only `action` and `observation.state` change here, so recompute just those
+    # and keep the source stats for everything else. We avoid lerobot's
+    # recompute_stats: it loads the whole frame table into pandas and boolean-masks
+    # per episode, which pulls every multi-dim ArrayND feature (e.g. int16 tactile
+    # grids) through datasets' pandas ExtensionArray — broken against this env's
+    # pandas (int → "cannot convert NaN to integer"; float → PandasArrayExtensionDtype
+    # AttributeError). Reading only the two changed float columns sidesteps it.
+    logger.info("Recomputing stats (action + observation.state only)...")
+    from lerobot.datasets.dataset_tools import (
+        aggregate_stats,
+        compute_episode_stats,
+        write_stats,
+    )
 
     ds_updated = LeRobotDataset(work_repo_id, root=work_root)
-    recompute_stats(ds_updated, skip_image_video=True)
+    recompute_keys = [k for k in ("action", "observation.state") if k in ds_updated.meta.features]
+    feats_subset = {k: ds_updated.meta.features[k] for k in recompute_keys}
+    ep_stats = []
+    for pf in sorted((root / "data").rglob("*.parquet")):
+        tb = pq.read_table(pf, columns=["episode_index"] + recompute_keys)
+        epi = np.array(tb.column("episode_index").to_pylist())
+        arrs = {k: np.array(tb.column(k).to_pylist(), dtype=np.float32) for k in recompute_keys}
+        for e in np.unique(epi):
+            m = epi == e
+            ep_stats.append(compute_episode_stats({k: arrs[k][m] for k in recompute_keys}, feats_subset))
+    new_stats = aggregate_stats(ep_stats)
+    for k, v in (ds_updated.meta.stats or {}).items():
+        new_stats.setdefault(k, v)
+    write_stats(new_stats, ds_updated.root)
+    ds_updated.meta.stats = new_stats
 
     # --- 4. Verify ---
     logger.info("\n=== Verification ===")
