@@ -95,8 +95,8 @@ class Settings(BaseSettings):
     # Processing (SLAM → LeRobot) Space. When set, the device uses THIS Space for
     # process_dataset instead of the one the fleet sends — lets a device pin its
     # own fork (e.g. one with tactile export). Empty falls back to the fleet value.
-    slam_space_url: str = "https://carolinepascal-grabette-slam.hf.space"
-    slam_space_repo: str = "CarolinePascal/grabette-slam"
+    slam_space_url: str = "https://pollen-robotics-grabette-slam-test.hf.space"
+    slam_space_repo: str = "pollen-robotics/grabette-slam-test"
 
     # Fleet relay
     relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
