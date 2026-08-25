@@ -238,30 +238,6 @@ python3 scripts/test_speaker.py         # plays all four cues, via the daemon's 
 sudo /usr/local/bin/aic3104-init.sh     # re-apply the mixer levels (if it's silent)
 journalctl -u grabette | grep -i speaker   # "Speaker ready on '…'", or why it isn't
 ```
-
-`test_speaker.py` times each cue and, when a playback **blocks** rather than
-fails, probes where the transfer stopped: it watches the kernel's own `hw_ptr`
-in `/proc/asound/aic3104/pcm0p/sub0/status` while a playback runs. A frozen
-pointer with the stream `RUNNING` means the transfer started and stalled (the Pi
-drives the bit clock here, so suspect the I2S clock, not the codec); `PREPARED`
-means it never triggered. That distinction is the fix, so read it before
-changing anything. `i2cdetect -y 1` complements it: `UU` at `0x18` is **good**
-(the driver holds the chip), `--` means the codec fell off the bus.
-
-Two things that survive a reboot and are worth clearing before suspecting
-hardware:
-
-```bash
-sudo /usr/local/bin/aic3104-init.sh --reset   # drop a bad saved mixer state
-```
-`alsa-restore` replays `/var/lib/alsa/asound.state` at every boot, and that file
-is written at **shutdown** — so a mixer state saved during a misbehaving session
-comes back after what looks like a clean restart. `--reset` resets the card to
-driver defaults, deletes the saved state, then re-applies our levels.
-
-A supply glitch (hot-plugging the OAK-D pulls hard on the same rails) can also
-leave the HAT latched up, and a `reboot` does **not** clear that — the 3.3 V rail
-never drops. Power the Pi down and unplug it for ~30 s.
 (`test_speaker.py` needs no venv — `grabette.hardware.sound` is stdlib-only, so
 the system `python3` runs it before `install-rpi` has built anything.)
 Turn it off with `GRABETTE_SOUND_ENABLED=false` (in `/etc/grabette/env`), or trim

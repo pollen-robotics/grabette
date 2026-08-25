@@ -27,22 +27,6 @@ set -u
 
 CARD=aic3104
 
-# --reset: wipe the card's mixer state back to driver defaults before applying
-# our levels. Needed because this script only ever SETS FOUR CONTROLS, layering
-# them on whatever alsa-restore replayed from /var/lib/alsa/asound.state at
-# boot — and that file is written at shutdown, so a state saved during a
-# misbehaving session comes back after every reboot and survives what looks
-# like a clean restart. Not the default: on a healthy device the four controls
-# are all that matter, and a reset at every boot would discard anything an
-# operator deliberately set by hand.
-RESET=0
-if [ "${1:-}" = "--reset" ]; then
-    RESET=1
-elif [ -n "${1:-}" ]; then
-    echo "usage: $(basename "$0") [--reset]" >&2
-    exit 2
-fi
-
 # Property that exists ONLY because our overlay was applied (see
 # config/overlays/tlv320aic3104-overlay.dts: simple-audio-card,name = "aic3104").
 # Its absence means no codec is configured on this device.
@@ -53,14 +37,6 @@ DT_CARD_NAME=/proc/device-tree/sound/simple-audio-card,name
 TRIES=10
 
 apply_mixer_levels() {
-    if [ "$RESET" = "1" ]; then
-        # Best-effort: alsactl has no init rules for this codec, so it applies
-        # its generic defaults and may still exit non-zero. Also drop the saved
-        # state so the next boot can't replay the bad one we just cleared.
-        echo "Resetting '$CARD' mixer state to driver defaults"
-        alsactl init "$CARD" 2>/dev/null || true
-        rm -f /var/lib/alsa/asound.state 2>/dev/null || true
-    fi
     # Speaker path: the speaker amp hangs off the codec's line outputs
     # (LEFT_LOP/RIGHT_LOP).
     #   'PCM Playback Volume'      digital DAC gain
@@ -112,8 +88,6 @@ done
 # answering (not fitted, or an I2C fault). Worth saying out loud — but still
 # exit 0, since the speaker is optional and this unit must not fail the boot.
 echo "'$CARD' is declared in the devicetree but never registered as a card." >&2
-echo "Check 'i2cdetect -y 1': 'UU' at 0x18 means the driver holds the chip and" >&2
-echo "the problem is downstream of the bus; '--' means the codec is not" >&2
-echo "answering at all. 'dmesg | grep -i tlv320' has the probe errors." >&2
-echo "Recording is unaffected either way." >&2
+echo "The codec is not answering on I2C. Check 'i2cdetect -y 1' for 0x18," >&2
+echo "and dmesg for tlv320aic3x probe errors. Recording is unaffected." >&2
 exit 0

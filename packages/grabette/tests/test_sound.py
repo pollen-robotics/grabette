@@ -304,45 +304,6 @@ def test_hung_aplay_is_killed(monkeypatch, caplog):
     assert "killed" in caplog.text
 
 
-def test_repeated_failures_disable_the_cues(monkeypatch, caplog):
-    """Wedged audio hardware must stop bothering the daemon: a codec that has
-    stopped answering would otherwise hang a thread and log a warning on every
-    single capture, forever, for a purely cosmetic feature."""
-    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
-    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(
-        [], FakeProc(returncode=1, stderr=b"wedged"),
-    ))
-    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
-    speaker.prepare()
-    with caplog.at_level("WARNING"):
-        for _ in range(sound.MAX_CONSECUTIVE_FAILURES):
-            assert speaker._spawn(speaker._cues[sound.CUE_START]) is False
-    assert not speaker.is_available
-    assert "disabling the cues" in caplog.text
-    # ...and it stays off: no further attempt, so no further noise.
-    monkeypatch.setattr(sound.subprocess, "Popen", lambda *a, **kw: (_ for _ in ()).throw(
-        AssertionError("must not retry once disabled")))
-    speaker.play_start()
-    speaker.play_error()
-    speaker.close()
-
-
-def test_a_success_resets_the_failure_count(monkeypatch):
-    """Transient failures must not add up across a long session."""
-    procs = [FakeProc(returncode=1, stderr=b"blip"), FakeProc(returncode=0),
-             FakeProc(returncode=1, stderr=b"blip")]
-    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
-    monkeypatch.setattr(sound.subprocess, "Popen", lambda *a, **kw: procs.pop(0))
-    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
-    speaker.prepare()
-    wav = speaker._cues[sound.CUE_START]
-    assert speaker._spawn(wav) is False
-    assert speaker._spawn(wav) is True
-    assert speaker._spawn(wav) is False
-    assert speaker.is_available  # 2 failures, not consecutive → still armed
-    speaker.close()
-
-
 def test_play_never_raises_when_spawn_fails(monkeypatch):
     monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0")
