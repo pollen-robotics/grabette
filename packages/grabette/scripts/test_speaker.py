@@ -31,8 +31,6 @@ from grabette.hardware.sound import (  # noqa: E402
     CUE_SAVED,
     CUE_START,
     CUE_STOP,
-    CUES,
-    MIN_CUE_S,
     Speaker,
     autodetect_device,
 )
@@ -77,16 +75,8 @@ def main() -> int:
         if not played:
             break
         print(f"[..]   playing {label}")
-        # Time each one: a cue that takes far longer than its own length is the
-        # signature of a clip too short for the device buffer, where aplay
-        # blocks in drain instead of returning (see MIN_CUE_S).
-        t0 = time.monotonic()
         played = speaker._spawn(speaker._cues[cue])
-        elapsed = time.monotonic() - t0
-        tone_ms = sum(d for _, d in CUES[cue]) * 1000
-        print(f"       aplay returned in {elapsed * 1000:.0f} ms "
-              f"(tones {tone_ms:.0f} ms, padded to {MIN_CUE_S * 1000:.0f} ms)")
-        time.sleep(0.2)
+        time.sleep(0.5)
     speaker.close()
     if not played:
         print("[FAIL] aplay reported an error (above) — the card is there but "

@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import wave
 
-import pytest
-
 from grabette.hardware import sound
 
 
@@ -21,39 +19,8 @@ def test_rendered_cue_is_48k_stereo_16bit(tmp_path):
         assert w.getframerate() == sound.SAMPLE_RATE == 48000
         assert w.getnchannels() == 2
         assert w.getsampwidth() == 2
-
-
-@pytest.mark.parametrize("name", list(sound.CUES))
-def test_every_cue_is_padded_past_the_alsa_buffer(tmp_path, name):
-    """A clip shorter than the device's ring buffer can leave the DMA transfer
-    never started, with aplay blocked in drain — which is what a 60 ms cue did,
-    on every recording. The padding is a correctness requirement, so hold every
-    cue to it, not just the short one that exposed it."""
-    path = tmp_path / f"{name}.wav"
-    sound._render_wav(path, sound.CUES[name], volume=0.6)
-    with wave.open(str(path), "rb") as w:
-        assert w.getnframes() >= int(sound.SAMPLE_RATE * sound.MIN_CUE_S)
-
-
-def test_padding_is_silence_appended_after_the_tones(tmp_path):
-    """The pad must not alter how a cue sounds: the audible part is unchanged
-    and everything after it is exactly zero."""
-    tones = ((1000.0, 0.05),)
-    path = tmp_path / "short.wav"
-    sound._render_wav(path, tones, volume=1.0)
-    with wave.open(str(path), "rb") as w:
-        frames = w.readframes(w.getnframes())
-    voiced_frames = int(sound.SAMPLE_RATE * 0.05)
-    assert set(frames[voiced_frames * 4:]) == {0}          # pad is silent
-    assert any(frames[:voiced_frames * 4])                 # tone survived
-
-
-def test_long_cue_is_not_truncated_by_the_minimum(tmp_path):
-    tones = ((440.0, sound.MIN_CUE_S + 0.3),)
-    path = tmp_path / "long.wav"
-    sound._render_wav(path, tones, volume=0.6)
-    with wave.open(str(path), "rb") as w:
-        assert w.getnframes() == int(sound.SAMPLE_RATE * (sound.MIN_CUE_S + 0.3))
+        expected = sum(int(sound.SAMPLE_RATE * d) for _, d in sound.START_TONES)
+        assert w.getnframes() == expected
 
 
 def test_cue_starts_and_ends_near_silence(tmp_path):
@@ -124,7 +91,7 @@ def test_silent_gaps_render_as_silence(tmp_path):
     path = tmp_path / "gap.wav"
     sound._render_wav(path, ((0.0, 0.02),), volume=1.0)
     with wave.open(str(path), "rb") as w:
-        frames = w.readframes(int(sound.SAMPLE_RATE * 0.02))
+        frames = w.readframes(w.getnframes())
     assert set(frames) == {0}
 
 

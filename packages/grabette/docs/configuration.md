@@ -65,13 +65,6 @@ The card is always addressed **by name**, never by index: on a Pi 4 the
 `vc4-hdmi` cards are registered too, so the codec's number isn't stable. Setting
 `GRABETTE_SOUND_DEVICE` overrides the auto-detection with any ALSA device string.
 
-Every cue is rendered padded with trailing silence to `sound.MIN_CUE_S`. That is
-a correctness requirement, not a style choice: ALSA starts the DMA transfer only
-once the ring buffer passes its start threshold, and a clip shorter than the
-buffer `aplay` negotiates with `bcm2835-i2s` can leave the transfer never
-started, with `aplay` blocked in drain until the 5 s watchdog kills it. Keep
-`MIN_CUE_S` comfortably above any plausible device buffer when adding a cue.
-
 The speaker is **optional hardware**, and sound is cosmetic: a missing codec, a
 missing `aplay`, or a playback error logs one line and is otherwise ignored —
 `play_start()`/`play_stop()` become no-ops and nothing in the recording path
