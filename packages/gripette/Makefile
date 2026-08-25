@@ -33,7 +33,12 @@ help:
 install-rpi: check-hand enable-uart harden-rpi
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
-	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev
+	@# python3-dbus + python3-gi: the BLE WiFi provisioning service
+	@# (gripette.bluetooth.bluetooth_service) talks to BlueZ over DBus and runs a
+	@# GLib mainloop. Usually preinstalled on Pi OS, but not guaranteed.
+	@# python3-dev: Python.h, for any dependency that still builds from source.
+	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev \
+	  python3-dev python3-dbus python3-gi
 	@# sudo rm: if any service ran as root and left root-owned .pyc files in
 	@# the venv (we fixed this with PYTHONDONTWRITEBYTECODE=1 in the unit
 	@# files, but existing installs may still have leftover root-owned
