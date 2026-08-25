@@ -57,11 +57,10 @@
 #                         how the episodes were actually recorded — see
 #                         docs/grasp_projection_recording_procedure.md.
 #   --projection-repo-id ID
-#                         --grasp-projection: repo_id used to open the converted
-#                         dataset for its (mandatory) stats pass. Defaults to the
-#                         raw input's id. Must RESOLVE on the Hub — LeRobotDataset
-#                         queries revisions even for a local root, so an invented
-#                         id 404s. The data always comes from the local root.
+#                         --grasp-projection: repo_id the converted dataset is
+#                         opened under for its (mandatory) stats pass. Defaults to
+#                         a local id, which needs no Hub access — you should not
+#                         need this flag. The data always comes from the local root.
 #   --no-qa               skip the analyze_dataset.py QA step
 #   --no-resize           skip the 480x360 training copy (train on full res —
 #                         debugging only; costs 2-3x more per training step)
@@ -128,6 +127,10 @@ CLEAN_ROOT="$WORK/clean"
 CART_ROOT="$WORK/cartesian"
 
 # Optional args as arrays (robust to spaces / empty).
+# Expanded as ${A[@]+"${A[@]}"} at every use site, NOT "${A[@]}": bash 3.2 —
+# still the default /bin/bash on macOS — counts an EMPTY array as unset under
+# `set -u` and aborts with 'unbound variable'. Bash >= 4.4 does not. This script
+# has to run on both.
 RAW_ROOT_ARG=();  [[ -n "$RAW_ROOT" ]]     && RAW_ROOT_ARG=(--root "$RAW_ROOT")
 CLEAN_EXTRA=();   [[ -n "$MAX_LOST_RUN" ]] && CLEAN_EXTRA=(--max_lost_run "$MAX_LOST_RUN")
 # Camera filter: keep only the training camera(s) unless --cameras all.
@@ -146,9 +149,9 @@ echo "════════════════════════�
 
 echo; echo "==> [1] clean — reject episodes with unrecoverable SLAM loss"
 uv run python clean_dataset.py \
-  --repo_id "$RAW" "${RAW_ROOT_ARG[@]}" \
+  --repo_id "$RAW" ${RAW_ROOT_ARG[@]+"${RAW_ROOT_ARG[@]}"} \
   --output_repo_id "$CLEAN_ID" --output_root "$CLEAN_ROOT" --overwrite_output \
-  "${CLEAN_EXTRA[@]}"
+  ${CLEAN_EXTRA[@]+"${CLEAN_EXTRA[@]}"}
 
 CONVERT_EXTRA=(); [[ -n "$SMOOTH_POSES" ]] && CONVERT_EXTRA=(--smooth_poses "$SMOOTH_POSES")
 echo; echo "==> [2] convert — camera-local deltas + per-frame despike"
@@ -156,7 +159,7 @@ uv run python convert_dataset.py \
   --repo_id "$CLEAN_ID" --root "$CLEAN_ROOT" \
   --proprioception "$PROPRIO" \
   --output_repo_id "$CART_ID" --output_root "$CART_ROOT" --overwrite_output \
-  "${CONVERT_EXTRA[@]}"
+  ${CONVERT_EXTRA[@]+"${CONVERT_EXTRA[@]}"}
 
 if [[ "$DO_QA" == 1 ]]; then
   echo; echo "==> [3] analyze — QA on the converted dataset"
@@ -207,12 +210,18 @@ if [[ "$DO_PROJECTION" == 1 ]]; then
   PROJ_ID="local/${BASE}_graspproj"
   PROJ_ROOT="$WORK/graspproj"
   PROJ_EXTRA=(); [[ "$REST_IS_CLOSED" == 1 ]] && PROJ_EXTRA=(--rest_is_closed)
-  # The converter's stats pass opens the dataset through LeRobotDataset, which
-  # queries the Hub for revisions even when `root` is local — so the id has to be
-  # one that RESOLVES. An invented `local/..._graspproj` 404s. The raw input's id
-  # is the right one (the data still comes from --dst_root); override with
-  # --projection-repo-id when the raw input is itself local-only.
-  PROJ_REPO_ID="${PROJ_REPO_ID:-$RAW}"
+  # The converter's stats pass opens the dataset through LeRobotDataset. A LOCAL
+  # id is deliberate here, and better than the raw input's id in both directions:
+  #
+  #   - it needs no Hub access. LeRobotDataset only queries the Hub when the root
+  #     is incomplete; against a fully-written root an unknown `local/...` id opens
+  #     fine (measured). That keeps an offline pipeline offline.
+  #   - a REAL Hub id is actively risky. Opening a freshly converted dataset under
+  #     its SOURCE repo's id is what once re-downloaded source parquet over the
+  #     converted files — the conversion silently reverted.
+  #
+  # --projection-repo-id remains as an escape hatch, not a normal requirement.
+  PROJ_REPO_ID="${PROJ_REPO_ID:-$PROJ_ID}"
   echo; echo "==> [7] grasp projection — gripper angles -> (strategy, closure)"
   # Runs in the grabette-postprocess project, not this one: the converter and the
   # projection itself live there (and in gripette), and this uv project carries
@@ -220,10 +229,12 @@ if [[ "$DO_PROJECTION" == 1 ]]; then
   if ! uv run --project ../../packages/grabette-postprocess \
       python -m grabette_postprocess.grasp_projection_convert \
       --src_root "$TRAIN_ROOT" --dst_root "$PROJ_ROOT" --overwrite \
-      --repo_id "$PROJ_REPO_ID" "${PROJ_EXTRA[@]}"; then
+      --repo_id "$PROJ_REPO_ID" ${PROJ_EXTRA[@]+"${PROJ_EXTRA[@]}"}; then
     echo "ERROR: the grasp projection step failed." >&2
-    echo "       If it 404'd on '$PROJ_REPO_ID': the stats pass needs a repo_id that" >&2
-    echo "       resolves on the Hub. Pass --projection-repo-id <a real dataset id>." >&2
+    echo "       The stats pass opened the dataset as '$PROJ_REPO_ID' (local, no Hub" >&2
+    echo "       access). If it failed there, the converted root at" >&2
+    echo "       $PROJ_ROOT is probably incomplete — check the" >&2
+    echo "       converter output above rather than the repo id." >&2
     echo "       Stats are NOT optional here — closure is 0..1 where the raw angle" >&2
     echo "       was 0..1.6 rad, so stale stats mis-normalise the channel." >&2
     exit 1
