@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import time as _time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -282,6 +284,30 @@ async def _handle_relay_command(cmd: dict) -> dict:
     return {"status": "error", "message": f"unknown command '{ctype}'"}
 
 
+async def _loop_lag_watchdog(threshold_s: float = 0.5, tick_s: float = 0.1) -> None:
+    """Diagnostic: log whenever the event loop / main thread stalls.
+
+    Sleeps tick_s and measures the ACTUAL elapsed time; the excess over tick_s
+    is wall-time the main thread could not run — either a non-yielding coroutine
+    blocked the loop, or the GIL was held by another thread. A stall >threshold_s
+    is long enough to stop picamera2 recycling buffers → the CSI "Dequeue timer
+    expired" / frontend-timeout wedge. Logged at WARNING with the lag and a
+    wall-clock so it can be lined up against a camera timeout in the journal.
+
+    Opt-in via CASQUETTE_LOOP_WATCHDOG=1 — pure diagnostic, negligible cost.
+    """
+    loop = asyncio.get_running_loop()
+    while True:
+        t0 = loop.time()
+        await asyncio.sleep(tick_s)
+        lag = loop.time() - t0 - tick_s
+        if lag > threshold_s:
+            logger.warning(
+                "EVENT-LOOP STALL: main thread blocked %.2fs (at %s)",
+                lag, _time.strftime("%H:%M:%S"),
+            )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _daemon
@@ -289,6 +315,10 @@ async def lifespan(app: FastAPI):
     backend = _create_backend()
     _daemon = Daemon(backend)
     await _daemon.start()
+
+    if os.getenv("CASQUETTE_LOOP_WATCHDOG"):
+        asyncio.create_task(_loop_lag_watchdog())
+        logger.info("Loop-lag watchdog enabled (CASQUETTE_LOOP_WATCHDOG=1)")
 
     # HF auth (PAT-only): best-effort check that a token is present so the relay
     # can authenticate. No periodic refresh — a PAT is long-lived. The async
