@@ -297,6 +297,14 @@ async def _loop_lag_watchdog(threshold_s: float = 0.5, tick_s: float = 0.1) -> N
     Opt-in via CASQUETTE_LOOP_WATCHDOG=1 — pure diagnostic, negligible cost.
     """
     loop = asyncio.get_running_loop()
+    if os.getenv("CASQUETTE_ASYNCIO_DEBUG"):
+        # asyncio debug mode logs "Executing <callback> took N seconds" for any
+        # callback exceeding slow_callback_duration — this NAMES what blocks the
+        # loop, turning an anonymous stall into a specific culprit. 0.5s keeps
+        # the log to only the significant blockers.
+        loop.set_debug(True)
+        loop.slow_callback_duration = 0.5
+        logger.info("asyncio debug on (slow_callback_duration=0.5s)")
     while True:
         t0 = loop.time()
         await asyncio.sleep(tick_s)
