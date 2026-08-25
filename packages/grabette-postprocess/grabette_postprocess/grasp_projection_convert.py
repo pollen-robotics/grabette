@@ -380,10 +380,13 @@ def convert_dataset(
                    "meaning and RANGE, so stale stats mis-normalise training.")
 @click.option("--repo_id", default=None,
               help="repo_id to open the converted dataset under, for the stats "
-                   "pass only. LeRobotDataset queries the Hub for available "
-                   "revisions even when `root` is local, so an invented id 404s. "
-                   "Use the SOURCE dataset's id — the data still comes from "
-                   "--dst_root.")
+                   "pass only; the data always comes from --dst_root. A LOCAL id "
+                   "(local/anything) is the right choice and needs no Hub access: "
+                   "LeRobotDataset only queries the Hub when the root is "
+                   "incomplete, and by this point it is fully written. Do NOT pass "
+                   "the SOURCE dataset's Hub id — opening the converted dataset "
+                   "under it has re-downloaded source parquet over the converted "
+                   "files, silently reverting the conversion.")
 def main(src_root, dst_root, rest_is_closed, overwrite, recompute_stats, repo_id):
     """Re-express a dataset's gripper channels as (strategy, commanded closure)."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")
