@@ -513,3 +513,48 @@ def test_report_unassigned_caps_the_payload_but_not_the_count(tmp_path, left_han
     assert report["total"] == n
     assert len(report["episodes"]) == UNASSIGNED_REPORT_LIMIT
     assert report["episodes"][-1]["episode_id"] == f"ep_{n - 1:04d}"
+
+
+# ── blank / unsafe episode ids ────────────────────────────────────────
+# episode_dir("") is the episodes ROOT, and the deletion paths rmtree whatever
+# episode_dir returns — so a blank entry in a task's episode_ids used to turn
+# "delete this task" into "wipe every episode on this device". A fleet dispatch
+# can carry any id into move_episodes, so the entry is reachable in practice.
+
+
+def test_move_episodes_refuses_blank_id(tmp_path):
+    _make_episode(tmp_path, "ep_real", ["imu_data.json"])
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.get_or_create_task("target")
+    res = tm.move_episodes(["", "  ", "../..", "a/b", "ep_real"], tid)
+    assert res["skipped"] == ["", "  ", "../..", "a/b"]
+    assert res["moved"] == ["ep_real"]
+    target = next(t for t in tm.list_tasks() if t.name == "target")
+    assert target.episode_ids == ["ep_real"]
+
+
+def test_delete_task_with_blank_id_keeps_other_episodes(tmp_path):
+    # A registry already poisoned (written by an older build): deleting the task
+    # must drop its entry without touching the episodes of every other task.
+    _make_episode(tmp_path, "ep_keep", ["imu_data.json"])
+    _make_episode(tmp_path, "ep_gone", ["imu_data.json"])
+    tm = TaskManager(data_dir=tmp_path)
+    keep = tm.get_or_create_task("keep")
+    doomed = tm.get_or_create_task("doomed")
+    tm.move_episodes(["ep_keep"], keep)
+    tm.move_episodes(["ep_gone"], doomed)
+    tm._find_task(doomed)["episode_ids"].append("")  # the poisoned entry
+    assert tm.delete_task_by_name("doomed") is True
+    assert (tmp_path / "episodes" / "ep_keep").exists()
+    assert not (tmp_path / "episodes" / "ep_gone").exists()
+    assert (tmp_path / "episodes").exists()
+
+
+def test_delete_episode_refuses_blank_id(tmp_path):
+    _make_episode(tmp_path, "ep_real", ["imu_data.json"])
+    tm = TaskManager(data_dir=tmp_path)
+    for bad in ("", "   ", ".", "..", "a/b"):
+        with pytest.raises(FileNotFoundError):
+            tm.delete_episode(bad)
+    assert (tmp_path / "episodes" / "ep_real").exists()
+    assert (tmp_path / "episodes").exists()

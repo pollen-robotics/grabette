@@ -217,6 +217,25 @@ class TaskManager:
     def episode_dir(self, episode_id: str) -> Path:
         return self.episodes_dir / episode_id
 
+    def _deletable_episode_dir(self, episode_id: str) -> Path | None:
+        """episode_dir for a caller that is about to DELETE it, or None when the
+        id can't name an episode directory.
+
+        episode_dir("") is the episodes ROOT, and every deletion here is
+        rmtree(episode_dir(eid)) — so a single blank entry in a task's
+        episode_ids turned "delete this task" into "wipe every episode on this
+        device". A blank id does reach the registry: a fleet dispatch carries
+        arbitrary ids into move_episodes, whose "is it here?" test is
+        episode_dir(eid).exists(), and the root always exists. Path separators
+        are refused for the same reason — nothing outside episodes_dir is ours
+        to delete. Read paths keep using episode_dir: a poisoned registry should
+        make reporting over-report, not raise.
+        """
+        eid = (episode_id or "").strip()
+        if not eid or eid in (".", "..") or "/" in eid or "\\" in eid:
+            return None
+        return self.episodes_dir / eid
+
     def create_episode(
         self,
         task_id: str | None = None,
@@ -318,8 +337,8 @@ class TaskManager:
         self._pending_episode = None
         if pending is None:
             return
-        ep_dir = self.episode_dir(pending[0])
-        if ep_dir.exists():
+        ep_dir = self._deletable_episode_dir(pending[0])
+        if ep_dir is not None and ep_dir.exists():
             shutil.rmtree(ep_dir, ignore_errors=True)
 
     # ── Session (runtime recording-run lock) ──────────────────────────
@@ -365,9 +384,9 @@ class TaskManager:
         return self._get_episode_info(episode_id)
 
     def delete_episode(self, episode_id: str) -> None:
-        ep_dir = self.episode_dir(episode_id)
-        if not ep_dir.exists():
-            raise FileNotFoundError(f"Episode {episode_id} not found")
+        ep_dir = self._deletable_episode_dir(episode_id)
+        if ep_dir is None or not ep_dir.exists():
+            raise FileNotFoundError(f"Episode {episode_id!r} not found")
 
         # Remove from whichever task contains it. If that empties a named task,
         # drop the task too — an empty task has no reason to exist (and, being
@@ -681,8 +700,8 @@ class TaskManager:
             return False
         members = t.get("episode_members", {})
         for eid in list(t.get("episode_ids", [])):
-            ep_dir = self.episode_dir(eid)
-            if ep_dir.exists():
+            ep_dir = self._deletable_episode_dir(eid)
+            if ep_dir is not None and ep_dir.exists():
                 shutil.rmtree(ep_dir, ignore_errors=True)
             members.pop(eid, None)
         self._tasks.remove(t)
@@ -725,6 +744,12 @@ class TaskManager:
         shared: list[dict] = []
         filed: list[dict] = []  # membership of each episode filed here, for the signature
         for eid in episode_ids:
+            if not (eid or "").strip() or self._deletable_episode_dir(eid) is None:
+                # Not an episode id at all. Registering it would put an entry in
+                # the target that no file backs and every later deletion would
+                # resolve to the episodes root (see _deletable_episode_dir).
+                skipped.append(eid)
+                continue
             source = next((t for t in self._tasks if eid in t["episode_ids"]), None)
             if source is None and not self.episode_dir(eid).exists():
                 # Nothing here holds it and there are no files either. A fleet
