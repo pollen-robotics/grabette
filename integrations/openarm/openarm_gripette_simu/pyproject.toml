@@ -22,10 +22,12 @@ dataset = ["lerobot[dataset]==0.6.0 ; python_version >= '3.12'"]
 # Policy evaluation client (examples/evaluate.py): loads a trained policy and
 # drives the sim over gRPC. [diffusion] supplies diffusers; [pi] supplies the
 # transformers stack for the Pi0/Pi0.5/Pi0Fast checkpoints this client supports.
-# scipy is also used directly for rotation math.
+# scipy is also used directly for rotation math; gripette supplies
+# grasp_projection (state/action encoding for projected checkpoints).
 eval = [
     "lerobot[diffusion,pi]==0.6.0 ; python_version >= '3.12'",
     "scipy>=1.10",
+    "gripette",
 ]
 # tests/ — needs the `eval` extra as well: the GripAssist regression tests load
 # examples/evaluate.py, which imports the policy stack.
@@ -39,6 +41,7 @@ build-backend = "hatchling.build"
 # Resolved from the monorepo workspace (integrations/openarm/openarm_gripette_model),
 # not PyPI. Was a local `../` path dep in the standalone repo.
 openarm-gripette-model = { workspace = true }
+gripette = { workspace = true }
 
 # OpenCV is intentionally headless by default: lerobot depends on
 # opencv-python-headless and the on-device services (grabette/Pi) need it, and
