@@ -34,6 +34,37 @@ def _exc_text(e: BaseException) -> str:
     return f"{type(e).__name__}: {e}"
 
 
+def _read_hf_token() -> str | None:
+    """Read the HF token WITHOUT importing huggingface_hub.
+
+    The relay only needs the token string, but importing huggingface_hub costs
+    ~11 MB resident + a slow cold-boot import — and on the 512 MB Pi Zero 2W that
+    marginal memory is what tipped the device into swap-thrash and wedged the CSI
+    camera (frontend timeout). Mirror huggingface_hub.get_token()'s resolution:
+    HF_TOKEN env var, else the token file at {HF_HOME or ~/.cache/huggingface}/token
+    (honoring HF_TOKEN_PATH). The full library is still used lazily for the actual
+    upload (fleet/hf.py) and the logout handler — just not at startup.
+    """
+    tok = os.environ.get("HF_TOKEN")
+    if tok and tok.strip():
+        return tok.strip()
+    path = os.environ.get("HF_TOKEN_PATH")
+    if not path:
+        hf_home = os.environ.get("HF_HOME")
+        if not hf_home:
+            cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(
+                os.path.expanduser("~"), ".cache"
+            )
+            hf_home = os.path.join(cache, "huggingface")
+        path = os.path.join(hf_home, "token")
+    try:
+        with open(path) as f:
+            tok = f.read().strip()
+        return tok or None
+    except OSError:
+        return None
+
+
 def get_daemon_instance() -> Daemon | None:
     return _daemon
 
@@ -329,24 +360,20 @@ async def lifespan(app: FastAPI):
         logger.info("Loop-lag watchdog enabled (CASQUETTE_LOOP_WATCHDOG=1)")
 
     # HF auth (PAT-only): best-effort check that a token is present so the relay
-    # can authenticate. No periodic refresh — a PAT is long-lived. The async
-    # ensure_authenticated is kept so a later OAuth port slots in here.
+    # can authenticate. No periodic refresh — a PAT is long-lived. Read the token
+    # directly (not via huggingface_hub / auth.py) to keep that heavy import out
+    # of the startup + steady-state path — see _read_hf_token.
     if settings.relay_enabled:
-        from casquette.fleet.auth import get_hf_auth
-        try:
-            if not await get_hf_auth().ensure_authenticated():
-                logger.warning(
-                    "no HF token — fleet relay will idle until one is set "
-                    "(save a PAT or run `huggingface-cli login` on the device)"
-                )
-        except Exception:
-            logger.debug("startup HF auth check failed", exc_info=True)
+        if not _read_hf_token():
+            logger.warning(
+                "no HF token — fleet relay will idle until one is set "
+                "(save a PAT or run `huggingface-cli login` on the device)"
+            )
 
     # Fleet relay loop. Casquette is a pure peer — NO button listener, and no
     # PiSugar battery / hand providers (grabette-only hardware).
     relay_task = None
     if settings.relay_enabled:
-        from huggingface_hub import get_token
         from casquette.fleet.relay_client import RelayClient
         from casquette.task import get_task_manager
 
@@ -363,7 +390,7 @@ async def lifespan(app: FastAPI):
         tm = get_task_manager()
         relay = RelayClient(
             base_url=settings.relay_url,
-            token_provider=get_token,
+            token_provider=_read_hf_token,
             device_id=settings.device_id,
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "prepare_capture",

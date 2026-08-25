@@ -91,10 +91,6 @@ class VideoCapture:
             video_config = self._picam2.create_video_configuration(
                 main={"size": self.resolution, "format": "RGB888"},
                 controls=controls,
-                # Extra buffers so a brief scheduling stall (Pi Zero 2W under
-                # camera + IMU + relay load) doesn't immediately trip the 1s
-                # dequeue timeout that wedges the camera frontend.
-                buffer_count=8,
             )
         self._picam2.configure(video_config)
         self._encoder = H264Encoder(bitrate=self.bitrate)
