@@ -1,0 +1,42 @@
+name: Build HF documentation
+
+# Publishes docs/source/ to https://huggingface.co/docs/grabette/ via the
+# upstream doc-builder reusable workflow (NOT the stale pollen-robotics fork —
+# reachy_mini calls upstream too). Requires HF to have registered `grabette` as
+# a doc package on their side; until then this builds and pushes, but the
+# public route 404s.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v1.0.0) — leave empty for a standard develop build"
+        required: false
+        type: string
+
+  release:
+    types:
+      - published
+
+  push:
+    branches:
+      - develop
+    paths:
+      - "docs/**"
+
+jobs:
+  build:
+    uses: huggingface/doc-builder/.github/workflows/build_main_documentation.yml@main
+    with:
+      repo_owner: pollen-robotics
+      commit_sha: ${{ github.sha }}
+      package: grabette
+      # --not_python_module: the docs use no [[autodoc]], and there is no
+      # importable top-level `grabette` module in this uv workspace. Without it
+      # the build dies on `ModuleNotFoundError: No module named 'grabette'`;
+      # with it, CI also skips installing the package at all.
+      additional_args: >-
+        --not_python_module ${{ (github.event_name == 'release' && format('--version {0}', github.event.release.tag_name)) || (inputs.version != '' && format('--version {0}', inputs.version)) || '' }}
+    secrets:
+      token: ${{ secrets.HUGGINGFACE_PUSH }}
+      hf_token: ${{ secrets.HF_DOC_BUILD_PUSH }}
