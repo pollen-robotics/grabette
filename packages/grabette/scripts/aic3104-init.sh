@@ -44,11 +44,19 @@ apply_mixer_levels() {
     #   'Line Playback Switch'     the LOP output-stage MUTE. It is NOT a
     #                              line-in bypass: switching it off silences
     #                              the speaker entirely.
-    #   'Line Playback Volume'     LOP output-stage gain, 0..9 dB
+    #   'Line Playback Volume'     LOP output-stage gain, 0..9 dB. Deliberately
+    #                              NOT at the 9 dB maximum: the cues are
+    #                              operator feedback from a device held in the
+    #                              hand, indoors, and at full output stage the
+    #                              beep is louder than that job needs. Trimmed
+    #                              HERE, on the analog stage, rather than via
+    #                              GRABETTE_SOUND_VOLUME — that one scales the
+    #                              rendered samples, so it buys quiet by
+    #                              spending waveform resolution.
     amixer -c "$CARD" cset name='PCM Playback Volume'      127,127 >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line DAC Playback Volume' 118,118 >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Switch'     on,on   >/dev/null 2>&1
-    amixer -c "$CARD" cset name='Line Playback Volume'     9,9     >/dev/null 2>&1
+    amixer -c "$CARD" cset name='Line Playback Volume'     4,4     >/dev/null 2>&1
     echo "TLV320AIC3104 mixer levels set on card '$CARD'"
 }
 
