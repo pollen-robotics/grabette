@@ -1626,6 +1626,9 @@ urdf = [
     { name = "onshape-to-robot" },
     { name = "pybullet" },
 ]
+vision = [
+    { name = "opencv-python-headless" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1635,6 +1638,7 @@ requires-dist = [
     { name = "depthai", marker = "extra == 'rpi'", specifier = ">=3.6,<4" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "gpiod", marker = "extra == 'rpi'", specifier = ">=2.0.0" },
+    { name = "grabette", extras = ["vision"], marker = "extra == 'rpi'" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=5.0.0" },
     { name = "grpcio", marker = "extra == 'teleop-bridge'", specifier = ">=1.60" },
     { name = "httpx", marker = "extra == 'hf'", specifier = ">=0.27" },
@@ -1642,7 +1646,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'hf'", specifier = ">=0.20.0" },
     { name = "numpy", marker = "extra == 'teleop-bridge'" },
     { name = "onshape-to-robot", marker = "extra == 'urdf'", specifier = ">=1.8.1" },
-    { name = "opencv-python-headless", marker = "extra == 'rpi'", specifier = ">=4.8" },
+    { name = "opencv-python-headless", marker = "extra == 'vision'", specifier = ">=4.8" },
     { name = "picamera2", marker = "extra == 'rpi'" },
     { name = "protobuf", marker = "extra == 'teleop-bridge'", specifier = ">=4.25" },
     { name = "pybullet", marker = "extra == 'urdf'", specifier = ">=3.2.7" },
@@ -1654,7 +1658,7 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'teleop-bridge'" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["rpi", "hf", "urdf", "ui", "teleop-bridge", "test"]
+provides-extras = ["rpi", "vision", "hf", "urdf", "ui", "teleop-bridge", "test"]
 
 [[package]]
 name = "grabette-postprocess"

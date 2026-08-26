@@ -17,7 +17,6 @@ Two holes made that insufficient, and both are closed here:
 """
 import asyncio
 import sys
-import threading
 import types
 
 import pytest
