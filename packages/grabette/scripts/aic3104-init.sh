@@ -64,7 +64,7 @@ apply_mixer_levels() {
     # one scales the rendered samples, so it buys quiet by spending waveform
     # resolution.
     amixer -c "$CARD" cset name='PCM Playback Volume'      127,127 >/dev/null 2>&1
-    amixer -c "$CARD" cset name='Line DAC Playback Volume' 64,64   >/dev/null 2>&1
+    amixer -c "$CARD" cset name='Line DAC Playback Volume' 42,42   >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Switch'     on,on   >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Volume'     4,4     >/dev/null 2>&1
     echo "TLV320AIC3104 mixer levels set on card '$CARD'"
