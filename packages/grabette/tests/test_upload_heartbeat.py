@@ -11,6 +11,7 @@ huggingface_hub on every machine we run on and xet is the default upload path,
 yet it moves its bytes in a Rust stack, outside the httpx client whose socket
 timeouts are the rest of this defence. Nothing else can see that transfer.
 """
+import inspect
 import time
 
 import pytest
@@ -77,6 +78,29 @@ def test_both_sources_make_the_heartbeat_trustworthy():
 
 # --- the xet hook -------------------------------------------------------------
 
+def _reject_like_hf_xet(updater) -> None:
+    """Raise what the Rust side raises for a progress callback it will not take.
+
+    hf_xet introspects the callback and accepts one parameter of any name, or
+    exactly two named (total_update, item_updates). Without this the fake accepts
+    callables the real library refuses, and the heartbeat wrapper can ship a
+    signature that fails every upload before a byte moves — which is what
+    happened. Kept next to the fake so every test below exercises the contract.
+    """
+    if updater is None:
+        return
+    names = list(inspect.signature(updater).parameters)
+    if len(names) == 1:
+        return
+    if len(names) == 2:
+        if names == ["total_update", "item_updates"]:
+            return
+        raise TypeError(f"Function {updater} must have either one argument or "
+                        f"two named arguments (total_update, item_updates)")
+    raise TypeError(f"Function {updater} must take exactly 1 or 2 arguments, "
+                    f"but got {len(names)}")
+
+
 @pytest.fixture
 def fake_xet(monkeypatch):
     """Stand-in hf_xet whose upload functions match the real signature.
@@ -91,6 +115,7 @@ def fake_xet(monkeypatch):
     def upload_files(file_paths, endpoint, token_info, token_refresher,
                      progress_updater, _repo_type, request_headers=None,
                      sha256s=None, skip_sha256=False):
+        _reject_like_hf_xet(progress_updater)
         calls.append(progress_updater)
         return "committed"
 
@@ -108,6 +133,19 @@ def test_the_real_hf_xet_signature_still_has_the_progress_argument():
     index = hf._xet_progress_index(hf_xet.upload_files)
 
     assert index == 4, f"hf_xet.upload_files moved its progress argument to {index}"
+
+
+def test_the_updater_signature_is_one_the_real_hf_xet_accepts():
+    # The signature IS the contract: hf_xet inspects the callback and refuses
+    # anything that is not one parameter or exactly (total_update, item_updates).
+    # A refused callback fails the upload before a byte moves, so every attempt
+    # fails identically — strictly worse than having no heartbeat.
+    pytest.importorskip("hf_xet")
+
+    names = list(inspect.signature(hf._marking_updater(None)).parameters)
+
+    assert names == ["total_update", "item_updates"], \
+        f"hf_xet will reject a progress callback taking {names}"
 
 
 def test_the_injected_updater_marks_the_heartbeat(fake_xet):

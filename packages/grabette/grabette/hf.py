@@ -138,7 +138,7 @@ _XET_INCREMENTS = ("total_bytes_completion_increment",
                    "total_transfer_bytes_completion_increment")
 
 
-def _progress_moved(args) -> bool:
+def _progress_moved(total_update) -> bool:
     """True if this progress tick reports real advancement.
 
     Marking on the mere ARRIVAL of a tick would make the heartbeat mean "the
@@ -152,8 +152,7 @@ def _progress_moved(args) -> bool:
     withholding a mark kills an upload that was fine. Only the first is
     acceptable.
     """
-    total = args[0] if args else None
-    known = [v for v in (getattr(total, n, None) for n in _XET_INCREMENTS)
+    known = [v for v in (getattr(total_update, n, None) for n in _XET_INCREMENTS)
              if isinstance(v, (int, float)) and not isinstance(v, bool)]
     if not known:
         return True
@@ -168,12 +167,19 @@ def _marking_updater(inner):
     onto None is therefore what makes this work with progress bars disabled, which
     is the difference between a heartbeat that survives a quiet journald and one
     that does not.
+
+    The parameter names are part of the contract, not a style choice. hf_xet
+    inspects this callable and accepts only two shapes: one parameter of any
+    name, or exactly two named (total_update, item_updates). A `*args, **kwargs`
+    wrapper reads as two parameters named "args" and "kwargs", so hf_xet raises
+    before a byte moves and every attempt fails identically — which is worse than
+    no heartbeat at all. `fake_xet` in the tests enforces the same rule.
     """
-    def updater(*args, **kwargs):
-        if _progress_moved(args):
+    def updater(total_update, item_updates):
+        if _progress_moved(total_update):
             note_hub_activity()
         if inner is not None:
-            return inner(*args, **kwargs)
+            return inner(total_update, item_updates)
         return None
     return updater
 
