@@ -67,6 +67,7 @@
             margin-bottom: .9rem;
         }
         .step-hint { color: #8b98ad; font-size: .78rem; line-height: 1.4; margin: 0 0 .6rem; }
+        #connectHint { margin: .55rem 0 0; }
         .step-num {
             display: inline-flex;
             align-items: center;
@@ -218,6 +219,51 @@
         .lock-note svg { flex-shrink: 0; margin-top: .12rem; color: #fcd34d; }
         .lock-note b { color: #fcd34d; }
 
+        /* Dashboard hand-off — deliberately not the emerald→blue gradient the
+           in-flow actions share. This is the one control that leaves the tool,
+           so it keeps the fleet's signature yellow but on its own amber ramp,
+           away from the emerald→blue family, and shows the
+           URL in monospace so it reads as an address rather than a verb. */
+        .dash-link {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: .5rem;
+            margin-top: .2rem;
+            padding: .7rem 1rem;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #ffd76b, #f59e0b);
+            color: #1a1a2e;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-weight: 700;
+            font-size: .9rem;
+            text-decoration: none;
+            word-break: break-all;
+            box-shadow: 0 4px 16px -7px rgba(245,158,11,.85);
+            /* Gradients don't interpolate, so brightness carries the hover. */
+            transition: filter .12s, box-shadow .12s, transform .12s;
+        }
+        .dash-link:hover {
+            filter: brightness(1.08);
+            box-shadow: 0 7px 20px -7px rgba(245,158,11,.95);
+            transform: translateY(-1px);
+        }
+        .dash-link:active { transform: none; }
+        @media (prefers-reduced-motion: reduce) {
+            .dash-link { transition: none; }
+            .dash-link:hover { transform: none; }
+        }
+        .dash-note { color: #8b98ad; font-size: .75rem; line-height: 1.4; margin: .55rem 0 0; }
+        .dash-note ul { margin: .35rem 0 0; padding-left: 1.05rem; }
+        .dash-note li { margin-top: .25rem; }
+        .dash-note b { color: #c3cbe0; font-weight: 700; }
+        .dash-note code {
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: .72rem;
+            color: #c3cbe0;
+            word-break: break-all;
+        }
+
         /* chrome:// cannot be a link, so the URL is a copy button instead.
            Overrides the full-width block styling of the base button rule. */
         .copy-url {
@@ -319,9 +365,7 @@
             <div id="browserNoteText">
                 <b>Chrome or Edge required.</b> This tool relies on Web Bluetooth, which
                 Firefox and Safari do not implement — there is no workaround on those browsers.
-                If Connect finds nothing on Chrome, enable this flag — Chrome refuses to
-                open <code>chrome://</code> links from a page, so copy it and paste it into
-                the address bar:
+                If Connect finds nothing on Chrome, enable this flag:
                 <button type="button" class="copy-url" id="copyFlag" onclick="copyFlagUrl()"
                         title="Copy to clipboard">
                     <code id="flagUrl"></code>
@@ -337,14 +381,16 @@
             <div class="step"><span class="step-num">1</span> <span id="step1Title">Select the type of device</span></div>
 
             <div id="connectPick">
-                <select id="deviceSelect">
+                <select id="deviceSelect" onchange="updateConnectLabel()">
                     <option value="Grabette">Grabette</option>
                     <option value="Gripette">Gripette</option>
                     <option value="Casquette">Casquette</option>
                 </select>
                 <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
-                    Connect
+                    <span id="btnConnectLabel">Search for nearby devices</span>
                 </button>
+                <p class="step-hint" id="connectHint">Your browser will list the devices of
+                 this type within Bluetooth range — pick yours from it to pair and connect.</p>
             </div>
 
             <div id="connectedBox" hidden>
@@ -406,6 +452,18 @@
             <div class="step-msg" id="msgWifi"></div>
         </div>
 
+        <!-- Revealed once the device reports a routable address of its own, which
+             is as close to "the dashboard is up" as this page can get: it is
+             served over HTTPS, so it cannot probe a plain-http address. -->
+        <div class="card step-card" id="card-dash" hidden>
+            <div class="step"><span class="step-num">4</span> Open the device dashboard</div>
+            <a class="dash-link" id="dashLink" target="_blank" rel="noopener">
+                <span id="dashUrl"></span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </a>
+            <div class="dash-note" id="dashNote"></div>
+        </div>
+
         <!-- Not a step: ping and network status are usable at any point once
              connected, so this panel sits outside the numbered flow. -->
         <div class="card diag step-card" id="card-diag" hidden>
@@ -438,6 +496,12 @@
     // HKDF context string — must match HKDF_INFO in bluetooth_service.py exactly.
     const HKDF_INFO = 'grabette-wifi-psk-v1';
 
+    // Each product serves its dashboard on its own port: grabette/config.py and
+    // casquette/config.py default to 8000 and 8001, gripette's webui.py to 8080.
+    const DASHBOARD_PORTS = { Grabette: 8000, Casquette: 8001, Gripette: 8080 };
+
+    let connectedType = null;   // 'Grabette' | 'Gripette' | 'Casquette'
+    let connectedHost = null;   // hostname from the advertised "Type (hostname)"
     let device = null;
     let server = null;
     let commandChar = null;
@@ -501,6 +565,15 @@
         document.getElementById('wifiLocked').hidden = on;
     }
 
+    // The button does not just connect: it opens the browser's chooser after a
+    // BLE scan filtered on the selected type. Name that, and name the type, so
+    // the control describes what actually happens. Deliberately "Search" and not
+    // "Scan" — step 3 already owns "Scan networks", for WiFi.
+    function updateConnectLabel() {
+        document.getElementById('btnConnectLabel').textContent =
+            'Search for a ' + document.getElementById('deviceSelect').value + ' nearby';
+    }
+
     function setConnected(connected, deviceName) {
         // Card 1 swaps between the picker and the connected identity.
         document.getElementById('connectPick').hidden = connected;
@@ -512,6 +585,9 @@
         reveal('card-auth', connected);
         reveal('card-diag', connected);
         if (!connected) reveal('card-wifi', false);
+        // Always hidden on a state change: the address belongs to whichever
+        // device was on the other end, and is stale the moment that changes.
+        reveal('card-dash', false);
 
         document.getElementById('btnPin').disabled = !connected;
         document.getElementById('btnPing').disabled = !connected;
@@ -524,7 +600,7 @@
         const targetName = document.getElementById('deviceSelect').value;
         try {
             clearMsg('msgAuth', 'msgWifi', 'msgStatus');
-            stepMsg('msgConnect', 'Scanning for ' + targetName + '…');
+            stepMsg('msgConnect', 'Searching for a ' + targetName + ' nearby…');
             log('Scanning for ' + targetName + '...');
             // Match by name PREFIX: the device advertises "Grabette (hostname)"
             // so the chooser shows the hostname and several robots of the same
@@ -577,6 +653,11 @@
             // device.name is the chosen device's advertised name, e.g.
             // "Grabette (grabette-01)" — show the hostname, not just the type.
             const shownName = device.name || targetName;
+            connectedType = targetName;
+            // advertised_name is f"{device_name} ({socket.gethostname()})", so the
+            // parenthesised part is the hostname to use for the .local fallback.
+            const hostMatch = /\(([^)]+)\)/.exec(shownName);
+            connectedHost = hostMatch ? hostMatch[1] : null;
             setConnected(true, shownName);
             clearMsg('msgConnect');
             log('Connected to ' + shownName, 'log-ok');
@@ -713,7 +794,8 @@
         setPasswordShown(document.getElementById('passwordInput').type === 'password');
     }
 
-    setPasswordShown(false);  // paints the initial eye icon
+    setPasswordShown(false);   // paints the initial eye icon
+    updateConnectLabel();      // paints the initial button label
 
     async function sendWifi() {
         const ssid = document.getElementById('ssidInput').value.trim();
@@ -743,6 +825,7 @@
         log(resp, resp.startsWith('ERROR') ? 'log-err' : 'log-ok');
         stepMsg('msgWifi', replyText(resp), resp.startsWith('ERROR') ? 'err' : 'ok');
         noteAuthConsumed();
+        if (!resp.startsWith('ERROR')) awaitDashboard();
     }
 
     // WIFI_CONNECT_ENC and WIFI_RESET both clear the robot's authenticated flag,
@@ -760,9 +843,8 @@
     // the dialog wraps to its own width, and manual breaks land mid-sentence.
     const RESET_CONFIRM = [
         'Forget all saved WiFi networks?',
-        'Every WiFi profile stored on the device will be deleted — not just the one it is using. Their passwords are deleted with them, and the device will not rejoin any of these networks on its own.',
+        'Every WiFi profile stored on the device will be deleted, not just the one it is using. Their passwords are deleted with them, and the device will not rejoin any of these networks on its own.',
         'The Hotspot profile is kept, so the device stays reachable.',
-        'This also uses up the PIN. To put the device back on a network afterwards, authenticate again in step 2, then send the credentials in step 3.',
     ].join('\n\n');
 
     async function sendWifiReset() {
@@ -845,6 +927,95 @@
         setTimeout(() => { hint.textContent = 'Copy'; }, 1800);
     }
 
+    // Build a dashboard link out of the address the device just reported.
+    //
+    // The status string is "{MODE} (ssid) [iface] ip ; [iface] ip", so the IP is
+    // already known and mDNS is not needed — .local resolution is unreliable on
+    // Android and blocked on many guest networks, so it is only offered as a
+    // fallback for when DHCP later moves the device.
+    //
+    // The link cannot be health-checked: this page is served over HTTPS and a
+    // fetch() to a plain-http address is blocked as mixed content. Top-level
+    // navigation is not, so the link itself works — Chrome's HTTPS-First mode
+    // may still interpose a warning the user has to click through.
+    function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    function offerDashboard(status) {
+        const ifaces = [...status.matchAll(/\[(\w+)\]\s+(\d{1,3}(?:\.\d{1,3}){3})/g)];
+        const port = DASHBOARD_PORTS[connectedType];
+        if (!ifaces.length || !port) { reveal('card-dash', false); return false; }
+
+        // Prefer wlan0 — that is the interface the credentials just configured.
+        const pick = ifaces.find(m => m[1] === 'wlan0') || ifaces[0];
+        const url = 'http://' + pick[2] + ':' + port;
+
+        document.getElementById('dashLink').href = url;
+        document.getElementById('dashUrl').textContent = url;
+
+        // 10.42.0.x is NetworkManager's hotspot range: the device is serving its
+        // own network rather than having joined yours.
+        const hotspot = status.startsWith('HOTSPOT');
+        // "{MODE} (ssid) ..." — naming the network is the one useful thing this
+        // page can offer, since it cannot check what the client is joined to.
+        const ssidMatch = /^\w+\s+\(([^)]*)\)/.exec(status);
+        const ssid = ssidMatch && ssidMatch[1] ? ssidMatch[1] : null;
+
+        // No probe is possible: this page is served over HTTPS, and every way of
+        // reaching a plain-http address from here (fetch, even no-cors, and img)
+        // is blocked as mixed content. WebRTC no longer exposes the client's LAN
+        // address either. So the address is offered, never asserted.
+        const checks = [];
+        if (hotspot) {
+            checks.push('The device is in <b>hotspot mode</b> — it did not join a WiFi network, '
+                        + 'so this address is only reachable from a machine joined to its hotspot.');
+        } else {
+            checks.push(ssid
+                ? 'This machine must be on <b>' + escapeHtml(ssid) + '</b>, the network the device joined.'
+                : 'This machine must be on the same network as the device.');
+            checks.push('The dashboard service must be running on the device — it is a separate '
+                        + 'service from the Bluetooth one you are talking to now.');
+        }
+        checks.push('The dashboard is served over plain HTTP, so your browser may warn before opening it.');
+        if (connectedHost) {
+            checks.push('If the address changes later, try <b>http://' + escapeHtml(connectedHost)
+                        + '.local:' + port + '</b> (needs mDNS, unsupported on some phones and networks).');
+        }
+
+        document.getElementById('dashNote').innerHTML =
+            'This is the address the device reported. This page cannot test it — for the link to work:'
+            + '<ul><li>' + checks.join('</li><li>') + '</li></ul>';
+        reveal('card-dash', true);
+        return !hotspot;
+    }
+
+    // After credentials are accepted the device still has to associate and take
+    // a DHCP lease, so the address is not there yet. The status characteristic
+    // is refreshed by the service every 10s; poll it until a non-hotspot address
+    // shows up, so step 4 appears on its own rather than waiting for the user to
+    // go hunting in Diagnostics.
+    const DASH_POLL_MS = 2500;
+    const DASH_POLL_TRIES = 10;
+
+    async function awaitDashboard() {
+        if (!networkStatusChar) return;
+        for (let i = 0; i < DASH_POLL_TRIES; i++) {
+            await new Promise(r => setTimeout(r, DASH_POLL_MS));
+            if (!device || !device.gatt.connected) return;
+            let status;
+            try {
+                status = new TextDecoder().decode(await networkStatusChar.readValue());
+            } catch (e) {
+                return;  // link dropped mid-poll; nothing useful to report
+            }
+            log('Network: ' + status);
+            if (offerDashboard(status)) return;
+        }
+    }
+
     // Web Bluetooth is Chromium-only. Detect its absence up front and kill the
     // entry point, rather than letting Connect fail with an opaque error.
     if (!navigator.bluetooth) {
@@ -868,6 +1039,7 @@
             const bad = status === 'OFFLINE' || status === 'ERROR';
             stepMsg('msgStatus', 'Network: ' + status, bad ? 'err' : 'ok');
             log('Network: ' + status, bad ? 'log-err' : 'log-ok');
+            offerDashboard(status);
         } catch (e) {
             stepMsg('msgStatus', 'Read failed: ' + e.message, 'err');
             log('Read failed: ' + e.message, 'log-err');
