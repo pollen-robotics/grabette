@@ -61,8 +61,10 @@ def test_start_and_stop_cues_are_distinguishable(tmp_path):
 
 def test_error_cue_is_low_and_repeated():
     """It has to read as "something went wrong" to someone looking at the
-    workspace rather than the device: well below both other cues, and repeated
-    instead of a single glide."""
+    workspace rather than the device: below the other cues, and repeated instead
+    of a single glide. The pitch margin is deliberately modest — the HAT speaker
+    sets a floor (see ERROR_TONES) — so the repetition and the length are what
+    actually carry the distinction, and they are what these assertions pin."""
     voiced = [f for f, _ in sound.ERROR_TONES if f > 0]
     assert len(voiced) >= 3                                   # repeated
     assert max(voiced) < min(f for f, _ in sound.START_TONES)  # lower than both

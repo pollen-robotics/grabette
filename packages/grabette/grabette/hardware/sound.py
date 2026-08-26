@@ -66,13 +66,20 @@ SAMPLE_RATE = 48000
 # falling is unmistakable in a way that two different pitches are not.
 START_TONES: tuple[tuple[float, float], ...] = ((880.0, 0.09), (1320.0, 0.11))
 STOP_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.09), (880.0, 0.11))
-# Error: three low buzzes. Deliberately unlike the other two in every dimension
-# a listener can pick up — an octave and a half below them, repeated instead of
-# a glide, and longer overall — because it has to be recognisable as "something
-# went wrong" by someone who is looking at the workspace, not at the device.
+# Error: three buzzes, the lowest of the four cues — it has to be recognisable
+# as "something went wrong" by someone looking at the workspace, not at the
+# device. What makes it recognisable is the RHYTHM (a repeated triplet, ~0.66s
+# against the start pair's 0.20s), NOT the pitch: 660 Hz sits only a fifth below
+# the start cue, because that is roughly where the HAT's speaker stops
+# reproducing. It has no enclosure and rolls off hard below ~500 Hz, and this
+# cue used to be at 220 Hz — which measured fine and was inaudible on the actual
+# device (440 Hz still weak, 660 Hz clean), the worst possible outcome for the
+# one cue whose whole job is to report failures nobody is watching for. Pitch it
+# lower again only against real hardware, at the mixer levels of
+# scripts/aic3104-init.sh — the margin here is a speaker limit, not a taste.
 # A 0 Hz "tone" renders as silence (sin(0) = 0), which is how the gaps are made.
 ERROR_TONES: tuple[tuple[float, float], ...] = (
-    (220.0, 0.15), (0.0, 0.07), (220.0, 0.15), (0.0, 0.07), (220.0, 0.22),
+    (660.0, 0.15), (0.0, 0.07), (660.0, 0.15), (0.0, 0.07), (660.0, 0.22),
 )
 # Saved: one short high blip. Deliberately the slightest of the four — it is a
 # confirmation arriving a second or two after the stop cue, on every single

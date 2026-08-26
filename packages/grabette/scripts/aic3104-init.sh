@@ -40,21 +40,31 @@ apply_mixer_levels() {
     # Speaker path: the speaker amp hangs off the codec's line outputs
     # (LEFT_LOP/RIGHT_LOP).
     #   'PCM Playback Volume'      digital DAC gain
-    #   'Line DAC Playback Volume' DAC -> LOP routing level
+    #   'Line DAC Playback Volume' DAC -> LOP routing level, 0..118 in 0.5 dB
+    #                              steps. THE trim knob for cue loudness: ~59 dB
+    #                              of range, against the ten coarse steps of the
+    #                              LOP stage below.
     #   'Line Playback Switch'     the LOP output-stage MUTE. It is NOT a
     #                              line-in bypass: switching it off silences
     #                              the speaker entirely.
-    #   'Line Playback Volume'     LOP output-stage gain, 0..9 dB. Deliberately
-    #                              NOT at the 9 dB maximum: the cues are
-    #                              operator feedback from a device held in the
-    #                              hand, indoors, and at full output stage the
-    #                              beep is louder than that job needs. Trimmed
-    #                              HERE, on the analog stage, rather than via
-    #                              GRABETTE_SOUND_VOLUME — that one scales the
-    #                              rendered samples, so it buys quiet by
-    #                              spending waveform resolution.
+    #   'Line Playback Volume'     LOP output-stage gain, 0..9.
+    #
+    # The two volume values below were CALIBRATED AS A PAIR, by ear, on a V2 HAT
+    # with the speaker fitted: at the levels the codec comes up with, the cues
+    # are far louder than operator feedback from a hand-held device needs
+    # indoors. They are therefore NOT independent settings to tweak one at a
+    # time -- re-run the sweep on real hardware instead:
+    #     for v in 80 70 64 58; do
+    #       amixer -c aic3104 -q cset name='Line DAC Playback Volume' $v,$v
+    #       python3 scripts/test_speaker.py
+    #     done
+    # (amixer alone is not persistent: this script re-applies at every boot.)
+    #
+    # Trim HERE, on the codec, rather than through GRABETTE_SOUND_VOLUME: that
+    # one scales the rendered samples, so it buys quiet by spending waveform
+    # resolution.
     amixer -c "$CARD" cset name='PCM Playback Volume'      127,127 >/dev/null 2>&1
-    amixer -c "$CARD" cset name='Line DAC Playback Volume' 118,118 >/dev/null 2>&1
+    amixer -c "$CARD" cset name='Line DAC Playback Volume' 64,64   >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Switch'     on,on   >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Volume'     4,4     >/dev/null 2>&1
     echo "TLV320AIC3104 mixer levels set on card '$CARD'"
