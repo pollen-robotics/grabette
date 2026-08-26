@@ -84,6 +84,10 @@ class EpisodeInfo(BaseModel):
     angle_sample_count: int = 0
     has_video: bool = False
     has_imu: bool = False
+    # False when metadata.json is missing or unreadable. The episode is still
+    # listed (its files are on disk and may be recoverable), but its counters
+    # are zeros rather than facts, and the UI must not present them as facts.
+    metadata_ok: bool = True
 
 
 class TaskInfo(BaseModel):
@@ -459,13 +463,28 @@ class TaskManager:
         frame_count = 0
         imu_sample_count = 0
         angle_sample_count = 0
+        metadata_ok = True
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
+            # One unreadable episode must never take the whole listing down with
+            # it. This runs once per episode of every task, so an exception here
+            # used to 500 GET /api/tasks — and the dashboard, which cannot tell
+            # a failed call from an empty one, then showed NO tasks at all while
+            # the fleet (which reports from the registry, not from these files)
+            # still showed them. A 0-byte metadata.json from an interrupted
+            # write was enough to do it.
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, ValueError) as e:
+                logger.warning("Unreadable metadata for episode %s (%s): %s",
+                               episode_id, meta_path, e)
+                meta, metadata_ok = {}, False
             duration = meta.get("duration_seconds", 0.0)
             frame_count = meta.get("frame_count", 0)
             imu_sample_count = meta.get("imu_sample_count") or meta.get("oakd", {}).get("imu_samples", 0)
             angle_sample_count = meta.get("angle_sample_count", 0)
+        else:
+            metadata_ok = False
 
         return EpisodeInfo(
             episode_id=episode_id,
@@ -476,6 +495,7 @@ class TaskManager:
             angle_sample_count=angle_sample_count,
             has_video=video_path.exists(),
             has_imu=imu_present,
+            metadata_ok=metadata_ok,
         )
 
     def revision(self) -> int:

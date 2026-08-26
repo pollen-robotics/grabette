@@ -185,11 +185,20 @@ class GrabetteClient:
     # -- Tasks --
 
     def list_tasks(self) -> list[dict]:
+        """Every task on the device, or [] if the call failed.
+
+        The empty list is NOT ambiguous to a caller who knows the API: the
+        device always has at least Unassigned, so [] can only mean this call
+        failed. It used to fail SILENTLY — no log, no message — which is how a
+        single unreadable episode (500 on /api/tasks) turned into a dashboard
+        showing no tasks and no episodes with nothing anywhere to explain it.
+        """
         try:
             r = self._http.get("/api/tasks")
             r.raise_for_status()
             return r.json()
-        except Exception:
+        except Exception as e:  # noqa: BLE001 — the UI must not die with the call
+            logger.warning("Could not list tasks from %s: %s", self.base_url, e)
             return []
 
     # -- Episodes --

@@ -471,6 +471,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         rows = []
         task_name = ""
         task_description = ""
+        # The device always has Unassigned, so an empty list means the API call
+        # failed — never that there is nothing to show. Saying so beats a blank
+        # page that looks exactly like "no episodes recorded yet".
+        api_down = not sessions
         for s in sessions:
             if s["id"] == session_id:
                 task_name = s.get("name", "")
@@ -497,9 +501,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         count_str = f"{count} episode" + ("s" if count != 1 else "")
         ep_title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
         desc_parts = []
+        if api_down:
+            desc_parts.append(
+                "⚠️ **Could not reach the grabette API** — the task list below is "
+                "empty because the call failed, not because there is nothing "
+                "recorded. Check the daemon log for the error."
+            )
         if task_description:
             desc_parts.append(f"**Task description:** {task_description}")
-        desc_parts.append(f"*{count_str} recorded*")
+        if not api_down:
+            desc_parts.append(f"*{count_str} recorded*")
         desc = "\n\n".join(desc_parts)
         return rows, move_dd, task_header, desc, cap_title, ep_title
 

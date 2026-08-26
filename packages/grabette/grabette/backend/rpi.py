@@ -17,6 +17,7 @@ from grabette.config import settings
 from grabette.errors import exc_text as _exc_text
 from grabette.hardware.frames import build_frames_payload
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
+from grabette.output import write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -729,7 +730,7 @@ class RpiBackend(Backend):
                     )
                 # metadata.json goes last so its presence signals the episode
                 # is fully saved to any watcher.
-                (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+                write_json_atomic(episode_dir / "metadata.json", meta)
         except Exception:
             logger.exception("Deferred file writes failed")
         writes_ms = (time.monotonic() - _t) * 1000
