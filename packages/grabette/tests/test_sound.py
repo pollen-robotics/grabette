@@ -35,19 +35,39 @@ def test_cue_starts_and_ends_near_silence(tmp_path):
     assert abs(last) < 500
 
 
+def _peak(path) -> int:
+    """Loudest sample in a rendered cue."""
+    with wave.open(str(path), "rb") as w:
+        frames = w.readframes(w.getnframes())
+    return max(
+        abs(int.from_bytes(frames[i:i + 2], "little", signed=True))
+        for i in range(0, len(frames), 2)
+    )
+
+
 def test_volume_scales_peak_amplitude(tmp_path):
     peaks = []
     for volume in (0.2, 1.0):
         path = tmp_path / f"cue-{volume}.wav"
         sound._render_wav(path, ((1000.0, 0.05),), volume=volume)
-        with wave.open(str(path), "rb") as w:
-            frames = w.readframes(w.getnframes())
-        peaks.append(max(
-            abs(int.from_bytes(frames[i:i + 2], "little", signed=True))
-            for i in range(0, len(frames), 2)
-        ))
+        peaks.append(_peak(path))
     assert peaks[0] < peaks[1]
     assert peaks[1] <= 32767
+
+
+def test_error_cue_is_rendered_with_more_headroom(monkeypatch):
+    """The speaker rolls off where the error cue sits, so one shared amplitude
+    leaves the buzz — the cue that must never be missed — the only inaudible one
+    of the four. It is compensated in the render, not by raising the mixer for
+    everything (see CUE_GAINS)."""
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=0.5)
+    speaker.prepare()
+    peaks = {name: _peak(path) for name, path in speaker._cues.items()}
+    assert peaks[sound.CUE_ERROR] > max(
+        peak for name, peak in peaks.items() if name != sound.CUE_ERROR
+    )
+    speaker.close()
 
 
 def test_start_and_stop_cues_are_distinguishable(tmp_path):
@@ -59,19 +79,24 @@ def test_start_and_stop_cues_are_distinguishable(tmp_path):
     assert stop_freqs == sorted(stop_freqs, reverse=True)  # descending
 
 
-def test_error_cue_is_low_and_repeated():
+def test_error_cue_is_repeated_and_long():
     """It has to read as "something went wrong" to someone looking at the
-    workspace rather than the device: below the other cues, and repeated instead
-    of a single glide. The pitch margin is deliberately modest — the HAT speaker
-    sets a floor (see ERROR_TONES) — so the repetition and the length are what
-    actually carry the distinction, and they are what these assertions pin."""
+    workspace rather than the device. It used to do that by being the lowest of
+    the four — it can't any more, the HAT speaker doesn't reproduce the bottom
+    end (see ERROR_TONES). What carries the distinction now is the SHAPE: three
+    buzzes at one pitch, separated by silence, far longer than any other cue,
+    where the others are a two-tone glide or a single blip."""
     voiced = [f for f, _ in sound.ERROR_TONES if f > 0]
-    assert len(voiced) >= 3                                   # repeated
-    assert max(voiced) < min(f for f, _ in sound.START_TONES)  # lower than both
-    assert max(voiced) < min(f for f, _ in sound.STOP_TONES)
-    # And longer overall, so it isn't mistaken for a clipped start/stop.
+    assert len(voiced) >= 3                              # repeated...
+    assert len(set(voiced)) == 1                         # ...at one pitch, not a glide
+    assert any(f == 0.0 for f, _ in sound.ERROR_TONES)   # ...with gaps between
+    others = (sound.START_TONES, sound.STOP_TONES, sound.SAVED_TONES)
     total = sum(d for _, d in sound.ERROR_TONES)
-    assert total > sum(d for _, d in sound.START_TONES)
+    for other in others:
+        assert total > sum(d for _, d in other)
+    # And on a pitch no other cue uses, so a buzz heard through a door can't be
+    # taken for one of them.
+    assert not set(voiced) & {f for cue in others for f, _ in cue}
 
 
 def test_saved_cue_is_the_slightest(tmp_path):

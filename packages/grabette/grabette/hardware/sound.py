@@ -16,10 +16,10 @@ where the recording actually starts and stops without looking at the LED:
   • a SHORT, HIGH blip once the episode is fully written to disk — the mp4 mux
     and the JSON sidecars are done, so the device can be moved or powered off.
     That lands ~1-2s after the stop cue, which fires at the START of the mux;
-  • a LOW, REPEATED buzz when a capture command fails — the case that actually
-    needs sound, since the failure modes are exactly the ones with no screen in
-    front of them: you press the button, the LED goes back to idle, and nothing
-    tells you whether the take started.
+  • a REPEATED, three-tone buzz when a capture command fails — the case that
+    actually needs sound, since the failure modes are exactly the ones with no
+    screen in front of them: you press the button, the LED goes back to idle,
+    and nothing tells you whether the take started.
 
 Playback rules that matter here:
   • The speaker is OPTIONAL hardware. A grabette built without one is a
@@ -66,20 +66,29 @@ SAMPLE_RATE = 48000
 # falling is unmistakable in a way that two different pitches are not.
 START_TONES: tuple[tuple[float, float], ...] = ((880.0, 0.09), (1320.0, 0.11))
 STOP_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.09), (880.0, 0.11))
-# Error: three buzzes, the lowest of the four cues — it has to be recognisable
-# as "something went wrong" by someone looking at the workspace, not at the
-# device. What makes it recognisable is the RHYTHM (a repeated triplet, ~0.66s
-# against the start pair's 0.20s), NOT the pitch: 660 Hz sits only a fifth below
-# the start cue, because that is roughly where the HAT's speaker stops
-# reproducing. It has no enclosure and rolls off hard below ~500 Hz, and this
-# cue used to be at 220 Hz — which measured fine and was inaudible on the actual
-# device (440 Hz still weak, 660 Hz clean), the worst possible outcome for the
-# one cue whose whole job is to report failures nobody is watching for. Pitch it
-# lower again only against real hardware, at the mixer levels of
-# scripts/aic3104-init.sh — the margin here is a speaker limit, not a taste.
+# Error: three buzzes at one pitch. It has to be recognisable as "something went
+# wrong" by someone looking at the workspace, not at the device — and what makes
+# it so is the SHAPE, not the pitch: a repeated triplet with silent gaps, ~0.66s
+# against the start pair's 0.20s, where every other cue is a two-tone glide or a
+# single blip.
+#
+# It was designed as the LOWEST of the four (220 Hz, an octave and a half under
+# the others) and that turned out to be untenable on the hardware: the HAT's
+# speaker is a small unenclosed driver, it rolls off steeply below ~1 kHz, and
+# the cue was flatly inaudible on-device — the worst possible failure for the one
+# cue whose whole job is to report faults nobody is watching for. Measured on a
+# V2 HAT at the mixer levels of scripts/aic3104-init.sh: 220 Hz silent, 440 Hz
+# barely there, 660 Hz audible but weak even at full scale, 1100 Hz clean. So it
+# now sits INSIDE the speaker's usable band, on a frequency no other cue uses
+# (880/1320 are start+stop, 1760 is saved), and leans on rhythm and length alone
+# to stand apart.
+#
+# Do not take it back down towards the bottom end without re-testing on a real
+# speaker at the shipped mixer levels — the constraint here is the driver's
+# response, not taste. See also CUE_GAINS: it is rendered hotter than the rest.
 # A 0 Hz "tone" renders as silence (sin(0) = 0), which is how the gaps are made.
 ERROR_TONES: tuple[tuple[float, float], ...] = (
-    (660.0, 0.15), (0.0, 0.07), (660.0, 0.15), (0.0, 0.07), (660.0, 0.22),
+    (1100.0, 0.15), (0.0, 0.07), (1100.0, 0.15), (0.0, 0.07), (1100.0, 0.22),
 )
 # Saved: one short high blip. Deliberately the slightest of the four — it is a
 # confirmation arriving a second or two after the stop cue, on every single
@@ -98,6 +107,17 @@ CUES: dict[str, tuple[tuple[float, float], ...]] = {
     CUE_SAVED: SAVED_TONES,
     CUE_ERROR: ERROR_TONES,
 }
+
+# Per-cue multiplier on the configured volume (GRABETTE_SOUND_VOLUME). The error
+# buzz is not a routine confirmation like the other three — it is the one cue
+# that must never be missed — so it renders at the full digital scale
+# (_render_wav clamps there) while the rest keep the shared trim, which exists
+# to stop the routine cues being obnoxious. A multiplier rather than a fixed
+# amplitude, so lowering GRABETTE_SOUND_VOLUME keeps the buzz proportionally
+# louder instead of quietly flattening the difference. It buys ~4 dB: real, but
+# a safety margin on top of a cue placed where the speaker can reproduce it
+# (see ERROR_TONES) — never a substitute for that.
+CUE_GAINS: dict[str, float] = {CUE_ERROR: 1.7}
 
 # A failure is typically noticed by several layers at once (the backend raises,
 # the scheduler logs it and discards the episode, the button listener reports it
@@ -196,7 +216,8 @@ class Speaker:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="grabette-sound-")
             for name, tones in CUES.items():
                 path = Path(self._tmpdir.name) / f"{name}.wav"
-                _render_wav(path, tones, self._volume)
+                gain = CUE_GAINS.get(name, 1.0)
+                _render_wav(path, tones, self._volume * gain)
                 self._cues[name] = path
         except Exception:
             logger.warning("Speaker cue rendering failed; sound disabled", exc_info=True)
@@ -223,7 +244,7 @@ class Speaker:
         self._play(CUE_SAVED)
 
     def play_error(self) -> None:
-        """Buzz 'that command failed' (low, repeated). Safe to call from every
+        """Buzz 'that command failed' (repeated triplet). Safe to call from every
         layer that notices the same failure — see CUE_DEBOUNCE_S. Returns at
         once; never raises."""
         self._play(CUE_ERROR)
