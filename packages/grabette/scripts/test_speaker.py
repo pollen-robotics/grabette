@@ -70,7 +70,7 @@ def main() -> int:
         (CUE_START, "START  (ascending — recording is live)"),
         (CUE_STOP, "STOP   (descending — frames no longer saved)"),
         (CUE_SAVED, "SAVED  (short blip — episode written, mux done)"),
-        (CUE_ERROR, "ERROR  (low, repeated — a capture command failed)"),
+        (CUE_ERROR, "ERROR  (repeated triplet — a capture command failed)"),
     ):
         if not played:
             break

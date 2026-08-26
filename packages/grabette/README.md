@@ -143,7 +143,7 @@ and not looking at it:
   sidecars, so between the two there was nothing telling you the episode was
   actually complete. A failed write buzzes the error cue instead — an episode
   that didn't persist must not be something you discover later in the journal.
-- **low, repeated buzz** when a capture command *fails*. This is the case that
+- **repeated triplet** when a capture command *fails*. This is the case that
   most needs sound: the failures happen where there is no screen — you press the
   button, the LED drops back to idle, and nothing distinguishes "it errored"
   from "the press didn't register". It fires from three places, so that every
@@ -164,7 +164,7 @@ and not looking at it:
 
 The four have to be told apart by ear alone, so they differ in direction, pitch,
 count and length rather than in timbre — rising pair, falling pair, single short
-blip, low triplet. In a normal take you hear: *beep-up* (rolling) → *beep-down*
+blip, repeated triplet. In a normal take you hear: *beep-up* (rolling) → *beep-down*
 (frames stopped) → *blip* (saved).
 
 The hardware is a **TLV320AIC3104** codec on the V2 HAT, driven over I2S — the

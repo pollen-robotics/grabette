@@ -51,7 +51,7 @@ placed at the real boundaries of the take rather than at the button press:
   episode is complete on disk. Fired before the deferred hardware re-init, which
   concerns the *next* capture, not this episode. The LED cannot express this: it
   goes off when the streams are down, without waiting for the JSON writes.
-- **low and repeated**, when a capture command fails: from `start_capture`
+- **repeated triplet**, when a capture command fails: from `start_capture`
   (any trigger), from `CaptureScheduler` (a group start/stop failing around it,
   possibly on a peer nobody is watching), and from `ButtonListener` (failures
   that never reach the backend — a fleet refusal, a start that never fired, a
