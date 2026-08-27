@@ -162,8 +162,27 @@ expresses "ignore the discontinuity" — the trajectory has to be reconstructed
 
 > The representation with 13–32x better SNR has strictly worse glitch locality.
 
-That is a structural trade-off, not an implementation wart, and it should be
-weighed as such.
+That is a structural trade-off, not an implementation wart — **but measurement
+says it is a small one.** Over `test_pick_mustard_200` (200 episodes, 39 042
+frames), with the same caps the delta pipeline uses:
+
+| | |
+|---|---|
+| per-step translation glitches | 5 (**0.013%** of steps) |
+| per-step rotation glitches | 5 (**0.013%**) |
+| K=15 chunks containing a glitch | **0.20%** |
+| K=50 chunks containing a glitch | **0.59%** |
+
+So under 1% of chunks are touched even at K=50. The repair is cheap insurance
+rather than a load-bearing part of the design, and the locality argument — which I
+had weighted as one of the main objections — should not carry much weight against
+the SNR gain on data this clean. It would matter on a noisier capture session, so
+the survey is worth re-running per dataset (`n_jumps_spliced` /
+`n_rot_jumps_spliced` are in the step's report for exactly that).
+
+Note rotation glitches occur at the same rate as translation ones, which is why
+handling rotation was necessary rather than optional — but also why it is not
+urgent.
 
 What does carry over: layers 1, 2 and 4 are representation-agnostic. Episode
 rejection and tagging happen upstream of any action encoding, and layer 4
