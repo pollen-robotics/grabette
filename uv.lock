@@ -491,8 +491,10 @@ name = "casquette"
 version = "0.1.0"
 source = { editable = "packages/casquette" }
 dependencies = [
+    { name = "aiohttp" },
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "huggingface-hub" },
     { name = "opencv-contrib-python" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -509,8 +511,10 @@ rpi = [
 [package.metadata]
 requires-dist = [
     { name = "adafruit-extended-bus", marker = "extra == 'rpi'" },
+    { name = "aiohttp", specifier = ">=3.9" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "huggingface-hub", specifier = ">=0.20.0" },
     { name = "opencv-contrib-python", specifier = ">=4.13.0.92" },
     { name = "picamera2", marker = "extra == 'rpi'" },
     { name = "pydantic", specifier = ">=2.0.0" },
