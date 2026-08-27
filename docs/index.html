@@ -537,6 +537,39 @@
         return resp.replace(/^(OK|ERROR):\s*/, '');
     }
 
+    // WPA-PSK passphrase length (IEEE 802.11i), mirrored from
+    // bluetooth_service.py so a hopeless password is caught before it costs a
+    // key exchange and an nmcli round-trip.
+    const PSK_MIN_LEN = 8, PSK_MAX_LEN = 63, PSK_HEX_LEN = 64;
+
+    // The device translates nmcli's failures itself, but this page is served
+    // from GitHub Pages and talks to whatever firmware the robot happens to be
+    // running. Older builds forward nmcli verbatim, where a refused passphrase
+    // reads "(7) Secrets were required, but not provided" — which sounds like a
+    // bug in this tool rather than a typo in the password. Translate the few
+    // that matter so an out-of-date device is not why the user gives up.
+    const WIFI_ERROR_HINTS = [
+        [/secrets were required|no secrets/i,
+         'Wrong password for "%s" — the network refused it.'],
+        [/network could not be found|no network with ssid/i,
+         '"%s" was not found — check the name, and that the device is in range of it.'],
+        [/ip configuration could not be reserved/i,
+         'Joined "%s", but it handed out no address (DHCP failed). The password was accepted.'],
+        [/timeout expired|timed out/i,
+         'Timed out joining "%s" — it may be out of range.'],
+        [/psk[\s\S]*invalid|invalid[\s\S]*psk/i,
+         'That password is not a valid WiFi passphrase (' + PSK_MIN_LEN + '-' + PSK_MAX_LEN + ' characters).'],
+    ];
+
+    // The raw reply always reaches the log; only the step line is rewritten.
+    function wifiErrorText(resp, ssid) {
+        const text = replyText(resp);
+        for (const [pattern, hint] of WIFI_ERROR_HINTS) {
+            if (pattern.test(text)) return hint.replace('%s', ssid);
+        }
+        return text;
+    }
+
     // Progressive disclosure. A card is revealed once the step before it has
     // succeeded, so the page only ever shows what is actionable right now.
     // Reveals are sticky for the rest of the session: the robot consumes the
@@ -806,6 +839,12 @@
         const pin = document.getElementById('pinInput').value.trim();
         if (!ssid) { stepMsg('msgWifi', 'Enter an SSID', 'err'); return; }
         if (!password) { stepMsg('msgWifi', 'Enter a password', 'err'); return; }
+        if ((password.length < PSK_MIN_LEN || password.length > PSK_MAX_LEN)
+            && password.length !== PSK_HEX_LEN) {
+            stepMsg('msgWifi', 'A WiFi password is ' + PSK_MIN_LEN + '-' + PSK_MAX_LEN
+                    + ' characters; this one is ' + password.length + '.', 'err');
+            return;
+        }
         if (!pin) { stepMsg('msgWifi', 'Enter the PIN in step 2 — it encrypts the password', 'err'); return; }
 
         stepMsg('msgWifi', 'Sending credentials for "' + ssid + '"…');
@@ -825,10 +864,12 @@
 
         const resp = await sendCommand('WIFI_CONNECT_ENC ' + payload, true);
         if (resp === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
-        log(resp, resp.startsWith('ERROR') ? 'log-err' : 'log-ok');
-        stepMsg('msgWifi', replyText(resp), resp.startsWith('ERROR') ? 'err' : 'ok');
+        const failed = resp.startsWith('ERROR');
+        log(resp, failed ? 'log-err' : 'log-ok');
+        stepMsg('msgWifi', failed ? wifiErrorText(resp, ssid) : replyText(resp),
+                failed ? 'err' : 'ok');
         noteAuthConsumed();
-        if (!resp.startsWith('ERROR')) awaitDashboard();
+        if (!failed) awaitDashboard();
     }
 
     // WIFI_CONNECT_ENC and WIFI_RESET both clear the robot's authenticated flag,
@@ -962,9 +1003,11 @@
         // 10.42.0.x is NetworkManager's hotspot range: the device is serving its
         // own network rather than having joined yours.
         const hotspot = status.startsWith('HOTSPOT');
-        // "{MODE} (ssid) ..." — naming the network is the one useful thing this
-        // page can offer, since it cannot check what the client is joined to.
-        const ssidMatch = /^\w+\s+\(([^)]*)\)/.exec(status);
+        // "{MODE} (ssid) [iface] ip ..." — naming the network is the one useful
+        // thing this page can offer, since it cannot check what the client is
+        // joined to. Match greedily up to the ")" that closes it, the one before
+        // the "[iface]" list, so an SSID containing ")" is not cut short.
+        const ssidMatch = /^\w+\s+\((.*)\)\s+\[/.exec(status);
         const ssid = ssidMatch && ssidMatch[1] ? ssidMatch[1] : null;
 
         // No probe is possible: this page is served over HTTPS, and every way of
