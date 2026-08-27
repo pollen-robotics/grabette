@@ -1,12 +1,47 @@
 - sections:
     - local: index
-      title: Grabette
-    - local: get_started
-      title: Getting started
-    - local: dashboard
-      title: The dashboard
-    - local: spaces
-      title: Hugging Face Spaces
+      title: The Grabette Project
+  title: Project
+
+- sections:
+    - local: grabette/overview
+      title: Overview
+    - local: grabette/getting_started
+      title: Getting Started
+    - local: grabette/usage
+      title: Usage
+    - local: grabette/data_collection
+      title: Data Collection
+    - local: grabette/training
+      title: Training
+  title: Grabette
+
+- sections:
+    - local: gripette/overview
+      title: Overview
+    - local: gripette/getting_started
+      title: Getting Started
+    - local: gripette/set_up
+      title: Set up on a robotic arm
+    - local: gripette/usage
+      title: Usage
+  title: Gripette
+
+- sections:
+    - local: casquette/overview
+      title: Overview
+  title: Casquette (WIP)
+
+- sections:
     - local: faq
       title: FAQ
-  title: Get Started
+  title: FAQ
+
+- sections:
+    - local: former/get_started
+      title: Getting started
+    - local: former/dashboard
+      title: The dashboard
+    - local: former/spaces
+      title: Hugging Face Spaces
+  title: Former

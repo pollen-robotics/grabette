@@ -1,5 +1,9 @@
 # Getting started
 
+## 
+
+## Former version
+
 This page takes you from nothing to a LeRobot dataset. If you don't have a device yet, start with [mock mode](#try-it-without-hardware) — the whole dashboard works on a laptop.
 
 ## Try it without hardware
