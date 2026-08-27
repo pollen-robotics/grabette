@@ -11,9 +11,11 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 from grabette_postprocess.chunk_relative import (
+    DEFAULT_JUMP_CAP_DEG,
     DEFAULT_JUMP_CAP_M,
     from_chunk_relative,
     splice_jumps,
+    splice_rotation_jumps,
     to_chunk_relative,
 )
 
@@ -222,3 +224,69 @@ def test_the_repaired_sequence_is_continuous():
     pos, n = splice_jumps(chunk[:, :3])
     assert n == 1
     assert np.linalg.norm(np.diff(pos, axis=0), axis=1).max() < DEFAULT_JUMP_CAP_M
+
+
+# ── rotation jumps ──────────────────────────────────────────────────────
+
+def test_a_rotation_jump_is_spliced():
+    """Rotation glitches are real in this data — convert_dataset.py's
+    --despike_max_deg was lowered from 45 to 5 because 5-45 deg glitches reached
+    training, were reproduced at eval, and tripped the arm's IK-jump watchdog. So
+    repairing translation alone would be a REGRESSION against the delta pipeline.
+    """
+    chunk = make_chunk(t=14, jitter=0.005)
+    clean, _ = to_chunk_relative(chunk)
+
+    jumped = chunk.copy()
+    extra = Rotation.from_rotvec(np.deg2rad(40) * np.array([0.0, 1.0, 0.0]))
+    jumped[7:, 3:6] = (extra * Rotation.from_rotvec(chunk[7:, 3:6])).as_rotvec()
+    repaired, rep = to_chunk_relative(jumped)
+
+    assert rep["n_rot_jumps_spliced"] == 1
+    # Residual is bounded by the lost per-step motion, not zero — same
+    # information-theoretic limit as the translation case.
+    step_deg = np.rad2deg((Rotation.from_rotvec(chunk[:-1, 3:6]).inv()
+                           * Rotation.from_rotvec(chunk[1:, 3:6])).magnitude()).mean()
+    err_deg = np.rad2deg((Rotation.from_rotvec(repaired[:, 3:6]).inv()
+                          * Rotation.from_rotvec(clean[:, 3:6])).magnitude()).max()
+    assert err_deg < 3 * step_deg, f"residual {err_deg:.2f}deg vs step {step_deg:.2f}deg"
+    assert err_deg < 5.0, "the 40 deg artifact must be gone"
+
+
+def test_the_repaired_rotation_sequence_is_continuous():
+    chunk = make_chunk(t=15, jitter=0.005)
+    extra = Rotation.from_rotvec(np.deg2rad(60) * np.array([1.0, 0.0, 0.0]))
+    chunk[9:, 3:6] = (extra * Rotation.from_rotvec(chunk[9:, 3:6])).as_rotvec()
+    rots, n = splice_rotation_jumps(Rotation.from_rotvec(chunk[:, 3:6]))
+    assert n == 1
+    steps = np.rad2deg((rots[:-1].inv() * rots[1:]).magnitude())
+    assert steps.max() < DEFAULT_JUMP_CAP_DEG + 1e-6
+
+
+def test_normal_wrist_motion_is_not_spliced():
+    """The cap must not eat real motion: 4 deg/step is 200 deg/s at 50 fps, fast
+    but human. Only above 5 deg is it treated as a glitch."""
+    rots = Rotation.from_rotvec(
+        np.cumsum(np.full((10, 3), np.deg2rad(4.0) / np.sqrt(3)), axis=0)
+    )
+    _out, n = splice_rotation_jumps(rots)
+    assert n == 0
+
+
+def test_rotation_splice_handles_degenerate_input():
+    for t in (0, 1):
+        rots = Rotation.from_rotvec(np.zeros((t, 3)))
+        out, n = splice_rotation_jumps(rots)
+        assert n == 0 and len(out) == t
+
+
+def test_translation_and_rotation_jumps_are_reported_separately():
+    """The report drives the P2 measurement of how much data jumps affect, so the
+    two kinds must not be conflated."""
+    chunk = make_chunk(t=16, jitter=0.005)
+    chunk[5:, :3] += np.array([0.4, 0.0, 0.0])
+    extra = Rotation.from_rotvec(np.deg2rad(30) * np.array([0.0, 0.0, 1.0]))
+    chunk[11:, 3:6] = (extra * Rotation.from_rotvec(chunk[11:, 3:6])).as_rotvec()
+    _rel, rep = to_chunk_relative(chunk)
+    assert rep["n_jumps_spliced"] == 1
+    assert rep["n_rot_jumps_spliced"] == 1

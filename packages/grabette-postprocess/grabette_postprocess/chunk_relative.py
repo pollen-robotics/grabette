@@ -57,8 +57,18 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 # A per-step translation above this is a SLAM re-acquisition, not hand motion:
-# the same threshold the pose-smoothing segmentation uses to split segments.
+# the same threshold the pose-smoothing segmentation uses to split segments, and
+# the same value as convert_dataset.py's --despike_max_mm.
 DEFAULT_JUMP_CAP_M = 0.08
+
+# Per-step ROTATION above this is a glitch. Matches convert_dataset.py's
+# --despike_max_deg, whose help records why it is 5 and not 45: at 45 the
+# 5-45 deg glitches reached training, "the policy reproduced them at eval,
+# amplified through the widened r6d normalization ranges, and tripped the arm
+# server's IK-jump watchdog". 5 deg/step is 250 deg/s at 50 fps, above human
+# wrist speed (~150 deg/s peak). Rotation glitches are real in this data, so
+# repairing translation alone would be a regression against the delta pipeline.
+DEFAULT_JUMP_CAP_DEG = 5.0
 
 POSE_DIMS = 6          # x, y, z, ax, ay, az
 GRIPPER_DIMS = 2       # proximal, distal
@@ -103,10 +113,49 @@ def splice_jumps(
     return out, int(bad.sum())
 
 
+def splice_rotation_jumps(
+    rots: Rotation, jump_cap_deg: float = DEFAULT_JUMP_CAP_DEG
+) -> tuple[Rotation, int]:
+    """Remove orientation discontinuities from a rotation sequence.
+
+    Same repair as `splice_jumps`, in SO(3): per-step relative rotations
+    `R_i^-1 R_{i+1}` above the cap are replaced by the median of the valid steps,
+    then the sequence is rebuilt by composing forward.
+
+    The median is taken **componentwise on the step rotvecs**, which is legitimate
+    here for the reason it is *not* legitimate for the chunk reference: a valid
+    step is under 5 deg, and at that scale the Lie algebra is an excellent linear
+    approximation (the BCH error term is 1/2|a x b|, ~0.2 deg at 5 deg). The same
+    small-angle argument fails for a chunk-wide reference precisely because the
+    reference is a large arbitrary hand orientation.
+
+    Returns the repaired rotations and how many steps were spliced.
+    """
+    if len(rots) < 2:
+        return rots, 0
+    steps = rots[:-1].inv() * rots[1:]          # body-frame per-step rotations
+    mag = steps.magnitude()
+    bad = mag > np.deg2rad(jump_cap_deg)
+    if not bad.any():
+        return rots, 0
+
+    vecs = steps.as_rotvec()
+    good = vecs[~bad]
+    fill = np.median(good, axis=0) if len(good) else np.zeros(3)
+    vecs[bad] = fill
+
+    # Rebuild by composing forward from the (trusted) first orientation.
+    fixed = [rots[0]]
+    for v in vecs:
+        fixed.append(fixed[-1] * Rotation.from_rotvec(v))
+    return Rotation.concatenate(fixed), int(bad.sum())
+
+
 def to_chunk_relative(
     chunk: np.ndarray,
     rot: str = "rotvec",
     jump_cap_m: float = DEFAULT_JUMP_CAP_M,
+    jump_cap_deg: float = DEFAULT_JUMP_CAP_DEG,
 ) -> tuple[np.ndarray, dict]:
     """Absolute pose chunk -> offsets from its first row, in that row's frame.
 
@@ -114,6 +163,7 @@ def to_chunk_relative(
         chunk: (T, 8) absolute `[x,y,z,ax,ay,az,proximal,distal]`.
         rot: `"rotvec"` (keeps 8 dims) or `"r6d"` (11 dims).
         jump_cap_m: per-step translation above which a step is a SLAM jump.
+        jump_cap_deg: per-step rotation above which a step is a SLAM jump.
 
     Returns:
         (T, 8) or (T, 11) relative actions, and a report dict.
@@ -125,7 +175,9 @@ def to_chunk_relative(
         raise ValueError(f"rot must be 'rotvec' or 'r6d', got {rot!r}")
 
     pos, n_jumps = splice_jumps(chunk[:, :3], jump_cap_m)
-    rots = Rotation.from_rotvec(chunk[:, 3:6])
+    rots, n_rot_jumps = splice_rotation_jumps(
+        Rotation.from_rotvec(chunk[:, 3:6]), jump_cap_deg
+    )
     grip = chunk[:, POSE_DIMS:]
 
     R_ref_inv = rots[0].inv()
@@ -143,6 +195,7 @@ def to_chunk_relative(
     out = np.concatenate([rel_pos, rot_part, grip], axis=1)
     return out.astype(np.float32), {
         "n_jumps_spliced": n_jumps,
+        "n_rot_jumps_spliced": n_rot_jumps,
         "max_offset_m": float(np.linalg.norm(rel_pos, axis=1).max()),
         "max_rot_deg": float(np.rad2deg(rel_rot.magnitude().max())),
     }
