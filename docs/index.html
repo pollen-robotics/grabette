@@ -165,6 +165,9 @@
             line-height: 1.45;
         }
         .browser-note b { color: #fcd34d; }
+        /* Inherit the callout's colour: a default-blue link is unreadable on
+           the amber and red backgrounds. */
+        .browser-note a { color: inherit; text-decoration: underline; }
         .browser-note svg { flex-shrink: 0; margin-top: .12rem; color: #fcd34d; }
         .browser-note code {
             font-family: "SF Mono", "Fira Code", monospace;
@@ -1016,11 +1019,28 @@
         }
     }
 
-    // Web Bluetooth is Chromium-only. Detect its absence up front and kill the
-    // entry point, rather than letting Connect fail with an opaque error.
-    if (!navigator.bluetooth) {
-        document.getElementById('browserNote').classList.add('fatal');
-        document.getElementById('browserNoteText').innerHTML =
+    // Web Bluetooth is Chromium-only AND secure-context-only. Detect both up
+    // front and kill the entry point, rather than letting Connect fail with an
+    // opaque error. The two causes need different advice: a plain http:// page
+    // hides navigator.bluetooth even in a perfectly capable Chrome, so testing
+    // this file over http://<host>:<port> would otherwise be told to switch
+    // browsers — advice that cannot work.
+    const browserNote = document.getElementById('browserNote');
+    const browserNoteText = document.getElementById('browserNoteText');
+    if (!window.isSecureContext) {
+        // Name the port the page is actually served on, so the hint matches
+        // whatever the reader is running.
+        const localUrl = 'http://localhost' + (location.port ? ':' + location.port : '');
+        browserNote.classList.add('fatal');
+        browserNoteText.innerHTML =
+            "<b>Bluetooth doesn't work on this address.</b> Open the tool at " +
+            '<a href="https://pollen-robotics.github.io/grabette/">pollen-robotics.github.io/grabette/</a>' +
+            ' instead. (Testing a local copy? Serve it from <code>' + localUrl +
+            '</code> and it will work.)';
+        document.getElementById('btnConnect').disabled = true;
+    } else if (!navigator.bluetooth) {
+        browserNote.classList.add('fatal');
+        browserNoteText.innerHTML =
             '<b>This browser cannot run the tool.</b> Web Bluetooth is not available here, ' +
             'so no device can be reached. Open this page in Chrome or Edge.';
         document.getElementById('btnConnect').disabled = true;
