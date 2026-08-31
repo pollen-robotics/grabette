@@ -81,6 +81,9 @@ class RpiBackend(Backend):
         # Reset to False whenever start_teleop() runs, so entering teleop
         # never immediately drives the robot.
         self._teleop_sending = False
+        # Audible "recording is live" cue (TLV320AIC3104 on the V2 HAT).
+        # Resolved in start(); a no-op when the codec isn't set up.
+        self._speaker = None
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
@@ -98,6 +101,8 @@ class RpiBackend(Backend):
         if self._enable_oakd:
             self._init_oakd()
 
+        self._init_speaker()
+
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
@@ -112,6 +117,17 @@ class RpiBackend(Backend):
         except Exception as e:
             logger.warning("OAK-D not available, continuing without it: %s", e)
             self._oakd = None
+
+    def _init_speaker(self) -> None:
+        """Resolve the HAT codec + pre-render the capture-start beep. Purely
+        cosmetic, so a missing codec/alsa-utils only logs (see hardware/sound.py)."""
+        try:
+            from grabette.hardware.sound import get_speaker
+            self._speaker = get_speaker()
+            self._speaker.prepare()
+        except Exception:
+            logger.warning("Speaker init failed, continuing without sound", exc_info=True)
+            self._speaker = None
 
     def _init_angle_sensors(self) -> None:
         try:
@@ -140,6 +156,12 @@ class RpiBackend(Backend):
                 self._oakd.shutdown()
             except Exception as e:
                 logger.warning("OAK-D shutdown error: %s", e)
+        if self._speaker is not None:
+            try:
+                self._speaker.close()
+            except Exception as e:
+                logger.warning("Speaker shutdown error: %s", e)
+            self._speaker = None
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
@@ -446,6 +468,24 @@ class RpiBackend(Backend):
             if self._oakd and self._oakd.is_initialized:
                 self._oakd.start_recording(episode_dir)
             self._camera.start_recording(episode_dir / "raw_video.mp4")
+
+            # Audible cue — HERE, not at the top of start_capture: this is the
+            # first moment the recording is genuinely rolling (OAK-D warmed up,
+            # sync clock started, all streams recording). On a synchronized
+            # group start every member reaches this line at the shared T0, so
+            # the rig beeps in unison. Non-blocking and never raises.
+            if self._speaker is not None:
+                self._speaker.play_start()
+        except Exception:
+            # One error cue for EVERY trigger: button, dashboard and fleet all
+            # come through here, so the hardware failures (camera re-init,
+            # OAK-D bring-up, a stream refusing to start) are covered once.
+            # Failures that never reach start_capture — a fleet refusal, a
+            # scheduled start that doesn't fire — are cued by their own
+            # handlers; the debounce keeps overlaps to a single buzz.
+            if self._speaker is not None:
+                self._speaker.play_error()
+            raise
         finally:
             self._starting = False
 
@@ -470,6 +510,16 @@ class RpiBackend(Backend):
         # Grab sync-clock duration before stopping streams (monotonic,
         # same clock used by all stream timestamps — no wall-clock drift).
         duration_ms = self._sync.get_timestamp_ms()
+
+        # Audible cue (descending, mirroring the ascending one at start) — HERE,
+        # at the top of the teardown: the stream stops below flip their recording
+        # flag at once and only THEN spend ~1-2s muxing, so this is the instant
+        # frames stop being saved. Being a detached subprocess, it is heard
+        # during that mux even though the mux blocks the event loop. Placing it
+        # after the muxes instead would report "episode written", a second or two
+        # after the take actually ended.
+        if self._speaker is not None:
+            self._speaker.play_stop()
 
         # Stop angle BEFORE camera. camera.stop() runs ffmpeg muxing
         # which takes ~1-2s — if angle capture is still running during
@@ -606,6 +656,7 @@ class RpiBackend(Backend):
         the time we reach this point.
         """
         _t = time.monotonic()
+        writes_ok = True
         try:
             if episode_dir:
                 (episode_dir / "frame_timestamps.json").write_text(
@@ -643,7 +694,22 @@ class RpiBackend(Backend):
                 (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
         except Exception:
             logger.exception("Deferred file writes failed")
+            writes_ok = False
         writes_ms = (time.monotonic() - _t) * 1000
+
+        # Audible "the episode is on disk" — the mp4 muxes finished back in
+        # stop_capture, and metadata.json (written last, on purpose, as the
+        # marker that an episode is complete) has just landed. So this is the
+        # point where the device can be moved or powered off. Placed BEFORE the
+        # hardware re-init below, which is preparation for the NEXT capture and
+        # has nothing to do with this episode being saved. A failed write buzzes
+        # instead — an episode that didn't persist is exactly what an operator
+        # must not learn about later from the journal.
+        if self._speaker is not None:
+            if writes_ok:
+                self._speaker.play_saved()
+            else:
+                self._speaker.play_error()
 
         _t = time.monotonic()
         try:

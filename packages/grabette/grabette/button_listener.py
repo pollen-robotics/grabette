@@ -11,6 +11,14 @@ BOTH grabettes reflect their own status, even the peer started via the fleet:
   - Solid:      recording in progress
   - Fast blink: stopping (from the stop until the capture is fully torn down)
 (Teleop mode reuses the LED: solid = sending, off = repositioning.)
+
+The press paths also cue the speaker when a command FAILS. That matters most
+here of all the entry points: the button is used with no screen in front of it,
+and the failures it can hit before the backend is even reached — the fleet
+refusing a group start, a scheduled start that never fires — would otherwise
+show up only as the LED dropping back to idle, which is indistinguishable from
+a press that didn't register. Audible cues for the start/stop of a recording
+itself live in the backend, at the real stream boundaries.
 """
 
 from __future__ import annotations
@@ -20,6 +28,8 @@ import logging
 import threading
 import time
 from datetime import datetime
+
+from grabette.hardware.sound import cue_error
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +252,11 @@ class ButtonListener:
             logger.info("Button capture started")
         except Exception:
             logger.exception("Button start_capture failed")
+            # Covers what start_capture's own cue cannot: a fleet refusal, or a
+            # scheduled start that never fired — neither ever reaches the
+            # backend. When it DID reach the backend, the cue debounce collapses
+            # the two reports into one buzz.
+            cue_error()
 
     async def _start_capture_coro(self) -> None:
         """Runs on the event loop: request group sync, then start (scheduled
@@ -314,6 +329,7 @@ class ButtonListener:
             future.result(timeout=30.0)
         except Exception:
             logger.exception("Button stop_capture failed")
+            cue_error()
 
     async def _stop_capture_coro(self) -> None:
         from grabette.capture_scheduler import get_capture_scheduler
@@ -325,6 +341,10 @@ class ButtonListener:
             outcome = await scheduler.cancel_or_wait(self._backend)
         except RuntimeError:
             logger.exception("Button stop: refusing to interrupt in-flight start")
+            # The press is being dropped, and this path RETURNS rather than
+            # raising, so _do_stop_capture's handler never sees it — buzz here
+            # or the operator gets no feedback at all that the stop was refused.
+            cue_error()
             return
         if outcome == "cancelled":
             sm.discard_pending_episode()

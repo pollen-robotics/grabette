@@ -1,8 +1,18 @@
-.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff install-ntp ensure-ble-only help
+.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff install-ntp install-audio install-asound-conf ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
 WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
+
+# Recursive-make invocations go through this alias, NOT $(MAKE) directly: make
+# executes any recipe line whose text contains "$(MAKE)" even under -n, so a
+# `make -n install-audio` dry run would really write /etc/asound.conf and run
+# the mixer script. Hiding the reference behind another variable keeps -n dry.
+SUBMAKE := $(MAKE)
+
+# Boot config location: /boot/firmware on Bookworm+, /boot on older images.
+# Only ever READ by this Makefile — see install-audio for why.
+BOOT_CONFIG := $(firstword $(wildcard /boot/firmware/config.txt /boot/config.txt))
 
 help:
 	@echo "Targets:"
@@ -14,6 +24,7 @@ help:
 	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
 	@echo "  install-poweroff      Allow 'rasp' user to power off the Pi from the web UI"
 	@echo "  install-ntp           Pin NTP to a shared time service (tight multi-device start sync)"
+	@echo "  install-audio         Build+install the TLV320AIC3104 overlay & mixer init (optional HAT speaker)"
 	@echo ""
 	@echo "HAND must be 'left' or 'right' — this grabette's hand. Determines the per-sensor"
 	@echo "sign mapping in grabette/hardware/angle.py, written to /etc/grabette/env as"
@@ -22,7 +33,7 @@ help:
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: check-hand install-udev-oak install-ntp
+install-rpi: check-hand install-udev-oak install-ntp install-audio
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
@@ -139,6 +150,125 @@ install-ntp:
 	sudo systemctl restart systemd-timesyncd
 	@echo "Installed NTP drop-in. timesync status:"
 	@timedatectl timesync-status 2>/dev/null | grep -Ei 'Server|Offset' || true
+
+# HAT speaker (TLV320AIC3104 codec on I2S) — the "recording is live" beep.
+# Three pieces, all idempotent:
+#   1. the devicetree overlay: NOT a stock Pi overlay, so we compile our .dts
+#      into /boot/firmware/overlays/ ourselves (config.txt's
+#      `dtoverlay=tlv320aic3104` is a no-op until this exists);
+#   2. the mixer-init script — the codec comes up with its line outputs muted,
+#      so without it the card exists and plays silence;
+#   3. a systemd oneshot that applies (2) at every boot, ordered after
+#      alsa-restore (which can otherwise replay a stale mute) and before the
+#      grabette daemon.
+# Changing the overlay requires a REBOOT to take effect (the mixer script does not).
+install-audio:
+	sudo apt install -y device-tree-compiler alsa-utils
+	@# /dev/snd/* is root:audio 0660 and the daemon runs as 'rasp' (see
+	@# systemd/grabette.service), so without this group aplay dies with
+	@# "Permission denied" and only the beep is lost — silently, before the
+	@# _spawn logging was added. Pi OS normally puts the first user in 'audio'
+	@# already; this is for images/users where it isn't. Takes effect on the
+	@# next service start (or re-login).
+	sudo usermod -aG audio rasp
+	dtc -@ -I dts -O dtb -o /tmp/tlv320aic3104.dtbo config/overlays/tlv320aic3104-overlay.dts
+	sudo install -m 0644 -o root -g root /tmp/tlv320aic3104.dtbo \
+	  /boot/firmware/overlays/tlv320aic3104.dtbo
+	@rm -f /tmp/tlv320aic3104.dtbo
+	@# An overlay in /boot/firmware/overlays/ does NOTHING until config.txt asks
+	@# for it, and this Makefile deliberately never WRITES config.txt: that file
+	@# is the operator's boot config (per-device camera/display/HDMI edits live
+	@# there), so the package's copy is applied by hand, once — `sudo cp
+	@# config/config.txt /boot/firmware` in the README prerequisites. What we can
+	@# do is CHECK it, rather than silently installing an overlay nothing loads.
+	@if [ -z "$(BOOT_CONFIG)" ]; then \
+		echo "NOTE: no config.txt found in /boot/firmware or /boot — not a Pi? Skipping the check."; \
+	elif grep -qE '^[[:space:]]*dtoverlay=tlv320aic3104' $(BOOT_CONFIG); then \
+		echo "$(BOOT_CONFIG): dtoverlay=tlv320aic3104 present."; \
+		grep -qE '^[[:space:]]*dtparam=i2s=on' $(BOOT_CONFIG) \
+		  || echo "  WARNING: 'dtparam=i2s=on' is missing there — the codec has no I2S bus."; \
+	else \
+		echo "WARNING: $(BOOT_CONFIG) does not enable the codec, so the overlay just"; \
+		echo "         installed will never load. It needs these lines (from this"; \
+		echo "         package's config/config.txt):"; \
+		echo "             dtparam=audio=off"; \
+		echo "             dtparam=i2s=on"; \
+		echo "             dtoverlay=tlv320aic3104"; \
+		echo "         Apply the package copy:  sudo cp config/config.txt $(dir $(BOOT_CONFIG))"; \
+		echo "         (diff it first if you have per-device edits there), then reboot."; \
+	fi
+	sudo install -m 0755 -o root -g root scripts/aic3104-init.sh /usr/local/bin/aic3104-init.sh
+	sudo install -m 0644 -o root -g root systemd/aic3104-init.service \
+	  /etc/systemd/system/aic3104-init.service
+	sudo systemctl daemon-reload
+	sudo systemctl enable aic3104-init
+	@# EVERYTHING ABOVE IS INERT WITHOUT THE HARDWARE: an overlay whose I2C
+	@# probe finds nothing registers no card, and the mixer script exits 0 on
+	@# "no card". So the target is safe to run on a grabette built without a
+	@# speaker — which is a supported configuration. What follows, however, is
+	@# NOT safe to do blind, so it is gated on the card actually being there.
+	@echo
+	@if [ ! -e /proc/asound/aic3104 ]; then \
+		echo "No 'aic3104' card registered yet — nothing else to do."; \
+		echo "  • speaker fitted? then config.txt must be in /boot/firmware and"; \
+		echo "    the Pi rebooted for the overlay to load:  aplay -l | grep aic3104"; \
+		echo "  • no speaker fitted? then this is the expected end state. The"; \
+		echo "    daemon logs one line at startup and records silently."; \
+		echo "  /etc/asound.conf deliberately NOT written: aiming the default"; \
+		echo "  card at an absent device would break every other aplay here."; \
+	else \
+		$(SUBMAKE) --no-print-directory install-asound-conf; \
+		sudo /usr/local/bin/aic3104-init.sh; \
+		echo; \
+		echo "Test the speaker with:  python3 scripts/test_speaker.py"; \
+	fi
+
+# Point the DEFAULT ALSA card at the codec, BY NAME — on a Pi 4 the vc4-hdmi
+# cards are registered too and the index isn't stable, so `aplay` with no -D
+# would otherwise land on HDMI. Convenience only: the daemon always names the
+# card explicitly, so no file at all is a perfectly good state — which is why
+# install-audio only calls this once the card exists.
+#
+# The name MUST go on a `type hw` slave. `defaults.pcm.card "aic3104"` is
+# invalid — that key is an integer card index, and a string there doesn't just
+# get ignored, it fails to parse and alsa-lib DROPS ITS WHOLE CONFIGURATION
+# ("hooks failed, removing configuration"), so every aplay fails, whatever -D
+# you pass. An earlier version wrote exactly that; the grep below recognises it
+# as ours so a re-run repairs an affected device instead of skipping it as
+# "operator's file".
+#
+# Then VERIFY: a bad asound.conf breaks all audio, so if alsa-lib can't load
+# after our write, we take the file back out — no config at all works, a broken
+# one does not.
+install-asound-conf:
+	@if [ ! -f /etc/asound.conf ] || \
+	   grep -qE 'grabette install-audio|defaults\.pcm\.card "aic3104"' /etc/asound.conf; then \
+		printf '%s\n' \
+		  '# Written by grabette install-audio — safe to delete.' \
+		  '# Default playback/control card = the TLV320AIC3104 HAT codec, BY NAME' \
+		  '# (its index moves: a Pi 4 also registers the vc4-hdmi cards).' \
+		  'pcm.!default {' \
+		  '    type plug' \
+		  '    slave.pcm {' \
+		  '        type hw' \
+		  '        card "aic3104"' \
+		  '    }' \
+		  '}' \
+		  'ctl.!default {' \
+		  '    type hw' \
+		  '    card "aic3104"' \
+		  '}' \
+		  | sudo tee /etc/asound.conf >/dev/null; \
+		if aplay -l >/dev/null 2>&1; then \
+			echo "Wrote /etc/asound.conf (default card = aic3104)"; \
+		else \
+			sudo rm -f /etc/asound.conf; \
+			echo "WARNING: the /etc/asound.conf we wrote upset alsa-lib, so it was"; \
+			echo "         removed again. Not fatal: grabette names the card itself."; \
+		fi; \
+	else \
+		echo "/etc/asound.conf was not written by us — left untouched."; \
+	fi
 
 # Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
 ensure-ble-only:
