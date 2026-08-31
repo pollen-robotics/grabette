@@ -4,13 +4,16 @@ run_oak_slam / docker/oak_vslam.
 Our recording (grabette/hardware/oakd.py) stores compact mp4 + JSON sidecars
 to save disk. The C++ offline_vslam expects per-file PNGs + CSVs. This module
 produces <episode>/oak/{frames,depth,timestamps.csv,imu_acc.csv,imu_gyro.csv,
-imu_rotation.csv,calib_offline.json} from <episode>/{oakd_left.mp4, oakd_depth.mkv
-(or legacy oakd_depth/), oakd_left_timestamps.json, oakd_depth_timestamps.json,
-oakd_imu.json, oakd_calib_offline.json}.
+imu_rotation.csv,calib_offline.json} from <episode>/{dcam_left.mp4, dcam_depth.mkv
+(or a dcam_depth/ PNG directory), dcam_left_timestamps.json,
+dcam_depth_timestamps.json, dcam_imu.json, dcam_calib_offline.json}.
 
-Depth is stored as a single lossless FFV1 16-bit video (oakd_depth.mkv) — one
+Episodes recorded before the dcam_ rename use oakd_*/oak_mask.png names; every
+lookup here goes through episode_files.resolve(), so both layouts are accepted.
+
+Depth is stored as a single lossless FFV1 16-bit video (dcam_depth.mkv) — one
 file instead of ~600 PNGs, ~2× smaller, and bit-identical once decoded, so the
-SLAM input is unchanged. Older recordings with an oakd_depth/ PNG directory are
+SLAM input is unchanged. Older recordings with a dcam_depth/ PNG directory are
 still accepted.
 
 Frame matching: left timestamps and depth timestamps share a seq number
@@ -33,6 +36,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from grabette_postprocess.episode_files import resolve
+
 import numpy as np
 
 
@@ -44,7 +49,7 @@ def fit_device_to_host_s(left_ts_samples: list) -> tuple[float, float] | None:
     """Least-squares affine (slope, intercept) mapping the OAK device clock to
     the host clock, both in seconds: ``host_s ≈ slope * device_s + intercept``.
 
-    Fitted on the OAK left frame stream (oakd_left_timestamps.json), which
+    Fitted on the OAK left frame stream (dcam_left_timestamps.json), which
     carries both ``device_us`` and ``host_ms`` per frame. Used to place the IMU
     — which shares the cameras' device clock — onto the frame host timeline
     instead of trusting the IMU stream's own host_ms (whose USB-transfer latency
@@ -109,7 +114,7 @@ def _extract_mp4_frames(mp4_path: Path, out_dir: Path) -> int:
 def _extract_depth_video(mkv_path: Path, out_dir: Path) -> int:
     """Decode a lossless 16-bit depth video (FFV1 gray16le) to uint16 PNGs
     (000000.png…). Frame i is the i-th depth frame in encode order, which the
-    packer (grabette.hf) writes in oakd_depth_timestamps.json order. No
+    packer (grabette.hf) writes in dcam_depth_timestamps.json order. No
     -pix_fmt on output: ffmpeg writes native 16-bit PNG, preserving the mm
     values exactly (verified bit-identical to the source PNGs)."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -126,7 +131,7 @@ def _extract_depth_video(mkv_path: Path, out_dir: Path) -> int:
 
 def _split_imu_to_csvs(imu_json: Path, oak_dir: Path,
                        dev_to_host_s: tuple[float, float] | None = None) -> tuple[int, int, int]:
-    """Split oakd_imu.json into the three CSVs offline_vslam reads
+    """Split dcam_imu.json into the three CSVs offline_vslam reads
     (imu_acc.csv, imu_gyro.csv, imu_rotation.csv). Returns (n_accel, n_gyro, n_rot).
 
     rotation is the BNO086's fused orientation (IMU body → gravity-aligned world).
@@ -175,17 +180,23 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
         shutil.rmtree(oak_dir)
 
     # --- Required inputs ---
-    # Depth comes either as a compact lossless video (oakd_depth.mkv, the format
+    # Depth comes either as a compact lossless video (dcam_depth.mkv, the format
     # the uploader now produces) or, for older recordings, a directory of
-    # per-frame PNGs (oakd_depth/). Either is accepted.
-    left_mp4 = ep_dir / "oakd_left.mp4"
-    depth_dir = ep_dir / "oakd_depth"
-    depth_mkv = ep_dir / "oakd_depth.mkv"
-    left_ts_json = ep_dir / "oakd_left_timestamps.json"
-    depth_ts_json = ep_dir / "oakd_depth_timestamps.json"
-    imu_json = ep_dir / "oakd_imu.json"
-    calib_src = ep_dir / "oakd_calib_offline.json"
-    for p in (left_mp4, left_ts_json, depth_ts_json, imu_json, calib_src):
+    # per-frame PNGs (dcam_depth/). Either is accepted.
+    left_mp4 = resolve(ep_dir, "dcam_left.mp4")
+    depth_dir = resolve(ep_dir, "dcam_depth")
+    depth_mkv = resolve(ep_dir, "dcam_depth.mkv")
+    left_ts_json = resolve(ep_dir, "dcam_left_timestamps.json")
+    depth_ts_json = resolve(ep_dir, "dcam_depth_timestamps.json")
+    imu_json = resolve(ep_dir, "dcam_imu.json")
+    calib_src = resolve(ep_dir, "dcam_calib_offline.json")
+    # dcam_imu.json is deliberately NOT in this list: the Orbbec Gemini 305 has
+    # no IMU, so an episode from it has no IMU JSON at all. offline_vslam handles
+    # the absent CSVs (its IMU block is guarded on non-empty buffers), and the
+    # Phase 0 ablation showed IMU-free odometry is indistinguishable from
+    # re-running the pipeline. Treating it as required would reject every 305
+    # episode before SLAM ever runs.
+    for p in (left_mp4, left_ts_json, depth_ts_json, calib_src):
         if not p.exists():
             raise FileNotFoundError(f"Missing required input: {p}")
     if not depth_mkv.is_file() and not depth_dir.is_dir():
@@ -261,9 +272,13 @@ def convert_episode(ep_dir: Path, force: bool = False) -> Path:
                 f.write(f"{idx},{_ms_to_ns(host_ms)}\n")
 
     # --- Split IMU JSON → imu_acc.csv + imu_gyro.csv + imu_rotation.csv ---
-    n_acc, n_gyr, n_rot = _split_imu_to_csvs(imu_json, oak_dir, dev_to_host_s)
-
-    clk = "device→host fit" if dev_to_host_s is not None else "raw host_ms (no device_us)"
-    print(f"  oak/ written: {n} frames, {n_acc} accel, {n_gyr} gyro, "
-          f"{n_rot} rotation samples (IMU clock: {clk})")
+    # Skipped entirely for an IMU-less camera; offline_vslam then takes its
+    # no-orientation path and RTAB-Map runs plain RGB-D odometry.
+    if imu_json.exists():
+        n_acc, n_gyr, n_rot = _split_imu_to_csvs(imu_json, oak_dir, dev_to_host_s)
+        clk = "device→host fit" if dev_to_host_s is not None else "raw host_ms (no device_us)"
+        print(f"  oak/ written: {n} frames, {n_acc} accel, {n_gyr} gyro, "
+              f"{n_rot} rotation samples (IMU clock: {clk})")
+    else:
+        print(f"  oak/ written: {n} frames, no IMU (IMU-less camera)")
     return oak_dir

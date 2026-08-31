@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand write-env install-udev-oak install-systemd install-netdev install-poweroff install-ntp ensure-ble-only help
+.PHONY: install-rpi check-hand write-env install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-ntp ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -9,6 +9,8 @@ help:
 	@echo "  install-rpi HAND=L|R  Install apt deps + udev rule, create venv, sync, verify."
 	@echo "                        HAND={left,right} REQUIRED — determines proximal/distal sign."
 	@echo "  install-udev-oak      Install only the OAK-D / Movidius udev rule"
+	@echo "  install-udev-orbbec   Install only the Orbbec Gemini 305 udev rule"
+	@echo "  install-orbbec-sdk    Install pyorbbecsdk2 (--no-deps) for depth_camera=gemini305"
 	@echo "  install-systemd       Install + enable the grabette + bluetooth systemd services (BLE-only)"
 	@echo "  ensure-ble-only       Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
@@ -22,7 +24,7 @@ help:
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: check-hand install-udev-oak install-ntp
+install-rpi: check-hand install-udev-oak install-udev-orbbec install-ntp
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
@@ -82,6 +84,36 @@ install-udev-oak:
 	else \
 		echo "OAK-D udev rule already present."; \
 	fi
+
+# Orbbec USB access rule, for the Gemini 305 (depth_camera=gemini305). Without
+# it the SDK enumerates the device but fails to open it with the unhelpful
+# "usbEnumerator openUsbDevice failed!" — the USB node is root:root 0664 and
+# plugdev/video membership does not help. Idempotent.
+#
+# The rule is taken verbatim from the vendor's own 99-obsensor-libusb.rules,
+# narrowed to the Gemini 305's PID (0x0840) rather than shipping entries for the
+# whole Orbbec catalogue.
+install-udev-orbbec:
+	@if [ ! -f /etc/udev/rules.d/99-obsensor-libusb.rules ]; then \
+		echo "Installing Orbbec udev rule..."; \
+		echo 'SUBSYSTEMS=="usb", ATTRS{idVendor}=="2bc5", ATTRS{idProduct}=="0840", MODE:="0666", OWNER:="root", GROUP:="video", SYMLINK+="Gemini_305"' \
+			| sudo tee /etc/udev/rules.d/99-obsensor-libusb.rules >/dev/null; \
+		sudo udevadm control --reload-rules; \
+		sudo udevadm trigger; \
+	else \
+		echo "Orbbec udev rule already present."; \
+	fi
+
+# pyorbbecsdk2 for the Gemini 305. Installed with --no-deps ON PURPOSE: the
+# SDK's declared requirements (opencv-python, pygame, pynput, numpy>=2.1.0) are
+# for its bundled examples, not the compiled binding. Letting them in would pull
+# the full opencv build alongside this project's headless one and, worse,
+# install numpy into the venv where it shadows the system numpy picamera2 links
+# against. Verified on a Pi 4 / Trixie / Python 3.13: --no-deps imports, opens
+# the device and streams using the system numpy.
+install-orbbec-sdk:
+	$(WORKSPACE_ROOT)/.venv/bin/python -m pip install --no-deps pyorbbecsdk2
+	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import pyorbbecsdk, numpy; print('pyorbbecsdk OK, numpy', numpy.__version__, 'from', numpy.__file__)"
 
 # nmcli --rescan yes triggers a real radio scan, gated by two things:
 # 1. the 'netdev' group (NM membership check)

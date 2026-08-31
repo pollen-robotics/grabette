@@ -17,6 +17,8 @@ Episode directories are flat under episodes/.
 from __future__ import annotations
 
 import json
+
+from grabette.hardware.episode_files import DCAM_IMU, metadata_stats, resolve
 import logging
 import shutil
 import tarfile
@@ -447,11 +449,13 @@ class TaskManager:
     def _get_episode_info(self, episode_id: str) -> EpisodeInfo:
         ep_dir = self.episode_dir(episode_id)
         video_path = ep_dir / "raw_video.mp4"
-        # Real (OAK-D) episodes write oakd_imu.json; mock/legacy write
-        # imu_data.json. Checking only the latter reported has_imu=False for
-        # every real recording (issue #79).
+        # A real capture writes dcam_imu.json (or legacy oakd_imu.json); the mock
+        # backend writes imu_data.json. Checking only the latter reported
+        # has_imu=False for every real recording (issue #79). A Gemini 305
+        # episode has none of them — that camera has no IMU — which is a
+        # legitimate absence, not a fault.
         imu_present = (
-            (ep_dir / "oakd_imu.json").exists()
+            resolve(ep_dir, DCAM_IMU).exists()
             or (ep_dir / "imu_data.json").exists()
         )
 
@@ -464,7 +468,8 @@ class TaskManager:
             meta = json.loads(meta_path.read_text())
             duration = meta.get("duration_seconds", 0.0)
             frame_count = meta.get("frame_count", 0)
-            imu_sample_count = meta.get("imu_sample_count") or meta.get("oakd", {}).get("imu_samples", 0)
+            imu_sample_count = (meta.get("imu_sample_count")
+                                or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
 
         return EpisodeInfo(

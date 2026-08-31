@@ -18,15 +18,15 @@ Frames are encoded from `stereo.rectifiedLeft/Right` so the mp4s are already
 SLAM-ready (rectified + undistorted).
 
 Output layout per episode (resolution = depth_resolution, default 640×400):
-    oakd_left.mp4               H.264 mono, rectified (CAM_B = mono global-shutter)
-    oakd_right.mp4              H.264 mono, rectified (CAM_C = mono global-shutter)
-    oakd_depth/<seq>.png        uint16 mm (mask-applied if oak_mask.png present)
-    oakd_*_timestamps.json      per-stream device_us + host_ms
-    oakd_imu.json               accel + gyro + rotation_vector
-    oakd_calib.json             full factory calibration (eeprom dump)
-    oakd_calib_offline.json     flat fx/fy/cx/cy/baseline/imu_to_cam for offline SLAM
-    oak_mask.png                body mask (copied from hardware/oak_mask.png)
-    oakd_clock_pairs.json       first device_us ↔ host_ms pair per stream
+    dcam_left.mp4               H.264 mono, rectified (CAM_B = mono global-shutter)
+    dcam_right.mp4              H.264 mono, rectified (CAM_C = mono global-shutter)
+    dcam_depth/<seq>.png        uint16 mm (mask-applied if dcam_mask.png present)
+    dcam_*_timestamps.json      per-stream device_us + host_ms
+    dcam_imu.json               accel + gyro + rotation_vector
+    dcam_calib.json             full factory calibration (eeprom dump)
+    dcam_calib_offline.json     flat fx/fy/cx/cy/baseline/imu_to_cam for offline SLAM
+    dcam_mask.png                body mask (copied from hardware/dcam_mask.png)
+    dcam_clock_pairs.json       first device_us ↔ host_ms pair per stream
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
 
-_MASK_PATH = Path(__file__).parent / "oak_mask.png"
+_MASK_PATH = Path(__file__).parent / "dcam_mask.png"
 
 
 def _device_us(ts) -> int:
@@ -146,6 +146,13 @@ class OakdCapture:
         self._threads: list[threading.Thread] = []
         self._stop_event = threading.Event()
 
+        # Device identity, filled by init_device(). Kept so an episode can record
+        # which physical camera produced it.
+        self._device_id = None
+        self._product_name = None
+        self._usb_speed = None
+        self._imu_type = None
+
         self._calibration_json: dict | None = None
         self._calib_offline: dict | None = None
         # 8-bit GRAY mask (depth_resolution-sized) that blacks out the
@@ -180,11 +187,11 @@ class OakdCapture:
                 self._mask = mask
             else:
                 logger.warning(
-                    "oak_mask.png shape %s != depth_resolution %s — mask disabled",
+                    "dcam_mask.png shape %s != depth_resolution %s — mask disabled",
                     None if mask is None else mask.shape, self.depth_resolution,
                 )
         else:
-            logger.warning("oak_mask.png not found at %s — capturing without mask", _MASK_PATH)
+            logger.warning("dcam_mask.png not found at %s — capturing without mask", _MASK_PATH)
 
         # --- Build pipeline ---
         # cameras → stereo → rectifiedLeft/Right → H.264
@@ -371,26 +378,26 @@ class OakdCapture:
         self._output_dir = Path(output_dir).absolute()
         self._output_dir.mkdir(parents=True, exist_ok=True)
         if self.enable_depth:
-            (self._output_dir / "oakd_depth").mkdir(parents=True, exist_ok=True)
+            (self._output_dir / "dcam_depth").mkdir(parents=True, exist_ok=True)
 
-        self._left_h264_path = self._output_dir / "oakd_left.h264"
-        self._right_h264_path = self._output_dir / "oakd_right.h264"
+        self._left_h264_path = self._output_dir / "dcam_left.h264"
+        self._right_h264_path = self._output_dir / "dcam_right.h264"
 
         if self._calibration_json:
-            (self._output_dir / "oakd_calib.json").write_text(
+            (self._output_dir / "dcam_calib.json").write_text(
                 json.dumps(self._calibration_json, indent=2)
             )
         if self._calib_offline:
-            (self._output_dir / "oakd_calib_offline.json").write_text(
+            (self._output_dir / "dcam_calib_offline.json").write_text(
                 json.dumps(self._calib_offline, indent=2)
             )
         # Copy mask alongside the episode so downstream SLAM can mask mp4 frames
         # (we can't mask H.264-encoded streams in-flight).
         if self._mask is not None:
             try:
-                shutil.copyfile(_MASK_PATH, self._output_dir / "oak_mask.png")
+                shutil.copyfile(_MASK_PATH, self._output_dir / "dcam_mask.png")
             except OSError as e:
-                logger.warning("Could not copy oak_mask.png to session dir: %s", e)
+                logger.warning("Could not copy dcam_mask.png to session dir: %s", e)
 
         # Clear buffers
         self._left_ts.clear()
@@ -447,20 +454,20 @@ class OakdCapture:
         # since parallelism buys nothing against ffmpeg's already-completed
         # muxes and the JSON write cost is trivial.
         if self._output_dir:
-            (self._output_dir / "oakd_left_timestamps.json").write_text(
+            (self._output_dir / "dcam_left_timestamps.json").write_text(
                 json.dumps({"samples": self._left_ts})
             )
-            (self._output_dir / "oakd_right_timestamps.json").write_text(
+            (self._output_dir / "dcam_right_timestamps.json").write_text(
                 json.dumps({"samples": self._right_ts})
             )
             if self.enable_depth:
-                (self._output_dir / "oakd_depth_timestamps.json").write_text(
+                (self._output_dir / "dcam_depth_timestamps.json").write_text(
                     json.dumps({"samples": self._depth_ts})
                 )
-            (self._output_dir / "oakd_imu.json").write_text(
+            (self._output_dir / "dcam_imu.json").write_text(
                 json.dumps({"samples": self._imu_samples})
             )
-            (self._output_dir / "oakd_clock_pairs.json").write_text(
+            (self._output_dir / "dcam_clock_pairs.json").write_text(
                 json.dumps({"pairs": self._clock_pairs})
             )
 
@@ -591,7 +598,7 @@ class OakdCapture:
             device_us = _device_us(frame.getTimestampDevice())
 
             cv2.imwrite(
-                str(self._output_dir / "oakd_depth" / f"{seq:08d}.png"),
+                str(self._output_dir / "dcam_depth" / f"{seq:08d}.png"),
                 depth, png_params,
             )
             self._depth_ts.append({
@@ -726,18 +733,18 @@ class OakdCapture:
             logger.error("ffmpeg muxing failed for %s: %s", name, result.stderr[-300:])
 
     def _pack_depth_video(self) -> None:
-        """Finalize depth: encode oakd_depth/*.png → one lossless FFV1 16-bit
-        video (oakd_depth.mkv) in capture (= depth_ts) order, then drop the PNG
+        """Finalize depth: encode dcam_depth/*.png → one lossless FFV1 16-bit
+        video (dcam_depth.mkv) in capture (= depth_ts) order, then drop the PNG
         dir. Mirrors the H.264→mp4 mux above: one file per episode instead of
         ~600 PNGs, ~2× smaller, and bit-identical once decoded — so the offline
         SLAM input is unchanged. Best-effort: on any failure the PNGs are kept
         and used as-is (convert/episode_check accept either layout)."""
         if not self.enable_depth or not self._output_dir:
             return
-        depth_dir = self._output_dir / "oakd_depth"
+        depth_dir = self._output_dir / "dcam_depth"
         if not depth_dir.is_dir() or not self._depth_ts:
             return
-        out = self._output_dir / "oakd_depth.mkv"
+        out = self._output_dir / "dcam_depth.mkv"
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 stage = Path(tmp)
@@ -793,6 +800,21 @@ class OakdCapture:
 
         self._initialized = False
         logger.info("OakdCapture shut down")
+
+    def camera_info(self) -> dict:
+        """Identity of the attached OAK-D, for episode provenance.
+
+        Fields it could not read (called before a successful init_device) are
+        omitted rather than reported as null, so a null in the episode always
+        means "known to be absent" rather than "we did not look".
+        """
+        fields = {
+            "name": self._product_name,
+            "serial": self._device_id,
+            "link": self._usb_speed,
+            "imu": self._imu_type,
+        }
+        return {k: v for k, v in fields.items() if v is not None}
 
     @property
     def is_recording(self) -> bool:

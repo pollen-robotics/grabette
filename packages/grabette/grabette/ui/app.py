@@ -239,17 +239,20 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     else:
         rgb_badge = _badge("RGB Camera", "Disconnected", RED)
 
-    # OAK-D (4-state: connected / starting / off / error; N/A when unsupported)
+    # Depth camera (4-state: connected / starting / off / error; N/A when
+    # unsupported). The label comes from the API so the badge names the hardware
+    # actually configured — "OAK-D" or "Gemini 305" — rather than assuming.
+    depth_label = (oakd_status or {}).get("label") or "Depth camera"
     if not oakd_status or not oakd_status.get("supported"):
-        oakd_badge = _badge("OAK-D", "N/A", GRAY)
+        oakd_badge = _badge(depth_label, "N/A", GRAY)
     elif oakd_status.get("initialized"):
-        oakd_badge = _badge("OAK-D", "Connected", GREEN)
+        oakd_badge = _badge(depth_label, "Connected", GREEN)
     elif oakd_status.get("initializing"):
-        oakd_badge = _badge("OAK-D", "Starting…", ORANGE)
+        oakd_badge = _badge(depth_label, "Starting…", ORANGE)
     elif oakd_status.get("enabled"):
-        oakd_badge = _badge("OAK-D", "Error", RED)
+        oakd_badge = _badge(depth_label, "Error", RED)
     else:
-        oakd_badge = _badge("OAK-D", "Off", GRAY)
+        oakd_badge = _badge(depth_label, "Off", GRAY)
 
     return (
         "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;"
@@ -395,16 +398,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             )
 
     def _oakd_button_update():
-        """Compute the OAK-D toggle button's appearance + OAK data row visibility.
+        """Compute the depth-camera toggle's appearance + data row visibility.
 
         Returns (button_update, oak_row_visibility) so callers can keep the
         depth/IMU/accelerometer row hidden until the camera is enabled.
+
+        The button names the configured camera using the label the API serves,
+        so it reads "Gemini 305: ON" on a device running the Orbbec.
         """
         s = client.get_oakd_status() or {}
+        name = s.get("label") or "Depth camera"
         if not s.get("supported"):
             return (
                 gr.update(
-                    value="OAK-D not available",
+                    value=f"{name} not available",
                     variant="secondary",
                     interactive=False,
                 ),
@@ -420,10 +427,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         teleop = bool(tstatus.get("active"))
         busy = capturing or teleop
         if enabled:
-            label = "OAK-D: ON" + ("  (busy)" if busy else "  — click to disable")
+            label = f"{name}: ON" + ("  (busy)" if busy else "  — click to disable")
             variant = "primary"
         else:
-            label = "OAK-D: OFF" + ("  (busy)" if busy else "  — click to enable")
+            label = f"{name}: OFF" + ("  (busy)" if busy else "  — click to enable")
             variant = "secondary"
         return (
             gr.update(value=label, variant=variant, interactive=not busy),
@@ -435,7 +442,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         enabled = bool(s.get("enabled"))
         result = client.set_oakd(not enabled)
         if "error" in result:
-            logger.warning("OAK-D toggle failed: %s", result["error"])
+            logger.warning("Depth camera toggle failed: %s", result["error"])
         return _oakd_button_update()
 
     def poll_oakd():
@@ -1032,7 +1039,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # Build status text and toggle button state
             if is_starting:
-                status = "◌ Initializing OAK camera…"
+                status = "◌ Initializing depth camera…"
                 toggle_btn_update = gr.update(interactive=False, value="Start Capture", variant="primary")
             elif is_recording:
                 parts = [
@@ -1146,7 +1153,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # The whole row is hidden until the OAK-D is enabled (its depth, IMU
         # and accelerometer streams only exist while the camera is running).
         # The toggle button stays outside the row so it's always reachable.
-        oakd_btn = gr.Button("OAK-D: OFF  — click to enable", size="sm")
+        oakd_btn = gr.Button("Depth camera: OFF  — click to enable", size="sm")
         with gr.Row(visible=False, equal_height=True) as oak_row:
             with gr.Column(scale=1):
                 gr.HTML(_section_label("Depth (OAK-D)"))
