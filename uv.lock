@@ -3064,6 +3064,7 @@ dev = [
     { name = "grpcio-tools" },
 ]
 eval = [
+    { name = "gripette" },
     { name = "lerobot", extra = ["diffusion", "pi"], marker = "python_full_version >= '3.12'" },
     { name = "scipy" },
 ]
@@ -3073,6 +3074,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "gripette", marker = "extra == 'eval'", editable = "packages/gripette" },
     { name = "grpcio", specifier = ">=1.81" },
     { name = "grpcio-tools", marker = "extra == 'dev'", specifier = ">=1.60" },
     { name = "lerobot", extras = ["dataset"], marker = "python_full_version >= '3.12' and extra == 'dataset'", specifier = "==0.6.0" },
