@@ -32,7 +32,43 @@ All settings via environment variables with `GRABETTE_` prefix. Persistent per-d
 | `GRABETTE_SOUND_ENABLED` | `true` | Cues on the HAT speaker: recording start, recording stop, episode saved, failed command |
 | `GRABETTE_SOUND_DEVICE` | (auto) | ALSA device. Empty = auto-detect the codec by card name (`plughw:CARD=aic3104`) |
 | `GRABETTE_SOUND_VOLUME` | `0.6` | Amplitude of the generated cue, `0`..`1` (absolute loudness is the codec mixer's job) |
+| `GRABETTE_FLEET_ENV` | `prod` | Which fleet deployment to report to: `prod` or `test`. Derives both the relay URL and the OAuth redirect. Anything else reads as `prod` |
+| `GRABETTE_RELAY_URL` | (from `GRABETTE_FLEET_ENV`) | Explicit fleet Space URL — overrides `GRABETTE_FLEET_ENV`. Empty string selects direct OAuth; it does **not** stop the relay client |
+| `GRABETTE_RELAY_ENABLED` | `true` | `false` = fully standalone: no fleet registration, no group sync, no HF token auto-refresh |
 | `GRABETTE_LOG_LEVEL` | `INFO` | Logging level |
+
+### Pointing a device at the test fleet
+
+One line in `/etc/grabette/env`, then restart the service:
+
+```bash
+GRABETTE_FLEET_ENV=test
+```
+
+The dashboard's fleet tile turns amber and names the Space it points at, so a
+device left on the test deployment is visible rather than silently recording
+into a fleet nobody watches. Remove the line to go back to production —
+nothing in the repo ever defaults to `test`.
+
+The fleet Space URL is also the OAuth redirect_uri, so the test Space must be
+registered as one in the HF OAuth app or login fails on a device pointed at it.
+
+### Running a device standalone
+
+```bash
+GRABETTE_RELAY_ENABLED=false
+```
+
+The device never registers with a fleet, never polls for commands, and every
+start/stop stays local — the physical button and the dashboard work exactly as
+usual, solo. It also stops the periodic HF token refresh, which exists to keep
+the relay's token valid.
+
+`GRABETTE_RELAY_URL=""` is *not* the same switch, despite reading like it: it
+puts OAuth in direct mode (redirect_uri points at this device rather than a
+Space), which is what local dev wants, but the relay client still starts and
+retries against an empty URL once per poll interval. Use `GRABETTE_RELAY_ENABLED`
+to actually stop it, and both together for local dev without a Space.
 
 ## Audible recording cue
 

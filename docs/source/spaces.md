@@ -47,4 +47,10 @@ Both Spaces run on the free CPU tier.
 
 The `-test` variants of these Spaces are development deployments. Use the ones linked above.
 
+If you do need to work against them, set `GRABETTE_FLEET_ENV=test` on the device
+rather than writing a URL: it moves the relay and the OAuth redirect together, and
+the dashboard then shows an amber fleet tile naming the Space, so no device stays
+pointed there by accident. The fleet Space picks its own conversion Space to
+match, so a test fleet never converts through the production pipeline.
+
 </Tip>

@@ -10,6 +10,7 @@ import math
 import gradio as gr
 from PIL import Image
 
+from grabette import spaces
 from grabette.config import settings
 from grabette.ui.api_client import GrabetteClient
 
@@ -876,15 +877,25 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # here — it's OAuth-gated and this dashboard is served over plain HTTP,
         # so its login can't render in an iframe — so we link out in a new tab,
         # where the HF session and OAuth work normally.
+        # WHICH fleet, not just "the" fleet: a device left on the test deployment
+        # keeps working perfectly and records into a fleet nobody is watching, and
+        # nothing on this page used to say so. The Space name is always shown, and
+        # the tile turns amber on anything that isn't prod — see grabette.spaces.
+        _test = spaces.is_test()
+        _target = settings.relay_url.replace("https://", "")
+        _grad = ("linear-gradient(135deg,#d97706,#b45309)" if _test
+                 else "linear-gradient(135deg,#10b981,#3b82f6)")
         gr.HTML(
             f'<a href="{settings.relay_url}" target="_blank" rel="noopener" '
             'style="display:block;margin-top:1.2rem;padding:2.6rem 1.5rem;border-radius:16px;'
             'text-align:center;text-decoration:none;color:#fff;'
-            'background:linear-gradient(135deg,#10b981,#3b82f6);'
+            f'background:{_grad};'
             'box-shadow:0 6px 22px rgba(0,0,0,.28);">'
-            '<div style="font-size:1.7rem;font-weight:800;">Open fleet dashboard ↗</div>'
+            + ('<div style="font-size:.8rem;font-weight:800;letter-spacing:.08em;'
+               'margin-bottom:.5rem;">⚠ TEST DEPLOYMENT</div>' if _test else '')
+            + '<div style="font-size:1.7rem;font-weight:800;">Open fleet dashboard ↗</div>'
             '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
-            'Manage tasks, sessions and datasets on grabette-fleet</div></a>'
+            f'Manage tasks, sessions and datasets on {_target}</div></a>'
         )
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)

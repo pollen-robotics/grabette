@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+
+from casquette.fleet import spaces
 
 
 def _stable_device_id() -> str:
@@ -66,7 +68,10 @@ class Settings(BaseSettings):
     # The device connects OUTBOUND to relay_url, authenticates with its local
     # HF token, and polls for group start/stop commands. Empty token / disabled
     # / unreachable → the device just runs solo (fleet is best-effort).
-    relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
+    # Derived from CASQUETTE_FLEET_ENV (see casquette.fleet.spaces): pointing a
+    # device at the test deployment is one named env var, not a URL copied around.
+    # CASQUETTE_RELAY_URL still overrides, as usual for a Settings field.
+    relay_url: str = Field(default_factory=lambda: spaces.space_url("fleet"))
     relay_enabled: bool = True
 
     # Logging
