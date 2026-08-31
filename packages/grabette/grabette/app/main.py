@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from grabette.config import settings
 from grabette.daemon import Daemon
+from grabette.errors import exc_text as _exc_text
 
 # Route Gradio's internal file cache to the SD card. Gradio copies every
 # callback-returned file path into its cache dir (defaulting to
@@ -100,6 +103,91 @@ _SPACE_WAKE_RETRY_S = 5.0           # between probes
 _SPACE_POST_TIMEOUT_S = 120.0       # /api/process, on a Space known to be awake
 _SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
 
+# --- episode upload (raw dataset) ---------------------------------------------
+# Three layers, because each catches what the one below it cannot:
+#
+# 1. SOCKET timeouts on the Hub client (grabette.hf.install_hub_timeouts).
+#    huggingface_hub ships its httpx client with timeout=None, so a link that
+#    DEGRADES rather than drops leaves a request waiting on a socket that never
+#    delivers — forever, inside a thread nothing can interrupt. With per-operation
+#    timeouts a stall raises inside the worker, hf_hub retries it, and the thread
+#    DIES, leaving nothing behind. Covers everything that goes through httpx: the
+#    JSON API and LFS uploads. It does NOT cover a xet upload, which is the
+#    default path and does its HTTP in Rust — hence layer 3.
+# 2. Retry with backoff here, so one bad minute doesn't sink a build that other
+#    devices already spent twenty minutes uploading for.
+# 3. A no-PROGRESS watchdog here, for a stall no socket timeout can see: a wedged
+#    filesystem, or — the case that actually matters — a xet upload, whose bytes
+#    move in a Rust HTTP stack that layer 1 does not touch at all. It lets the
+#    COMMAND report back, so the fleet frees the device; the worker thread cannot
+#    be killed, so it runs on.
+#
+# Layer 3 bounds SILENCE, never elapsed time. A total-elapsed cap cannot express
+# the requirement, because any value it takes encodes an assumed throughput, and
+# a healthy upload on a slower link then dies at the deadline — which is the one
+# outcome we must never produce: an episode killed while it was still uploading
+# fine. "No progress for N minutes" is the same guarantee against hangs with no
+# assumption about speed, so a progressing upload runs as long as it needs to.
+# The progress signal comes from grabette.hf's heartbeat (xet's own byte-level
+# callback, plus httpx request/response hooks).
+#
+# Which is why uploads get their OWN executor. asyncio.to_thread uses the DEFAULT
+# one, shared with the daemon's 50 Hz sensor poll, the OAK-D bring-up and
+# stop_recording's mux — on a 4-core Pi that pool is 8 threads wide. An abandoned
+# upload burning one of them competes for CPU with the H.264 encoders and the
+# OAK-D drainers during a recording (hf_xet hashes and chunks in native threads),
+# and enough of them would starve the capture path itself. Trading frame
+# stability for upload robustness is not a trade worth making, so the two never
+# share a pool: a stalled upload can only ever degrade uploading.
+_UPLOAD_STALL_TIMEOUT_S = 900.0     # no Hub I/O at all for this long = wedged
+_UPLOAD_WATCHDOG_POLL_S = 5.0       # how often staleness is judged. Costs nothing:
+                                    # the wait returns as soon as the upload does,
+                                    # so this only paces the CHECK, not the finish.
+# Used ONLY when grabette.hf reports an INCOMPLETE heartbeat — some upload path
+# is unobservable, so silence there proves nothing and the watchdog above must not
+# rule on it. Partial coverage counts as incomplete on purpose: with only the
+# httpx source wired, a xet transfer emits no marks at all and would read as a
+# stall. Falling back to elapsed time accepts the false positive this whole design
+# exists to avoid, because the alternative — no bound at all — is the original
+# bug: a device pinned as "uploading" until someone restarts the Space.
+# Deliberately far more generous than the 1800s it replaces, being a fallback now
+# rather than the mechanism.
+_UPLOAD_BLIND_ATTEMPT_TIMEOUT_S = 14400.0  # 4 h
+_UPLOAD_MAX_ATTEMPTS = 3
+_UPLOAD_RETRY_BASE_S = 5.0          # backoff: 5s, 10s (doubling per attempt)
+# Deliberately narrow: uploads are sequential within a command, so one worker
+# does the work and the second is headroom for a single abandoned thread.
+_UPLOAD_WORKERS = 2
+
+_upload_executor: "concurrent.futures.ThreadPoolExecutor | None" = None
+_upload_executor_lock = threading.Lock()
+# Threads we stopped waiting on that are still running. Self-correcting: each is
+# counted down by its future's done callback if it ever finishes. Incremented on
+# the event loop and decremented in a worker thread, hence the lock.
+_stalled_uploads = 0
+_stall_lock = threading.Lock()
+
+
+def _mark_stalled(delta: int) -> int:
+    """Adjust the stalled-upload count under the lock; returns the new value."""
+    global _stalled_uploads
+    with _stall_lock:
+        _stalled_uploads = max(0, _stalled_uploads + delta)
+        return _stalled_uploads
+
+
+def _get_upload_executor():
+    """The upload-only thread pool, created on first use.
+
+    Lazily, not at import: a device that never runs a fleet dataset build should
+    not carry the threads."""
+    global _upload_executor
+    with _upload_executor_lock:
+        if _upload_executor is None:
+            _upload_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=_UPLOAD_WORKERS, thread_name_prefix="hf-upload")
+    return _upload_executor
+
 # Probing the app is the authoritative readiness test, but it cannot tell apart
 # "still booting" from two states it will never get out of. When the fleet also
 # names the Space REPO (space_repo, optional), the Hub runtime resolves both:
@@ -120,16 +208,6 @@ class _CommandCancelled(Exception):
     """The operator cancelled this command while it waited on something."""
 
 
-def _exc_text(e: BaseException) -> str:
-    """Never-empty description of an exception.
-
-    `str(asyncio.TimeoutError())` is the EMPTY STRING, so interpolating an
-    exception straight into a message can report only "processing failed:" —
-    leaving the operator nothing to act on, and the failure that says the least is
-    the most common one. Fall back to the class name, which at least names the
-    failure mode.
-    """
-    return str(e).strip() or type(e).__name__
 
 
 def _space_stage(space_repo: str, token: str | None) -> str | None:
@@ -240,7 +318,278 @@ async def _wake_space(session, space_url: str, headers: dict,
             f"Open it once in a browser, then retry.")
 
 
+def _space_excluded_episodes(quality) -> list[dict]:
+    """The episodes the Space left out, one entry each, with its reason.
+
+    The summary string above answers "why did this fail"; this answers "WHICH of
+    my takes are not in the dataset". They are different questions and the second
+    is the one an operator asks after a build that succeeded — a dataset quietly
+    assembled from 17 of 20 recordings is worse than one that names the 3.
+
+    The Space labels a role-layout episode "20250101_120000/left" (its
+    episode_label), so the recording id and the arm are split back apart here:
+    the fleet keys everything by episode id, and "which arm" is what tells the
+    operator which grabette to go and look at.
+    """
+    if not isinstance(quality, list):
+        return []
+    out = []
+    for ep in quality:
+        if not isinstance(ep, dict) or not ep.get("excluded"):
+            continue
+        name = str(ep.get("name") or "").strip()
+        if not name:
+            continue
+        episode_id, _, role = name.partition("/")
+        reasons = [str(r).strip() for r in (ep.get("errors") or []) if str(r).strip()]
+        out.append({"episode_id": episode_id, "role": role,
+                    "reason": reasons[0] if reasons else
+                              f"excluded by the conversion ({ep.get('verdict') or 'no verdict'})"})
+    return out
+
+
+class _UploadStalled(Exception):
+    """An upload stopped making progress and was abandoned."""
+
+
+async def _await_upload(cf, dest: str, attempt: int) -> None:
+    """Wait for one upload, abandoning it only once it goes SILENT.
+
+    Never returns because time passed: the only thing that ends the wait short of
+    completion is the absence of Hub I/O for _UPLOAD_STALL_TIMEOUT_S. An upload
+    that is still moving bytes — however slowly, however large the episode — keeps
+    the heartbeat fresh and is never abandoned. That is the guarantee this
+    function exists to provide.
+
+    Shielded, so a poll that expires does NOT wait for a cancellation the worker
+    thread cannot honour — awaiting that is the very hang being bounded. Nothing
+    here runs off the event loop for longer than a dict lookup: the polling only
+    reads two values from grabette.hf. Raises _UploadStalled, or whatever the
+    upload itself raised.
+    """
+    from grabette import hf as hf_module
+
+    # Mark now, so the clock starts at the submit. Without this, an upload that
+    # never reaches the network at all (a wedged filesystem) would be measured
+    # against whatever unrelated Hub call happened to mark last, or against
+    # nothing at all.
+    hf_module.note_hub_activity()
+    started = time.monotonic()
+    fut = asyncio.wrap_future(cf)
+    try:
+        while True:
+            try:
+                await asyncio.wait_for(asyncio.shield(fut),
+                                       timeout=_UPLOAD_WATCHDOG_POLL_S)
+                return
+            except asyncio.TimeoutError:
+                pass  # just a poll tick, not a verdict
+            # Asked every tick, not once up front. The heartbeat is installed
+            # lazily by HuggingFaceClient._get_api — in the WORKER thread we are
+            # waiting on — so on the process's first upload no source exists yet
+            # when we first get here. Installing it from this coroutine instead
+            # would import the hf_xet extension on the EVENT LOOP (~100ms on x86,
+            # more on a Pi), stalling the daemon's poll for that long. Asking
+            # late costs one poll interval and blocks nothing.
+            if hf_module.heartbeat_is_complete():
+                age = hf_module.hub_activity_age_s()
+                if age is not None and age >= _UPLOAD_STALL_TIMEOUT_S:
+                    raise _UploadStalled(
+                        f"no Hub activity for {age:.0f}s (attempt "
+                        f"{attempt}/{_UPLOAD_MAX_ATTEMPTS}) — the upload is "
+                        f"wedged, not slow; a slow one keeps the heartbeat alive")
+            else:
+                elapsed = time.monotonic() - started
+                if elapsed >= _UPLOAD_BLIND_ATTEMPT_TIMEOUT_S:
+                    logger.error(
+                        "no upload heartbeat source for %s, so the bound fell "
+                        "back to elapsed time — this abandonment MAY be a "
+                        "healthy upload", dest)
+                    raise _UploadStalled(
+                        f"no progress signal available and {elapsed / 3600:.1f}h "
+                        f"elapsed (attempt {attempt}/{_UPLOAD_MAX_ATTEMPTS})")
+    except _UploadStalled:
+        # Nothing will await `fut` again. Consume whatever the abandoned thread
+        # eventually raises, or asyncio logs it as never retrieved — noise that
+        # would land in the operator's journal long after the real error.
+        fut.add_done_callback(lambda f: f.cancelled() or f.exception())
+        raise
+
+
+async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: bool,
+                              is_cancelled) -> None:
+    """Upload one episode dir, bounded and retried. Raises on final failure.
+
+    Two distinct failures are handled here, and conflating them is what made a
+    flaky link fatal:
+      • a transient error (reset connection, 5xx, stalled socket) — retried with
+        a doubling backoff, because the alternative is losing every OTHER
+        device's completed upload to one bad minute. Re-uploading the same folder
+        is safe: an identical commit is a no-op on the Hub.
+      • an attempt that STOPS MAKING PROGRESS — abandoned by _await_upload so the
+        COMMAND can report back and the fleet can free this device. Note what is
+        not in that sentence: how long the attempt has taken. A slow attempt is
+        not a failed one, and killing one is the failure mode this whole layer is
+        built to avoid. The worker thread cannot be killed (upload_folder is not
+        interruptible), so it keeps running; it does so on the upload-only
+        executor, where it can never delay a recording. See _UPLOAD_WORKERS.
+
+    Runs on _get_upload_executor(), never asyncio.to_thread: to_thread means the
+    DEFAULT executor, which the 50 Hz sensor poll and the OAK-D bring-up also use.
+
+    Raises _CommandCancelled the moment the build is cancelled, including during
+    a backoff wait: a cancel must not have to sit out a retry delay.
+    """
+    last: Exception | None = None
+    for attempt in range(1, _UPLOAD_MAX_ATTEMPTS + 1):
+        if is_cancelled():
+            raise _CommandCancelled
+        # Every worker tied up by a previous stall means this attempt would just
+        # queue behind it — silently, for as long as the stall lasts. Say so
+        # instead: it is a device-level fault with a device-level fix.
+        if _stalled_uploads >= _UPLOAD_WORKERS:
+            raise RuntimeError(
+                f"{_stalled_uploads} earlier upload(s) are still stalled on this "
+                "device and cannot be interrupted — reboot it before retrying")
+        # submit() rather than loop.run_in_executor() so we keep the
+        # concurrent.futures future: its done callback runs in the WORKER thread,
+        # independent of the event loop. An asyncio future's callback is
+        # scheduled ON the loop, so a loop that stops before the thread finishes
+        # would leak the stall count permanently.
+        cf = _get_upload_executor().submit(
+            hf.upload_episode, ep_dir, raw_repo, None, dest, private)
+        try:
+            await _await_upload(cf, dest, attempt)
+            return
+        except _UploadStalled as e:
+            last = e
+            # Count the stall BEFORE registering the release, never after: a
+            # thread that finishes in between would fire the callback first
+            # (clamped to 0) and the increment would then leak a phantom stall
+            # forever. add_done_callback on an already-finished future runs
+            # inline, so the window is real, not theoretical.
+            stalled = _mark_stalled(1)
+            cf.add_done_callback(lambda _f: _mark_stalled(-1))
+            logger.error("abandoning the upload thread for %s: %s (%d now stalled)",
+                         dest, _exc_text(e), stalled)
+        except Exception as e:  # noqa: BLE001 — retry whatever the Hub/network raised
+            last = e
+            logger.warning("upload of %s failed (attempt %d/%d): %s",
+                           dest, attempt, _UPLOAD_MAX_ATTEMPTS, _exc_text(e))
+        if attempt < _UPLOAD_MAX_ATTEMPTS:
+            delay = _UPLOAD_RETRY_BASE_S * (2 ** (attempt - 1))
+            # Sleep in slices so a cancel lands within a second, not after the
+            # whole backoff.
+            waited = 0.0
+            while waited < delay:
+                if is_cancelled():
+                    raise _CommandCancelled
+                await asyncio.sleep(min(1.0, delay - waited))
+                waited += 1.0
+    raise RuntimeError(
+        f"{_UPLOAD_MAX_ATTEMPTS} attempts failed, last: {_exc_text(last)}"
+        if last is not None else f"{_UPLOAD_MAX_ATTEMPTS} attempts failed")
+
+
+# Relay commands that make this device too busy to record, and what to call the
+# state. The fleet infers these from its own command queue, but the DEVICE could
+# not see them at all: a relay command creates no local job, so the heartbeat
+# reported "idle" all the way through a 20-minute upload. That blind spot is why
+# the physical button could start a recording on top of one.
+_DATASET_WORK_KINDS = {"upload_episodes": "uploading", "process_dataset": "processing"}
+
+# command id -> kind, for the commands currently executing. The relay's worker is
+# serial so this holds one entry at a time, but it is keyed by id rather than a
+# flag so a lost entry can never wedge the device as permanently busy.
+_active_dataset_work: dict[str, str] = {}
+
+
 async def _handle_relay_command(cmd: dict) -> dict:
+    """Relay entry point: record what this device is busy with, then dispatch.
+
+    Tracked HERE rather than inside each handler so the bookkeeping cannot drift
+    from the dispatch: every command type that occupies the device is declared in
+    one table, and the finally covers every early return in the handlers below.
+    """
+    kind = _DATASET_WORK_KINDS.get(cmd.get("type") or "")
+    if kind is None:
+        return await _dispatch_relay_command(cmd)
+    cmd_id = cmd.get("id") or ""
+    _active_dataset_work[cmd_id] = kind
+    try:
+        return await _dispatch_relay_command(cmd)
+    finally:
+        _active_dataset_work.pop(cmd_id, None)
+
+
+def _device_activity() -> str:
+    """What this device is doing: idle | capturing | uploading | processing.
+
+    ONE answer, used by both consumers: the fleet heartbeat (so an operator sees
+    the true state) and the local capture gate (so a recording can't start on top
+    of it). Two sources that could disagree is how a device ends up called free
+    by one and busy by the other.
+
+    Best-effort and non-throwing — a bad read reports 'idle'. All in-memory, so
+    it stays cheap on the heartbeat.
+    """
+    from grabette.daemon import DaemonState
+    from grabette.jobs import JobStatus, get_job_manager
+
+    # Fleet-dispatched dataset work. First because it is the heaviest and the
+    # least visible: it creates no local job, so nothing else here would see it.
+    kinds = set(_active_dataset_work.values())
+    if "processing" in kinds:
+        return "processing"
+    if "uploading" in kinds:
+        return "uploading"
+    # An upload we stopped waiting on is still RUNNING (see _upload_one_episode):
+    # the thread cannot be killed, and on a Pi it is hashing and chunking, not
+    # idling on a socket. The device is not free just because we gave up on it.
+    if _stalled_uploads:
+        return "uploading"
+    try:
+        active = [j for j in get_job_manager().list_jobs()
+                  if j.status in (JobStatus.PENDING, JobStatus.RUNNING)]
+        if any(j.name.startswith("push:") for j in active):
+            return "processing"  # SLAM convert + push to the dataset
+        if any(j.name.startswith("upload:") for j in active):
+            return "uploading"
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        d = get_daemon_instance()
+        if d is not None and d.state == DaemonState.RUNNING and d.backend.is_capturing:
+            return "capturing"
+    except Exception:  # noqa: BLE001
+        pass
+    return "idle"
+
+
+# Activities during which starting a recording would produce a degraded episode.
+# Mirrors the fleet's _RECORDING_BLOCKERS — the two gates must agree, or the
+# fleet refuses a start the device would have accepted (or worse, the reverse).
+_RECORDING_BLOCKERS = {
+    "uploading": "this grabette is uploading episodes to the Hub — recording now "
+                 "would compete with it for CPU and drop frames. Wait for the "
+                 "upload to finish, or cancel the dataset build.",
+    "processing": "this grabette is running a dataset conversion — recording now "
+                  "would compete with it for CPU and drop frames. Wait for it to "
+                  "finish, or cancel the dataset build.",
+}
+
+
+def _busy_reason() -> str:
+    """Why capture is refused right now for BUSY reasons ("" = free).
+
+    Installed on the backend at startup (set_busy_probe) so every start path —
+    button, dashboard, fleet — goes through it. 'capturing' is deliberately NOT
+    a blocker here: start_capture has its own "Already capturing" error, and
+    reporting it as busy would mask that clearer message."""
+    return _RECORDING_BLOCKERS.get(_device_activity(), "")
+
+
+async def _dispatch_relay_command(cmd: dict) -> dict:
     """Map fleet commands to grabette daemon actions.
 
     start_capture/stop_capture share their scheduling state machine (see
@@ -309,38 +658,84 @@ async def _handle_relay_command(cmd: dict) -> dict:
         private = bool(args.get("private", False))
         if not raw_repo or not role:
             return {"status": "error", "message": "raw_repo and role are required"}
+        from grabette.episode_check import missing_files
+
         tm = get_task_manager()
         hf = get_hf_client()
         uploaded, missing = [], []
+        # Episodes present on disk but lacking a required artifact. Uploading one
+        # is pure waste: the Space rejects it, and in a bimanual build one arm
+        # short drops the WHOLE recording. Screening them here costs a stat() per
+        # file and turns "the dataset came out empty" into a named reason, per
+        # episode, attached to this device.
+        incomplete: list[dict] = []
+        present = []
         for eid in episode_ids:
+            ep_dir = tm.episode_dir(eid)
+            if not ep_dir.exists():
+                missing.append(eid)
+                continue
+            lacks = missing_files(ep_dir)
+            if lacks:
+                # The arm matters as much as the recording: it says which
+                # grabette to go and look at, and it is what lets the fleet
+                # recognise the SAME arm being reported again by the conversion
+                # (which drops the whole recording once an arm is absent) instead
+                # of listing one lost take twice.
+                incomplete.append({"episode_id": eid, "role": role, "missing": lacks})
+                continue
+            present.append((eid, ep_dir))
+
+        # Nothing left to send: fail NOW instead of uploading zero episodes and
+        # letting the build discover it has nothing to convert half an hour later,
+        # after every other device has finished pushing.
+        if not present and incomplete:
+            # The message says WHAT happened; `incomplete` says which episodes and
+            # why, and the fleet renders that per episode. Naming the files here
+            # too just made the operator read the same causes twice.
+            return {"status": "error", "role": role,
+                    "message": (f"none of this device's {len(incomplete)} "
+                                f"episode(s) can be converted"),
+                    "uploaded": uploaded, "missing": missing, "incomplete": incomplete}
+
+        for eid, ep_dir in present:
             # Cancellation checkpoint, once per episode. Checked BEFORE the first
             # upload too: the cancel may have landed while this command was still
             # queued behind another one (the relay's worker is serial), in which
             # case nothing should be uploaded at all. Per-episode is the finest
             # granularity available — one episode is a single blocking
             # api.upload_folder inside hf.upload_episode, which cannot be
-            # interrupted from outside.
+            # interrupted from outside (see _upload_one_episode for the bound we
+            # put on it).
             if cancels.is_cancelled(cmd_id):
-                return {"status": "cancelled", "role": role,
-                        "uploaded": uploaded, "missing": missing}
-            ep_dir = tm.episode_dir(eid)
-            if not ep_dir.exists():
-                missing.append(eid)
-                continue
+                return {"status": "cancelled", "role": role, "uploaded": uploaded,
+                        "missing": missing, "incomplete": incomplete}
             try:
-                await asyncio.to_thread(hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}", private)
+                await _upload_one_episode(hf, ep_dir, raw_repo, f"{eid}/{role}", private,
+                                          lambda: cancels.is_cancelled(cmd_id))
                 uploaded.append(eid)
+            except _CommandCancelled:
+                return {"status": "cancelled", "role": role, "uploaded": uploaded,
+                        "missing": missing, "incomplete": incomplete}
             except Exception as e:  # noqa: BLE001
                 if cancels.is_cancelled(cmd_id):
                     # Cancelled mid-upload: the failure is a consequence, not news.
-                    return {"status": "cancelled", "role": role,
-                            "uploaded": uploaded, "missing": missing}
+                    return {"status": "cancelled", "role": role, "uploaded": uploaded,
+                            "missing": missing, "incomplete": incomplete}
                 return {"status": "error", "message": f"upload failed for {eid}: {_exc_text(e)}",
-                        "uploaded": uploaded, "missing": missing, "role": role}
+                        "uploaded": uploaded, "missing": missing,
+                        "incomplete": incomplete, "role": role}
         if cancels.is_cancelled(cmd_id):
-            return {"status": "cancelled", "role": role,
-                    "uploaded": uploaded, "missing": missing}
-        return {"status": "ok", "role": role, "uploaded": uploaded, "missing": missing}
+            return {"status": "cancelled", "role": role, "uploaded": uploaded,
+                    "missing": missing, "incomplete": incomplete}
+        # Succeeded, but say what was left behind: a build quietly assembled from
+        # 17 of 20 episodes is worse than one that says which 3 are gone and why.
+        res = {"status": "ok", "role": role, "uploaded": uploaded,
+               "missing": missing, "incomplete": incomplete}
+        if incomplete:
+            res["message"] = (f"uploaded {len(uploaded)} episode(s); skipped "
+                              f"{len(incomplete)} that cannot be converted")
+        return res
 
     if ctype == "process_dataset":
         # Fleet-orchestrated dataset build, processing step. THIS device triggers
@@ -423,16 +818,43 @@ async def _handle_relay_command(cmd: dict) -> dict:
                         continue
                     sstatus = st.get("status", "running")
                     if sstatus == "done":
-                        return {"status": "ok", "result_url": st.get("result")}
+                        result_url = st.get("result")
+                        excluded = _space_excluded_episodes(st.get("quality"))
+                        if not result_url:
+                            # "done" with no dataset is NOT a success. The Space
+                            # finishes this way when every episode was rejected
+                            # (bad recording check, no usable trajectory) — it
+                            # logs the reason and pushes nothing. Reported as ok,
+                            # it became a fleet job that invented a link to a repo
+                            # that was never created, so the operator got a green
+                            # "Open <dataset>" leading to a 404. Fail it here, and
+                            # carry the Space's own reasons across.
+                            # The per-episode reasons ride in `excluded`, which
+                            # the fleet reports on its own. The pointer to the log
+                            # is only for the case where the Space told us nothing
+                            # structured at all — otherwise it would send the
+                            # operator hunting for what is already on their screen.
+                            return {"status": "error", "excluded": excluded, "message": (
+                                "the conversion produced no dataset — no episode "
+                                "made it through"
+                                + ("" if excluded else " (see the Space log for details)"))}
+                        # Succeeded, though episodes may still have been dropped:
+                        # `excluded` names them, and that is the only place they
+                        # need naming.
+                        res = {"status": "ok", "result_url": result_url}
+                        if excluded:
+                            res["excluded"] = excluded
+                        return res
                     if sstatus in ("error", "not_found"):
                         # not_found = the Space forgot the job. Its job list lives in
                         # memory, so this means it restarted mid-conversion (OOM, a
                         # redeploy) — say so, rather than echoing "not_found".
                         lost = (f"the Space no longer knows job {space_jid} — it restarted "
                                 f"mid-conversion (its job list is kept in memory)")
-                        return {"status": "error",
-                                "message": st.get("error") or (
-                                    lost if sstatus == "not_found" else "the Space reported a failure")}
+                        detail = st.get("error") or (
+                            lost if sstatus == "not_found" else "the Space reported a failure")
+                        return {"status": "error", "message": detail,
+                                "excluded": _space_excluded_episodes(st.get("quality"))}
         except _CommandCancelled:
             return {"status": "cancelled"}
         except Exception as e:  # noqa: BLE001
@@ -650,6 +1072,12 @@ async def lifespan(app: FastAPI):
 
     backend = _create_backend()
     _daemon = Daemon(backend)
+    # The capture gate: every start path (button, dashboard, fleet) goes through
+    # backend.raise_if_capture_blocked, which asks this. Installed BEFORE the
+    # daemon starts and outside the relay block on purpose — a dashboard-driven
+    # upload must block a recording just as a fleet-driven one does, and a device
+    # with the relay disabled still runs those.
+    backend.set_busy_probe(_busy_reason)
     await _daemon.start()
 
     # Start physical button listener on RPi
@@ -695,31 +1123,6 @@ async def lifespan(app: FastAPI):
         from grabette.relay_client import RelayClient
         from grabette.app.routers.system import _pisugar_battery
         from grabette.app.routers.tasks import get_task_manager
-        from grabette.daemon import DaemonState
-        from grabette.jobs import JobStatus, get_job_manager
-
-        def _device_activity() -> str:
-            """Current device activity for the fleet heartbeat:
-            idle | capturing | uploading | processing. Surfaces local, dashboard-
-            initiated work (SLAM push / episode upload) that the fleet can't infer
-            on its own, plus live capture. Best-effort & non-throwing — a bad read
-            just reports 'idle'. All in-memory, so it's cheap on the heartbeat."""
-            try:
-                active = [j for j in get_job_manager().list_jobs()
-                          if j.status in (JobStatus.PENDING, JobStatus.RUNNING)]
-                if any(j.name.startswith("push:") for j in active):
-                    return "processing"  # SLAM convert + push to the dataset
-                if any(j.name.startswith("upload:") for j in active):
-                    return "uploading"
-            except Exception:
-                pass
-            try:
-                d = get_daemon_instance()
-                if d is not None and d.state == DaemonState.RUNNING and d.backend.is_capturing:
-                    return "capturing"
-            except Exception:
-                pass
-            return "idle"
 
         relay = RelayClient(
             base_url=settings.relay_url,
@@ -738,6 +1141,11 @@ async def lifespan(app: FastAPI):
             unassigned_provider=get_task_manager().report_unassigned,
             tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
             activity_provider=_device_activity,  # device state, reported via heartbeat
+            # Hardware faults (no OAK-D calibration, no angle sensors) — the
+            # device refuses to record in these states, and an operator who can
+            # only find that out by walking up to the grabette and reading its
+            # LED will find it out too late.
+            fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

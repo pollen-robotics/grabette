@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import random
@@ -11,7 +10,7 @@ from pathlib import Path
 from grabette.backend.base import Backend
 from grabette.config import settings
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
-from grabette.output import write_imu_json
+from grabette.output import write_imu_json, write_json_atomic
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +71,7 @@ class MockBackend(Backend):
     async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
             raise RuntimeError("Already capturing")
+        self.raise_if_capture_blocked()
         self._capturing = True
         self._capture_start = time.time()
         self._episode_dir = episode_dir
@@ -253,4 +253,4 @@ class MockBackend(Backend):
         sync_meta = self._take_sync_metadata()
         if sync_meta:
             meta["sync"] = sync_meta
-        (episode_dir / "metadata.json").write_text(json.dumps(meta, indent=2))
+        write_json_atomic(episode_dir / "metadata.json", meta)

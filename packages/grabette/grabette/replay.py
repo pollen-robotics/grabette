@@ -53,11 +53,16 @@ class ReplayEngine:
 
         # Load duration from metadata
         meta_path = path / "metadata.json"
+        meta = {}
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
-            self._duration_ms = meta.get("duration_seconds", 0) * 1000
-        else:
-            self._duration_ms = 0
+            # Same tolerance as TaskManager._get_episode_info: an episode whose
+            # metadata was truncated by an interrupted write still has its video
+            # and IMU, so replay it at duration 0 rather than raising.
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, ValueError) as e:
+                logger.warning("Unreadable metadata for replay of %s: %s", path, e)
+        self._duration_ms = meta.get("duration_seconds", 0) * 1000
 
         self._imu_samples = []
         self._angle_samples = []

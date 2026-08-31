@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import io
 import logging
 import math
@@ -206,10 +207,14 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     ORANGE = ("#f97316", "#9a3412")
     RED = ("#ef4444", "#991b1b")
 
-    def _badge(label, value, colors):
+    def _badge(label, value, colors, title=""):
         value_color, border_color = colors
+        # `title` carries the long form (a hardware fault's full explanation) as
+        # a hover tooltip: the badge row has one line per badge and truncates,
+        # so a message that matters can't live in the value itself.
+        tip = f" title=\"{html.escape(title, quote=True)}\"" if title else ""
         return (
-            f"<div style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
+            f"<div{tip} style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
             f"border:2px solid {border_color};flex:1;min-width:0;'>"
             f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
             f"color:#94a3b8;margin-bottom:0.2rem;'>{label}</div>"
@@ -239,9 +244,14 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     else:
         rgb_badge = _badge("RGB Camera", "Disconnected", RED)
 
-    # OAK-D (4-state: connected / starting / off / error; N/A when unsupported)
+    # OAK-D (5-state: fault / connected / starting / off / error; N/A when
+    # unsupported). The fault comes FIRST: it is the one state where the device
+    # refuses to record, so it must not be masked by "Off" after a power-down.
     if not oakd_status or not oakd_status.get("supported"):
         oakd_badge = _badge("OAK-D", "N/A", GRAY)
+    elif oakd_status.get("hardware_error"):
+        oakd_badge = _badge("OAK-D", "Cannot record", RED,
+                            title=oakd_status["hardware_error"])
     elif oakd_status.get("initialized"):
         oakd_badge = _badge("OAK-D", "Connected", GREEN)
     elif oakd_status.get("initializing"):
@@ -360,6 +370,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             if cap.get("angle_sample_count", 0):
                 parts[-1] += f"  |  Angle: {cap['angle_sample_count']}"
             return "\n".join(parts)
+        # Not capturing is not the same as free. A device tied up by an upload
+        # (or held back by a hardware fault) used to read "○ Idle" here, which is
+        # precisely the reading that gets a recording started on top of one.
+        blocked = cap.get("blocked_reason") or ""
+        if blocked:
+            return f"⛔ Cannot record — {blocked}"
         return "○ Idle"
 
     def on_toggle_capture(session_id):
@@ -455,6 +471,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         rows = []
         task_name = ""
         task_description = ""
+        # The device always has Unassigned, so an empty list means the API call
+        # failed — never that there is nothing to show. Saying so beats a blank
+        # page that looks exactly like "no episodes recorded yet".
+        api_down = not sessions
         for s in sessions:
             if s["id"] == session_id:
                 task_name = s.get("name", "")
@@ -481,9 +501,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         count_str = f"{count} episode" + ("s" if count != 1 else "")
         ep_title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
         desc_parts = []
+        if api_down:
+            desc_parts.append(
+                "⚠️ **Could not reach the grabette API** — the task list below is "
+                "empty because the call failed, not because there is nothing "
+                "recorded. Check the daemon log for the error."
+            )
         if task_description:
             desc_parts.append(f"**Task description:** {task_description}")
-        desc_parts.append(f"*{count_str} recorded*")
+        if not api_down:
+            desc_parts.append(f"*{count_str} recorded*")
         desc = "\n\n".join(desc_parts)
         return rows, move_dd, task_header, desc, cap_title, ep_title
 
