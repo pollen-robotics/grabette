@@ -369,22 +369,51 @@ def test_volume_is_stored_even_with_no_speaker_fitted(tmp_path, monkeypatch):
     assert sound.load_saved_volume() == 0.15
 
 
+def _join_cue_threads():
+    for t in threading.enumerate():
+        if t.name in ("speaker-cue", "speaker-test"):
+            t.join(timeout=5)
+
+
+def test_test_plays_the_start_and_stop_pair_in_order(tmp_path, monkeypatch):
+    """The two cues an operator has to recognise — and in the order they occur."""
+    sp = _speaker(tmp_path, monkeypatch, volume=0.6)
+    sp._render_cues()
+    played = []
+    monkeypatch.setattr(sp, "_spawn", lambda wav: played.append(wav.stem) or True)
+    monkeypatch.setattr(sound, "TEST_CUE_GAP_S", 0.0)
+
+    assert sp.play_test() is True
+    _join_cue_threads()
+    assert played == [sound.CUE_START, sound.CUE_STOP]
+
+
 def test_test_cue_ignores_the_debounce(tmp_path, monkeypatch):
     """A person pressing Test twice means it twice — unlike a burst of events."""
     sp = _speaker(tmp_path, monkeypatch, volume=0.6)
     sp._render_cues()
     spawned = []
     monkeypatch.setattr(sp, "_spawn", lambda wav: spawned.append(wav) or True)
+    monkeypatch.setattr(sound, "TEST_CUE_GAP_S", 0.0)
 
-    sp.play_saved()
-    sp.play_saved()   # inside CUE_DEBOUNCE_S — swallowed
+    sp.play_start()
+    sp.play_start()   # inside CUE_DEBOUNCE_S — swallowed
     assert sp.play_test() is True
     assert sp.play_test() is True
 
-    for t in threading.enumerate():
-        if t.name in ("speaker-cue", "speaker-test"):
-            t.join(timeout=2)
-    assert len(spawned) == 3  # one debounced cue + both tests
+    _join_cue_threads()
+    assert len(spawned) == 5  # one debounced cue + two per test
+
+
+def test_test_cue_survives_a_failing_aplay(tmp_path, monkeypatch):
+    """A dead first cue must not leave the thread raising into nothing."""
+    sp = _speaker(tmp_path, monkeypatch, volume=0.6)
+    sp._render_cues()
+    monkeypatch.setattr(sound, "TEST_CUE_GAP_S", 0.0)
+    monkeypatch.setattr(sp, "_spawn", lambda wav: (_ for _ in ()).throw(OSError("boom")))
+
+    assert sp.play_test() is True
+    _join_cue_threads()  # no exception escapes the worker
 
 
 def test_test_cue_reports_false_with_no_cues(tmp_path, monkeypatch):

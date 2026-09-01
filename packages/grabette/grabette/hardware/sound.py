@@ -131,6 +131,11 @@ CUE_DEBOUNCE_S = 1.5
 # itself is a fraction of a second).
 PLAY_TIMEOUT_S = 5.0
 
+# Silence between the start and stop cues when testing the speaker. Long enough
+# that they read as two separate cues (in real use a whole take separates them),
+# short enough that the button still feels like one action.
+TEST_CUE_GAP_S = 0.55
+
 # Linear fade applied to each tone's edges. Without it the abrupt start/stop of
 # the waveform is a step on the DAC output and the speaker clicks audibly.
 _FADE_S = 0.006
@@ -323,20 +328,43 @@ class Speaker:
         self._play(CUE_ERROR)
 
     def play_test(self) -> bool:
-        """Play one blip on demand. True if it was dispatched.
+        """Play the start cue, then the stop cue. True if dispatched.
+
+        The pair, not a single blip: these are the two an operator actually has
+        to recognise in the field, and the only thing a volume needs to be
+        judged against. Hearing them back to back is also how you confirm the
+        ascending/descending shape is still telling them apart at this level.
 
         Bypasses CUE_DEBOUNCE_S on purpose: that debounce exists so a burst of
         identical *events* cannot become a burst of beeps, but a person pressing
         Test twice means it twice — and a button that silently does nothing is
         exactly what you do not want while judging a volume.
         """
-        wav = self._cues.get(CUE_SAVED) if self._enabled else None
-        if wav is None:
+        if not self._enabled:
+            return False
+        wavs = [self._cues.get(CUE_START), self._cues.get(CUE_STOP)]
+        if any(w is None for w in wavs):
             return False
         threading.Thread(
-            target=self._spawn, args=(wav,), daemon=True, name="speaker-test",
+            target=self._play_sequence, args=(wavs,), daemon=True, name="speaker-test",
         ).start()
         return True
+
+    def _play_sequence(self, wavs: list[Path]) -> None:
+        """Play cues one after another, on this thread. Never raises.
+
+        _spawn already runs aplay to completion, so the gap is the only thing
+        that needs adding — without it the two cues run together into one
+        four-tone warble and stop being the pair you are trying to hear.
+        """
+        for i, wav in enumerate(wavs):
+            if i:
+                time.sleep(TEST_CUE_GAP_S)
+            try:
+                self._spawn(wav)
+            except Exception:
+                logger.debug("test cue failed", exc_info=True)
+                return
 
     def _play(self, name: str) -> None:
         wav = self._cues.get(name) if self._enabled else None

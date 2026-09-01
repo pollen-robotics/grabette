@@ -342,9 +342,18 @@ class GrabetteClient:
             return {"error": str(exc)}
 
     def test_speaker(self) -> dict:
+        """Play the start/stop cues. {"error": <reason>} if it was refused.
+
+        The refusal that matters is 409 mid-recording, and its `detail` is
+        written for the operator — surface that, not an HTTP status line.
+        """
         try:
             r = self._http.post("/api/system/speaker/test", timeout=5.0)
-            r.raise_for_status()
+            if r.status_code >= 400:
+                try:
+                    return {"error": r.json().get("detail") or f"HTTP {r.status_code}"}
+                except Exception:
+                    return {"error": f"HTTP {r.status_code}"}
             return r.json()
         except Exception as exc:
             return {"error": str(exc)}

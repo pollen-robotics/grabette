@@ -1371,8 +1371,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.skip()
 
     def on_speaker_test():
-        client.test_speaker()
-        return gr.skip()
+        """Play the cues; report the one refusal an operator can act on."""
+        result = client.test_speaker()
+        if "error" in result:
+            return gr.update(
+                value=(
+                    f"<div style='color:{C_WARN};font-size:.8rem;line-height:1.5;"
+                    f"margin-top:.15rem;'>{html.escape(result['error'])}</div>"
+                ),
+                visible=True,
+            )
+        return gr.update(value="", visible=False)
 
     def get_header_only():
         """(header, battery_popup, beep_signal) — for pages with no status strip."""
@@ -1502,7 +1511,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 )
                 speaker_note = gr.HTML("", visible=False)
                 speaker_test_btn = gr.Button(
-                    "Test sound", size="sm", variant="secondary",
+                    "Play start / stop cues", size="sm", variant="secondary",
                     scale=0, interactive=False,
                 )
 
@@ -1526,7 +1535,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # `release`, not `change`: the slider fires continuously while dragged,
         # and each event re-renders every cue WAV on the device.
         speaker_slider.release(fn=on_speaker_volume, inputs=speaker_slider, outputs=None)
-        speaker_test_btn.click(fn=on_speaker_test, outputs=None)
+        speaker_test_btn.click(fn=on_speaker_test, outputs=speaker_note)
 
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)

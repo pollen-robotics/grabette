@@ -294,6 +294,24 @@ class SpeakerVolume(BaseModel):
     volume: float = Field(ge=0.0, le=1.0)
 
 
+def _refuse_while_capturing(detail: str) -> None:
+    """Raise 409 if a take is running. No daemon (mock backend) = nothing to protect."""
+    try:
+        from grabette.app.main import get_daemon_instance
+
+        daemon = get_daemon_instance()
+        if daemon is None or daemon.state.value != "running":
+            return
+        cap = daemon.backend.get_state().capture
+        capturing = cap.is_capturing or cap.is_starting
+    except HTTPException:
+        raise
+    except Exception:
+        return
+    if capturing:
+        raise HTTPException(status_code=409, detail=detail)
+
+
 def _speaker_state() -> dict:
     from grabette.hardware.sound import get_speaker
 
@@ -318,12 +336,18 @@ def speaker_set_volume(req: SpeakerVolume) -> dict:
 
 @router.post("/speaker/test")
 def speaker_test() -> dict:
-    """Play one short cue, so the operator can hear what they just set.
+    """Play the start and stop cues, so the volume can be judged on the real pair.
 
-    Uses the 'episode saved' blip: it is the shortest of the four, and the one
-    least likely to be mistaken for a recording actually starting.
+    Refused mid-recording (409). These are the actual capture cues: anyone
+    within earshot of a running take would hear "recording started" and then
+    "recording stopped" with neither having happened, which is exactly the
+    confusion the cues exist to prevent.
     """
     from grabette.hardware.sound import get_speaker
 
+    _refuse_while_capturing(
+        "A recording is in progress. The test plays the start and stop cues, "
+        "which would be heard as the take starting and stopping.",
+    )
     played = get_speaker().play_test()
     return {"played": played, **_speaker_state()}
