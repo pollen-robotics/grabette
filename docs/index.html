@@ -667,7 +667,11 @@
             });
 
             // GATT can connect then drop immediately (common on Linux/BlueZ),
-            // so retry the connect + service discovery a few times.
+            // so retry a few times — the WHOLE opening sequence, not just the
+            // connect. A drop during getCharacteristic/startNotifications used
+            // to fall straight through to "Connection failed" ("Cannot perform
+            // GATT operations"), so the page abandoned a recoverable link while
+            // still advertising attempts it never made.
             let cmdService;
             const maxAttempts = 5;
             for (let attempt = 1; ; attempt++) {
@@ -675,6 +679,9 @@
                     log('Connecting GATT (attempt ' + attempt + '/' + maxAttempts + ')...');
                     server = await device.gatt.connect();
                     cmdService = await server.getPrimaryService(SERVICE_UUID);
+                    commandChar = await cmdService.getCharacteristic(COMMAND_CHAR_UUID);
+                    responseChar = await cmdService.getCharacteristic(RESPONSE_CHAR_UUID);
+                    await responseChar.startNotifications();
                     break;
                 } catch (e) {
                     // Stop the moment the handle itself is dead: those retries
@@ -687,11 +694,6 @@
                     await new Promise(r => setTimeout(r, 500));
                 }
             }
-
-            // Command service
-            commandChar = await cmdService.getCharacteristic(COMMAND_CHAR_UUID);
-            responseChar = await cmdService.getCharacteristic(RESPONSE_CHAR_UUID);
-            await responseChar.startNotifications();
 
             // Status service
             try {
