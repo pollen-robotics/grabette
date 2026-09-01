@@ -279,7 +279,8 @@ Every page opens with the same header — the device's hostname and its battery 
 **Home**:
 1. Network: the network this Grabette is on and its IP address
 2. Open **Switch network**: the known networks, switchable in one click with no password, and the Bluetooth tool to join a new one — the way in when the device is on no network you can reach
-3. Log in to Hugging Face
+3. Set the speaker cue volume (inactive if the device has no speaker)
+4. Log in to Hugging Face
 
 **Episodes**:
 1. Start/stop a recording (you can either use the button on the device)

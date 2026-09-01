@@ -209,7 +209,11 @@ _WIFI_SETUP_HTML = """\
     font-family: -apple-system, system-ui, sans-serif;
     padding: 2px;
   }
-  #status { font-size: .82rem; color: var(--gb-muted); margin-bottom: .6rem; min-height: 1.2em; }
+  /* No reserved line: idle, this element held 1.2em of blank space between the
+     heading and the first network for no reason. It only takes room when it
+     has something to say. */
+  #status { font-size: .82rem; color: var(--gb-muted); margin-bottom: .5rem; }
+  #status:empty { display: none; }
   #status.ok  { color: var(--gb-ok); }
   #status.err { color: var(--gb-bad); }
   ul { list-style: none; }
@@ -227,7 +231,8 @@ _WIFI_SETUP_HTML = """\
     white-space: nowrap; background: var(--gb-ok-bg); color: var(--gb-ok);
     border: 1px solid var(--gb-ok-bd);
   }
-  .empty { color: var(--gb-muted); font-size: .82rem; line-height: 1.5; padding: .2rem 0 .5rem; }
+  .empty { color: var(--gb-muted); font-size: .82rem; line-height: 1.5; padding: 0 0 .3rem; }
+  #known:empty { display: none; }
   #error-box {
     display: none; background: var(--gb-bad-bg); border: 1px solid var(--gb-bad-bd);
     border-radius: 10px; padding: .6rem .75rem; margin-bottom: .7rem;
@@ -250,17 +255,27 @@ _WIFI_SETUP_HTML = """\
   #spinner { display: none; color: var(--gb-soft); font-size: .85rem; margin-bottom: .6rem; }
   .head {
     display: flex; align-items: center; justify-content: space-between;
-    gap: .75rem; margin-bottom: .6rem;
+    gap: .75rem; margin-bottom: .45rem;
   }
   h2 {
     font-size: .95rem; font-weight: 700; letter-spacing: .02em;
     color: var(--gb-soft); margin: 0;
   }
   button.small { padding: .28rem .7rem; font-size: .76rem; }
+  /* Switching to a known network and joining an unknown one are two different
+     jobs — one stays on the device, the other sends you to a phone-side tool.
+     A rule and a heading of its own keep them from reading as one list with a
+     button under it. */
+  .split {
+    margin: 1.1rem 0 .55rem;
+    padding-top: .9rem;
+    border-top: 1px solid var(--gb-border);
+  }
+  .split h2 { margin-bottom: .3rem; }
   /* The charter's primary: #ffcc4d on the brand navy. It is the one action in
-     this panel that leaves it, so it gets the accent rather than a ghost. */
+     this panel that leaves the device, so it gets the accent, not a ghost. */
   .join {
-    display: block; margin-top: .9rem; padding: .6rem 1rem;
+    display: block; margin-top: .55rem; padding: .6rem 1rem;
     border-radius: 10px; text-align: center; text-decoration: none;
     background: #ffcc4d; color: #1a1a2e;
     font-size: .87rem; font-weight: 700;
@@ -268,7 +283,7 @@ _WIFI_SETUP_HTML = """\
   .join:hover { filter: brightness(1.06); }
   .join:active { transform: scale(.99); }
   .join-note {
-    margin: .45rem .15rem 0; font-size: .78rem; line-height: 1.5;
+    margin: 0 .15rem; font-size: .78rem; line-height: 1.5;
     color: var(--gb-muted);
   }
   @media (max-width: 480px) {
@@ -289,12 +304,15 @@ _WIFI_SETUP_HTML = """\
 <div id="known-empty" class="empty">Looking for saved networks…</div>
 <ul id="known"></ul>
 
-<a class="join" href="__BT_TOOL_URL__" target="_blank" rel="noopener">
-  Join a new network (Bluetooth tool) ↗
-</a>
-<p class="join-note">A network this Grabette has never seen is joined over
-Bluetooth — that works even when it is on no network you can reach. Chrome or
-Edge.</p>
+<div class="split">
+  <h2>New network</h2>
+  <p class="join-note">A network this Grabette has never seen is joined over
+  Bluetooth — that works even when it is on no network you can reach. Chrome
+  or Edge.</p>
+  <a class="join" href="__BT_TOOL_URL__" target="_blank" rel="noopener">
+    Join a new network (Bluetooth tool) ↗
+  </a>
+</div>
 
 <script>
 // Theme: same key the dashboard writes, read before first paint.

@@ -41,6 +41,7 @@ Playback rules that matter here:
 from __future__ import annotations
 
 import array
+import json
 import logging
 import math
 import shutil
@@ -158,6 +159,34 @@ def _render_wav(path: Path, tones, volume: float, rate: int = SAMPLE_RATE) -> No
         w.writeframes(samples.tobytes())
 
 
+# Where a volume set from the dashboard is kept. settings.sound_volume is the
+# factory default (env / .env); once an operator moves the slider, THIS wins on
+# every subsequent boot. Same one-file-per-concern pattern as tasks.json.
+VOLUME_FILE = "speaker_volume.json"
+
+
+def _volume_path() -> Path:
+    from grabette.config import settings
+    return settings.data_dir / VOLUME_FILE
+
+
+def load_saved_volume() -> float | None:
+    """The operator's stored volume, or None if never set / unreadable."""
+    try:
+        raw = json.loads(_volume_path().read_text())
+        return clamp_volume(float(raw["volume"]))
+    except Exception:
+        # Absent is the normal case on a fresh device; corrupt is not worth
+        # failing a boot over, and falling back to the configured default is
+        # exactly the right recovery either way.
+        return None
+
+
+def clamp_volume(volume: float) -> float:
+    """Volumes are a 0..1 gain — anything else would clip the rendered cue."""
+    return max(0.0, min(1.0, float(volume)))
+
+
 def autodetect_device() -> str | None:
     """ALSA device for the HAT codec, or None if the card isn't registered.
 
@@ -212,23 +241,67 @@ class Speaker:
                 self._enabled = False
                 return
             self._device = device
+        if not self._render_cues():
+            return
+        logger.info("Speaker ready on '%s' at volume %.2f", self._device, self._volume)
+
+    def _render_cues(self) -> bool:
+        """(Re-)render every cue at the current volume. False disables sound.
+
+        The gain is baked into the samples rather than applied at playback —
+        `aplay` has no volume of its own and the codec's mixer is set once by
+        scripts/aic3104-init.sh — so changing the volume means rendering again.
+        It is a handful of sub-second WAVs; cheap enough to do on a slider.
+        """
         try:
-            self._tmpdir = tempfile.TemporaryDirectory(prefix="grabette-sound-")
+            if self._tmpdir is None:
+                self._tmpdir = tempfile.TemporaryDirectory(prefix="grabette-sound-")
+            cues: dict[str, Path] = {}
             for name, tones in CUES.items():
                 path = Path(self._tmpdir.name) / f"{name}.wav"
                 gain = CUE_GAINS.get(name, 1.0)
                 _render_wav(path, tones, self._volume * gain)
-                self._cues[name] = path
+                cues[name] = path
+            # Swapped in only once every cue rendered: a half-written set would
+            # leave some cues silent and some loud.
+            self._cues = cues
+            return True
         except Exception:
             logger.warning("Speaker cue rendering failed; sound disabled", exc_info=True)
             self._cues = {}
             self._enabled = False
-            return
-        logger.info("Speaker ready on '%s'", self._device)
+            return False
 
     @property
     def is_available(self) -> bool:
         return self._enabled and bool(self._cues)
+
+    @property
+    def volume(self) -> float:
+        return self._volume
+
+    def set_volume(self, volume: float, *, persist: bool = True) -> float:
+        """Set the cue volume (0..1) and re-render. Returns the value applied.
+
+        Safe to call with no speaker fitted: the value is stored and persisted
+        so it takes effect if one is added later, but nothing is rendered.
+        """
+        self._volume = clamp_volume(volume)
+        if persist:
+            self._save_volume()
+        if self._enabled and self._cues:
+            self._render_cues()
+        return self._volume
+
+    def _save_volume(self) -> None:
+        try:
+            path = _volume_path()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"volume": self._volume}))
+        except Exception:
+            # A read-only or full SD card must not break the control itself —
+            # the new volume still applies for this run.
+            logger.warning("Could not persist the speaker volume", exc_info=True)
 
     def play_start(self) -> None:
         """Beep 'recording is live' (ascending). Returns at once; never raises."""
@@ -248,6 +321,22 @@ class Speaker:
         layer that notices the same failure — see CUE_DEBOUNCE_S. Returns at
         once; never raises."""
         self._play(CUE_ERROR)
+
+    def play_test(self) -> bool:
+        """Play one blip on demand. True if it was dispatched.
+
+        Bypasses CUE_DEBOUNCE_S on purpose: that debounce exists so a burst of
+        identical *events* cannot become a burst of beeps, but a person pressing
+        Test twice means it twice — and a button that silently does nothing is
+        exactly what you do not want while judging a volume.
+        """
+        wav = self._cues.get(CUE_SAVED) if self._enabled else None
+        if wav is None:
+            return False
+        threading.Thread(
+            target=self._spawn, args=(wav,), daemon=True, name="speaker-test",
+        ).start()
+        return True
 
     def _play(self, name: str) -> None:
         wav = self._cues.get(name) if self._enabled else None
@@ -345,9 +434,10 @@ def get_speaker() -> Speaker:
     global _speaker
     if _speaker is None:
         from grabette.config import settings
+        saved = load_saved_volume()
         _speaker = Speaker(
             device=settings.sound_device,
-            volume=settings.sound_volume,
+            volume=settings.sound_volume if saved is None else saved,
             enabled=settings.sound_enabled,
         )
     return _speaker

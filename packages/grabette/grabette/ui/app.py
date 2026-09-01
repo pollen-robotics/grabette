@@ -221,9 +221,8 @@ h2.gb-section {
     color: var(--gb-muted) !important;
     opacity: 1 !important;
 }
-/* Gradio's own footer is switched off entirely in app/main.py (footer_links);
-   _page_footer renders ours. This is belt and braces in case a build ever
-   emits it anyway. */
+/* No footer at all — see footer_links in app/main.py. This is belt and braces
+   in case a build ever emits one anyway. */
 .gradio-container footer { display: none !important; }
 
 /* ── Page header (device name + battery), identical on all four pages ───── */
@@ -320,6 +319,13 @@ h2.gb-section {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ── Speaker ───────────────────────────────────────────────────────────────
+   Gradio marks a non-interactive slider only by setting `disabled` on its two
+   inputs, which on a range track is nearly invisible. Dim the whole control so
+   "no speaker fitted" reads at a glance and not just from the note under it. */
+.gradio-container .gb-speaker:has(input[disabled]) { opacity: .5; }
+.gradio-container .gb-speaker input[disabled] { cursor: not-allowed; }
+
 /* ── The one call to action ───────────────────────────────────────────────
    Wide is fine for a banner — but not tall and not shouting, or it competes
    with the state above it.
@@ -348,14 +354,6 @@ h2.gb-section {
 .gradio-container a.gb-fleet,
 .gradio-container a.gb-fleet .gb-fleet-title,
 .gradio-container a.gb-fleet .gb-fleet-sub { color: #fff !important; }
-
-.gb-footer {
-    margin: 2.5rem 0 1.25rem;
-    text-align: center;
-    font-size: .78rem;
-}
-.gb-footer a { color: var(--gb-muted); text-decoration: none; }
-.gb-footer a:hover { color: var(--gb-soft); text-decoration: underline; }
 
 /* ── Phone ─────────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
@@ -768,22 +766,6 @@ def _status_bar_html(oakd_status, cam_status):
         oakd_badge = _badge("OAK-D", "Off", GRAY)
 
     return _card_row([rgb_badge, oakd_badge], margin="0.25rem 0 0.75rem")
-
-
-def _page_footer():
-    """Our own credit line, because Gradio's is not ours to translate.
-
-    Gradio picks its UI language from navigator.language and exposes no
-    server-side override (its `i18n` hook only carries an app's own custom
-    keys), so a French browser gets "Créé avec Gradio". The framework footer is
-    therefore turned off in app/main.py — footer_links=[] — and the same
-    attribution rendered here, in English, in the dashboard's own type.
-    """
-    gr.HTML(
-        '<div class="gb-footer">'
-        '<a href="https://gradio.app" target="_blank" rel="noreferrer">'
-        'Built with Gradio</a></div>'
-    )
 
 
 def _page_chrome():
@@ -1348,6 +1330,50 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         popup_update, beep_signal = _battery_popup_html(info)
         return page_header_html(info), cards, popup_update, beep_signal
 
+    # ── Speaker ───────────────────────────────────────────────────────
+
+    def _speaker_note(state: dict) -> str:
+        if state.get("available"):
+            return ""
+        return (
+            f"<div style='color:{C_MUTED};font-size:.8rem;line-height:1.5;"
+            "margin-top:.15rem;'>No speaker detected on this Grabette — the "
+            "cues are silent. A level set here is still remembered, and applies "
+            "if one is fitted later.</div>"
+        )
+
+    def load_speaker():
+        """(slider, note, test_button) — the control reflects the hardware.
+
+        With no speaker the slider still shows the stored level (it is real, and
+        it will apply if one is fitted) but nothing here can be operated.
+        """
+        state = client.get_speaker()
+        available = bool(state.get("available"))
+        return (
+            gr.update(
+                value=round(state.get("volume", 0.0) * 100),
+                interactive=available,
+            ),
+            gr.update(value=_speaker_note(state), visible=not available),
+            gr.update(interactive=available),
+        )
+
+    def on_speaker_volume(pct):
+        """Slider release → set the volume. Silent no-op if the call fails.
+
+        The volume is stored server-side even with no speaker fitted, so this
+        stays useful on a device whose speaker is not installed yet.
+        """
+        result = client.set_speaker_volume(float(pct) / 100.0)
+        if "error" in result:
+            logger.warning("Setting the speaker volume failed: %s", result["error"])
+        return gr.skip()
+
+    def on_speaker_test():
+        client.test_speaker()
+        return gr.skip()
+
     def get_header_only():
         """(header, battery_popup, beep_signal) — for pages with no status strip."""
         info = client.get_system_info()
@@ -1465,6 +1491,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 with gr.Accordion("Switch network", open=False):
                     gr.HTML(_WIFI_SETTINGS_HTML)
 
+                # ── Speaker ───────────────────────────────────────────
+                gr.HTML(_section("Speaker"))
+                # Inert when no codec is fitted — see hardware/sound.py: a
+                # grabette without a speaker is a supported build, not a broken
+                # one, so the control says so rather than pretending.
+                speaker_slider = gr.Slider(
+                    0, 100, step=5, value=60, label="Cue volume",
+                    interactive=False, elem_classes=["gb-speaker"],
+                )
+                speaker_note = gr.HTML("", visible=False)
+                speaker_test_btn = gr.Button(
+                    "Test sound", size="sm", variant="secondary",
+                    scale=0, interactive=False,
+                )
+
             # ── HuggingFace account ───────────────────────────────────
             with gr.Column(scale=2, min_width=300):
                 gr.HTML(_section("Hugging Face account"))
@@ -1482,6 +1523,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             'on grabette-fleet</span></a>'
         )
 
+        # `release`, not `change`: the slider fires continuously while dragged,
+        # and each event re-renders every cue WAV on the device.
+        speaker_slider.release(fn=on_speaker_volume, inputs=speaker_slider, outputs=None)
+        speaker_test_btn.click(fn=on_speaker_test, outputs=None)
+
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)
         home_outputs = [home_header, home_network_cards, batt_popup_cn, batt_beep_cn]
@@ -1491,7 +1537,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_timer_cn.tick(fn=get_home_status, outputs=home_outputs)
         batt_beep_cn.change(fn=None, inputs=batt_beep_cn, outputs=None, js=_BATTERY_BEEP_JS)
         demo.load(fn=get_home_status, outputs=home_outputs)
-        _page_footer()
+        demo.load(
+            fn=load_speaker,
+            outputs=[speaker_slider, speaker_note, speaker_test_btn],
+        )
         demo.load(fn=None, js=_PAGE_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1718,7 +1767,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_popup_ep = gr.HTML(visible=False)
         batt_beep_ep = gr.Textbox(visible=False)
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
-        _page_footer()
         demo.load(fn=None, js=_PAGE_INIT_JS)
 
         # Battery warning rides on the status-bar poll (one system-info read
@@ -1811,7 +1859,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         dv_system_timer.tick(fn=get_system_bar, outputs=dv_system_outputs)
         batt_beep_lv.change(fn=None, inputs=batt_beep_lv, outputs=None, js=_BATTERY_BEEP_JS)
         live_demo.load(fn=get_system_bar, outputs=dv_system_outputs)
-        _page_footer()
         live_demo.load(fn=None, js=_PAGE_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1851,7 +1898,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[poweroff_page_header, batt_popup_po, batt_beep_po],
         )
         batt_beep_po.change(fn=None, inputs=batt_beep_po, outputs=None, js=_BATTERY_BEEP_JS)
-        _page_footer()
         poweroff_demo.load(fn=None, js=_PAGE_INIT_JS)
 
     return demo

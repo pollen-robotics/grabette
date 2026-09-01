@@ -1,12 +1,15 @@
 """Speaker cue tests — no audio hardware involved.
 
-The contract that matters on-device is that the cue is a valid 48 kHz stereo
-WAV (the codec's fixed 12 MHz MCLK / mclk-fs=250 leaves no other rate) and that
-every failure path stays silent instead of raising into start_capture.
+Two contracts. On-device, the cue has to be a valid 48 kHz stereo WAV (the
+codec's fixed 12 MHz MCLK / mclk-fs=250 leaves no other rate) and every failure
+path has to stay silent rather than raise into start_capture. From the
+dashboard, the volume has to actually reach every cue, survive a restart, and
+keep working on a grabette with no speaker fitted at all.
 """
 
 from __future__ import annotations
 
+import threading
 import wave
 
 from grabette.hardware import sound
@@ -309,3 +312,82 @@ def test_play_never_raises_when_spawn_fails(monkeypatch):
     monkeypatch.setattr(sound.subprocess, "Popen", boom)
     speaker._spawn(speaker._cues[sound.CUE_START])  # swallowed + logged, never raised
     speaker.close()
+
+
+# ── Runtime volume ────────────────────────────────────────────────────────
+#
+# The volume is baked into the rendered samples (aplay has no volume of its
+# own), so "set the volume" means "render the cues again" — and that is the
+# part that can silently half-work.
+
+def _speaker(tmp_path, monkeypatch, **kw):
+    """A Speaker with its persistence pointed at tmp_path."""
+    monkeypatch.setattr(sound, "_volume_path", lambda: tmp_path / "speaker_volume.json")
+    return sound.Speaker(device="plughw:test", **kw)
+
+
+def test_set_volume_rerenders_every_cue(tmp_path, monkeypatch):
+    sp = _speaker(tmp_path, monkeypatch, volume=1.0)
+    sp._render_cues()
+    loud = {n: _peak(p) for n, p in sp._cues.items()}
+    assert loud and all(v > 0 for v in loud.values())
+
+    sp.set_volume(0.2)
+    quiet = {n: _peak(p) for n, p in sp._cues.items()}
+    # Every cue, not just the first: a partial re-render would leave some loud.
+    for name in loud:
+        assert quiet[name] < loud[name], f"{name} was not re-rendered"
+
+
+def test_volume_is_clamped_to_a_usable_gain():
+    assert sound.clamp_volume(2.5) == 1.0
+    assert sound.clamp_volume(-1) == 0.0
+    assert sound.clamp_volume(0.42) == 0.42
+
+
+def test_volume_survives_a_restart(tmp_path, monkeypatch):
+    sp = _speaker(tmp_path, monkeypatch, volume=0.6)
+    sp.set_volume(0.25)
+    monkeypatch.setattr(sound, "_volume_path", lambda: tmp_path / "speaker_volume.json")
+    assert sound.load_saved_volume() == 0.25
+
+
+def test_a_corrupt_volume_file_falls_back_instead_of_failing_boot(tmp_path, monkeypatch):
+    path = tmp_path / "speaker_volume.json"
+    path.write_text("{ not json")
+    monkeypatch.setattr(sound, "_volume_path", lambda: path)
+    assert sound.load_saved_volume() is None
+
+
+def test_volume_is_stored_even_with_no_speaker_fitted(tmp_path, monkeypatch):
+    """Fitting a speaker later must bring up the level the operator chose."""
+    sp = _speaker(tmp_path, monkeypatch, volume=0.6)
+    sp._enabled = False  # what prepare() does when no codec is present
+    assert sp.set_volume(0.15) == 0.15
+    assert sp.is_available is False
+    monkeypatch.setattr(sound, "_volume_path", lambda: tmp_path / "speaker_volume.json")
+    assert sound.load_saved_volume() == 0.15
+
+
+def test_test_cue_ignores_the_debounce(tmp_path, monkeypatch):
+    """A person pressing Test twice means it twice — unlike a burst of events."""
+    sp = _speaker(tmp_path, monkeypatch, volume=0.6)
+    sp._render_cues()
+    spawned = []
+    monkeypatch.setattr(sp, "_spawn", lambda wav: spawned.append(wav) or True)
+
+    sp.play_saved()
+    sp.play_saved()   # inside CUE_DEBOUNCE_S — swallowed
+    assert sp.play_test() is True
+    assert sp.play_test() is True
+
+    for t in threading.enumerate():
+        if t.name in ("speaker-cue", "speaker-test"):
+            t.join(timeout=2)
+    assert len(spawned) == 3  # one debounced cue + both tests
+
+
+def test_test_cue_reports_false_with_no_cues(tmp_path, monkeypatch):
+    sp = _speaker(tmp_path, monkeypatch, volume=0.6)
+    sp._enabled = False
+    assert sp.play_test() is False

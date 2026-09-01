@@ -1283,8 +1283,9 @@ def create_app() -> FastAPI:
                 #    reader. The device API is documented in the repo instead.
                 #  - "gradio" is the credit, and it is translated from
                 #    navigator.language with no server-side override — a French
-                #    browser got "Créé avec Gradio". ui/app.py's _page_footer
-                #    renders the same attribution in English instead.
+                #    browser got "Créé avec Gradio". Dropped rather than
+                #    reproduced; Gradio is Apache-2.0 and asks for no in-app
+                #    attribution.
                 footer_links=[],
                 allowed_paths=[str(settings.data_dir / ".downloads")],
             )

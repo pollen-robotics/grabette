@@ -7,6 +7,7 @@ import socket
 import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -277,3 +278,52 @@ async def system_update():
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Speaker
+#
+# The speaker is OPTIONAL hardware (see hardware/sound.py): a grabette built
+# without one is a supported configuration, so every endpoint here answers
+# normally with available=false rather than erroring. The volume is still
+# stored in that case — fit a speaker later and it comes up at the chosen
+# level.
+# ---------------------------------------------------------------------------
+
+class SpeakerVolume(BaseModel):
+    volume: float = Field(ge=0.0, le=1.0)
+
+
+def _speaker_state() -> dict:
+    from grabette.hardware.sound import get_speaker
+
+    speaker = get_speaker()
+    return {"available": speaker.is_available, "volume": round(speaker.volume, 2)}
+
+
+@router.get("/speaker")
+def speaker_status() -> dict:
+    """Whether cues can be played at all, and at what volume."""
+    return _speaker_state()
+
+
+@router.post("/speaker")
+def speaker_set_volume(req: SpeakerVolume) -> dict:
+    """Set the cue volume. Takes effect on the next cue — no restart."""
+    from grabette.hardware.sound import get_speaker
+
+    get_speaker().set_volume(req.volume)
+    return _speaker_state()
+
+
+@router.post("/speaker/test")
+def speaker_test() -> dict:
+    """Play one short cue, so the operator can hear what they just set.
+
+    Uses the 'episode saved' blip: it is the shortest of the four, and the one
+    least likely to be mistaken for a recording actually starting.
+    """
+    from grabette.hardware.sound import get_speaker
+
+    played = get_speaker().play_test()
+    return {"played": played, **_speaker_state()}

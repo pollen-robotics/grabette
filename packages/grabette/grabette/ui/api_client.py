@@ -321,6 +321,34 @@ class GrabetteClient:
         except Exception:
             return {"active": False, "episode_id": None, "time_ms": 0, "duration_ms": 0, "playing": False}
 
+    # -- Speaker --
+
+    def get_speaker(self) -> dict:
+        """{"available", "volume"}. Unavailable is the honest answer on a
+        failed call too: the control must not pretend it can do anything."""
+        try:
+            r = self._http.get("/api/system/speaker", timeout=3.0)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return {"available": False, "volume": 0.0}
+
+    def set_speaker_volume(self, volume: float) -> dict:
+        try:
+            r = self._http.post("/api/system/speaker", json={"volume": volume}, timeout=5.0)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            return {"error": str(exc)}
+
+    def test_speaker(self) -> dict:
+        try:
+            r = self._http.post("/api/system/speaker/test", timeout=5.0)
+            r.raise_for_status()
+            return r.json()
+        except Exception as exc:
+            return {"error": str(exc)}
+
     # -- WiFi --
 
     def wifi_status(self) -> dict:
