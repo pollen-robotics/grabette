@@ -1274,6 +1274,15 @@ def create_app() -> FastAPI:
                 app, demo, path="/",
                 theme=fleet_theme(),
                 css=APP_CSS,
+                # Footer: keep the Gradio credit, drop the other two.
+                #  - "settings" is a second display-theme picker that does not
+                #    write the preference our header switch stores, so the two
+                #    silently contradict each other.
+                #  - "api" opens Gradio's API recorder, which on this app just
+                #    streams the dashboard's own 3 s polling timers back at the
+                #    reader. The device API is documented in the repo instead.
+                # Dropping them also removes the trailing separator they left.
+                footer_links=["gradio"],
                 allowed_paths=[str(settings.data_dir / ".downloads")],
             )
             logger.info("Gradio UI mounted at /")

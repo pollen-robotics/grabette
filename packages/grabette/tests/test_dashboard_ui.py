@@ -175,3 +175,75 @@ def test_content_is_capped_while_the_shell_is_full_bleed():
 def test_phone_breakpoint_collapses_the_card_grid():
     phone = _css().split("@media (max-width: 700px)", 1)[1]
     assert "grid-template-columns: 1fr" in phone
+
+
+# ── Section headings ──────────────────────────────────────────────────────
+
+def test_section_heading_is_plain_html_and_escaped():
+    """Markdown's block chrome clips a heading into a pill; ours is bare HTML."""
+    out = ui._section("Network & <b>more</b>")
+    assert out.startswith("<h2 class='gb-section'>")
+    assert "<b>" not in out and "&amp;" in out
+
+
+def test_markdown_block_chrome_is_stripped():
+    """Gradio's inline `overflow: auto` on the block is what does the clipping."""
+    css = _css()
+    rule = re.search(r"\.block:has\(\[data-testid=\"markdown-wrapper\"\]\)\s*\{([^}]*)\}", css)
+    assert rule, "markdown blocks are no longer neutralised"
+    # !important is required: it has to beat the component's inline style.
+    assert "overflow: visible !important" in rule.group(1)
+
+
+# ── Theme switch ──────────────────────────────────────────────────────────
+
+def test_theme_segments_set_their_own_mode():
+    """Two buttons, not one toggle: picking the active one must be a no-op."""
+    for mode in ("light", "dark"):
+        js = ui._theme_set_js(mode)
+        assert f"'{mode}'" in js
+        assert "localStorage.setItem('grabette-theme'" in js
+        assert "__grabetteApplyTheme" in js
+    assert ui._theme_set_js("light") != ui._theme_set_js("dark")
+
+
+def test_theme_choice_survives_navigation_and_honours_the_url():
+    lib = ui._THEME_JS_LIB
+    assert "localStorage" in lib          # kept across the navbar's plain links
+    assert "__theme" in lib               # an explicit URL request still wins
+    assert "prefers-color-scheme" in lib  # OS setting is the last fallback
+
+
+# ── Fleet call to action ──────────────────────────────────────────────────
+
+def test_fleet_cta_text_is_the_higher_contrast_choice():
+    """White on this emerald→blue gradient bottoms out at 2.5:1; black at 5.6:1.
+
+    Recomputed here rather than trusted, so a change to the gradient that makes
+    white viable (or black worse) fails instead of passing silently.
+    """
+    rule = re.search(r"\.gb-fleet\s*\{([^}]*)\}", _css()).group(1)
+    stops = re.findall(r"#([0-9a-f]{6})", rule)
+    assert len(stops) >= 2, "expected a two-stop gradient"
+
+    def luminance(hexstr):
+        parts = [int(hexstr[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        lin = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in parts]
+        return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+    def ratio(a, b):
+        hi, lo = max(a, b), min(a, b)
+        return (hi + 0.05) / (lo + 0.05)
+
+    # Sample the sweep, not just the stops: the midpoint is its own worst case.
+    a, b = [tuple(int(s[i:i + 2], 16) for i in (0, 2, 4)) for s in stops[:2]]
+    samples = []
+    for t in (0.0, 0.25, 0.5, 0.75, 1.0):
+        mix = "".join(f"{round(a[i] + (b[i] - a[i]) * t):02x}" for i in range(3))
+        samples.append(luminance(mix))
+
+    worst_black = min(ratio(lum, 0.0) for lum in samples)
+    worst_white = min(ratio(lum, 1.0) for lum in samples)
+    assert worst_black > worst_white
+    assert worst_black >= 4.5, f"AA needs 4.5:1, got {worst_black:.2f}"
+    assert "color: #000" in rule

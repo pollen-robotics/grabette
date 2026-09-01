@@ -196,14 +196,23 @@ body.dark {
 .gradio-container .html-container { padding: 0 !important; }
 
 /* ── Section rhythm ────────────────────────────────────────────────────────
-   Markdown "## Foo" is what separates one section from the next, so it has to
-   read as a divider, not as body text that happens to be bold. */
-.gradio-container h2 {
-    font-size: .95rem !important;
-    font-weight: 700 !important;
-    letter-spacing: .02em;
-    color: var(--gb-soft) !important;
-    margin: 1.6rem 0 .1rem !important;
+   A section heading is text, not a widget, but Gradio wraps every Markdown in
+   a padded rounded block carrying an inline `overflow: auto`. Give the heading
+   a margin and that block becomes a pill with the text clipped inside it — so
+   strip the chrome from Markdown blocks (a stylesheet !important does beat the
+   inline style), and render our own headings as plain HTML with the spacing on
+   the heading itself. */
+.gradio-container .block:has([data-testid="markdown-wrapper"]) {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+}
+h2.gb-section {
+    font-size: .95rem; font-weight: 700; letter-spacing: .02em;
+    color: var(--gb-soft);
+    margin: 1.5rem 0 .55rem;
 }
 /* Gradio dims disabled buttons by lightening them, which on a dark ground
    produces a near-white bar with unreadable text. Use the palette instead. */
@@ -212,18 +221,51 @@ body.dark {
     color: var(--gb-muted) !important;
     opacity: 1 !important;
 }
-/* One theme switch, not two: Gradio's footer cog opens its own display-theme
-   picker, which does not write our stored preference and would be silently
-   undone on the next page. The ◐ button in the header is the control. */
-footer .settings, footer .settings + .divider { display: none !important; }
+/* The footer's cog (a second, contradicting theme picker) and its API link are
+   dropped through Gradio's footer_links in app/main.py — see the comment
+   there. That leaves the Gradio credit alone between two separators with
+   nothing left to separate. */
+footer .divider { display: none !important; }
 
 /* ── Page header (device name + battery), identical on all four pages ───── */
-.gb-header-row { align-items: center !important; gap: .6rem !important; }
-.gb-theme-btn, .gb-theme-btn button {
-    min-width: 2.6rem !important; max-width: 3rem;
-    padding: .45rem 0 !important; font-size: 1.05rem !important;
-    background: var(--gb-sunk) !important; border: 1px solid var(--gb-border) !important;
-    color: var(--gb-soft) !important;
+.gb-header-row { align-items: center !important; gap: .75rem !important; }
+
+/* Theme switch: a two-segment control, the way a phone shows a setting with
+   two named states — both options visible and labelled, the active one filled.
+   Two real buttons rather than one toggle, so clicking "Light" while already
+   light does nothing instead of flipping to dark. */
+/* basis 0, not auto: the band's natural width (name + battery pill) is wide
+   enough that an auto basis plus the switch overflows the row and wraps it. */
+.gb-head-block { flex: 1 1 0 !important; min-width: 0 !important; }
+.gb-theme-col { flex: 0 0 auto !important; }
+.gb-theme-switch {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    gap: .15rem !important;
+    padding: .2rem !important;
+    border-radius: 999px !important;
+    background: var(--gb-sunk) !important;
+    border: 1px solid var(--gb-border) !important;
+}
+/* Each segment is a Gradio block wrapper around a <button>; both have to stop
+   fighting the pill for width and padding. */
+.gb-theme-switch > * { min-width: 0 !important; padding: 0 !important; }
+.gb-seg, .gb-seg button {
+    min-width: 0 !important;
+    padding: .32rem .8rem !important;
+    border: 0 !important; border-radius: 999px !important;
+    background: transparent !important;
+    color: var(--gb-muted) !important;
+    font-size: .8rem !important; font-weight: 600 !important;
+    white-space: nowrap;
+    box-shadow: none !important;
+    transition: background .12s ease, color .12s ease;
+}
+.gb-seg:hover, .gb-seg button:hover { color: var(--gb-text) !important; }
+.gb-seg-on, .gb-seg-on button, button.gb-seg-on {
+    background: var(--gb-card) !important;
+    color: var(--gb-text) !important;
+    box-shadow: 0 1px 3px rgba(22, 33, 62, .18) !important;
 }
 .gb-head {
     display: flex; align-items: center; justify-content: space-between;
@@ -298,20 +340,35 @@ footer .settings, footer .settings + .divider { display: none !important; }
 }
 /* The one call to action on the page. Wide is fine for a banner — but not tall
    and not shouting, or it competes with the state above it. */
+/* Black, not white. Measured against this gradient (WCAG 2.1 contrast ratio):
+     emerald #10b981 — white 2.5:1, black 8.3:1
+     midpoint ~#259dbb — white 3.2:1, black 6.5:1
+     blue    #3b82f6 — white 3.8:1, black 5.6:1
+   White fails AA (4.5:1) across the whole sweep and fails even the 3:1 large-
+   text floor at the emerald end. Black clears AA everywhere, worst case 5.6:1.
+   The subtitle stays fully opaque for the same reason — dimming it with an
+   opacity would give back exactly the contrast this is buying. */
 .gb-fleet {
     display: flex; flex-direction: column; align-items: center; gap: .2rem;
     margin-top: 1.6rem; padding: 1.15rem 1.5rem;
-    border-radius: 14px; text-decoration: none; color: #fff;
+    border-radius: 14px; text-decoration: none; color: #000;
     background: linear-gradient(135deg, #10b981, #3b82f6);
     box-shadow: 0 4px 16px rgba(16, 185, 129, .22);
     transition: filter .12s ease;
 }
-.gb-fleet:hover { filter: brightness(1.05); }
+.gb-fleet:hover { filter: brightness(1.06); }
 .gb-fleet-title { font-size: 1.1rem; font-weight: 800; }
-.gb-fleet-sub { font-size: .87rem; opacity: .9; }
+.gb-fleet-sub { font-size: .87rem; font-weight: 500; }
 
 /* ── Phone ─────────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
+    /* The switch on its own line: sharing 390 px with the name band squeezed
+       the hostname into three lines and pushed the battery out of its card. */
+    .gb-header-row { flex-wrap: wrap !important; }
+    .gb-head-block, .gb-theme-col {
+        flex: 1 1 100% !important; min-width: 100% !important;
+    }
+    .gb-theme-switch { width: fit-content !important; margin-left: auto !important; }
     .gb-name { font-size: 1.2rem; }
     .gb-head { padding: .7rem .8rem; }
     /* One tile per row beats two unreadable slivers. */
@@ -405,14 +462,17 @@ _THEME_JS_LIB = """
     window.__gbDark = dark;
     document.body.classList.toggle('dark', dark);
     gbWatchFrames();
-    // The button says where a click takes you, not where you are.
-    document.querySelectorAll('.gb-theme-btn').forEach(function (w) {
-      var b = w.tagName === 'BUTTON' ? w : w.querySelector('button');
-      if (!b) { return; }
-      b.textContent = dark ? '\u2600' : '\u263E';
-      b.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
-      b.setAttribute('aria-label', b.title);
-    });
+    // Light the segment matching the current theme. elem_classes can land on
+    // the <button> or on a wrapper depending on the component, so handle both.
+    function seg(cls, on) {
+      document.querySelectorAll('.' + cls).forEach(function (w) {
+        var b = (w.tagName === 'BUTTON' ? w : w.querySelector('button')) || w;
+        b.classList.toggle('gb-seg-on', on);
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      });
+    }
+    seg('gb-seg-light', !dark);
+    seg('gb-seg-dark', dark);
   }
   window.__grabetteTheme = function () {
     // ?__theme= wins: it is Gradio's own convention, it is what its footer
@@ -426,13 +486,14 @@ _THEME_JS_LIB = """
   window.__grabetteApplyTheme = gbApply;
 """
 
-_THEME_TOGGLE_JS = """
-() => {
-  var next = document.body.classList.contains('dark') ? 'light' : 'dark';
-  try { localStorage.setItem('grabette-theme', next); } catch (e) {}
-  window.__grabetteApplyTheme(next);
-}
-"""
+def _theme_set_js(mode: str) -> str:
+    """Click handler for one segment: store the choice, apply it, no round-trip."""
+    return (
+        "() => {"
+        f" try {{ localStorage.setItem('grabette-theme', '{mode}'); }} catch (e) {{}}"
+        f" window.__grabetteApplyTheme('{mode}');"
+        "}"
+    )
 
 _HF_AUTH_IFRAME = (
     '<iframe src="/api/hf-auth/widget" scrolling="no"'
@@ -659,6 +720,15 @@ def _info_card(
     )
 
 
+def _section(text: str) -> str:
+    """A section heading, as plain HTML rather than Markdown.
+
+    Gradio's Markdown block wraps its content in chrome that turns a two-word
+    heading into a clipped pill; an HTML block carries none.
+    """
+    return f"<h2 class='gb-section'>{html.escape(text)}</h2>"
+
+
 def _card_row(cards: list[str], margin: str = "0") -> str:
     """Wrap rendered cards in the flex row that reflows to one column on a phone."""
     return f"<div class='gb-cards' style='margin:{margin}'>" + "".join(cards) + "</div>"
@@ -724,14 +794,21 @@ def _page_chrome():
     """
     gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
     with gr.Row(elem_classes=["gb-header-row"]):
-        header = gr.HTML(page_header_html(None))
-        theme_btn = gr.Button(
-            "\u263E", scale=0, min_width=44,
-            variant="secondary", elem_classes=["gb-theme-btn"],
-        )
+        header = gr.HTML(page_header_html(None), elem_classes=["gb-head-block"])
+        # A Column is what reliably takes scale/min_width here; the Row inside
+        # it is the pill the two segments sit in.
+        with gr.Column(scale=0, min_width=200, elem_classes=["gb-theme-col"]):
+            with gr.Row(elem_classes=["gb-theme-switch"]):
+                light_btn = gr.Button("\u2600 Light", min_width=88,
+                                      variant="secondary",
+                                      elem_classes=["gb-seg", "gb-seg-light"])
+                dark_btn = gr.Button("\u263E Dark", min_width=88,
+                                     variant="secondary",
+                                     elem_classes=["gb-seg", "gb-seg-dark"])
     # Client-side only: no round-trip, and the choice is kept in localStorage so
     # it survives the navbar's plain-link navigation between pages.
-    theme_btn.click(fn=None, inputs=None, outputs=None, js=_THEME_TOGGLE_JS)
+    light_btn.click(fn=None, inputs=None, outputs=None, js=_theme_set_js("light"))
+    dark_btn.click(fn=None, inputs=None, outputs=None, js=_theme_set_js("dark"))
     return header
 
 
@@ -1376,7 +1453,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── Network ───────────────────────────────────────────────
             with gr.Column(scale=3, min_width=340):
-                gr.Markdown("## Network")
+                gr.HTML(_section("Network"))
                 home_network_cards = gr.HTML("")
 
                 with gr.Accordion("Switch network", open=False):
@@ -1401,7 +1478,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── HuggingFace account ───────────────────────────────────
             with gr.Column(scale=2, min_width=300):
-                gr.Markdown("## Hugging Face account")
+                gr.HTML(_section("Hugging Face account"))
                 gr.HTML(_HF_AUTH_IFRAME)
 
         # Big, obvious way to reach the fleet. We can't embed grabette-fleet
@@ -1440,7 +1517,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── LEFT: Tasks ──────────────────────────────────────────
             with gr.Column(scale=1, min_width=200, elem_id="tasks-col"):
-                gr.Markdown("## Tasks")
+                gr.HTML(_section("Tasks"))
                 task_list = gr.Radio(choices=[], label=None, container=False)
                 # Remembers, per browser, which task was selected so a page
                 # refresh stays on it instead of snapping back to the first

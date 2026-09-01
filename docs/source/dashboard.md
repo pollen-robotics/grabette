@@ -15,7 +15,7 @@ The device's IP address works too, and is shown on the **Home** page if `.local`
 
 Every page opens with the same band: the **device's hostname** on the left, its **battery** on the right, and the theme switch beside it. Same content, same position, whichever page you are on — with several Grabettes open in several tabs, that is how you tell them apart.
 
-The ◐ button switches between the **light and dark themes**. The choice is remembered in the browser and applies to every page; with no choice made, the dashboard follows the operating system's setting. (`?__theme=light` or `?__theme=dark` in the URL overrides both, for a bookmark or a kiosk.)
+Beside it, a **Light / Dark** switch. The choice is remembered in the browser and applies to every page; with no choice made, the dashboard follows the operating system's setting. (`?__theme=light` or `?__theme=dark` in the URL overrides both, for a bookmark or a kiosk.)
 
 ## Home
 
