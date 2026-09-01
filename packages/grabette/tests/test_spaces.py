@@ -102,3 +102,33 @@ def test_no_shipped_default_points_at_a_test_space(monkeypatch):
     assert "-test" not in spaces.fleet_url()
     assert "-test" not in spaces.space_url("fleet")
     assert "-test" not in spaces.space_url("slam")
+
+
+def test_the_derived_url_is_not_an_override():
+    assert not spaces.is_overridden()
+
+
+def test_the_derived_test_url_is_not_an_override(monkeypatch):
+    monkeypatch.setenv("GRABETTE_FLEET_ENV", "test")
+    assert not spaces.is_overridden()
+
+
+def test_a_third_space_is_an_override_on_either_env(monkeypatch):
+    # The case the dashboard used to paint exactly like production.
+    monkeypatch.setenv("GRABETTE_RELAY_URL", "https://gaelle-grabette-fleet.hf.space")
+    assert spaces.is_overridden()
+    monkeypatch.setenv("GRABETTE_FLEET_ENV", "test")
+    assert spaces.is_overridden()
+
+
+def test_writing_the_default_out_by_hand_is_not_an_override(monkeypatch):
+    # No false alarm, or the flag stops meaning anything. Trailing slash included.
+    monkeypatch.setenv("GRABETTE_RELAY_URL", PROD_FLEET + "/")
+    assert not spaces.is_overridden()
+
+
+def test_an_empty_relay_url_counts_as_an_override(monkeypatch):
+    # It is not the derived Space, and the tile says "no fleet" rather than
+    # showing a green production tile with a blank target.
+    monkeypatch.setenv("GRABETTE_RELAY_URL", "")
+    assert spaces.is_overridden()

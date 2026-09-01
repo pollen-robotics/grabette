@@ -61,9 +61,19 @@ def space_url(kind: str) -> str:
 def fleet_url() -> str:
     """The fleet Space this device registers with and logs in through.
 
-    GRABETTE_RELAY_URL wins when PRESENT, empty included — "" means "no relay",
-    which is a real setting, not a missing one."""
+    GRABETTE_RELAY_URL wins when PRESENT, empty included — "" is a real setting
+    (direct OAuth, see the module docstring), not a missing one. It does not stop
+    the relay client; GRABETTE_RELAY_ENABLED=false does."""
     override = os.environ.get("GRABETTE_RELAY_URL")
     if override is not None:
         return override.rstrip("/")
     return space_url("fleet")
+
+
+def is_overridden() -> bool:
+    """Is the fleet URL something other than the one this env derives?
+
+    Asked so the dashboard can flag ANY unusual target, not just the test
+    deployment: a device pointed at a personal Space is just as easy to forget,
+    and used to look exactly like production."""
+    return fleet_url() != space_url("fleet")

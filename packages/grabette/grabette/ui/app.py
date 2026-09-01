@@ -880,10 +880,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # WHICH fleet, not just "the" fleet: a device left on the test deployment
         # keeps working perfectly and records into a fleet nobody is watching, and
         # nothing on this page used to say so. The Space name is always shown, and
-        # the tile turns amber on anything that isn't prod — see grabette.spaces.
+        # the tile turns amber on anything that is not the derived production
+        # Space — an explicit GRABETTE_RELAY_URL included, which is just as easy
+        # to forget as the test env and used to look exactly like production.
         _test = spaces.is_test()
-        _target = settings.relay_url.replace("https://", "")
-        _grad = ("linear-gradient(135deg,#d97706,#b45309)" if _test
+        _custom = spaces.is_overridden()
+        _flag = "⚠ TEST DEPLOYMENT" if _test else "⚠ CUSTOM FLEET" if _custom else ""
+        _target = settings.relay_url.replace("https://", "") or "no fleet (relay URL unset)"
+        _grad = ("linear-gradient(135deg,#d97706,#b45309)" if (_test or _custom)
                  else "linear-gradient(135deg,#10b981,#3b82f6)")
         gr.HTML(
             f'<a href="{settings.relay_url}" target="_blank" rel="noopener" '
@@ -891,8 +895,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             'text-align:center;text-decoration:none;color:#fff;'
             f'background:{_grad};'
             'box-shadow:0 6px 22px rgba(0,0,0,.28);">'
-            + ('<div style="font-size:.8rem;font-weight:800;letter-spacing:.08em;'
-               'margin-bottom:.5rem;">⚠ TEST DEPLOYMENT</div>' if _test else '')
+            + (f'<div style="font-size:.8rem;font-weight:800;letter-spacing:.08em;'
+               f'margin-bottom:.5rem;">{_flag}</div>' if _flag else '')
             + '<div style="font-size:1.7rem;font-weight:800;">Open fleet dashboard ↗</div>'
             '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
             f'Manage tasks, sessions and datasets on {_target}</div></a>'

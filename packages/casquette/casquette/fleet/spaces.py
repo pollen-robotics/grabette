@@ -58,9 +58,14 @@ def space_url(kind: str) -> str:
 def fleet_url() -> str:
     """The fleet Space this device registers with.
 
-    CASQUETTE_RELAY_URL wins when PRESENT, empty included — "" means "no relay",
-    which is a real setting, not a missing one."""
+    CASQUETTE_RELAY_URL wins when PRESENT, empty included. "" is not "no relay"
+    here (see the module docstring) — standalone is CASQUETTE_RELAY_ENABLED=false."""
     override = os.environ.get("CASQUETTE_RELAY_URL")
     if override is not None:
         return override.rstrip("/")
     return space_url("fleet")
+
+
+def is_overridden() -> bool:
+    """Is the fleet URL something other than the one this env derives?"""
+    return fleet_url() != space_url("fleet")
