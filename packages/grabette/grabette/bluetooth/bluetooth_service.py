@@ -470,22 +470,57 @@ class Application(dbus.service.Object):
 # Network helpers
 # =====================================================================
 
-def _active_wifi_ssid() -> str:
-    """Name of the currently-connected WiFi network, or "" if none.
+def _nmcli_unescape(value: str) -> str:
+    """Undo nmcli's terse-mode escaping: ``\\:`` is ':' and ``\\\\`` is a backslash.
 
-    Reads the active connections (no scan, so it stays fast enough for the
-    periodic mainloop refresh): the active 802-11-wireless connection's NAME is
-    the SSID (NetworkManager names WiFi connections after the SSID by default).
+    One helper in place of the three hand-rolled variants this file had grown,
+    one of which (in _wifi_reset) only ever undid the ':' half — so a profile
+    name carrying a backslash was passed back to nmcli still escaped.
+    """
+    out = []
+    i = 0
+    while i < len(value):
+        if value[i] == "\\" and i + 1 < len(value):
+            out.append(value[i + 1])
+            i += 2
+        else:
+            out.append(value[i])
+            i += 1
+    return "".join(out)
+
+
+def _active_wifi_ssid() -> str:
+    """SSID of the currently-connected WiFi network, or "" if none.
+
+    Reads the *ssid property* of the active 802-11-wireless profile, not the
+    profile's name. The two only coincide when NetworkManager created the
+    profile itself; netplan renders its own as "netplan-<iface>-<ssid>", so
+    trusting the name put "netplan-wlan0-Home" on screen where "Home" belonged.
+
+    The profile is addressed by UUID rather than by name, so a name carrying
+    ':' or other nmcli-escaped characters cannot be mis-resolved. Neither call
+    scans, so this stays fast enough for the periodic mainloop refresh.
     """
     try:
-        result = subprocess.run(
-            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"],
+        active = subprocess.run(
+            ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show", "--active"],
             capture_output=True, text=True, timeout=5,
         )
-        for line in result.stdout.splitlines():
-            if line.endswith(":802-11-wireless"):
-                name = line[: -len(":802-11-wireless")]
-                return name.replace("\\:", ":")  # un-escape nmcli's ':'
+        for line in active.stdout.splitlines():
+            if not line.endswith(":802-11-wireless"):
+                continue
+            uuid = line[: -len(":802-11-wireless")]
+            detail = subprocess.run(
+                ["nmcli", "-t", "-f", "802-11-wireless.ssid",
+                 "connection", "show", uuid],
+                capture_output=True, text=True, timeout=5,
+            )
+            # "802-11-wireless.ssid:<ssid>" — the field name holds no ':', so
+            # the first separator is the field one and the rest is the SSID.
+            for detail_line in detail.stdout.splitlines():
+                _, sep, ssid = detail_line.partition(":")
+                if sep and ssid:
+                    return _nmcli_unescape(ssid)
     except Exception:
         pass
     return ""
@@ -566,7 +601,7 @@ def _wifi_scan() -> str:
         # -t output is "SSID:SIGNAL"; SIGNAL is the numeric last field, and
         # any ':' inside the SSID is backslash-escaped by nmcli.
         ssid, _, signal = line.rpartition(":")
-        ssid = ssid.replace("\\:", ":").replace("\\\\", "\\").strip()
+        ssid = _nmcli_unescape(ssid).strip()
         if not ssid or ssid in seen:  # skip hidden (empty) and duplicates
             continue
         seen.add(ssid)
@@ -587,6 +622,50 @@ def _wifi_scan() -> str:
     return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
 
+# WPA-PSK passphrase length, from IEEE 802.11i: 8-63 characters, or exactly 64
+# for a raw hex PSK. nmcli rejects anything else at profile-creation time with
+# "802-11-wireless-security.psk: property is invalid", which says nothing about
+# what a user is meant to do, so the length is checked here instead.
+WPA_PSK_MIN_LEN = 8
+WPA_PSK_MAX_LEN = 63
+WPA_PSK_HEX_LEN = 64
+
+# The reply is delivered as a single BLE notification (see
+# WIFI_SCAN_MTU_BUDGET), so an untranslated nmcli message has to be trimmed
+# rather than silently truncated by the ATT layer.
+WIFI_ERROR_MAX_LEN = 150
+
+
+def _wifi_connect_error(raw: str, ssid: str) -> str:
+    """Translate an nmcli failure into a sentence that names the likely cause.
+
+    nmcli reports a rejected passphrase as "(7) Secrets were required, but not
+    provided": NetworkManager asks a secret agent for a corrected password and
+    a headless device has none. That reads as a fault in the provisioning tool
+    rather than as "the password is wrong", which is what it almost always is.
+
+    Unrecognised failures keep nmcli's own wording — it is better than a vague
+    guess, and the full text is in the service log either way.
+    """
+    low = raw.lower()
+    if "secrets were required" in low or "no secrets" in low:
+        return f'Wrong password for "{ssid}" — the network refused it.'
+    if "network could not be found" in low or "no network with ssid" in low:
+        return f'"{ssid}" was not found — check the name, and that it is in range.'
+    if "ip configuration could not be reserved" in low:
+        return f'Joined "{ssid}", but it handed out no address (DHCP failed).'
+    if "timeout expired" in low or "timed out" in low:
+        return f'Timed out joining "{ssid}" — it may be out of range.'
+    if "psk" in low and "invalid" in low:
+        return (f"That password is not a valid WiFi passphrase "
+                f"({WPA_PSK_MIN_LEN}-{WPA_PSK_MAX_LEN} characters).")
+    if not raw:
+        return f'Could not join "{ssid}" (no reason reported).'
+    if len(raw) > WIFI_ERROR_MAX_LEN:
+        return raw[: WIFI_ERROR_MAX_LEN - 1] + "…"
+    return raw
+
+
 def _wifi_connect(ssid: str, password: str) -> str:
     """Connect to a WiFi network using nmcli. Returns status message.
 
@@ -596,7 +675,18 @@ def _wifi_connect(ssid: str, password: str) -> str:
     ``key-mgmt``. We rescan first, and delete any incomplete profile a previous
     failed attempt left under the same name (a common cause of the key-mgmt
     error on retry), then connect fresh.
+
+    Failures come back through _wifi_connect_error, so the client shows the
+    cause rather than an nmcli status code.
     """
+    # Reject an impossible passphrase before touching the radio: this is the
+    # one failure we can name with certainty, and the round-trip through nmcli
+    # only turns it into a property-validation error.
+    if not (WPA_PSK_MIN_LEN <= len(password) <= WPA_PSK_MAX_LEN
+            or len(password) == WPA_PSK_HEX_LEN):
+        return (f"ERROR: A WiFi password is {WPA_PSK_MIN_LEN}-{WPA_PSK_MAX_LEN} "
+                f"characters; this one is {len(password)}.")
+
     # Active rescan so the AP is visible to NetworkManager. Timeouts are kept
     # tight so the whole flow stays under the client's 35s notification timeout.
     try:
@@ -636,7 +726,8 @@ def _wifi_connect(ssid: str, password: str) -> str:
             capture_output=True, text=True, timeout=15,
         )
         if add.returncode != 0:
-            return f"ERROR: {add.stderr.strip() or add.stdout.strip()}"
+            detail = add.stderr.strip() or add.stdout.strip()
+            return f"ERROR: {_wifi_connect_error(detail, ssid)}"
 
         up = subprocess.run(
             ["nmcli", "connection", "up", ssid],
@@ -647,13 +738,14 @@ def _wifi_connect(ssid: str, password: str) -> str:
         # Bring-up failed (wrong password, out of range…): remove the profile
         # so the next attempt starts clean.
         error = up.stderr.strip() or up.stdout.strip()
+        logger.warning("nmcli failed to join %r: %s", ssid, error)
         subprocess.run(
             ["nmcli", "connection", "delete", ssid],
             capture_output=True, text=True,
         )
-        return f"ERROR: {error}"
+        return f"ERROR: {_wifi_connect_error(error, ssid)}"
     except subprocess.TimeoutExpired:
-        return "ERROR: Connection timed out"
+        return f'ERROR: Timed out joining "{ssid}" — it may be out of range.'
     except Exception as e:
         return f"ERROR: {e}"
 
@@ -671,8 +763,7 @@ def _wifi_reset() -> str:
             if ":802-11-wireless" not in line:
                 continue
             conn_name = line.split(":802-11-wireless")[0]
-            # Unescape nmcli escaping
-            conn_name = conn_name.replace("\\:", ":")
+            conn_name = _nmcli_unescape(conn_name)
             if conn_name == "Hotspot":
                 continue
             subprocess.run(

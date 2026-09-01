@@ -29,4 +29,44 @@ All settings via environment variables with `GRABETTE_` prefix. Persistent per-d
 | `GRABETTE_PROXIMAL_SIGN` | (from `hand`) | Override the hand-derived proximal sensor sign. ±1 |
 | `GRABETTE_UI_ENABLED` | `true` | Enable Gradio dashboard |
 | `GRABETTE_BUTTON_ENABLED` | `true` | Enable hardware button |
+| `GRABETTE_SOUND_ENABLED` | `true` | Cues on the HAT speaker: recording start, recording stop, episode saved, failed command |
+| `GRABETTE_SOUND_DEVICE` | (auto) | ALSA device. Empty = auto-detect the codec by card name (`plughw:CARD=aic3104`) |
+| `GRABETTE_SOUND_VOLUME` | `0.6` | Amplitude of the generated cue, `0`..`1` (absolute loudness is the codec mixer's job) |
 | `GRABETTE_LOG_LEVEL` | `INFO` | Logging level |
+
+## Audible recording cue
+
+`GRABETTE_SOUND_*` drives the TLV320AIC3104 codec on the V2 HAT. Two cues, both
+placed at the real boundaries of the take rather than at the button press:
+
+- **ascending**, from `RpiBackend.start_capture`, at the point where the
+  recording is genuinely rolling — OAK-D warmed up, sync clock started, all
+  streams recording. On a synchronized group start every device reaches that
+  point at the shared T0 and they beep together.
+- **descending**, from the top of `RpiBackend.stop_capture`, where the streams
+  stop saving frames — i.e. *before* the ~1-2s mux, which it then plays over
+  (the cue is a detached subprocess, the mux blocks the event loop).
+- **short high blip**, from `RpiBackend._finalize_and_reinit`, straight after
+  `metadata.json` is written — i.e. muxes done *and* sidecars persisted, the
+  episode is complete on disk. Fired before the deferred hardware re-init, which
+  concerns the *next* capture, not this episode. The LED cannot express this: it
+  goes off when the streams are down, without waiting for the JSON writes.
+- **repeated triplet**, when a capture command fails: from `start_capture`
+  (any trigger), from `CaptureScheduler` (a group start/stop failing around it,
+  possibly on a peer nobody is watching), and from `ButtonListener` (failures
+  that never reach the backend — a fleet refusal, a start that never fired, a
+  refused stop). `sound.cue_error()` is the entry point for callers with no
+  backend handle. Overlapping reports of one failure collapse into a single
+  buzz via a per-cue debounce (`CUE_DEBOUNCE_S`), so no layer has to know
+  whether another already cued it. A failure of the deferred writes buzzes here
+  too, in place of the "saved" blip.
+
+The card is always addressed **by name**, never by index: on a Pi 4 the
+`vc4-hdmi` cards are registered too, so the codec's number isn't stable. Setting
+`GRABETTE_SOUND_DEVICE` overrides the auto-detection with any ALSA device string.
+
+The speaker is **optional hardware**, and sound is cosmetic: a missing codec, a
+missing `aplay`, or a playback error logs one line and is otherwise ignored —
+`play_start()`/`play_stop()` become no-ops and nothing in the recording path
+branches on it. Setup, the speaker-less case, and troubleshooting:
+[README → Speaker](../README.md#speaker-audible-recording-cue-make-install-audio).

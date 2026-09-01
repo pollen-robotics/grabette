@@ -1,0 +1,27 @@
+name: Build HF PR Documentation
+
+# Builds docs/source/ for a pull request and uploads it as an artifact. The
+# companion workflow (upload_pr_documentation.yml) publishes it and comments
+# the preview link on the PR — that preview is the only way to see the real
+# huggingface.co chrome (grouped sidebar, search, version selector), which
+# `doc-builder preview` cannot render locally.
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: huggingface/doc-builder/.github/workflows/build_pr_documentation.yml@main
+    with:
+      repo_owner: pollen-robotics
+      commit_sha: ${{ github.event.pull_request.head.sha }}
+      pr_number: ${{ github.event.number }}
+      package: grabette
+      # See build_documentation.yml for why this is required.
+      additional_args: --not_python_module

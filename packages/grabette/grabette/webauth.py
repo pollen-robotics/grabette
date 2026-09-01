@@ -49,6 +49,12 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
     async def oauth_configured() -> dict[str, Any]:
         return {"configured": auth.oauth_configured()}
 
+    @router.get("/oauth/warm-relay")
+    async def warm_relay() -> dict[str, Any]:
+        """Wake the fleet Space so the OAuth callback lands on a running relay
+        even with no dashboard tab open. Called by the login card before OAuth."""
+        return await auth.warm_relay()
+
     @router.get("/oauth/start")
     async def oauth_start() -> dict[str, Any]:
         result = auth.start_oauth()
@@ -105,6 +111,7 @@ button{{padding:.45rem .9rem;border:0;border-radius:7px;cursor:pointer;font-weig
 button.oauth{{background:#10b981;color:#fff;width:100%;margin-bottom:.5rem}}
 button.primary{{background:#f59e0b;color:#fff}}
 button.logout{{background:#ef4444;color:#fff}}
+.who-row{{display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap}}
 .muted{{color:#64748b;font-size:.78rem}}
 .err{{color:#dc2626;font-size:.78rem;min-height:1rem}}
 </style></head>
@@ -143,7 +150,7 @@ const HF='/api/hf-auth',_$=id=>document.getElementById(id);
 async function hfRefresh(){
  const s=await(await fetch(`${HF}/status`)).json();
  if(s.is_logged_in){
-  _$('hfStatus').innerHTML=`Logged in as <b>${s.username||'user'}</b> <button class="logout" onclick="hfLogout()">Logout</button>`;
+  _$('hfStatus').innerHTML=`<div class="who-row"><span>Logged in as <b>${s.username||'user'}</b></span><button class="logout" onclick="hfLogout()">Logout</button></div>`;
   _$('hfLogin').style.display='none';
  }else{
   _$('hfStatus').textContent='Not logged in.';_$('hfLogin').style.display='block';
@@ -158,7 +165,13 @@ _$('hfSave').onclick=async()=>{_$('hfErr').textContent='';const token=_$('hfTok'
  const r=await fetch(`${HF}/save-token`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});
  if(r.ok){_$('hfTok').value='';hfRefresh();}else{_$('hfErr').textContent=(await r.json()).detail||'failed';}};
 async function hfLogout(){await fetch(`${HF}/token`,{method:'DELETE'});hfRefresh();}
-_$('hfOauth').onclick=async()=>{const r=await(await fetch(`${HF}/oauth/start`)).json();
+_$('hfOauth').onclick=async()=>{_$('hfErr').textContent='';
+ const b=_$('hfOauth'),orig=b.textContent;b.disabled=true;b.textContent='Waking fleet…';
+ // Wake the (sleep-when-idle) fleet Space first, so the OAuth callback — routed
+ // through it by HF — lands on a running relay even with no dashboard tab open.
+ try{await fetch(`${HF}/oauth/warm-relay`);}catch(e){}
+ b.disabled=false;b.textContent=orig;
+ const r=await(await fetch(`${HF}/oauth/start`)).json();
  if(r.status!=='success'){_$('hfErr').textContent=r.message;return;}
  const p=window.open(r.auth_url,'hf','width=600,height=750');
  const t=setInterval(async()=>{const st=await(await fetch(`${HF}/oauth/status/${r.session_id}`)).json();

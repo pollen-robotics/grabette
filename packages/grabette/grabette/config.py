@@ -80,6 +80,19 @@ class Settings(BaseSettings):
     # Hardware button (Grove LED Button on GPIO22/23)
     button_enabled: bool = True
 
+    # Audible cue on the V2 HAT's TLV320AIC3104 codec: a beep at the instant a
+    # recording actually goes live (after the OAK-D warm-up), so the operator
+    # doesn't have to watch the LED — and a whole group beeps together at T0.
+    # Degrades silently when the codec isn't set up (see `make install-audio`).
+    sound_enabled: bool = True
+    # ALSA device. Empty = auto-detect the codec BY CARD NAME
+    # (plughw:CARD=aic3104) — never by index, since on a Pi 4 the vc4-hdmi
+    # cards shift the numbering. Set explicitly only to override.
+    sound_device: str = ""
+    # Amplitude of the generated tone, 0..1. The speaker's absolute loudness is
+    # set by the codec mixer in scripts/aic3104-init.sh; this only trims it.
+    sound_volume: float = 0.6
+
     # Logging
     log_level: str = "INFO"
 

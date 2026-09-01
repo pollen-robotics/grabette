@@ -5,177 +5,429 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Grabette Bluetooth Tool</title>
     <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
+        /* Visual language mirrors the Grabette fleet dashboard: same gradient
+           backdrop, same translucent cards, same numbered-step circles and the
+           same emerald→blue gradient on primary actions. */
+        * { box-sizing: border-box; }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            background: #1a1a2e;
-            color: #e0e0e0;
+            font-family: -apple-system, system-ui, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: #fff;
             min-height: 100vh;
-            padding: 20px;
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
         }
-        h1 {
-            text-align: center;
-            color: #4fc3f7;
-            margin-bottom: 24px;
-            font-size: 1.5em;
-        }
-        .container {
-            max-width: 420px;
-            margin: 0 auto;
-        }
+        .container { width: 100%; max-width: 640px; }
+        h1 { font-size: 1.3rem; margin: 0 0 .3rem; font-weight: 700; }
+        .muted { color: #a0aec0; font-size: .82rem; }
+        .intro { color: #c3cbe0; font-size: .88rem; line-height: 1.5; margin: 0 0 1.4rem; }
+
         .card {
-            background: #16213e;
-            border-radius: 12px;
-            padding: 16px;
-            margin-bottom: 16px;
-            border: 1px solid #2a3a5c;
+            background: rgba(255,255,255,.06);
+            padding: 1.2rem;
+            border-radius: 14px;
+            margin-bottom: 1rem;
         }
-        .card h2 {
-            font-size: 0.9em;
-            color: #90caf9;
+
+        /* Numbered step header — identical to the fleet's .ds-step/.step-num. */
+        .step {
+            display: flex;
+            align-items: center;
+            gap: .55rem;
+            font-weight: 700;
+            font-size: 1.05rem;
+            color: #e2e8f0;
+            margin-bottom: .9rem;
+        }
+        /* Outcome line under each step: the confirmation or error for that
+           step only, so the flow reads without opening the log. */
+        .step-msg {
+            display: none;
+            margin-top: .6rem;
+            padding: .45rem .6rem;
+            border-radius: 8px;
+            font-size: .82rem;
+            line-height: 1.35;
+        }
+        .step-msg.show { display: block; }
+        .step-msg.ok   { background: rgba(16,185,129,.16); color: #a7f3d0; border: 1px solid rgba(16,185,129,.4); }
+        .step-msg.err  { background: rgba(239,68,68,.14); color: #fca5a5; border: 1px solid rgba(248,113,113,.4); }
+        .step-msg.busy { background: rgba(255,255,255,.08); color: #c3cbe0; border: 1px solid rgba(255,255,255,.18); }
+        /* Subdued card for the out-of-flow diagnostics panel — same treatment
+           as the fleet's .sp-manage-zone. */
+        .card.diag { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); margin-top: 1.4rem; }
+        .section-label {
+            font-size: .72rem;
+            font-weight: 700;
+            color: #8b98ad;
+            letter-spacing: .05em;
             text-transform: uppercase;
-            letter-spacing: 1px;
-            margin-bottom: 12px;
+            margin-bottom: .9rem;
         }
+        .step-hint { color: #8b98ad; font-size: .78rem; line-height: 1.4; margin: 0 0 .6rem; }
+        #connectHint { margin: .55rem 0 0; }
+        .step-num {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.7rem;
+            height: 1.7rem;
+            flex-shrink: 0;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #10b981, #3b82f6);
+            color: #fff;
+            font-size: .85rem;
+            font-weight: 700;
+        }
+
         button {
             display: block;
             width: 100%;
-            padding: 12px;
-            border: none;
+            padding: .55rem 1rem;
+            border: 0;
             border-radius: 8px;
-            font-size: 1em;
+            font-size: .95rem;
             font-weight: 600;
             cursor: pointer;
-            transition: opacity 0.2s;
-            margin-bottom: 8px;
+            transition: opacity .2s;
+            margin-bottom: .5rem;
         }
         button:hover { opacity: 0.85; }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         button:last-child { margin-bottom: 0; }
-        .btn-primary { background: #4fc3f7; color: #1a1a2e; }
-        .btn-success { background: #66bb6a; color: #1a1a2e; }
-        .btn-danger  { background: #ef5350; color: #fff; }
-        .btn-secondary { background: #546e7a; color: #fff; }
+        .btn-primary, .btn-success { background: linear-gradient(135deg, #10b981, #3b82f6); color: #fff; }
+        .btn-danger  { background: #ef4444; color: #fff; }
+        .btn-secondary {
+            background: rgba(255,255,255,.08);
+            color: #c3cbe0;
+            border: 1px solid rgba(255,255,255,.18);
+        }
+        .btn-secondary:hover { background: rgba(255,255,255,.14); opacity: 1; }
         #networkList { max-height: 220px; overflow-y: auto; }
-        #networkList:not(:empty) { margin-bottom: 8px; }
-        #networkList button { background: #37474f; color: #fff; font-weight: 400; text-align: left; }
+        #networkList:not(:empty) { margin-bottom: .5rem; }
+        #networkList button { text-align: left; font-weight: 400; }
         select, input {
             display: block;
             width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #2a3a5c;
+            padding: .5rem .7rem;
+            border: 1px solid #334;
             border-radius: 8px;
-            background: #0f1629;
-            color: #e0e0e0;
-            font-size: 1em;
-            margin-bottom: 8px;
+            background: rgba(255,255,255,.05);
+            color: #fff;
+            font: inherit;
+            font-size: .9rem;
+            margin-bottom: .5rem;
         }
-        select { cursor: pointer; }
-        input::placeholder { color: #546e7a; }
-        input:focus, select:focus { outline: none; border-color: #4fc3f7; }
+        select { cursor: pointer; background: #fff; color: #111; }
+        select option { background: #fff; color: #111; }
+        input::placeholder { color: #8b98ad; }
+        input:focus, select:focus { outline: none; border-color: #3b82f6; }
         #log {
-            background: #0f1629;
-            border: 1px solid #2a3a5c;
-            border-radius: 8px;
-            padding: 12px;
+            background: rgba(0,0,0,.25);
+            border-radius: 10px;
+            padding: .6rem .7rem;
             font-family: "SF Mono", "Fira Code", monospace;
-            font-size: 0.85em;
+            font-size: .8rem;
             max-height: 200px;
             overflow-y: auto;
             white-space: pre-wrap;
             word-break: break-all;
         }
-        .log-info { color: #90caf9; }
-        .log-ok   { color: #66bb6a; }
-        .log-err  { color: #ef5350; }
-        .log-cmd  { color: #ffd54f; }
+        .log-info { color: #c3cbe0; }
+        .log-ok   { color: #a7f3d0; }
+        .log-err  { color: #fca5a5; }
+        .log-cmd  { color: #fcd34d; }
         .status-dot {
             display: inline-block;
-            width: 10px;
-            height: 10px;
+            width: .6rem;
+            height: .6rem;
             border-radius: 50%;
-            margin-right: 6px;
+            margin-right: .4rem;
             vertical-align: middle;
         }
-        .status-connected { background: #66bb6a; }
-        .status-disconnected { background: #ef5350; }
-        #connection-status {
-            text-align: center;
-            margin-bottom: 16px;
-            font-size: 0.9em;
+        .status-connected { background: #10b981; }
+        .status-disconnected { background: #ef4444; }
+        /* Browser-requirement callout: the fleet's amber warning treatment,
+           escalated to the red fault palette when Web Bluetooth is missing. */
+        .browser-note {
+            display: flex;
+            gap: .6rem;
+            align-items: flex-start;
+            margin: 0 0 1.4rem;
+            padding: .8rem .9rem;
+            border-radius: 12px;
+            border: 1px solid rgba(245,158,11,.4);
+            background: rgba(245,158,11,.08);
+            color: #fde68a;
+            font-size: .84rem;
+            line-height: 1.45;
+        }
+        .browser-note b { color: #fcd34d; }
+        /* Inherit the callout's colour: a default-blue link is unreadable on
+           the amber and red backgrounds. */
+        .browser-note a { color: inherit; text-decoration: underline; }
+        .browser-note svg { flex-shrink: 0; margin-top: .12rem; color: #fcd34d; }
+        .browser-note code {
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: .78rem;
+            background: rgba(0,0,0,.28);
+            padding: .05rem .35rem;
+            border-radius: 5px;
+            word-break: break-all;
+        }
+        .browser-note.fatal {
+            border-color: rgba(248,113,113,.55);
+            background: rgba(239,68,68,.14);
+            color: #fecaca;
+        }
+        .browser-note.fatal b, .browser-note.fatal svg { color: #fca5a5; }
+
+        .pw-field { position: relative; margin-bottom: .5rem; }
+        .pw-field input { margin-bottom: 0; padding-right: 2.6rem; }
+        .pw-toggle {
+            position: absolute;
+            top: 50%;
+            right: .35rem;
+            transform: translateY(-50%);
+            display: flex;
+            align-items: center;
+            width: auto;
+            margin: 0;
+            padding: .3rem;
+            background: none;
+            border: 0;
+            border-radius: 6px;
+            color: #8b98ad;
+        }
+        .pw-toggle:hover { color: #e2e8f0; background: rgba(255,255,255,.08); opacity: 1; }
+
+        /* Why the WiFi controls are greyed out. Amber = needs an action from
+           you, as opposed to the red .step-msg.err used for failures. */
+        .lock-note {
+            display: flex;
+            gap: .45rem;
+            align-items: flex-start;
+            margin-top: .6rem;
+            padding: .45rem .6rem;
+            border-radius: 8px;
+            border: 1px solid rgba(245,158,11,.4);
+            background: rgba(245,158,11,.08);
+            color: #fde68a;
+            font-size: .78rem;
+            line-height: 1.4;
+        }
+        .lock-note[hidden] { display: none; }
+        .lock-note svg { flex-shrink: 0; margin-top: .12rem; color: #fcd34d; }
+        .lock-note b { color: #fcd34d; }
+
+        /* Dashboard hand-off — deliberately not the emerald→blue gradient the
+           in-flow actions share. This is the one control that leaves the tool,
+           so it keeps the fleet's signature yellow but on its own amber ramp,
+           away from the emerald→blue family, and shows the
+           URL in monospace so it reads as an address rather than a verb. */
+        .dash-link {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: .5rem;
+            margin-top: .2rem;
+            padding: .7rem 1rem;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #ffd76b, #f59e0b);
+            color: #1a1a2e;
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-weight: 700;
+            font-size: .9rem;
+            text-decoration: none;
+            word-break: break-all;
+            box-shadow: 0 4px 16px -7px rgba(245,158,11,.85);
+            /* Gradients don't interpolate, so brightness carries the hover. */
+            transition: filter .12s, box-shadow .12s, transform .12s;
+        }
+        .dash-link:hover {
+            filter: brightness(1.08);
+            box-shadow: 0 7px 20px -7px rgba(245,158,11,.95);
+            transform: translateY(-1px);
+        }
+        .dash-link:active { transform: none; }
+        @media (prefers-reduced-motion: reduce) {
+            .dash-link { transition: none; }
+            .dash-link:hover { transform: none; }
+        }
+        .dash-note { color: #8b98ad; font-size: .75rem; line-height: 1.4; margin: .55rem 0 0; }
+        .dash-note ul { margin: .35rem 0 0; padding-left: 1.05rem; }
+        .dash-note li { margin-top: .25rem; }
+        .dash-note b { color: #c3cbe0; font-weight: 700; }
+        .dash-note code {
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: .72rem;
+            color: #c3cbe0;
+            word-break: break-all;
+        }
+
+        /* chrome:// cannot be a link, so the URL is a copy button instead.
+           Overrides the full-width block styling of the base button rule. */
+        .copy-url {
+            display: inline-flex;
+            align-items: center;
+            gap: .45rem;
+            width: auto;
+            max-width: 100%;
+            margin: .3rem 0 0;
+            padding: .15rem .25rem;
+            background: none;
+            border: 0;
+            border-radius: 7px;
+            font: inherit;
+            color: inherit;
+            text-align: left;
+        }
+        .copy-url:hover { background: rgba(0,0,0,.2); opacity: 1; }
+        .copy-hint {
+            flex-shrink: 0;
+            font-size: .66rem;
+            font-weight: 700;
+            letter-spacing: .06em;
+            text-transform: uppercase;
+            color: #fcd34d;
+        }
+
+        /* Connected identity inside card 1. The name gets the fleet's gradient
+           text treatment (as .ep-big-num does) so it reads as the headline of
+           the card rather than a status line. */
+        .conn-line { display: flex; align-items: center; gap: .6rem; margin-bottom: .9rem; }
+        .conn-label {
+            font-size: .72rem;
+            font-weight: 700;
+            color: #8b98ad;
+            letter-spacing: .05em;
+            text-transform: uppercase;
+        }
+        .conn-name {
+            font-size: 1.05rem;
+            font-weight: 800;
+            line-height: 1.25;
+            background: linear-gradient(135deg, #10b981, #3b82f6);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        /* Progressive disclosure: a gated card is inert until the step before
+           it succeeds, then slides in. */
+        .step-card[hidden] { display: none; }
+        .step-card:not([hidden]) { animation: reveal .25s ease-out; }
+        @keyframes reveal {
+            from { opacity: 0; transform: translateY(-.4rem); }
+            to   { opacity: 1; transform: none; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .step-card:not([hidden]) { animation: none; }
         }
 
         /* Collapsible "available networks" disclosure */
-        details#networkDetails { margin-bottom: 8px; }
+        details#networkDetails { margin-bottom: .5rem; }
         summary {
             cursor: pointer;
             list-style: none;
-            padding: 6px 0;
-            color: #90caf9;
-            font-size: 0.9em;
+            padding: .3rem 0;
+            color: #8b98ad;
+            font-size: .8rem;
             user-select: none;
         }
+        summary:hover { color: #c3cbe0; }
         summary::-webkit-details-marker { display: none; }
         summary::before {
             content: '▸';
             display: inline-block;
-            margin-right: 8px;
+            margin-right: .5rem;
             transition: transform 0.15s;
         }
         details[open] summary::before { transform: rotate(90deg); }
 
-        /* Desktop: two columns. The grid row height is driven by the controls
-           column, and the log card stretches to match it (align-items: stretch),
-           so the log ends level with the bottom of the Status card. */
-        @media (min-width: 760px) {
-            .container { max-width: 960px; }
-            .layout { display: grid; grid-template-columns: 360px 380px; gap: 16px; align-items: stretch; justify-content: center; }
-            .controls .card:last-child { margin-bottom: 0; }
-            .log-card { margin-bottom: 0; display: flex; flex-direction: column; }
-            .log-card #log { flex: 1; max-height: none; }
-        }
+        .log-details { margin-top: .4rem; }
+        .log-details > summary { padding: .4rem 0; }
+        /* Phone: reclaim the wide desktop padding. */
+        @media (max-width: 600px) { body { padding: 1rem; } }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Grabette BT Tool</h1>
+        <h1>Grabette BT Tool <span class="muted">— WiFi provisioning</span></h1>
+        <p class="intro">Provision any Grabette, Gripette or Casquette over Bluetooth Low Energy:
+         connect to the device, authenticate with its PIN, then hand it the WiFi credentials it
+         should join.</p>
 
-        <div id="connection-status">
-            <span class="status-dot status-disconnected" id="statusDot"></span>
-            <span id="statusText">Disconnected</span>
+        <!-- The browser requirement is the single most common reason this page
+             does nothing, so it leads rather than sitting inside the intro. The
+             script below escalates it to an error when Web Bluetooth is absent. -->
+        <div class="browser-note" id="browserNote">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            <div id="browserNoteText">
+                <b>Chrome or Edge required.</b> This tool relies on Web Bluetooth, which
+                Firefox and Safari do not implement — there is no workaround on those browsers.
+                If Connect finds nothing on Chrome, enable this flag:
+                <button type="button" class="copy-url" id="copyFlag" onclick="copyFlagUrl()"
+                        title="Copy to clipboard">
+                    <code id="flagUrl"></code>
+                    <span class="copy-hint" id="copyFlagHint">Copy</span>
+                </button>
+            </div>
         </div>
 
-        <div class="layout">
-        <div class="controls">
-
-        <!-- Connection -->
+        <!-- Connection. Once the link is up the picker and Connect are dead
+             controls, so the card swaps to naming the device it is talking to,
+             with Disconnect as the only remaining action. -->
         <div class="card">
-            <h2>Connection</h2>
-            <select id="deviceSelect">
-                <option value="Grabette">Grabette (glove / Pi 4)</option>
-                <option value="Gripette">Gripette (gripper / Pi Zero 2W)</option>
-                <option value="Casquette">Casquette (POV camera / Pi Zero 2W)</option>
-            </select>
-            <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
-                Connect
-            </button>
-            <button class="btn-secondary" id="btnDisconnect" onclick="disconnectDevice()" disabled>
-                Disconnect
-            </button>
+            <div class="step"><span class="step-num">1</span> <span id="step1Title">Select the type of device</span></div>
+
+            <div id="connectPick">
+                <select id="deviceSelect" onchange="updateConnectLabel()">
+                    <option value="Grabette">Grabette</option>
+                    <option value="Gripette">Gripette</option>
+                    <option value="Casquette">Casquette</option>
+                </select>
+                <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
+                    <span id="btnConnectLabel">Search for nearby devices</span>
+                </button>
+                <p class="step-hint" id="connectHint">Your browser will list the devices of
+                 this type within Bluetooth range — pick yours from it to pair and connect.</p>
+            </div>
+
+            <div id="connectedBox" hidden>
+                <div class="conn-line">
+                    <span class="status-dot status-connected"></span>
+                    <div>
+                        <div class="conn-label">Connected to</div>
+                        <div class="conn-name" id="statusText">—</div>
+                    </div>
+                </div>
+                <button class="btn-secondary" id="btnDisconnect" onclick="disconnectDevice()">
+                    Disconnect
+                </button>
+            </div>
+
+            <div class="step-msg" id="msgConnect"></div>
         </div>
 
-        <!-- Authentication -->
-        <div class="card">
-            <h2>Authentication</h2>
+        <!-- Authentication — revealed once the BLE link is up. -->
+        <div class="card step-card" id="card-auth" hidden>
+            <div class="step"><span class="step-num">2</span> Authenticate</div>
             <input type="text" id="pinInput" placeholder="PIN (default: 00000)" value="00000">
+            <p class="step-hint">The PIN both unlocks the WiFi commands and encrypts the
+             password on its way to the device. It is consumed by each WiFi write, so
+             re-authenticate before sending credentials again.</p>
             <button class="btn-primary" id="btnPin" onclick="sendPin()" disabled>
                 Authenticate
             </button>
+            <div class="step-msg" id="msgAuth"></div>
         </div>
 
-        <!-- WiFi Configuration -->
-        <div class="card">
-            <h2>WiFi Configuration</h2>
+        <!-- WiFi Configuration — revealed once the PIN is accepted. -->
+        <div class="card step-card" id="card-wifi" hidden>
+            <div class="step"><span class="step-num">3</span> Configure WiFi</div>
             <button class="btn-secondary" id="btnScan" onclick="scanWifi()" disabled>
                 Scan networks
             </button>
@@ -184,35 +436,56 @@
                 <div id="networkList"></div>
             </details>
             <input type="text" id="ssidInput" placeholder="WiFi SSID">
-            <input type="password" id="passwordInput" placeholder="WiFi Password">
+            <div class="pw-field">
+                <input type="password" id="passwordInput" placeholder="WiFi Password">
+                <button type="button" class="pw-toggle" id="pwToggle" onclick="togglePassword()"
+                        title="Show password" aria-label="Show password"></button>
+            </div>
             <button class="btn-success" id="btnWifi" onclick="sendWifi()" disabled>
                 Connect WiFi
             </button>
             <button class="btn-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled>
-                Reset All WiFi
+                Forget all saved WiFi networks
             </button>
+            <div class="lock-note" id="wifiLocked" hidden>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                <span>The device consumed the PIN on the last WiFi command.
+                 <b>Authenticate again</b> in step 2 to re-enable these controls.</span>
+            </div>
+            <div class="step-msg" id="msgWifi"></div>
         </div>
 
-        <!-- Status -->
-        <div class="card">
-            <h2>Status</h2>
+        <!-- Revealed once the device reports a routable address of its own, which
+             is as close to "the dashboard is up" as this page can get: it is
+             served over HTTPS, so it cannot probe a plain-http address. -->
+        <div class="card step-card" id="card-dash" hidden>
+            <div class="step"><span class="step-num">4</span> Open the device dashboard</div>
+            <a class="dash-link" id="dashLink" target="_blank" rel="noopener">
+                <span id="dashUrl"></span>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            </a>
+            <div class="dash-note" id="dashNote"></div>
+        </div>
+
+        <!-- Not a step: ping and network status are usable at any point once
+             connected, so this panel sits outside the numbered flow. -->
+        <div class="card diag step-card" id="card-diag" hidden>
+            <div class="section-label">Diagnostics</div>
             <button class="btn-secondary" id="btnPing" onclick="sendPing()" disabled>
                 Ping
             </button>
             <button class="btn-secondary" id="btnNetStatus" onclick="readNetworkStatus()" disabled>
                 Read Network Status
             </button>
+            <div class="step-msg" id="msgStatus"></div>
         </div>
 
-        </div><!-- /.controls -->
-
-        <!-- Log -->
-        <div class="card log-card">
-            <h2>Log</h2>
+        <!-- Full protocol trace. Collapsed: each step reports its own outcome
+             above, so the raw command echo is for debugging only. -->
+        <details class="log-details">
+            <summary>Show detailed log</summary>
             <div id="log"></div>
-        </div>
-
-        </div><!-- /.layout -->
+        </details>
     </div>
 
 <script>
@@ -226,6 +499,12 @@
     // HKDF context string — must match HKDF_INFO in bluetooth_service.py exactly.
     const HKDF_INFO = 'grabette-wifi-psk-v1';
 
+    // Each product serves its dashboard on its own port: grabette/config.py and
+    // casquette/config.py default to 8000 and 8001, gripette's webui.py to 8080.
+    const DASHBOARD_PORTS = { Grabette: 8000, Casquette: 8001, Gripette: 8080 };
+
+    let connectedType = null;   // 'Grabette' | 'Gripette' | 'Casquette'
+    let connectedHost = null;   // hostname from the advertised "Type (hostname)"
     let device = null;
     let server = null;
     let commandChar = null;
@@ -240,41 +519,124 @@
         logEl.scrollTop = logEl.scrollHeight;
     }
 
-    function setConnected(connected, deviceName) {
-        const dot = document.getElementById('statusDot');
-        const text = document.getElementById('statusText');
-        dot.className = 'status-dot ' + (connected ? 'status-connected' : 'status-disconnected');
-        text.textContent = connected ? 'Connected to ' + (deviceName || '?') : 'Disconnected';
-
-        document.getElementById('btnConnect').disabled = connected;
-        document.getElementById('deviceSelect').disabled = connected;
-        document.getElementById('btnDisconnect').disabled = !connected;
-        document.getElementById('btnPin').disabled = !connected;
-        document.getElementById('btnScan').disabled = !connected;
-        document.getElementById('btnWifi').disabled = !connected;
-        document.getElementById('btnWifiReset').disabled = !connected;
-        document.getElementById('btnPing').disabled = !connected;
-        document.getElementById('btnNetStatus').disabled = !connected;
+    // Per-step outcome line. Every step reports its own result here; the log
+    // keeps the full trace for debugging.
+    function stepMsg(id, msg, kind = 'busy') {
+        const el = document.getElementById(id);
+        el.textContent = msg;
+        el.className = 'step-msg show ' + kind;
     }
 
-    // Chrome's two wordings for "BlueZ no longer has this device object". A
-    // failed connect makes BlueZ evict the device, so the handle we hold is
-    // dead: only a fresh requestDevice() can replace it, and that needs a new
-    // user gesture. Retrying past this point just buries the real error.
-    function isDeadHandle(e) {
-        return /no longer in range|doesn't exist anymore/i.test(e.message || '');
+    function clearMsg(...ids) {
+        for (const id of ids) document.getElementById(id).className = 'step-msg';
+    }
+
+    // Server replies are "OK: …" / "ERROR: …" — strip the redundant prefix, the
+    // colour of the message already carries the verdict.
+    function replyText(resp) {
+        return resp.replace(/^(OK|ERROR):\s*/, '');
+    }
+
+    // WPA-PSK passphrase length (IEEE 802.11i), mirrored from
+    // bluetooth_service.py so a hopeless password is caught before it costs a
+    // key exchange and an nmcli round-trip.
+    const PSK_MIN_LEN = 8, PSK_MAX_LEN = 63, PSK_HEX_LEN = 64;
+
+    // The device translates nmcli's failures itself, but this page is served
+    // from GitHub Pages and talks to whatever firmware the robot happens to be
+    // running. Older builds forward nmcli verbatim, where a refused passphrase
+    // reads "(7) Secrets were required, but not provided" — which sounds like a
+    // bug in this tool rather than a typo in the password. Translate the few
+    // that matter so an out-of-date device is not why the user gives up.
+    const WIFI_ERROR_HINTS = [
+        [/secrets were required|no secrets/i,
+         'Wrong password for "%s" — the network refused it.'],
+        [/network could not be found|no network with ssid/i,
+         '"%s" was not found — check the name, and that the device is in range of it.'],
+        [/ip configuration could not be reserved/i,
+         'Joined "%s", but it handed out no address (DHCP failed). The password was accepted.'],
+        [/timeout expired|timed out/i,
+         'Timed out joining "%s" — it may be out of range.'],
+        [/psk[\s\S]*invalid|invalid[\s\S]*psk/i,
+         'That password is not a valid WiFi passphrase (' + PSK_MIN_LEN + '-' + PSK_MAX_LEN + ' characters).'],
+    ];
+
+    // The raw reply always reaches the log; only the step line is rewritten.
+    function wifiErrorText(resp, ssid) {
+        const text = replyText(resp);
+        for (const [pattern, hint] of WIFI_ERROR_HINTS) {
+            if (pattern.test(text)) return hint.replace('%s', ssid);
+        }
+        return text;
+    }
+
+    // Progressive disclosure. A card is revealed once the step before it has
+    // succeeded, so the page only ever shows what is actionable right now.
+    // Reveals are sticky for the rest of the session: the robot consumes the
+    // PIN on every WiFi write, but hiding step 3 again at that point would take
+    // away the very form the user is being asked to re-submit.
+    function reveal(id, on) {
+        document.getElementById(id).hidden = !on;
+    }
+
+    // The device clears `authenticated` on every WiFi write, and WIFI_SCAN needs
+    // it too (it just doesn't consume it) — so all three step-3 controls die
+    // together. Mirroring the flag here greys them out with a reason, instead of
+    // letting the user click into an "ERROR: Not authenticated" reply.
+    const WIFI_BTN_TITLES = {
+        btnScan: 'List the WiFi networks the device can currently see',
+        btnWifi: 'Send this SSID and password to the device, encrypted with the PIN',
+        btnWifiReset: 'Delete every WiFi profile saved on the device (the Hotspot profile is kept)',
+    };
+
+    function setAuthed(on) {
+        for (const id of Object.keys(WIFI_BTN_TITLES)) {
+            const b = document.getElementById(id);
+            b.disabled = !on;
+            b.title = on ? WIFI_BTN_TITLES[id]
+                         : 'Authenticate again in step 2 — the device consumed the PIN';
+        }
+        // Only worth explaining once step 3 is on screen, i.e. after a first
+        // successful PIN; before that the card is hidden anyway.
+        document.getElementById('wifiLocked').hidden = on;
+    }
+
+    // The button does not just connect: it opens the browser's chooser after a
+    // BLE scan filtered on the selected type. Name that, and name the type, so
+    // the control describes what actually happens. Deliberately "Search" and not
+    // "Scan" — step 3 already owns "Scan networks", for WiFi.
+    function updateConnectLabel() {
+        document.getElementById('btnConnectLabel').textContent =
+            'Search for a ' + document.getElementById('deviceSelect').value + ' nearby';
+    }
+
+    function setConnected(connected, deviceName) {
+        // Card 1 swaps between the picker and the connected identity.
+        document.getElementById('connectPick').hidden = connected;
+        document.getElementById('connectedBox').hidden = !connected;
+        document.getElementById('step1Title').textContent =
+            connected ? 'Connected device' : 'Select the type of device';
+        if (connected) document.getElementById('statusText').textContent = deviceName || '?';
+
+        reveal('card-auth', connected);
+        reveal('card-diag', connected);
+        if (!connected) reveal('card-wifi', false);
+        // Always hidden on a state change: the address belongs to whichever
+        // device was on the other end, and is stale the moment that changes.
+        reveal('card-dash', false);
+
+        document.getElementById('btnPin').disabled = !connected;
+        document.getElementById('btnPing').disabled = !connected;
+        document.getElementById('btnNetStatus').disabled = !connected;
+        setAuthed(false);  // a fresh link is never authenticated
+        if (!connected) setPasswordShown(false);  // don't leave it on screen
     }
 
     async function connectDevice() {
         const targetName = document.getElementById('deviceSelect').value;
-        // Block a second click while the first is still connecting: opening the
-        // chooser again starts a fresh scan, and that scan aborts the
-        // connection already in flight (BlueZ reports
-        // le-connection-abort-by-local), so the extra click breaks the very
-        // attempt it looks like it is helping.
-        const btnConnect = document.getElementById('btnConnect');
-        btnConnect.disabled = true;
         try {
+            clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+            stepMsg('msgConnect', 'Searching for a ' + targetName + ' nearby…');
             log('Scanning for ' + targetName + '...');
             // Match by name PREFIX: the device advertises "Grabette (hostname)"
             // so the chooser shows the hostname and several robots of the same
@@ -286,16 +648,15 @@
 
             device.addEventListener('gattserverdisconnected', () => {
                 log('Device disconnected', 'log-err');
+                clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+                stepMsg('msgConnect', 'Device disconnected', 'err');
                 setConnected(false);
             });
 
             // GATT can connect then drop immediately (common on Linux/BlueZ),
-            // so retry the connect + service discovery a few times — but stop
-            // the moment the handle itself is dead, because those retries
-            // cannot succeed and their error replaces the one that explains
-            // what actually went wrong.
+            // so retry the connect + service discovery a few times.
             let cmdService;
-            const maxAttempts = 3;
+            const maxAttempts = 5;
             for (let attempt = 1; ; attempt++) {
                 try {
                     log('Connecting GATT (attempt ' + attempt + '/' + maxAttempts + ')...');
@@ -303,7 +664,8 @@
                     cmdService = await server.getPrimaryService(SERVICE_UUID);
                     break;
                 } catch (e) {
-                    if (attempt >= maxAttempts || isDeadHandle(e)) throw e;
+                    if (attempt >= maxAttempts) throw e;
+                    stepMsg('msgConnect', 'Link unstable, retrying (' + attempt + '/' + maxAttempts + ')…');
                     log('GATT unstable, retrying: ' + e.message, 'log-err');
                     if (device.gatt.connected) device.gatt.disconnect();
                     await new Promise(r => setTimeout(r, 500));
@@ -327,17 +689,17 @@
             // device.name is the chosen device's advertised name, e.g.
             // "Grabette (grabette-01)" — show the hostname, not just the type.
             const shownName = device.name || targetName;
+            connectedType = targetName;
+            // advertised_name is f"{device_name} ({socket.gethostname()})", so the
+            // parenthesised part is the hostname to use for the .local fallback.
+            const hostMatch = /\(([^)]+)\)/.exec(shownName);
+            connectedHost = hostMatch ? hostMatch[1] : null;
             setConnected(true, shownName);
+            clearMsg('msgConnect');
             log('Connected to ' + shownName, 'log-ok');
         } catch (e) {
+            stepMsg('msgConnect', 'Connection failed: ' + e.message, 'err');
             log('Connection failed: ' + e.message, 'log-err');
-            if (isDeadHandle(e)) {
-                log('The device entry expired — click Connect and pick it again.', 'log-err');
-            }
-        } finally {
-            // setConnected(true) already disabled the button on success; only a
-            // failed attempt needs it back.
-            if (!(device && device.gatt.connected)) btnConnect.disabled = false;
         }
     }
 
@@ -346,6 +708,8 @@
             device.gatt.disconnect();
         }
         setConnected(false);
+        clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+        stepMsg('msgConnect', 'Disconnected');
         log('Disconnected');
     }
 
@@ -379,13 +743,27 @@
     }
 
     async function sendPing() {
-        await sendCommand('PING');
+        stepMsg('msgStatus', 'Pinging…');
+        const resp = await sendCommand('PING');
+        if (resp === null) { stepMsg('msgStatus', 'No response from the device', 'err'); return; }
+        stepMsg('msgStatus', resp === 'PONG' ? 'Device answered — link is alive' : resp,
+                resp === 'PONG' ? 'ok' : 'err');
     }
 
     async function sendPin() {
         const pin = document.getElementById('pinInput').value.trim();
-        if (!pin) { log('Enter a PIN', 'log-err'); return; }
-        await sendCommand('PIN_' + pin);
+        if (!pin) { stepMsg('msgAuth', 'Enter a PIN', 'err'); log('Enter a PIN', 'log-err'); return; }
+        stepMsg('msgAuth', 'Authenticating…');
+        const resp = await sendCommand('PIN_' + pin);
+        if (resp === null) { stepMsg('msgAuth', 'No response from the device', 'err'); return; }
+        // A wrong PIN five times in a row arms an escalating lockout on the
+        // robot, so the "Locked for Ns" reply is surfaced verbatim.
+        const failed = resp.startsWith('ERROR');
+        setAuthed(!failed);
+        if (!failed) reveal('card-wifi', true);
+        stepMsg('msgAuth',
+                failed ? replyText(resp) : 'Authenticated — you can now configure WiFi',
+                failed ? 'err' : 'ok');
     }
 
     // ---- WiFi password sealing (mirrors bluetooth_service.py) ----
@@ -433,61 +811,125 @@
         });
     }
 
+    // Typing a WPA password blind on a phone is the main source of wasted
+    // provisioning round-trips, so allow revealing it. Nothing about the wire
+    // format changes — the value is still sealed with AES-GCM before it leaves.
+    const EYE_ON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const EYE_OFF = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+
+    function setPasswordShown(shown) {
+        const input = document.getElementById('passwordInput');
+        const btn = document.getElementById('pwToggle');
+        input.type = shown ? 'text' : 'password';
+        btn.innerHTML = shown ? EYE_OFF : EYE_ON;
+        btn.title = shown ? 'Hide password' : 'Show password';
+        btn.setAttribute('aria-label', btn.title);
+    }
+
+    function togglePassword() {
+        setPasswordShown(document.getElementById('passwordInput').type === 'password');
+    }
+
+    setPasswordShown(false);   // paints the initial eye icon
+    updateConnectLabel();      // paints the initial button label
+
     async function sendWifi() {
         const ssid = document.getElementById('ssidInput').value.trim();
         const password = document.getElementById('passwordInput').value;
         const pin = document.getElementById('pinInput').value.trim();
-        if (!ssid) { log('Enter an SSID', 'log-err'); return; }
-        if (!password) { log('Enter a password', 'log-err'); return; }
-        if (!pin) { log('Enter the PIN (used to encrypt the password)', 'log-err'); return; }
+        if (!ssid) { stepMsg('msgWifi', 'Enter an SSID', 'err'); return; }
+        if (!password) { stepMsg('msgWifi', 'Enter a password', 'err'); return; }
+        if ((password.length < PSK_MIN_LEN || password.length > PSK_MAX_LEN)
+            && password.length !== PSK_HEX_LEN) {
+            stepMsg('msgWifi', 'A WiFi password is ' + PSK_MIN_LEN + '-' + PSK_MAX_LEN
+                    + ' characters; this one is ' + password.length + '.', 'err');
+            return;
+        }
+        if (!pin) { stepMsg('msgWifi', 'Enter the PIN in step 2 — it encrypts the password', 'err'); return; }
 
+        stepMsg('msgWifi', 'Sending credentials for "' + ssid + '"…');
         log('Sending WiFi credentials for "' + ssid + '"…', 'log-cmd');
 
         // 1. Fetch the robot's ephemeral public key (plumbing — kept quiet).
         const keyexRaw = await sendCommand('WIFI_KEYEX', true);
-        if (!keyexRaw) return;
+        if (!keyexRaw) { stepMsg('msgWifi', 'No key-exchange response from the device', 'err'); return; }
         let kex;
         try { kex = JSON.parse(keyexRaw); }
-        catch (e) { log('Bad key-exchange response', 'log-err'); return; }
+        catch (e) { stepMsg('msgWifi', 'Bad key-exchange response', 'err'); log('Bad key-exchange response', 'log-err'); return; }
 
         // 2. Seal the password and send it (the blob is long — kept quiet).
         let payload;
         try { payload = await sealWifiPassword(ssid, password, pin, kex.pk, kex.kid); }
-        catch (e) { log('Encryption failed: ' + e.message, 'log-err'); return; }
+        catch (e) { stepMsg('msgWifi', 'Encryption failed: ' + e.message, 'err'); log('Encryption failed: ' + e.message, 'log-err'); return; }
 
         const resp = await sendCommand('WIFI_CONNECT_ENC ' + payload, true);
-        if (resp === null) return;
-        log(resp, resp.startsWith('ERROR') ? 'log-err' : 'log-ok');
+        if (resp === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
+        const failed = resp.startsWith('ERROR');
+        log(resp, failed ? 'log-err' : 'log-ok');
+        stepMsg('msgWifi', failed ? wifiErrorText(resp, ssid) : replyText(resp),
+                failed ? 'err' : 'ok');
+        noteAuthConsumed();
+        if (!failed) awaitDashboard();
     }
 
+    // WIFI_CONNECT_ENC and WIFI_RESET both clear the robot's authenticated flag,
+    // so the next WiFi write needs a fresh PIN. Say so where the PIN lives
+    // rather than letting the user hit "Not authenticated" on the retry.
+    function noteAuthConsumed() {
+        setAuthed(false);
+        stepMsg('msgAuth', 'PIN used up — authenticate again before the next WiFi command');
+    }
+
+    // Destructive and irreversible from here: nmcli deletes the profiles, so the
+    // passwords are gone too. Spell out the blast radius rather than asking a
+    // yes/no question the user has to guess the meaning of.
+    // One entry per paragraph, joined by a blank line. Never hard-wrap these:
+    // the dialog wraps to its own width, and manual breaks land mid-sentence.
+    const RESET_CONFIRM = [
+        'Forget all saved WiFi networks?',
+        'Every WiFi profile stored on the device will be deleted, not just the one it is using. Their passwords are deleted with them, and the device will not rejoin any of these networks on its own.',
+        'The Hotspot profile is kept, so the device stays reachable.',
+    ].join('\n\n');
+
     async function sendWifiReset() {
-        if (!confirm('Delete ALL saved WiFi networks?')) return;
-        await sendCommand('WIFI_RESET');
+        if (!confirm(RESET_CONFIRM)) return;
+        stepMsg('msgWifi', 'Clearing saved networks…');
+        const resp = await sendCommand('WIFI_RESET');
+        if (resp === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
+        stepMsg('msgWifi', replyText(resp), resp.startsWith('ERROR') ? 'err' : 'ok');
+        noteAuthConsumed();
     }
 
     async function scanWifi() {
         const details = document.getElementById('networkDetails');
         const summary = document.getElementById('networkSummary');
         const listEl = document.getElementById('networkList');
+        stepMsg('msgWifi', 'Scanning for networks…');
         log('Scanning for networks…', 'log-cmd');
         // Quiet: the SSID list is shown in the collapsible panel, not the log.
         const response = await sendCommand('WIFI_SCAN', true);
-        if (response === null) return;
-        if (response.startsWith('ERROR')) { log(response, 'log-err'); details.hidden = true; return; }
+        if (response === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
+        if (response.startsWith('ERROR')) {
+            stepMsg('msgWifi', replyText(response), 'err');
+            log(response, 'log-err'); details.hidden = true; return;
+        }
 
         let ssids;
         try {
             ssids = JSON.parse(response);
         } catch (e) {
+            stepMsg('msgWifi', 'Could not parse the scan result', 'err');
             log('Could not parse scan result', 'log-err');
             details.hidden = true;
             return;
         }
         if (!ssids.length) {
+            stepMsg('msgWifi', 'No networks found', 'err');
             log('No networks found', 'log-ok');
             details.hidden = true;
             return;
         }
+        stepMsg('msgWifi', ssids.length + ' network(s) found — pick one below', 'ok');
         log(ssids.length + ' network(s) found', 'log-ok');
 
         // Render each SSID as a button that fills the SSID field, then collapses
@@ -509,8 +951,147 @@
         details.open = true;
     }
 
+    // A chrome:// URL cannot be navigated to from web content — Chrome blocks it
+    // outright — so the closest thing to a clickable link is one-click copy for
+    // pasting into the address bar. Kept in JS so the button label and the text
+    // copied can never drift apart.
+    const CHROME_FLAG_URL = 'chrome://flags/#enable-experimental-web-platform-features';
+    document.getElementById('flagUrl').textContent = CHROME_FLAG_URL;
+
+    async function copyFlagUrl() {
+        const hint = document.getElementById('copyFlagHint');
+        try {
+            await navigator.clipboard.writeText(CHROME_FLAG_URL);
+            hint.textContent = 'Copied';
+        } catch (e) {
+            // Clipboard access can be refused by permissions policy; the URL is
+            // still on screen and selectable.
+            hint.textContent = 'Copy failed';
+        }
+        setTimeout(() => { hint.textContent = 'Copy'; }, 1800);
+    }
+
+    // Build a dashboard link out of the address the device just reported.
+    //
+    // The status string is "{MODE} (ssid) [iface] ip ; [iface] ip", so the IP is
+    // already known and mDNS is not needed — .local resolution is unreliable on
+    // Android and blocked on many guest networks, so it is only offered as a
+    // fallback for when DHCP later moves the device.
+    //
+    // The link cannot be health-checked: this page is served over HTTPS and a
+    // fetch() to a plain-http address is blocked as mixed content. Top-level
+    // navigation is not, so the link itself works — Chrome's HTTPS-First mode
+    // may still interpose a warning the user has to click through.
+    function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    function offerDashboard(status) {
+        const ifaces = [...status.matchAll(/\[(\w+)\]\s+(\d{1,3}(?:\.\d{1,3}){3})/g)];
+        const port = DASHBOARD_PORTS[connectedType];
+        if (!ifaces.length || !port) { reveal('card-dash', false); return false; }
+
+        // Prefer wlan0 — that is the interface the credentials just configured.
+        const pick = ifaces.find(m => m[1] === 'wlan0') || ifaces[0];
+        const url = 'http://' + pick[2] + ':' + port;
+
+        document.getElementById('dashLink').href = url;
+        document.getElementById('dashUrl').textContent = url;
+
+        // 10.42.0.x is NetworkManager's hotspot range: the device is serving its
+        // own network rather than having joined yours.
+        const hotspot = status.startsWith('HOTSPOT');
+        // "{MODE} (ssid) [iface] ip ..." — naming the network is the one useful
+        // thing this page can offer, since it cannot check what the client is
+        // joined to. Match greedily up to the ")" that closes it, the one before
+        // the "[iface]" list, so an SSID containing ")" is not cut short.
+        const ssidMatch = /^\w+\s+\((.*)\)\s+\[/.exec(status);
+        const ssid = ssidMatch && ssidMatch[1] ? ssidMatch[1] : null;
+
+        // No probe is possible: this page is served over HTTPS, and every way of
+        // reaching a plain-http address from here (fetch, even no-cors, and img)
+        // is blocked as mixed content. WebRTC no longer exposes the client's LAN
+        // address either. So the address is offered, never asserted.
+        const checks = [];
+        if (hotspot) {
+            checks.push('The device is in <b>hotspot mode</b> — it did not join a WiFi network, '
+                        + 'so this address is only reachable from a machine joined to its hotspot.');
+        } else {
+            checks.push(ssid
+                ? 'This machine must be on <b>' + escapeHtml(ssid) + '</b>, the network the device joined.'
+                : 'This machine must be on the same network as the device.');
+            checks.push('The dashboard service must be running on the device — it is a separate '
+                        + 'service from the Bluetooth one you are talking to now.');
+        }
+        checks.push('The dashboard is served over plain HTTP, so your browser may warn before opening it.');
+        if (connectedHost) {
+            checks.push('If the address changes later, try <b>http://' + escapeHtml(connectedHost)
+                        + '.local:' + port + '</b> (needs mDNS, unsupported on some phones and networks).');
+        }
+
+        document.getElementById('dashNote').innerHTML =
+            'This is the address the device reported. This page cannot test it — for the link to work:'
+            + '<ul><li>' + checks.join('</li><li>') + '</li></ul>';
+        reveal('card-dash', true);
+        return !hotspot;
+    }
+
+    // After credentials are accepted the device still has to associate and take
+    // a DHCP lease, so the address is not there yet. The status characteristic
+    // is refreshed by the service every 10s; poll it until a non-hotspot address
+    // shows up, so step 4 appears on its own rather than waiting for the user to
+    // go hunting in Diagnostics.
+    const DASH_POLL_MS = 2500;
+    const DASH_POLL_TRIES = 10;
+
+    async function awaitDashboard() {
+        if (!networkStatusChar) return;
+        for (let i = 0; i < DASH_POLL_TRIES; i++) {
+            await new Promise(r => setTimeout(r, DASH_POLL_MS));
+            if (!device || !device.gatt.connected) return;
+            let status;
+            try {
+                status = new TextDecoder().decode(await networkStatusChar.readValue());
+            } catch (e) {
+                return;  // link dropped mid-poll; nothing useful to report
+            }
+            log('Network: ' + status);
+            if (offerDashboard(status)) return;
+        }
+    }
+
+    // Web Bluetooth is Chromium-only AND secure-context-only. Detect both up
+    // front and kill the entry point, rather than letting Connect fail with an
+    // opaque error. The two causes need different advice: a plain http:// page
+    // hides navigator.bluetooth even in a perfectly capable Chrome, so testing
+    // this file over http://<host>:<port> would otherwise be told to switch
+    // browsers — advice that cannot work.
+    const browserNote = document.getElementById('browserNote');
+    const browserNoteText = document.getElementById('browserNoteText');
+    if (!window.isSecureContext) {
+        // Name the port the page is actually served on, so the hint matches
+        // whatever the reader is running.
+        const localUrl = 'http://localhost' + (location.port ? ':' + location.port : '');
+        browserNote.classList.add('fatal');
+        browserNoteText.innerHTML =
+            "<b>Bluetooth doesn't work on this address.</b> Open the tool at " +
+            '<a href="https://pollen-robotics.github.io/grabette/">pollen-robotics.github.io/grabette/</a>' +
+            ' instead. (Testing a local copy? Serve it from <code>' + localUrl +
+            '</code> and it will work.)';
+        document.getElementById('btnConnect').disabled = true;
+    } else if (!navigator.bluetooth) {
+        browserNote.classList.add('fatal');
+        browserNoteText.innerHTML =
+            '<b>This browser cannot run the tool.</b> Web Bluetooth is not available here, ' +
+            'so no device can be reached. Open this page in Chrome or Edge.';
+        document.getElementById('btnConnect').disabled = true;
+    }
+
     async function readNetworkStatus() {
         if (!networkStatusChar) {
+            stepMsg('msgStatus', 'Network status is not available on this device', 'err');
             log('Network status characteristic not available', 'log-err');
             return;
         }
@@ -519,8 +1100,11 @@
             const decoder = new TextDecoder();
             const status = decoder.decode(value);
             const bad = status === 'OFFLINE' || status === 'ERROR';
+            stepMsg('msgStatus', 'Network: ' + status, bad ? 'err' : 'ok');
             log('Network: ' + status, bad ? 'log-err' : 'log-ok');
+            offerDashboard(status);
         } catch (e) {
+            stepMsg('msgStatus', 'Read failed: ' + e.message, 'err');
             log('Read failed: ' + e.message, 'log-err');
         }
     }

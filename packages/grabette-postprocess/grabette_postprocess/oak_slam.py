@@ -194,7 +194,9 @@ def run_oak_slam(
     trajectory format (frame_idx, timestamp, state, is_lost, is_keyframe,
     x, y, z, q_x, q_y, q_z, q_w).
 
-    By default the binary runs in Docker; the image must be built once with:
+    By default the binary runs in Docker. The image is published:
+        docker pull pollenrobotics/oak-vslam
+    or build it locally with:
         docker build -t pollenrobotics/oak-vslam docker/oak_vslam/
 
     Args:

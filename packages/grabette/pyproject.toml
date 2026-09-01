@@ -26,9 +26,17 @@ rpi = [
     # and on recent Pi OS Bookworm aarch64 + cpython 3.11.15 there's no wheel,
     # so uv builds from source for ~30 min. Don't.
     "depthai>=3.6,<4",
-    "opencv-python-headless>=4.8",
+    "grabette[vision]",
     "scipy",  # quaternion + rotation math (teleop, dataset processing)
     "rerun-sdk",  # live trajectory visualization for teleop
+]
+# The host-installable half of the OAK-D stack. Split out of `rpi` because that
+# extra is unusable off a Pi (picamera2, depthai, gpiod), yet grabette.hardware.oakd
+# imports cv2 at module level — so CI could not import the module it tests, and
+# test_hardware_error.py failed collection on every run. This is a feature set,
+# not test tooling: it stays out of the `test` extra on purpose.
+vision = [
+    "opencv-python-headless>=4.8",
 ]
 hf = [
     "huggingface-hub>=0.20.0",

@@ -4,16 +4,17 @@ import asyncio
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from grabette.app.dependencies import get_backend, get_daemon
-from grabette.backend.base import Backend
+from grabette.app.dependencies import get_daemon
 from grabette.daemon import Daemon
 
 router = APIRouter(prefix="/api/state", tags=["state"])
 
 
 @router.get("")
-def get_state(backend: Backend = Depends(get_backend)):
-    return backend.get_state()
+def get_state(daemon: Daemon = Depends(get_daemon)):
+    # Cached poll-loop state (no blocking I2C) — this endpoint is polled often
+    # by the dashboard, so a fresh read here would saturate the I2C bus.
+    return daemon.latest_state()
 
 
 @router.get("/history")
@@ -31,8 +32,9 @@ async def state_ws(ws: WebSocket):
         while True:
             daemon = get_daemon_instance()
             if daemon and daemon.state.value == "running":
-                state = daemon.backend.get_state()
-                await ws.send_json(state.model_dump())
+                # Cached state — NOT a fresh get_state(): a blocking I2C read
+                # here runs on the event loop at 10Hz and stalls the whole server.
+                await ws.send_json(daemon.latest_state().model_dump())
             await asyncio.sleep(0.1)  # 10Hz
     except WebSocketDisconnect:
         pass

@@ -22,7 +22,9 @@ def main(input_dir, docker_image, output_csv):
     calib_offline.json, timestamps.csv, imu_acc.csv, imu_gyro.csv,
     frames/*.png, depth/*.png
 
-    Build the Docker image once with:
+    By default the binary runs in Docker. The image is published:
+        docker pull pollenrobotics/oak-vslam
+    or build it locally with:
         docker build -t pollenrobotics/oak-vslam docker/oak_vslam/
 
     Produces <episode_dir>/camera_trajectory.csv (absolute poses) compatible

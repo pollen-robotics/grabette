@@ -47,6 +47,19 @@ from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
 
+
+class OakdCalibrationError(RuntimeError):
+    """The OAK-D's offline calibration could not be produced.
+
+    Fatal for recording, not merely for this device's live view: every episode
+    needs oakd_calib_offline.json to be convertible downstream, so a grabette
+    that can't produce one must refuse to record rather than fill its card with
+    data the SLAM pipeline will reject days later. Raised by init_device; the
+    backend turns it into a device-wide hardware error (see
+    RpiBackend.hardware_error) which blocks capture and drives the error LED.
+    """
+
+
 _MASK_PATH = Path(__file__).parent / "oak_mask.png"
 
 
@@ -155,7 +168,12 @@ class OakdCapture:
     # ------------------------------------------------------------------ init
 
     def init_device(self) -> None:
-        """Connect, read calibration, build pipeline, START it, launch drainers."""
+        """Connect, read calibration, build pipeline, START it, launch drainers.
+
+        Raises OakdCalibrationError if the offline calibration can't be produced
+        — recording without it yields unconvertible episodes, so the device must
+        not come up as if it were ready.
+        """
         import depthai as dai
 
         logger.info("Connecting to OAK-D for calibration read...")
@@ -308,6 +326,14 @@ class OakdCapture:
         Schema matches what grabette-data/docker/oak_vslam expects:
         width, height, fx, fy, cx, cy, baseline (m), imu_to_cam (4x4).
 
+        Raises OakdCalibrationError when the calibration can't be read or comes
+        back unusable. It used to log a warning and return {} — start_recording
+        then simply skipped writing oakd_calib_offline.json, and the whole
+        session's episodes reached the SLAM Space with "missing
+        oakd_calib_offline.json", hours after the data could still have been
+        re-recorded. This file is not optional: without it an episode can never
+        be converted, so failing to produce it is a hardware fault, not a
+        warning.
         """
         import depthai as dai
         try:
@@ -318,19 +344,31 @@ class OakdCapture:
             baseline_m = calib.getBaselineDistance(
                 dai.CameraBoardSocket.CAM_C, dai.CameraBoardSocket.CAM_B
             ) / 100.0
-            return {
-                "width": w,
-                "height": h,
-                "fx": intr[0][0],
-                "fy": intr[1][1],
-                "cx": intr[0][2],
-                "cy": intr[1][2],
-                "baseline": baseline_m,
-                "imu_to_cam": imu_extr,
-            }
         except Exception as e:
-            logger.warning("Could not extract OAK-D offline calib: %s", e)
-            return {}
+            raise OakdCalibrationError(
+                f"could not read the OAK-D calibration: {e or type(e).__name__}"
+            ) from e
+        calib_offline = {
+            "width": w,
+            "height": h,
+            "fx": intr[0][0],
+            "fy": intr[1][1],
+            "cx": intr[0][2],
+            "cy": intr[1][2],
+            "baseline": baseline_m,
+            "imu_to_cam": imu_extr,
+        }
+        # Same contract the offline pipeline checks (grabette_postprocess
+        # checks.recording._check_calib): a present-but-degenerate calibration is
+        # exactly as unusable as a missing one, so catch it here too rather than
+        # letting it through to produce episodes that fail conversion.
+        bad = [k for k in ("fx", "fy", "baseline") if not calib_offline[k] > 0]
+        if bad:
+            raise OakdCalibrationError(
+                "the OAK-D reported an unusable calibration "
+                f"({', '.join(f'{k}={calib_offline[k]}' for k in bad)})"
+            )
+        return calib_offline
 
     # ------------------------------------------------------ recording on/off
 
@@ -367,6 +405,16 @@ class OakdCapture:
             raise RuntimeError("OakdCapture already recording")
         if not self.sync.is_started:
             raise RuntimeError("SyncManager must be started before OakdCapture")
+        # Not a soft "write it if we have it": init_device refuses to come up
+        # without a usable offline calibration, so reaching here without one means
+        # that guard was bypassed. Refuse rather than silently produce an episode
+        # that could never be converted — checked before the episode dir is
+        # created so a refusal leaves nothing behind.
+        if not self._calib_offline:
+            raise OakdCalibrationError(
+                "no OAK-D offline calibration available — refusing to record an "
+                "episode that could never be converted"
+            )
 
         self._output_dir = Path(output_dir).absolute()
         self._output_dir.mkdir(parents=True, exist_ok=True)
@@ -380,10 +428,9 @@ class OakdCapture:
             (self._output_dir / "oakd_calib.json").write_text(
                 json.dumps(self._calibration_json, indent=2)
             )
-        if self._calib_offline:
-            (self._output_dir / "oakd_calib_offline.json").write_text(
-                json.dumps(self._calib_offline, indent=2)
-            )
+        (self._output_dir / "oakd_calib_offline.json").write_text(
+            json.dumps(self._calib_offline, indent=2)
+        )
         # Copy mask alongside the episode so downstream SLAM can mask mp4 frames
         # (we can't mask H.264-encoded streams in-flight).
         if self._mask is not None:

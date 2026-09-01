@@ -82,10 +82,18 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from gripette.grasp_projection import (
+    PROJECTION_SIDECAR,
     GraspProjection,
     normalize_closing_sign,
     segment_grip,
 )
+
+# Card front matter for a converted dataset. `grasp-projection` is queryable
+# through the Hub API without downloading anything, which is what makes a
+# projected dataset identifiable from a listing; the channel names in info.json
+# remain the authoritative signal.
+PROJECTION_HUB_TAG = "grasp-projection"
+_CARD_TAGS = ["LeRobot", "grabette", "gripette", PROJECTION_HUB_TAG]
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +169,63 @@ def convert_episode(
             "frac_close": labels.count("close") / max(len(labels), 1),
         },
     )
+
+
+def _write_sidecar(dst_root: Path, gp: GraspProjection, src_root: Path) -> None:
+    """Record which projection built this dataset, and from what.
+
+    Written every conversion, unconditionally: a projected dataset with no record
+    of its calibration is the ambiguity this file exists to remove.
+    """
+    path = dst_root / PROJECTION_SIDECAR
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(
+        gp.to_metadata(source_root=str(src_root)), indent=2) + "\n")
+    logger.info("Wrote %s", path)
+
+
+def _write_card(dst_root: Path, repo_id: str | None = None) -> None:
+    """Write a minimal dataset card if there is none.
+
+    `hf upload` does not render LeRobot's card template, so a hand-uploaded
+    dataset otherwise lands with no README, no tags and no viewer link. Never
+    overwrites: a hand-written card carries more than this can.
+
+    The viewer badge needs the repo id, which only exists at upload time — hence
+    `repo_id`. Without it the card is still written (tags are the valuable part)
+    and check_publish reports the missing viewer link.
+    """
+    path = dst_root / "README.md"
+    if path.exists():
+        logger.info("%s exists; leaving it alone", path)
+        return
+    tags = "\n".join(f"- {t}" for t in _CARD_TAGS)
+    badge = ""
+    if repo_id:
+        badge = (
+            f'\n<a class="flex" href="https://huggingface.co/spaces/lerobot/'
+            f'visualize_dataset?path={repo_id}">\n'
+            '<img class="block dark:hidden" src="https://huggingface.co/datasets/'
+            'huggingface/badges/resolve/main/visualize-this-dataset-xl.svg"/>\n'
+            '<img class="hidden dark:block" src="https://huggingface.co/datasets/'
+            'huggingface/badges/resolve/main/visualize-this-dataset-xl-dark.svg"/>\n'
+            "</a>\n"
+        )
+    path.write_text(
+        f"---\ntask_categories:\n- robotics\ntags:\n{tags}\n---\n{badge}\n"
+        f"# {dst_root.name}\n\n"
+        "Gripper channels are **(strategy, closure)**, not joint angles: the last "
+        "two channels of `action` and `observation.state` are normalised to the "
+        "gripper's reachable travel. In `action`, `closure = 1.0` means \"drive "
+        "fully closed\" and the object stops the fingers; in `observation.state` "
+        "closure stays continuous, so \"am I holding something\" remains "
+        "observable.\n\n"
+        f"The exact calibration is recorded in `{PROJECTION_SIDECAR}`. Decode with "
+        "`gripette.grasp_projection.GraspProjection` — see "
+        "[docs/grasp_projection.md](https://github.com/pollen-robotics/grabette/"
+        "blob/develop/docs/grasp_projection.md).\n"
+    )
+    logger.info("Wrote %s", path)
 
 
 def convert_dataset(
@@ -264,8 +329,32 @@ def convert_dataset(
         recompute_stats(ds, skip_image_video=True)
         logger.info("Stats recomputed")
 
+    _write_sidecar(dst_root, gp, src_root)
+    _write_card(dst_root, repo_id=stats_repo_id)
+
+    # WARN, don't refuse. A converted dataset that only ever lives locally for an
+    # experiment is legitimate, so publication rules must not block conversion —
+    # but the operator should hear about them here, while the context is fresh,
+    # rather than from a training run that dies in `get_safe_version` an hour in.
+    # Run `checks.publish.check_publish` as the hard gate before uploading.
+    from grabette_postprocess.checks.publish import check_publish
+
+    audit = check_publish(dst_root)
+    for msg in audit["errors"]:
+        logger.warning("publish check: %s", msg)
+    for msg in audit["warnings"]:
+        logger.warning("publish check: %s", msg)
+    if audit["errors"] or audit["warnings"]:
+        logger.warning(
+            "%d publish issue(s) above — fix them before uploading; "
+            "the git tag and card checks only run against a pushed repo",
+            len(audit["errors"]) + len(audit["warnings"]),
+        )
+
     return {
         "episodes": len(reports),
+        "publish_errors": audit["errors"],
+        "publish_warnings": audit["warnings"],
         "single_close": sum(1 for r in reports if r["n_close"] == 1),
         "no_close": sum(1 for r in reports if r["n_close"] == 0),
         "multi_close": sum(1 for r in reports if r["n_close"] > 1),
@@ -291,10 +380,13 @@ def convert_dataset(
                    "meaning and RANGE, so stale stats mis-normalise training.")
 @click.option("--repo_id", default=None,
               help="repo_id to open the converted dataset under, for the stats "
-                   "pass only. LeRobotDataset queries the Hub for available "
-                   "revisions even when `root` is local, so an invented id 404s. "
-                   "Use the SOURCE dataset's id — the data still comes from "
-                   "--dst_root.")
+                   "pass only; the data always comes from --dst_root. A LOCAL id "
+                   "(local/anything) is the right choice and needs no Hub access: "
+                   "LeRobotDataset only queries the Hub when the root is "
+                   "incomplete, and by this point it is fully written. Do NOT pass "
+                   "the SOURCE dataset's Hub id — opening the converted dataset "
+                   "under it has re-downloaded source parquet over the converted "
+                   "files, silently reverting the conversion.")
 def main(src_root, dst_root, rest_is_closed, overwrite, recompute_stats, repo_id):
     """Re-express a dataset's gripper channels as (strategy, commanded closure)."""
     logging.basicConfig(level=logging.INFO, format="%(message)s")

@@ -68,6 +68,7 @@ class Daemon:
         self._poll_task: asyncio.Task | None = None
         self._replay: "ReplayEngine | None" = None  # noqa: F821  forward ref; real import is deferred (see below) to avoid a cycle
         self._generation: int = 0
+        self._last_state = None  # latest SensorState from the poll loop (for status, non-blocking)
 
     async def start(self) -> None:
         if self.state not in (DaemonState.NOT_INITIALIZED, DaemonState.STOPPED, DaemonState.ERROR):
@@ -126,9 +127,19 @@ class Daemon:
             try:
                 state = await loop.run_in_executor(None, self.backend.get_state)
                 self.sample_ring.push_state(state)
+                self._last_state = state  # cache for the (non-blocking) status property
             except Exception:
                 logger.debug("Poll loop sample error", exc_info=True)
             await asyncio.sleep(0.02)  # 50Hz
+
+    def latest_state(self):
+        """Most recent SensorState from the 50Hz poll loop (~20ms old) WITHOUT a
+        blocking I2C read. backend.get_state() does blocking I2C when idle, and
+        callers on the event loop (the relay get_state handler, /api/state,
+        /api/state/ws at 10Hz) would otherwise stall the whole device server —
+        making the dashboard laggy, especially while the fleet is driving it.
+        Falls back to a direct read only before the poll has produced one."""
+        return self._last_state if self._last_state is not None else self.backend.get_state()
 
     @property
     def status(self) -> dict:
@@ -136,9 +147,15 @@ class Daemon:
             "state": self.state.value,
             "backend": type(self.backend).__name__,
             "error": self._error,
+            # A backend-detected fault that makes capture refuse ("" = none).
+            # Distinct from "error" above, which is the daemon's own start-up
+            # failure: here the daemon runs fine, the HARDWARE can't produce
+            # usable episodes. Rides on the status dict so it reaches the local
+            # dashboard and the fleet's get_state without a second endpoint.
+            "hardware_error": getattr(self.backend, "hardware_error", ""),
         }
         if self.state == DaemonState.RUNNING:
-            result["sensor"] = self.backend.get_state().model_dump()
+            result["sensor"] = self.latest_state().model_dump()
         return result
 
     # ── Replay ─────────────────────────────────────────────────────
