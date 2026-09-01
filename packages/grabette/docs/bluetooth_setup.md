@@ -20,7 +20,9 @@ sets it instead.
 
 The tool shows the current hand as soon as it connects (reading it needs no
 PIN), and the **Set to left** / **Set to right** buttons need the PIN like the
-WiFi ones. Setting it renames the host to `grabette-<hand>`, clears the cached
+WiFi ones. Setting it renames the host to `grabette-<hand>` — keeping the per-device
+serial suffix GrabetteOS appends on first boot, so `grabette-1f9a2b` becomes
+`grabette-left-1f9a2b` — clears the cached
 `GRABETTE_HAND` line so the derivation runs again, and restarts the service —
 per-device calibration in the same env file is left untouched. It is safe to
 change later: switching hands only flips the sensor signs, and

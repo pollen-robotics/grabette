@@ -221,6 +221,28 @@ def test_set_hand_accepts_either_hand_in_any_case(service, env_file, runner):
     assert runner.argv("hostnamectl")[-1] == "gripette-right"
 
 
+# ---- the per-device suffix survives a hand change ----
+
+# GripetteOS appends the Pi serial to the baked hostname on first boot
+# (common/files/hostname-suffix), which is what keeps several devices apart on
+# one network. Setting the hand must insert the hand and keep that suffix, not
+# rebuild the name from scratch.
+@pytest.mark.parametrize("current,hand,expected", [
+    ("gripette", "left", "gripette-left"),                          # no suffix
+    ("gripette-1f9a2b", "left", "gripette-left-1f9a2b"),            # fresh image
+    ("gripette-left-1f9a2b", "right", "gripette-right-1f9a2b"),     # re-set
+    ("gripette-simsim", "left", "gripette-left-simsim"),            # hand-set label
+    ("mypi", "left", "gripette-left-mypi"),                         # renamed box
+])
+def test_set_hand_keeps_whatever_follows_the_device_name(
+    service, env_file, runner, monkeypatch, current, hand, expected
+):
+    monkeypatch.setattr(bts.socket, "gethostname", lambda: current)
+    _authenticate(service)
+    service._handle_command(f"HAND {hand}".encode())
+    assert runner.argv("hostnamectl") == ["hostnamectl", "set-hostname", expected]
+
+
 # ---- a root service taking BLE input: the value is allowlisted ----
 
 @pytest.mark.parametrize("payload", [

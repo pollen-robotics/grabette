@@ -795,6 +795,29 @@ def _clear_hand_env() -> None:
             f.writelines(kept)
 
 
+def _hand_hostname(current: str, hand: str) -> str:
+    """Insert the hand after the device name, keeping whatever trails it.
+
+    What trails it is the per-device suffix GrabetteOS appends on first boot
+    (the low digits of the Pi serial, see common/files/hostname-suffix) or a
+    label someone set by hand. Either way it is what keeps several devices
+    apart on one network, so a hand change must not drop it:
+
+        grabette              + left  -> grabette-left
+        grabette-1f9a2b       + left  -> grabette-left-1f9a2b
+        grabette-left-1f9a2b  + right -> grabette-right-1f9a2b
+
+    Expressed as "keep the tail" rather than by reading the serial again, so
+    the serial rule lives in exactly one place — grabette-os — and the two
+    repositories cannot drift apart on it.
+    """
+    tail = current
+    if current.startswith(HAND_HOSTNAME_PREFIX):
+        tail = current[len(HAND_HOSTNAME_PREFIX):]
+    parts = [p for p in tail.strip("-").split("-") if p and p not in HAND_VALUES]
+    return "-".join([HAND_HOSTNAME_PREFIX, hand, *parts])
+
+
 def _set_hand(hand: str) -> str:
     """Set the hostname to <prefix>-<hand> and let the unit re-derive the hand.
 
@@ -810,7 +833,7 @@ def _set_hand(hand: str) -> str:
     """
     if hand not in HAND_VALUES:
         return "ERROR: Hand must be 'left' or 'right'."
-    hostname = f"{HAND_HOSTNAME_PREFIX}-{hand}"
+    hostname = _hand_hostname(socket.gethostname(), hand)
     try:
         result = subprocess.run(
             ["hostnamectl", "set-hostname", hostname],

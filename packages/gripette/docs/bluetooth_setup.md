@@ -129,7 +129,9 @@ sets it instead.
 
 The tool shows the current hand as soon as it connects (reading it needs no
 PIN). Click **Set to left** or **Set to right** — that needs the PIN, like the
-WiFi commands. It renames the host to `gripette-<hand>`, clears the cached
+WiFi commands. It renames the host to `gripette-<hand>` — keeping the
+per-device serial suffix GripetteOS appends on first boot, so `gripette-1f9a2b`
+becomes `gripette-left-1f9a2b` — clears the cached
 `GRIPPER_HAND` line so the derivation runs again, and restarts the service;
 the `GRIPPER_MOTOR*_OFFSET` calibration in the same env file is left untouched
 and stays valid (the hand only flips the motor signs, and the offsets are
