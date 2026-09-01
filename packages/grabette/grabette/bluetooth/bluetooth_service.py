@@ -97,6 +97,25 @@ PIN_LOCKOUT_SECONDS = 30
 MAX_PIN_LOCKOUT_SECONDS = 3600
 
 
+# ---- Hand (left/right) ----
+
+# The hand is only a pair of sensor signs (see config.Settings), resolved at
+# service start by /usr/local/bin/hand-from-hostname (GrabetteOS): it derives
+# left/right from the HOSTNAME and APPENDS GRABETTE_HAND to /etc/grabette/env.
+# That script is guarded by a grep on the variable, so re-deriving means
+# clearing the cached line — never rewriting the file, which also carries
+# per-device calibration appended by other tools.
+#
+# The hostname used to be set when flashing, in Raspberry Pi Imager's OS
+# customisation. Imager 2.0 removed that for custom images (it only ever
+# worked by way of a defect), so the HAND command below is the replacement.
+HAND_VALUES = ("left", "right")
+HAND_HOSTNAME_PREFIX = "grabette"
+HAND_ENV_FILE = "/etc/grabette/env"
+HAND_ENV_VAR = "GRABETTE_HAND"
+HAND_UNIT = "grabette.service"
+
+
 # =====================================================================
 # BLE Agent — "Just Works" pairing (no user interaction on device side)
 # =====================================================================
@@ -746,6 +765,79 @@ def _wifi_reset() -> str:
         return f"ERROR: {e}"
 
 
+def _hand_status() -> str:
+    """Report the hand already resolved on this device, and its hostname."""
+    hand = None
+    try:
+        with open(HAND_ENV_FILE) as f:
+            for line in f:
+                if line.startswith(f"{HAND_ENV_VAR}="):
+                    hand = line.split("=", 1)[1].strip() or None
+    except OSError:
+        pass  # no env file yet — same thing as no hand set
+    return json.dumps({"hand": hand, "hostname": socket.gethostname()})
+
+
+def _clear_hand_env() -> None:
+    """Drop the cached hand line, keeping every other line byte for byte.
+
+    Filtered line-wise on purpose: per-device calibration lives in the same
+    file, so it must never be rewritten from a template.
+    """
+    try:
+        with open(HAND_ENV_FILE) as f:
+            lines = f.readlines()
+    except OSError:
+        return  # nothing cached, nothing to clear
+    kept = [line for line in lines if not line.startswith(f"{HAND_ENV_VAR}=")]
+    if len(kept) != len(lines):
+        with open(HAND_ENV_FILE, "w") as f:
+            f.writelines(kept)
+
+
+def _set_hand(hand: str) -> str:
+    """Set the hostname to <prefix>-<hand> and let the unit re-derive the hand.
+
+    Three steps, in this order: hostname, then clear the cached line so
+    hand-from-hostname stops short-circuiting, then restart. A failed hostname
+    change stops the sequence, so the device is never left with a cleared hand
+    and the old hostname.
+
+    `hand` is matched against HAND_VALUES rather than sanitised: this runs as
+    root, from a value that arrived over BLE, and an allowlist is the only
+    check that cannot be talked around. The argv form (no shell) means even a
+    hostile string could not do more than fail hostnamectl's own validation.
+    """
+    if hand not in HAND_VALUES:
+        return "ERROR: Hand must be 'left' or 'right'."
+    hostname = f"{HAND_HOSTNAME_PREFIX}-{hand}"
+    try:
+        result = subprocess.run(
+            ["hostnamectl", "set-hostname", hostname],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip()
+            logger.error("hostnamectl failed for %r: %s", hostname, detail)
+            return f"ERROR: Could not set the hostname: {detail}"
+
+        _clear_hand_env()
+
+        # --no-block: the reply must not wait on the unit coming up (it runs
+        # ExecStartPre plus a Python start), or the BLE client times out. The
+        # unit would retry on its own anyway — Restart=on-failure.
+        subprocess.run(
+            ["systemctl", "restart", "--no-block", HAND_UNIT],
+            capture_output=True, text=True, timeout=10,
+        )
+        logger.info("Hand set to %s (hostname %s)", hand, hostname)
+        return f"OK: Hand set to {hand} (hostname {hostname})"
+    except subprocess.TimeoutExpired:
+        return "ERROR: Timed out setting the hand."
+    except Exception as e:
+        return f"ERROR: {e}"
+
+
 # =====================================================================
 # Main service class
 # =====================================================================
@@ -760,11 +852,14 @@ class BluetoothWifiService:
         WIFI_KEYEX            → {"kid","pk","alg"} ephemeral pubkey for sealing
         WIFI_CONNECT_ENC json → OK: Connecting to <ssid> / ERROR: ...
         WIFI_RESET            → OK: WiFi connections cleared / ERROR: ...
+        HAND                  → {"hand":"left|right|null","hostname":...}
+        HAND left|right       → OK: Hand set to <hand> (hostname ...) / ERROR: ...
 
     The WiFi password is sealed client-side (see _wifi_connect_enc) and never
     sent in clear — there is no plaintext connect command.
 
-    PIN authentication is required before WIFI_SCAN/WIFI_CONNECT_ENC/WIFI_RESET.
+    PIN authentication is required before WIFI_SCAN/WIFI_CONNECT_ENC/WIFI_RESET
+    and before setting (not reading) the hand.
     Auth is consumed by WIFI_CONNECT_ENC/WIFI_RESET (re-PIN for each) but NOT by
     WIFI_SCAN, so a client can scan then connect with a single PIN. WIFI_KEYEX
     is public (it returns only a public key). Auth is reset when the BLE central
@@ -850,6 +945,18 @@ class BluetoothWifiService:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             self.authenticated = False  # one-shot auth
             return _wifi_reset()
+
+        # HAND — report the resolved hand. Public: the hostname is already in
+        # the BLE advert, and the client shows the state before the PIN step.
+        if upper == "HAND":
+            return _hand_status()
+
+        # HAND <left|right> — set it (requires auth)
+        if upper.startswith("HAND "):
+            if not self.authenticated:
+                return "ERROR: Not authenticated. Send PIN_xxxxx first."
+            self.authenticated = False  # one-shot auth
+            return _set_hand(command_str.split(" ", 1)[1].strip().lower())
 
         return f"ERROR: Unknown command: {command_str}"
 

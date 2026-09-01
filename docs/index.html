@@ -459,12 +459,33 @@
              is as close to "the dashboard is up" as this page can get: it is
              served over HTTPS, so it cannot probe a plain-http address. -->
         <div class="card step-card" id="card-dash" hidden>
-            <div class="step"><span class="step-num">4</span> Open the device dashboard</div>
+            <div class="step"><span class="step-num">5</span> Open the device dashboard</div>
             <a class="dash-link" id="dashLink" target="_blank" rel="noopener">
                 <span id="dashUrl"></span>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
             </a>
             <div class="dash-note" id="dashNote"></div>
+        </div>
+
+        <!-- The hand (left/right) is only a pair of sensor signs, and the device
+             derives it from its own HOSTNAME when the main service starts. It
+             used to be set while flashing, in Raspberry Pi Imager's OS
+             customisation; Imager 2.0 removed that for custom images, so it is
+             set here instead. Reading is public (the hostname is already in the
+             advertised name), setting needs the PIN. Casquette has no hand. -->
+        <div class="card step-card" id="card-hand" hidden>
+            <div class="step"><span class="step-num">4</span> Set the hand</div>
+            <p class="step-hint">Which side this device is built as. It decides the
+                sensor sign mapping, so the wrong hand mirrors every reading —
+                and the device refuses to start its main service until one is set.</p>
+            <p class="step-hint">Currently: <b id="handCurrent">reading…</b></p>
+            <button class="btn-secondary" id="btnHandLeft" onclick="setHand('left')" disabled>
+                Set to left
+            </button>
+            <button class="btn-secondary" id="btnHandRight" onclick="setHand('right')" disabled>
+                Set to right
+            </button>
+            <div class="step-msg" id="msgHand"></div>
         </div>
 
         <!-- Not a step: ping and network status are usable at any point once
@@ -590,10 +611,11 @@
     };
 
     function setAuthed(on) {
-        for (const id of Object.keys(WIFI_BTN_TITLES)) {
+        const titles = { ...WIFI_BTN_TITLES, ...HAND_BTN_TITLES };
+        for (const id of Object.keys(titles)) {
             const b = document.getElementById(id);
             b.disabled = !on;
-            b.title = on ? WIFI_BTN_TITLES[id]
+            b.title = on ? titles[id]
                          : 'Authenticate again in step 2 — the device consumed the PIN';
         }
         // Only worth explaining once step 3 is on screen, i.e. after a first
@@ -620,6 +642,11 @@
 
         reveal('card-auth', connected);
         reveal('card-diag', connected);
+        // The hand is readable before the PIN, so its card goes up with the
+        // link: that is how "not set yet" gets seen. Casquette has no hand.
+        const hasHand = connected && HAND_DEVICES.includes(connectedType);
+        reveal('card-hand', hasHand);
+        if (hasHand) readHand();
         if (!connected) reveal('card-wifi', false);
         // Always hidden on a state change: the address belongs to whichever
         // device was on the other end, and is stale the moment that changes.
@@ -635,7 +662,7 @@
     async function connectDevice() {
         const targetName = document.getElementById('deviceSelect').value;
         try {
-            clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+            clearMsg('msgAuth', 'msgWifi', 'msgHand', 'msgStatus');
             stepMsg('msgConnect', 'Searching for a ' + targetName + ' nearby…');
             log('Scanning for ' + targetName + '...');
             // Match by name PREFIX: the device advertises "Grabette (hostname)"
@@ -648,7 +675,7 @@
 
             device.addEventListener('gattserverdisconnected', () => {
                 log('Device disconnected', 'log-err');
-                clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+                clearMsg('msgAuth', 'msgWifi', 'msgHand', 'msgStatus');
                 stepMsg('msgConnect', 'Device disconnected', 'err');
                 setConnected(false);
             });
@@ -708,7 +735,7 @@
             device.gatt.disconnect();
         }
         setConnected(false);
-        clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+        clearMsg('msgAuth', 'msgWifi', 'msgHand', 'msgStatus');
         stepMsg('msgConnect', 'Disconnected');
         log('Disconnected');
     }
@@ -764,6 +791,56 @@
         stepMsg('msgAuth',
                 failed ? replyText(resp) : 'Authenticated — you can now configure WiFi',
                 failed ? 'err' : 'ok');
+    }
+
+    // ---- Hand (left/right) ----
+
+    // Casquette has no hand: no motors and no angle sensors to mirror.
+    const HAND_DEVICES = ['Grabette', 'Gripette'];
+
+    const HAND_BTN_TITLES = {
+        btnHandLeft: 'Tell the device it is the left hand — sets its hostname and restarts the service',
+        btnHandRight: 'Tell the device it is the right hand — sets its hostname and restarts the service',
+    };
+
+    // Public command, so this runs on connect, before the PIN: an unset hand is
+    // the state worth seeing early, since the main service stays down until it
+    // is set. A device built before the HAND command answers "Unknown command".
+    async function readHand() {
+        const el = document.getElementById('handCurrent');
+        el.textContent = 'reading…';  // never show the previous device's hand
+        const resp = await sendCommand('HAND', true);
+        if (resp === null) { el.textContent = 'unknown — no response'; return; }
+        if (resp.startsWith('ERROR')) {
+            el.textContent = 'not supported by this device';
+            log('Device does not support the HAND command', 'log-err');
+            return;
+        }
+        let status;
+        try {
+            status = JSON.parse(resp);
+        } catch (e) {
+            el.textContent = resp;
+            return;
+        }
+        el.textContent = status.hand
+            ? status.hand + ' — hostname ' + status.hostname
+            : 'not set yet';
+        log('Hand: ' + (status.hand || 'not set'), status.hand ? 'log-ok' : 'log-err');
+    }
+
+    async function setHand(hand) {
+        stepMsg('msgHand', 'Setting the hand to ' + hand + '…');
+        const resp = await sendCommand('HAND ' + hand);
+        if (resp === null) { stepMsg('msgHand', 'No response from the device', 'err'); return; }
+        const failed = resp.startsWith('ERROR');
+        stepMsg('msgHand', replyText(resp), failed ? 'err' : 'ok');
+        if (failed) return;
+        // The device restarts its main service with --no-block, so this reply
+        // arrives before the service is back up. The hostname is already
+        // changed, which is what readHand reports.
+        noteAuthConsumed();
+        await readHand();
     }
 
     // ---- WiFi password sealing (mirrors bluetooth_service.py) ----
@@ -877,7 +954,7 @@
     // rather than letting the user hit "Not authenticated" on the retry.
     function noteAuthConsumed() {
         setAuthed(false);
-        stepMsg('msgAuth', 'PIN used up — authenticate again before the next WiFi command');
+        stepMsg('msgAuth', 'PIN used up — authenticate again before the next command that changes the device');
     }
 
     // Destructive and irreversible from here: nmcli deletes the profiles, so the

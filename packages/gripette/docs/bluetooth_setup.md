@@ -118,6 +118,23 @@ CONNECTED [wlan0] 192.168.1.36
 
 The gripette is now on your WiFi network.
 
+### 7. Set the hand
+
+`gripette.service` will not start until it knows which hand this gripper is: on
+every start `ExecStartPre` runs `hand-from-hostname`, which derives left/right
+from the **hostname** and appends `GRIPPER_HAND` to `/etc/gripette/env`. On
+GripetteOS the hostname used to be set while flashing, in Raspberry Pi Imager's
+OS customisation — Imager 2.0 removed that for custom images, so the BT Tool
+sets it instead.
+
+The tool shows the current hand as soon as it connects (reading it needs no
+PIN). Click **Set to left** or **Set to right** — that needs the PIN, like the
+WiFi commands. It renames the host to `gripette-<hand>`, clears the cached
+`GRIPPER_HAND` line so the derivation runs again, and restarts the service;
+the `GRIPPER_MOTOR*_OFFSET` calibration in the same env file is left untouched
+and stays valid (the hand only flips the motor signs, and the offsets are
+stored in the encoder frame).
+
 ## BLE command reference
 
 The web tool wraps these, but the commands are also usable directly — written as UTF-8 to the COMMAND characteristic; responses arrive as notifications:
@@ -128,6 +145,8 @@ The web tool wraps these, but the commands are also usable directly — written 
 | `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` | Authenticate (required before WIFI/WIFI_RESET) |
 | `WIFI ssid password` | `OK: Connecting to <ssid>` / `ERROR: ...` | Connect to WiFi via nmcli |
 | `WIFI_RESET` | `OK: WiFi connections cleared` | Delete all saved WiFi networks |
+| `HAND` | `{"hand":"left\|right\|null","hostname":"..."}` | Read the hand this gripette resolved (no PIN needed) |
+| `HAND left\|right` | `OK: Hand set to <hand> (hostname gripette-<hand>)` / `ERROR: ...` | Set the hand (needs the PIN, consumes it) |
 
 Network status is also readable from a dedicated BLE characteristic (auto-updates every 10s).
 
