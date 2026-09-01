@@ -6,8 +6,10 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+from grabette import spaces
 
 
 def _stable_device_id() -> str:
@@ -96,8 +98,11 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
-    # Fleet relay
-    relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
+    # Fleet relay. Derived from GRABETTE_FLEET_ENV (see grabette.spaces) so
+    # pointing a device at the test deployment is one named env var and not a
+    # URL copied into two files. GRABETTE_RELAY_URL still overrides, as usual
+    # for a Settings field.
+    relay_url: str = Field(default_factory=lambda: spaces.space_url("fleet"))
     relay_enabled: bool = True
     device_id: str = ""
     device_name: str = ""
