@@ -632,8 +632,21 @@
         if (!connected) setPasswordShown(false);  // don't leave it on screen
     }
 
+    // Chrome's two wordings for "BlueZ no longer has this device object". A
+    // failed connect makes BlueZ evict the device, so the handle is dead and
+    // only a fresh requestDevice() — a new user gesture — can replace it.
+    function isDeadHandle(e) {
+        return /no longer in range|doesn't exist anymore/i.test(e.message || '');
+    }
+
     async function connectDevice() {
         const targetName = document.getElementById('deviceSelect').value;
+        // Block a second click while the first is still connecting: opening the
+        // chooser again starts a scan, and that scan aborts the connection
+        // already in flight (BlueZ reports le-connection-abort-by-local), so the
+        // extra click breaks the very attempt it looks like it is helping.
+        const btnConnect = document.getElementById('btnConnect');
+        btnConnect.disabled = true;
         try {
             clearMsg('msgAuth', 'msgWifi', 'msgStatus');
             stepMsg('msgConnect', 'Searching for a ' + targetName + ' nearby…');
@@ -664,7 +677,10 @@
                     cmdService = await server.getPrimaryService(SERVICE_UUID);
                     break;
                 } catch (e) {
-                    if (attempt >= maxAttempts) throw e;
+                    // Stop the moment the handle itself is dead: those retries
+                    // cannot succeed, and their error replaces the one that
+                    // explains what actually went wrong.
+                    if (attempt >= maxAttempts || isDeadHandle(e)) throw e;
                     stepMsg('msgConnect', 'Link unstable, retrying (' + attempt + '/' + maxAttempts + ')…');
                     log('GATT unstable, retrying: ' + e.message, 'log-err');
                     if (device.gatt.connected) device.gatt.disconnect();
@@ -698,8 +714,16 @@
             clearMsg('msgConnect');
             log('Connected to ' + shownName, 'log-ok');
         } catch (e) {
-            stepMsg('msgConnect', 'Connection failed: ' + e.message, 'err');
+            const expired = isDeadHandle(e)
+                ? ' The device entry expired — search again and pick it.' : '';
+            stepMsg('msgConnect', 'Connection failed: ' + e.message + expired, 'err');
             log('Connection failed: ' + e.message, 'log-err');
+        } finally {
+            // Unconditionally: while connected the whole picker is hidden
+            // (setConnected), so what gates this button then is visibility, not
+            // its disabled flag — and leaving that flag set would make the
+            // button dead when the picker comes back after a disconnect.
+            btnConnect.disabled = false;
         }
     }
 
