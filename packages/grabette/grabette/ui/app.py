@@ -221,28 +221,30 @@ h2.gb-section {
     color: var(--gb-muted) !important;
     opacity: 1 !important;
 }
-/* The footer's cog (a second, contradicting theme picker) and its API link are
-   dropped through Gradio's footer_links in app/main.py — see the comment
-   there. That leaves the Gradio credit alone between two separators with
-   nothing left to separate. */
-footer .divider { display: none !important; }
+/* Gradio's own footer is switched off entirely in app/main.py (footer_links);
+   _page_footer renders ours. This is belt and braces in case a build ever
+   emits it anyway. */
+.gradio-container footer { display: none !important; }
 
 /* ── Page header (device name + battery), identical on all four pages ───── */
-.gb-header-row { align-items: center !important; gap: .75rem !important; }
-
 /* Theme switch: a two-segment control, the way a phone shows a setting with
    two named states — both options visible and labelled, the active one filled.
    Two real buttons rather than one toggle, so clicking "Light" while already
-   light does nothing instead of flipping to dark. */
-/* basis 0, not auto: the band's natural width (name + battery pill) is wide
-   enough that an auto basis plus the switch overflows the row and wraps it. */
-.gb-head-block { flex: 1 1 0 !important; min-width: 0 !important; }
+   light does nothing instead of flipping to dark.
+
+   It sits on its own line under the name band, hard right, and deliberately
+   small: it is a preference someone sets once, not something to give a quarter
+   of the header to. */
+.gb-theme-row {
+    justify-content: flex-end !important;
+    margin: .3rem 0 .2rem !important;
+}
 .gb-theme-col { flex: 0 0 auto !important; }
 .gb-theme-switch {
     display: flex !important;
     flex-wrap: nowrap !important;
-    gap: .15rem !important;
-    padding: .2rem !important;
+    gap: .1rem !important;
+    padding: .15rem !important;
     border-radius: 999px !important;
     background: var(--gb-sunk) !important;
     border: 1px solid var(--gb-border) !important;
@@ -252,11 +254,11 @@ footer .divider { display: none !important; }
 .gb-theme-switch > * { min-width: 0 !important; padding: 0 !important; }
 .gb-seg, .gb-seg button {
     min-width: 0 !important;
-    padding: .32rem .8rem !important;
+    padding: .2rem .6rem !important;
     border: 0 !important; border-radius: 999px !important;
     background: transparent !important;
     color: var(--gb-muted) !important;
-    font-size: .8rem !important; font-weight: 600 !important;
+    font-size: .72rem !important; font-weight: 600 !important;
     white-space: nowrap;
     box-shadow: none !important;
     transition: background .12s ease, color .12s ease;
@@ -318,57 +320,45 @@ footer .divider { display: none !important; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ── Link tiles ────────────────────────────────────────────────────────── */
-.gb-tile {
-    display: block; margin-top: .7rem; padding: .85rem 1rem;
-    /* Gradio centres text inside an HTML block; a paragraph of prose is not a
-       caption and must not be centred. */
-    text-align: left;
-    border-radius: 12px; text-decoration: none;
-    background: var(--gb-card); border: 1px solid var(--gb-border);
-    box-shadow: var(--gb-shadow);
-    transition: border-color .12s ease, transform .12s ease;
-}
-.gb-tile:hover { border-color: var(--gb-accent); transform: translateY(-1px); }
-.gb-tile-title { display: block; font-size: .95rem; font-weight: 700; color: var(--gb-text); }
-.gb-tile-sub {
-    display: block; margin-top: .25rem; font-size: .84rem;
-    line-height: 1.5; color: var(--gb-soft);
-    /* Cap the reading measure: comfortable prose, and it keeps the sentence
-       from running the full panel width if the layout ever goes one-column. */
-    max-width: 62ch;
-}
-/* The one call to action on the page. Wide is fine for a banner — but not tall
-   and not shouting, or it competes with the state above it. */
-/* Black, not white. Measured against this gradient (WCAG 2.1 contrast ratio):
-     emerald #10b981 — white 2.5:1, black 8.3:1
-     midpoint ~#259dbb — white 3.2:1, black 6.5:1
-     blue    #3b82f6 — white 3.8:1, black 5.6:1
-   White fails AA (4.5:1) across the whole sweep and fails even the 3:1 large-
-   text floor at the emerald end. Black clears AA everywhere, worst case 5.6:1.
-   The subtitle stays fully opaque for the same reason — dimming it with an
-   opacity would give back exactly the contrast this is buying. */
+/* ── The one call to action ───────────────────────────────────────────────
+   Wide is fine for a banner — but not tall and not shouting, or it competes
+   with the state above it.
+
+   White text, as asked. That forced the gradient DOWN a shade: on the original
+   emerald→blue (#10b981→#3b82f6) white measures 2.5:1 at the emerald end —
+   below even the 3:1 large-text floor, let alone AA's 4.5:1. Deepening the two
+   stops keeps the same emerald→blue identity and puts white at 5.6:1 / 6.4:1 /
+   6.8:1 across the sweep. The subtitle carries no opacity for the same reason:
+   dimming it would hand back exactly the contrast this is buying. */
 .gb-fleet {
     display: flex; flex-direction: column; align-items: center; gap: .2rem;
     margin-top: 1.6rem; padding: 1.15rem 1.5rem;
-    border-radius: 14px; text-decoration: none; color: #000;
-    background: linear-gradient(135deg, #10b981, #3b82f6);
-    box-shadow: 0 4px 16px rgba(16, 185, 129, .22);
+    border-radius: 14px; text-decoration: none; color: #fff;
+    background: linear-gradient(135deg, #047857, #1d4ed8);
+    box-shadow: 0 4px 16px rgba(4, 120, 87, .25);
     transition: filter .12s ease;
 }
-.gb-fleet:hover { filter: brightness(1.06); }
+.gb-fleet:hover { filter: brightness(1.12); }
 .gb-fleet-title { font-size: 1.1rem; font-weight: 800; }
 .gb-fleet-sub { font-size: .87rem; font-weight: 500; }
+/* Gradio's prose styles colour <a> themselves, at a higher specificity than a
+   bare class — which quietly left this banner using the body text colour (dark
+   on light, light on dark) instead of the colour picked for its background.
+   Say it on the anchor and on both spans, and mean it. */
+.gradio-container a.gb-fleet,
+.gradio-container a.gb-fleet .gb-fleet-title,
+.gradio-container a.gb-fleet .gb-fleet-sub { color: #fff !important; }
+
+.gb-footer {
+    margin: 2.5rem 0 1.25rem;
+    text-align: center;
+    font-size: .78rem;
+}
+.gb-footer a { color: var(--gb-muted); text-decoration: none; }
+.gb-footer a:hover { color: var(--gb-soft); text-decoration: underline; }
 
 /* ── Phone ─────────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
-    /* The switch on its own line: sharing 390 px with the name band squeezed
-       the hostname into three lines and pushed the battery out of its card. */
-    .gb-header-row { flex-wrap: wrap !important; }
-    .gb-head-block, .gb-theme-col {
-        flex: 1 1 100% !important; min-width: 100% !important;
-    }
-    .gb-theme-switch { width: fit-content !important; margin-left: auto !important; }
     .gb-name { font-size: 1.2rem; }
     .gb-head { padding: .7rem .8rem; }
     /* One tile per row beats two unreadable slivers. */
@@ -520,11 +510,6 @@ _ANGLE_IFRAME_HTML = (
     'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
-# The Bluetooth provisioning tool (docs/index.html, published to GitHub Pages).
-# It has to be served from an https origin — Web Bluetooth is secure-context
-# only — which is why it lives there and not on the device.
-_BT_TOOL_URL = "https://pollen-robotics.github.io/grabette/"
-
 _WIFI_SETTINGS_HTML = (
     '<iframe src="/api/wifi/setup" id="wifi-iframe" scrolling="no"'
     ' onload="var f=this;(function r(){'
@@ -785,6 +770,22 @@ def _status_bar_html(oakd_status, cam_status):
     return _card_row([rgb_badge, oakd_badge], margin="0.25rem 0 0.75rem")
 
 
+def _page_footer():
+    """Our own credit line, because Gradio's is not ours to translate.
+
+    Gradio picks its UI language from navigator.language and exposes no
+    server-side override (its `i18n` hook only carries an app's own custom
+    keys), so a French browser gets "Créé avec Gradio". The framework footer is
+    therefore turned off in app/main.py — footer_links=[] — and the same
+    attribution rendered here, in English, in the dashboard's own type.
+    """
+    gr.HTML(
+        '<div class="gb-footer">'
+        '<a href="https://gradio.app" target="_blank" rel="noreferrer">'
+        'Built with Gradio</a></div>'
+    )
+
+
 def _page_chrome():
     """Navbar + the shared header band. Call first inside every page.
 
@@ -793,16 +794,17 @@ def _page_chrome():
     same place whichever page you are on.
     """
     gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
-    with gr.Row(elem_classes=["gb-header-row"]):
-        header = gr.HTML(page_header_html(None), elem_classes=["gb-head-block"])
-        # A Column is what reliably takes scale/min_width here; the Row inside
-        # it is the pill the two segments sit in.
-        with gr.Column(scale=0, min_width=200, elem_classes=["gb-theme-col"]):
+    header = gr.HTML(page_header_html(None), elem_classes=["gb-head-block"])
+    # Under the band and hard right: a small preference, not a headline. A
+    # Column is what reliably takes scale/min_width here; the Row inside it is
+    # the pill the two segments sit in.
+    with gr.Row(elem_classes=["gb-theme-row"]):
+        with gr.Column(scale=0, min_width=150, elem_classes=["gb-theme-col"]):
             with gr.Row(elem_classes=["gb-theme-switch"]):
-                light_btn = gr.Button("\u2600 Light", min_width=88,
+                light_btn = gr.Button("\u2600 Light", min_width=64,
                                       variant="secondary",
                                       elem_classes=["gb-seg", "gb-seg-light"])
-                dark_btn = gr.Button("\u263E Dark", min_width=88,
+                dark_btn = gr.Button("\u263E Dark", min_width=64,
                                      variant="secondary",
                                      elem_classes=["gb-seg", "gb-seg-dark"])
     # Client-side only: no round-trip, and the choice is kept in localStorage so
@@ -1456,25 +1458,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.HTML(_section("Network"))
                 home_network_cards = gr.HTML("")
 
+                # Everything network lives in this one panel: the known
+                # networks to switch between, and the way out to the Bluetooth
+                # tool for one this device has never seen. See
+                # app/routers/wifi.py — it renders the whole thing.
                 with gr.Accordion("Switch network", open=False):
                     gr.HTML(_WIFI_SETTINGS_HTML)
-
-                # Adding a network is the Bluetooth tool's job, not this page's:
-                # it works when the device is on no network this browser can
-                # reach — which is exactly the situation where the dashboard
-                # cannot be loaded at all, so the link has to be somewhere an
-                # operator has already seen it. It is a normal https page on
-                # GitHub Pages (Web Bluetooth needs a secure context; the
-                # dashboard's own plain-HTTP origin cannot host it).
-                gr.HTML(
-                    f'<a class="gb-tile" href="{_BT_TOOL_URL}" target="_blank" '
-                    'rel="noopener">'
-                    '<span class="gb-tile-title">Add a new network — '
-                    'Bluetooth tool ↗</span>'
-                    '<span class="gb-tile-sub">Joins grabette to a network it '
-                    'has never seen, over Bluetooth — no network needed to '
-                    'reach it. Chrome or Edge.</span></a>'
-                )
 
             # ── HuggingFace account ───────────────────────────────────
             with gr.Column(scale=2, min_width=300):
@@ -1502,6 +1491,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_timer_cn.tick(fn=get_home_status, outputs=home_outputs)
         batt_beep_cn.change(fn=None, inputs=batt_beep_cn, outputs=None, js=_BATTERY_BEEP_JS)
         demo.load(fn=get_home_status, outputs=home_outputs)
+        _page_footer()
         demo.load(fn=None, js=_PAGE_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1728,6 +1718,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_popup_ep = gr.HTML(visible=False)
         batt_beep_ep = gr.Textbox(visible=False)
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
+        _page_footer()
         demo.load(fn=None, js=_PAGE_INIT_JS)
 
         # Battery warning rides on the status-bar poll (one system-info read
@@ -1820,6 +1811,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         dv_system_timer.tick(fn=get_system_bar, outputs=dv_system_outputs)
         batt_beep_lv.change(fn=None, inputs=batt_beep_lv, outputs=None, js=_BATTERY_BEEP_JS)
         live_demo.load(fn=get_system_bar, outputs=dv_system_outputs)
+        _page_footer()
         live_demo.load(fn=None, js=_PAGE_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
@@ -1859,6 +1851,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[poweroff_page_header, batt_popup_po, batt_beep_po],
         )
         batt_beep_po.change(fn=None, inputs=batt_beep_po, outputs=None, js=_BATTERY_BEEP_JS)
+        _page_footer()
         poweroff_demo.load(fn=None, js=_PAGE_INIT_JS)
 
     return demo

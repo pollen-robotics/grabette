@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # The Bluetooth provisioning tool (docs/index.html, published to GitHub
+    # Pages). Served from https because Web Bluetooth is secure-context only —
+    # the device's own plain-HTTP origin cannot host it. Overridable so a fork
+    # can point at its own Pages deployment.
+    bt_tool_url: str = "https://pollen-robotics.github.io/grabette/"
+
     # Fleet relay
     relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
     relay_enabled: bool = True

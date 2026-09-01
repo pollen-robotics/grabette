@@ -15,14 +15,16 @@ The device's IP address works too, and is shown on the **Home** page if `.local`
 
 Every page opens with the same band: the **device's hostname** on the left, its **battery** on the right, and the theme switch beside it. Same content, same position, whichever page you are on — with several Grabettes open in several tabs, that is how you tell them apart.
 
-Beside it, a **Light / Dark** switch. The choice is remembered in the browser and applies to every page; with no choice made, the dashboard follows the operating system's setting. (`?__theme=light` or `?__theme=dark` in the URL overrides both, for a bookmark or a kiosk.)
+Just under it, on the right, a small **Light / Dark** switch. The choice is remembered in the browser and applies to every page; with no choice made, the dashboard follows the operating system's setting. (`?__theme=light` or `?__theme=dark` in the URL overrides both, for a bookmark or a kiosk.)
 
 ## Home
 
 Where you land, and where the device says what it is.
 
-- **Network** — the network this Grabette is on and its IP address. **Switch network** folds out the list of networks it *already knows* and moves it to any of them in one click, no password. A network is known however it was set up: from a previous switch, or over Bluetooth.
-- **Add a new network** — opens the [Bluetooth provisioning tool](https://pollen-robotics.github.io/grabette/) in a new tab. Joining a network the device has never seen is that tool's job, because it works when the device is on no network you can reach — which is exactly when this page won't load either. Worth knowing where it is *before* you need it. Chrome or Edge only (Web Bluetooth).
+- **Network** — the network this Grabette is on, and its IP address.
+- **Switch network** folds out one panel with everything network in it:
+  - **Known networks** — every network this device already has credentials for. One click moves it to any of them, no password. A network is known however it was set up: from a previous switch, or over Bluetooth.
+  - **Join a new network (Bluetooth tool)** — opens the [Bluetooth provisioning tool](https://pollen-robotics.github.io/grabette/) in a new tab. Joining a network the device has never seen is that tool's job, because it works when the device is on no network you can reach — which is exactly when this page won't load either. Worth knowing where it is *before* you need it. Chrome or Edge only (Web Bluetooth). The URL is the `bt_tool_url` setting, so a fork can point at its own deployment.
 - **Hugging Face account** — paste an access token to log the device in. Everything under **Datasets**, and the fleet grouping described in [Hugging Face Spaces](./spaces.md), depends on this. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with write access to the datasets you intend to push.
 - **Open fleet dashboard** — links out to grabette-fleet.
 

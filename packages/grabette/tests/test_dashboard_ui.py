@@ -216,11 +216,12 @@ def test_theme_choice_survives_navigation_and_honours_the_url():
 
 # ── Fleet call to action ──────────────────────────────────────────────────
 
-def test_fleet_cta_text_is_the_higher_contrast_choice():
-    """White on this emerald→blue gradient bottoms out at 2.5:1; black at 5.6:1.
+def test_fleet_cta_white_text_clears_aa_on_its_gradient():
+    """The banner is white-on-gradient by request, so the gradient has to earn it.
 
-    Recomputed here rather than trusted, so a change to the gradient that makes
-    white viable (or black worse) fails instead of passing silently.
+    Recomputed here rather than trusted: brightening the stops back toward the
+    original emerald→blue drops white to 2.5:1 and fails this instead of
+    quietly shipping unreadable text.
     """
     rule = re.search(r"\.gb-fleet\s*\{([^}]*)\}", _css()).group(1)
     stops = re.findall(r"#([0-9a-f]{6})", rule)
@@ -242,8 +243,9 @@ def test_fleet_cta_text_is_the_higher_contrast_choice():
         mix = "".join(f"{round(a[i] + (b[i] - a[i]) * t):02x}" for i in range(3))
         samples.append(luminance(mix))
 
-    worst_black = min(ratio(lum, 0.0) for lum in samples)
     worst_white = min(ratio(lum, 1.0) for lum in samples)
-    assert worst_black > worst_white
-    assert worst_black >= 4.5, f"AA needs 4.5:1, got {worst_black:.2f}"
-    assert "color: #000" in rule
+    assert worst_white >= 4.5, f"AA needs 4.5:1, white gets {worst_white:.2f}"
+    assert "color: #fff" in rule
+    # ...and the colour has to actually land: Gradio's prose styles colour <a>
+    # at a higher specificity than a bare class.
+    assert "a.gb-fleet .gb-fleet-sub { color: #fff !important" in _css()

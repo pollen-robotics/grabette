@@ -19,6 +19,7 @@ over the device's own hotspot, and grabette-fleet builds on this API surface.
 from __future__ import annotations
 
 import logging
+from html import escape as html_escape
 
 from fastapi import APIRouter, BackgroundTasks
 from fastapi.responses import HTMLResponse
@@ -26,6 +27,7 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+from grabette.config import settings
 from grabette.wifi import (
     activate_saved_network,
     get_current_ssid,
@@ -149,7 +151,15 @@ def wifi_connect_result() -> dict:
 
 @router.get("/setup", response_class=HTMLResponse)
 def wifi_setup_page() -> str:
-    return _WIFI_SETUP_HTML
+    """The panel the dashboard's "Switch network" accordion iframes.
+
+    Self-contained: the known networks, and the way out to the Bluetooth tool
+    for a network this device has never seen. Rendered per request so the tool
+    URL comes from settings rather than being frozen into a module constant.
+    """
+    return _WIFI_SETUP_HTML.replace(
+        "__BT_TOOL_URL__", html_escape(settings.bt_tool_url, quote=True)
+    )
 
 
 _WIFI_SETUP_HTML = """\
@@ -238,6 +248,29 @@ _WIFI_SETUP_HTML = """\
   }
   button.ghost:hover { filter: none; background: var(--gb-border); }
   #spinner { display: none; color: var(--gb-soft); font-size: .85rem; margin-bottom: .6rem; }
+  .head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: .75rem; margin-bottom: .6rem;
+  }
+  h2 {
+    font-size: .95rem; font-weight: 700; letter-spacing: .02em;
+    color: var(--gb-soft); margin: 0;
+  }
+  button.small { padding: .28rem .7rem; font-size: .76rem; }
+  /* The charter's primary: #ffcc4d on the brand navy. It is the one action in
+     this panel that leaves it, so it gets the accent rather than a ghost. */
+  .join {
+    display: block; margin-top: .9rem; padding: .6rem 1rem;
+    border-radius: 10px; text-align: center; text-decoration: none;
+    background: #ffcc4d; color: #1a1a2e;
+    font-size: .87rem; font-weight: 700;
+  }
+  .join:hover { filter: brightness(1.06); }
+  .join:active { transform: scale(.99); }
+  .join-note {
+    margin: .45rem .15rem 0; font-size: .78rem; line-height: 1.5;
+    color: var(--gb-muted);
+  }
   @media (max-width: 480px) {
     li { flex-wrap: wrap; }
     li button, li .tag { margin-left: auto; }
@@ -246,12 +279,22 @@ _WIFI_SETUP_HTML = """\
 </head>
 <body>
 
+<div class="head">
+  <h2>Known networks</h2>
+  <button class="ghost small" onclick="loadKnown()">Refresh</button>
+</div>
 <div id="status"></div>
 <div id="error-box"></div>
 <div id="spinner">Switching, please wait…</div>
 <div id="known-empty" class="empty">Looking for saved networks…</div>
 <ul id="known"></ul>
-<button class="ghost" onclick="loadKnown()">Refresh</button>
+
+<a class="join" href="__BT_TOOL_URL__" target="_blank" rel="noopener">
+  Join a new network (Bluetooth tool) ↗
+</a>
+<p class="join-note">A network this Grabette has never seen is joined over
+Bluetooth — that works even when it is on no network you can reach. Chrome or
+Edge.</p>
 
 <script>
 // Theme: same key the dashboard writes, read before first paint.
@@ -283,8 +326,8 @@ async function loadKnown() {
     const nets = await r.json();
     ul.innerHTML = '';
     if (!nets.length) {
-      empty.textContent = 'No saved networks yet. Use the Bluetooth tool below '
-        + 'to join the first one — after that it shows up here.';
+      empty.textContent = 'None yet — join the first one with the Bluetooth '
+        + 'tool below, and it will show up here afterwards.';
       empty.style.display = 'block';
       return;
     }
