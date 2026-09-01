@@ -149,18 +149,62 @@ body.dark {
 /* The ground has to be painted on the app shell too: Gradio's container sits
    on top of <body> with its own opaque fill, which would hide it. */
 .gradio-container, .app, .main, body { background: var(--gb-bg) !important; }
-/* Full-bleed: the dashboard is the whole window. Gradio's default max-width
-   left the navbar stopping short of the right edge on a wide screen. */
-.gradio-container { max-width: 100% !important; width: 100% !important; }
-.gradio-container > .main, .gradio-container .contain { max-width: 100% !important; }
+
+/* ── Shell: bar edge-to-edge, content on a readable measure ─────────────────
+   The chrome (nav bar, its rule, the page ground) spans the window; the
+   content does NOT. A 1200-px column keeps a line of text and a stat tile at a
+   size the eye can take in — stretched across a 27" screen, the same card is a
+   label in one corner and a number in the other.
+
+   Gradio renders the navbar as <nav> in a .nav-holder that is a SIBLING of the
+   content column, so the two can be sized independently. (The elem_id we pass
+   to gr.Navbar lands on a display:none stub inside the column instead — hence
+   the .nav-holder selectors below rather than #grabette-nav.) */
+:root { --gb-measure: 1200px; --gb-gutter: clamp(.75rem, 3vw, 1.75rem); }
+/* Gradio caps .fillable at a responsive breakpoint (640→1920px). That cap is
+   what left the bar stopping short of the right edge, and it is the wrong tool
+   here anyway: we want the shell edge-to-edge and the CONTENT on a measure of
+   our choosing, which is one cap, applied in one place, below. */
+.gradio-container, .gradio-container .fillable:not(.fill_width) {
+    max-width: 100% !important;
+    width: 100% !important;
+}
+.gradio-container .wrap { max-width: 100% !important; }
+/* width:100% matters as much as the cap — .wrap centres its children with
+   align-items, so without it <main> is shrink-to-fit and lands on whatever
+   width its widest child happens to want. */
+.gradio-container main.contain {
+    width: 100% !important;
+    max-width: var(--gb-measure) !important;
+    margin-inline: auto !important;
+    padding-inline: var(--gb-gutter) !important;
+}
+/* The bar spans the window, but its links line up with the content column
+   below rather than floating out at the window edge. */
+.nav-holder nav {
+    padding-inline: max(var(--gb-gutter),
+                        calc((100% - var(--gb-measure)) / 2 + var(--gb-gutter))) !important;
+}
+
 /* Blocks that only group other blocks (rows, columns) must stay transparent —
    otherwise every nesting level stacks another translucent veil. */
 .gradio-container .form, .gradio-container .gap,
 .gradio-container div.block:not(.padded) { background: transparent; }
 /* Our hand-rolled HTML already carries its own card padding. Gradio's block
    padding on top of it left every strip at a slightly different width from its
-   neighbour — very visible once the page is full-bleed. */
+   neighbour. */
 .gradio-container .html-container { padding: 0 !important; }
+
+/* ── Section rhythm ────────────────────────────────────────────────────────
+   Markdown "## Foo" is what separates one section from the next, so it has to
+   read as a divider, not as body text that happens to be bold. */
+.gradio-container h2 {
+    font-size: .95rem !important;
+    font-weight: 700 !important;
+    letter-spacing: .02em;
+    color: var(--gb-soft) !important;
+    margin: 1.6rem 0 .1rem !important;
+}
 /* Gradio dims disabled buttons by lightening them, which on a dark ground
    produces a near-white bar with unreadable text. Use the palette instead. */
 .gradio-container button:disabled, .gradio-container button[disabled] {
@@ -208,35 +252,76 @@ footer .settings, footer .settings + .divider { display: none !important; }
 }
 .gb-batt-value { font-size: 1.05rem; font-weight: 800; }
 
-/* ── Status cards ──────────────────────────────────────────────────────── */
-.gb-cards { display: flex; flex-direction: row; gap: .5rem; flex-wrap: wrap; }
+/* ── Status cards ──────────────────────────────────────────────────────────
+   A grid of fixed-ish tiles rather than a flex row that divides the width
+   between however many cards there are: two readings should be two tiles, not
+   two half-page banners with the value stranded in the corner. */
+.gb-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    gap: .6rem;
+}
 .gb-card {
-    flex: 1 1 11rem; min-width: 0;
-    padding: .6rem 1rem; border-radius: 14px;
+    min-width: 0;
+    padding: .7rem .95rem; border-radius: 12px;
     background: var(--gb-card); border: 1px solid var(--gb-border);
     box-shadow: var(--gb-shadow);
 }
 .gb-card-label {
-    font-size: .65rem; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--gb-muted); margin-bottom: .2rem;
+    font-size: .64rem; text-transform: uppercase; letter-spacing: .09em;
+    font-weight: 600; color: var(--gb-muted); margin-bottom: .25rem;
 }
 .gb-card-value {
-    font-size: .9rem; font-weight: 700;
+    font-size: 1rem; font-weight: 700; line-height: 1.3;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
+/* ── Link tiles ────────────────────────────────────────────────────────── */
+.gb-tile {
+    display: block; margin-top: .7rem; padding: .85rem 1rem;
+    /* Gradio centres text inside an HTML block; a paragraph of prose is not a
+       caption and must not be centred. */
+    text-align: left;
+    border-radius: 12px; text-decoration: none;
+    background: var(--gb-card); border: 1px solid var(--gb-border);
+    box-shadow: var(--gb-shadow);
+    transition: border-color .12s ease, transform .12s ease;
+}
+.gb-tile:hover { border-color: var(--gb-accent); transform: translateY(-1px); }
+.gb-tile-title { display: block; font-size: .95rem; font-weight: 700; color: var(--gb-text); }
+.gb-tile-sub {
+    display: block; margin-top: .25rem; font-size: .84rem;
+    line-height: 1.5; color: var(--gb-soft);
+    /* Cap the reading measure: comfortable prose, and it keeps the sentence
+       from running the full panel width if the layout ever goes one-column. */
+    max-width: 62ch;
+}
+/* The one call to action on the page. Wide is fine for a banner — but not tall
+   and not shouting, or it competes with the state above it. */
+.gb-fleet {
+    display: flex; flex-direction: column; align-items: center; gap: .2rem;
+    margin-top: 1.6rem; padding: 1.15rem 1.5rem;
+    border-radius: 14px; text-decoration: none; color: #fff;
+    background: linear-gradient(135deg, #10b981, #3b82f6);
+    box-shadow: 0 4px 16px rgba(16, 185, 129, .22);
+    transition: filter .12s ease;
+}
+.gb-fleet:hover { filter: brightness(1.05); }
+.gb-fleet-title { font-size: 1.1rem; font-weight: 800; }
+.gb-fleet-sub { font-size: .87rem; opacity: .9; }
+
 /* ── Phone ─────────────────────────────────────────────────────────────── */
 @media (max-width: 700px) {
-    .gradio-container { padding: 0 .35rem !important; }
     .gb-name { font-size: 1.2rem; }
     .gb-head { padding: .7rem .8rem; }
-    /* One card per row beats four unreadable slivers. */
-    .gb-card { flex: 1 1 100%; }
+    /* One tile per row beats two unreadable slivers. */
+    .gb-cards { grid-template-columns: 1fr; }
     .gb-card-value { white-space: normal; }
-    /* The navbar is a flex row that would otherwise scroll off-screen. */
-    #grabette-nav { flex-wrap: wrap !important; row-gap: .2rem !important; }
-    #grabette-nav a { padding: .35rem .55rem !important; font-size: .9rem !important; }
-    #grabette-nav a:last-child { margin-left: 0 !important; }
+    .gb-fleet { margin-top: 1.1rem; padding: 1rem; }
+    .gb-fleet-title { font-size: 1rem; }
+    /* The bar is a flex row that would otherwise scroll off-screen. */
+    .nav-holder nav { flex-wrap: wrap !important; row-gap: .15rem !important; }
+    .nav-holder nav a { padding: .35rem .55rem !important; font-size: .9rem !important; }
 }
 
 #hf-auth-modal {
@@ -262,19 +347,20 @@ footer .settings, footer .settings + .divider { display: none !important; }
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid var(--gb-border) !important;
 }
-/* "Power Off" is the last navbar entry — push it to the far right and tint it
-   red so it reads as separate from the normal pages. Best-effort: relies on the
-   navbar being a flex row (gradio 6.x); the 🔴 label is the guaranteed cue. */
-#grabette-nav a:last-child {
-    margin-left: auto !important;
-    color: #ef4444 !important;
+/* The bar. Sticky, because on a phone the pages are long and "which grabette
+   am I on / how do I get to Power Off" should not require scrolling back up. */
+.nav-holder {
+    position: sticky; top: 0; z-index: 40;
+    background: var(--gb-card);
+    border-bottom: 1px solid var(--gb-border);
+    backdrop-filter: blur(6px);
 }
-#grabette-nav {
-    background: var(--gb-card) !important;
-    border-bottom: 1px solid var(--gb-border) !important;
-}
-#grabette-nav a { color: var(--gb-soft) !important; }
-#grabette-nav a:hover { color: var(--gb-text) !important; }
+.nav-holder nav a { color: var(--gb-soft) !important; }
+.nav-holder nav a:hover { color: var(--gb-text) !important; }
+/* "Power Off" is the last entry: tint it so it reads as separate from the
+   normal pages. The 🔴 in its label is the fallback cue if this selector ever
+   stops matching. */
+.nav-holder nav a:last-child { color: #ef4444 !important; }
 """
 
 # Theme switching. Gradio toggles `dark` on document.body and offers its own
@@ -1282,49 +1368,52 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     with gr.Blocks(title="Grabette") as demo:
         home_header = _page_chrome()
 
-        # ── Network ───────────────────────────────────────────────────
-        gr.Markdown("## Network")
-        home_network_cards = gr.HTML("")
+        # Two columns on a desktop, stacked on a phone (Gradio wraps a Row once
+        # its columns hit min_width). Side by side is what keeps a wide screen
+        # from stretching every panel into an unreadable band — the sections are
+        # the same sections either way.
+        with gr.Row(equal_height=False):
 
-        with gr.Accordion("Switch network", open=False):
-            gr.HTML(_WIFI_SETTINGS_HTML)
+            # ── Network ───────────────────────────────────────────────
+            with gr.Column(scale=3, min_width=340):
+                gr.Markdown("## Network")
+                home_network_cards = gr.HTML("")
 
-        # Adding a network is the Bluetooth tool's job, not this page's: it
-        # works when the device is on no network this browser can reach — which
-        # is exactly the situation where the dashboard cannot be loaded at all,
-        # so the link has to be somewhere an operator has already seen it. It is
-        # a normal https page on GitHub Pages (Web Bluetooth needs a secure
-        # context; the dashboard's own plain-HTTP origin cannot host it).
-        gr.HTML(
-            f'<a href="{_BT_TOOL_URL}" target="_blank" rel="noopener" '
-            'style="display:block;margin-top:.8rem;padding:1rem 1.2rem;'
-            f'border-radius:14px;text-decoration:none;color:{C_TEXT};'
-            f'text-align:left;background:{C_CARD};border:1px solid {C_BORDER};">'
-            '<div style="font-size:1rem;font-weight:700;">'
-            'Add a new network — Bluetooth tool ↗</div>'
-            f'<div style="font-size:.85rem;color:{C_SOFT};'
-            'margin-top:.3rem;font-weight:400;line-height:1.45;">'
-            'Joins grabette to a network it has never seen, over Bluetooth — '
-            'no network needed to reach it. Chrome or Edge.</div></a>'
-        )
+                with gr.Accordion("Switch network", open=False):
+                    gr.HTML(_WIFI_SETTINGS_HTML)
 
-        # ── HuggingFace account ───────────────────────────────────────
-        gr.Markdown("## Hugging Face account")
-        gr.HTML(_HF_AUTH_IFRAME)
+                # Adding a network is the Bluetooth tool's job, not this page's:
+                # it works when the device is on no network this browser can
+                # reach — which is exactly the situation where the dashboard
+                # cannot be loaded at all, so the link has to be somewhere an
+                # operator has already seen it. It is a normal https page on
+                # GitHub Pages (Web Bluetooth needs a secure context; the
+                # dashboard's own plain-HTTP origin cannot host it).
+                gr.HTML(
+                    f'<a class="gb-tile" href="{_BT_TOOL_URL}" target="_blank" '
+                    'rel="noopener">'
+                    '<span class="gb-tile-title">Add a new network — '
+                    'Bluetooth tool ↗</span>'
+                    '<span class="gb-tile-sub">Joins grabette to a network it '
+                    'has never seen, over Bluetooth — no network needed to '
+                    'reach it. Chrome or Edge.</span></a>'
+                )
+
+            # ── HuggingFace account ───────────────────────────────────
+            with gr.Column(scale=2, min_width=300):
+                gr.Markdown("## Hugging Face account")
+                gr.HTML(_HF_AUTH_IFRAME)
 
         # Big, obvious way to reach the fleet. We can't embed grabette-fleet
         # here — it's OAuth-gated and this dashboard is served over plain HTTP,
         # so its login can't render in an iframe — so we link out in a new tab,
         # where the HF session and OAuth work normally.
         gr.HTML(
-            f'<a href="{settings.relay_url}" target="_blank" rel="noopener" '
-            'style="display:block;margin-top:1.2rem;padding:2rem 1.5rem;border-radius:16px;'
-            'text-align:center;text-decoration:none;color:#fff;'
-            'background:linear-gradient(135deg,#10b981,#3b82f6);'
-            'box-shadow:0 6px 22px rgba(0,0,0,.2);">'
-            '<div style="font-size:1.4rem;font-weight:800;">Open fleet dashboard ↗</div>'
-            '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
-            'Manage tasks, sessions and datasets on grabette-fleet</div></a>'
+            f'<a class="gb-fleet" href="{settings.relay_url}" target="_blank" '
+            'rel="noopener">'
+            '<span class="gb-fleet-title">Open fleet dashboard ↗</span>'
+            '<span class="gb-fleet-sub">Manage tasks, sessions and datasets '
+            'on grabette-fleet</span></a>'
         )
 
         batt_popup_cn = gr.HTML(visible=False)

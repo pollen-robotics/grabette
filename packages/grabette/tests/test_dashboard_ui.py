@@ -20,6 +20,17 @@ def _hex_colors(markup: str) -> list[str]:
     return re.findall(r"#[0-9a-fA-F]{3,8}\b", markup)
 
 
+def _css() -> str:
+    """APP_CSS with comments stripped, so prose about a selector is not a rule."""
+    return re.sub(r"/\*.*?\*/", "", ui.APP_CSS, flags=re.S)
+
+
+def _block(css: str, selector: str) -> dict[str, str]:
+    """The --gb-* declarations of the first rule matching `selector`."""
+    body = re.search(re.escape(selector) + r"\s*\{([^}]*)\}", css).group(1)
+    return dict(re.findall(r"(--gb-[a-z-]+):\s*([^;]+);", body))
+
+
 # ── The header: same device name + battery on every page ──────────────────
 
 def test_header_shows_hostname_and_battery():
@@ -117,9 +128,11 @@ def test_card_row_reflows_via_the_stylesheet_not_inline_widths():
 
 def test_every_palette_token_is_defined_in_both_themes():
     """A var() with no dark value would silently keep its light colour."""
-    root_block, dark_block = ui.APP_CSS.split("body.dark {", 1)
-    light = dict(re.findall(r"(--gb-[a-z-]+):\s*([^;]+);", root_block))
-    dark = dict(re.findall(r"(--gb-[a-z-]+):\s*([^;]+);", dark_block))
+    css = _css()
+    # The palette pair specifically — a later :root block holds layout
+    # constants (--gb-measure, --gb-gutter) that are theme-independent.
+    light = _block(css, ":root")
+    dark = _block(css, "body.dark")
     assert light and light.keys() == dark.keys()
 
     # Every C_* the module renders with must resolve to one of them.
@@ -128,3 +141,37 @@ def test_every_palette_token_is_defined_in_both_themes():
         name = re.fullmatch(r"var\((--gb-[a-z-]+)\)", ref)
         assert name, f"{ref} is not a palette variable"
         assert name.group(1) in light, f"{ref} is not defined in APP_CSS"
+
+
+# ── Layout shell ──────────────────────────────────────────────────────────
+
+def test_nav_is_styled_through_the_real_element_not_the_hidden_stub():
+    """gr.Navbar's elem_id lands on a display:none placeholder in Gradio 6.
+
+    The visible bar is <nav> inside .nav-holder, a sibling of the content
+    column. Styling #grabette-nav silently does nothing — which is how the
+    Power Off tint and the bar's own background went missing for a release.
+    """
+    css = _css()
+    assert ".nav-holder nav" in css
+    for rule in re.findall(r"([^{}]*)\{", css):
+        if "#grabette-nav" in rule:
+            raise AssertionError(f"styles the hidden stub: {rule.strip()!r}")
+
+
+def test_content_is_capped_while_the_shell_is_full_bleed():
+    """The bar spans the window; the content does not, or nothing is readable."""
+    css = _css()
+    assert "--gb-measure" in css
+    # Gradio's own responsive cap has to be lifted, or the bar stops short.
+    assert ".fillable:not(.fill_width)" in css
+    # ...and <main> needs a width, not just a max-width: its parent centres
+    # children with align-items, so without one it is shrink-to-fit.
+    main_rule = re.search(r"main\.contain\s*\{([^}]*)\}", css).group(1)
+    assert "width: 100%" in main_rule
+    assert "max-width: var(--gb-measure)" in main_rule
+
+
+def test_phone_breakpoint_collapses_the_card_grid():
+    phone = _css().split("@media (max-width: 700px)", 1)[1]
+    assert "grid-template-columns: 1fr" in phone
