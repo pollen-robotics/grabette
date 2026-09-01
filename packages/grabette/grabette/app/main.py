@@ -1257,7 +1257,7 @@ def create_app() -> FastAPI:
     if settings.ui_enabled:
         try:
             import gradio as gr
-            from grabette.ui.app import create_ui
+            from grabette.ui.app import APP_CSS, create_ui, fleet_theme
 
             demo = create_ui()
             # `allowed_paths` whitelists directories from which Gradio's
@@ -1267,8 +1267,13 @@ def create_app() -> FastAPI:
             # exists on disk but Gradio refuses to hand it out, and the UI
             # never surfaces a download link. Default allowed paths cover
             # only Gradio's own cache and the OS temp dir.
+            # theme/css belong HERE, not on gr.Blocks: Gradio 6 moved both to
+            # launch()/mount_gradio_app, and a Blocks that is passed them just
+            # warns and drops them on the floor.
             app = gr.mount_gradio_app(
                 app, demo, path="/",
+                theme=fleet_theme(),
+                css=APP_CSS,
                 allowed_paths=[str(settings.data_dir / ".downloads")],
             )
             logger.info("Gradio UI mounted at /")

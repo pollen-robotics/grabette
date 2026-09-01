@@ -98,22 +98,30 @@ def widget_page() -> str:
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-body{{margin:0;padding:.8rem;background:transparent;
+/* Same charter as grabette-fleet and result_page below: translucent card on a
+   transparent body, so the widget reads as part of whatever dark page iframes
+   it rather than as a white panel punched into it. */
+body{{margin:0;padding:.8rem;background:transparent;color:#fff;
 font-family:-apple-system,system-ui,sans-serif;font-size:.9rem;overflow:hidden}}
-.card{{background:#f8fafc;color:#1e293b;padding:1rem;border-radius:10px;border:1px solid #e2e8f0}}
-h2{{font-size:.95rem;margin:0 0 .7rem;color:#0f172a}}
-input{{box-sizing:border-box;padding:.45rem;border-radius:7px;border:1px solid #cbd5e1;
-background:#fff;color:#1e293b;font-family:monospace;width:100%}}
-input::placeholder{{color:#94a3b8}}
+.card{{background:rgba(255,255,255,.06);color:#fff;padding:1rem;border-radius:14px;
+border:1px solid rgba(255,255,255,.12)}}
+h2{{font-size:.95rem;margin:0 0 .7rem;color:#fff}}
+input{{box-sizing:border-box;padding:.45rem;border-radius:8px;
+border:1px solid rgba(255,255,255,.22);
+background:#16213e;color:#fff;font-family:monospace;width:100%}}
+input:focus{{outline:none;border-color:rgba(59,130,246,.7)}}
+input::placeholder{{color:#8b98ad}}
 .row{{display:flex;gap:.5rem;margin-bottom:.5rem}}
 .row input{{flex:1}}
-button{{padding:.45rem .9rem;border:0;border-radius:7px;cursor:pointer;font-weight:600}}
-button.oauth{{background:#10b981;color:#fff;width:100%;margin-bottom:.5rem}}
-button.primary{{background:#f59e0b;color:#fff}}
+button{{padding:.45rem .9rem;border:0;border-radius:8px;cursor:pointer;font-weight:600;
+font-family:inherit}}
+button.oauth{{background:linear-gradient(135deg,#10b981,#3b82f6);color:#fff;width:100%;
+margin-bottom:.5rem}}
+button.primary{{background:#ffcc4d;color:#1a1a2e}}
 button.logout{{background:#ef4444;color:#fff}}
 .who-row{{display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap}}
-.muted{{color:#64748b;font-size:.78rem}}
-.err{{color:#dc2626;font-size:.78rem;min-height:1rem}}
+.muted{{color:#a0aec0;font-size:.78rem}}
+.err{{color:#fca5a5;font-size:.78rem;min-height:1rem}}
 </style></head>
 <body>{LOGIN_CARD}</body></html>"""
 
@@ -143,7 +151,7 @@ LOGIN_CARD = """
   <div class="row"><input id="hfTok" placeholder="hf_..." autocomplete="off">
    <button class="primary" id="hfSave">Save</button></div>
   <div class="err" id="hfErr"></div>
-  <p class="muted">Token: <a style="color:#2563eb;text-decoration:underline" href="https://huggingface.co/settings/tokens" target="_blank">hf.co/settings/tokens</a></p>
+  <p class="muted">Token: <a style="color:#7dd3fc;text-decoration:underline" href="https://huggingface.co/settings/tokens" target="_blank">hf.co/settings/tokens</a></p>
  </div></div>
 <script>
 const HF='/api/hf-auth',_$=id=>document.getElementById(id);

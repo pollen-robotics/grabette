@@ -7,9 +7,19 @@ http://<hostname>.local:8000     # e.g. http://R-grabette.local:8000
 http://localhost:8000            # in mock mode on your laptop
 ```
 
-The device's IP address works too, and is shown under **Settings** if `.local` name resolution isn't available on your network.
+The device's IP address works too, and is shown on the **Home** page if `.local` name resolution isn't available on your network.
 
 ![The Grabette dashboard](https://github.com/pollen-robotics/grabette/raw/develop/packages/grabette/docs/images/grabette-dashboard.png)
+
+## Home
+
+Where you land, and where the device says what it is.
+
+- **Essentials** — battery, hostname, IP address and the network it is on, in one strip at the top. Refreshed every 30 s.
+- **Network** — **Switch network** folds out the network panel: the networks this Grabette already knows are listed first and switch in one click, no password; below them, any other network in range can be added by picking it and typing its password. A network is "known" however it was set up — from here or over Bluetooth.
+- **Bluetooth tool** — opens the [Bluetooth provisioning tool](https://pollen-robotics.github.io/grabette/) in a new tab. That is the way in when the device is on a network you cannot reach at all, so this page won't load either — worth knowing where it is *before* you need it. Chrome or Edge only (Web Bluetooth).
+- **Hugging Face** — paste an access token to log the device in. Everything under **Datasets**, and the fleet grouping described in [Hugging Face Spaces](./spaces.md), depends on this. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with write access to the datasets you intend to push.
+- **Open fleet dashboard** — links out to grabette-fleet.
 
 ## Episodes
 
@@ -28,7 +38,7 @@ Where episodes leave the device.
 
 Upload the recordings to a Hugging Face dataset repository, and trigger post-processing — SLAM followed by LeRobot dataset generation. This is the on-device entry point to the same pipeline described in [Getting started](./get_started.md#turn-recordings-into-a-lerobot-dataset); the heavy lifting runs in the [SLAM Space](./spaces.md#grabette-slam--lerobot).
 
-You need to be logged in to Hugging Face first — see **Settings** below.
+You need to be logged in to Hugging Face first — see **Home** above.
 
 ## Live View
 
@@ -36,11 +46,9 @@ Preview the cameras and watch the sensor charts in real time.
 
 Use it before a recording session to confirm the framing, that the OAK-D is on and streaming depth, and that the finger-joint angles move as expected when you open and close the gripper. A minute here saves a session's worth of unusable episodes.
 
-## Settings
+## Power Off
 
-- **Device info** — hostname, IP address, and which hand (left or right) this device was installed as.
-- **WiFi** — see the current connection and switch networks. The [Bluetooth tool](https://pollen-robotics.github.io/grabette/) is the fallback when the device isn't reachable at all.
-- **Hugging Face** — paste an access token to log the device in. Everything under **Datasets**, and the fleet grouping described in [Hugging Face Spaces](./spaces.md), depends on this. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with write access to the datasets you intend to push.
+A clean shutdown of the Raspberry Pi, with the device's hostname printed on the button's card — several grabettes open in several tabs look identical otherwise. The button is disabled while a recording is running.
 
 ## Gripette's status page
 

@@ -16,7 +16,115 @@ from grabette.ui.api_client import GrabetteClient
 logger = logging.getLogger(__name__)
 
 
-MODAL_CSS = """
+# ── Visual charter ────────────────────────────────────────────────────────
+# Aligned with the grabette-fleet dashboard (and the Bluetooth tool, which
+# already mirrors it): the same #1a1a2e→#16213e gradient, translucent white
+# cards, #c3cbe0 / #a0aec0 text ramp and #ffcc4d primary accent. Operators move
+# between the three all day; they should look like one product.
+FLEET_BG = "linear-gradient(135deg,#1a1a2e,#16213e)"
+FLEET_SURFACE = "#16213e"
+FLEET_CARD = "rgba(255,255,255,.06)"
+FLEET_BORDER = "rgba(255,255,255,.12)"
+FLEET_TEXT = "#ffffff"
+FLEET_TEXT_SOFT = "#c3cbe0"
+FLEET_MUTED = "#8b98ad"
+FLEET_ACCENT = "#ffcc4d"
+
+# Both the light and the dark value of every token is set to the same colour:
+# the charter is a dark one, and the dashboard must not half-flip when the
+# browser is set to light (which is what the hardcoded slate cards used to do).
+def fleet_theme():
+    # System fonts only, no GoogleFont: the robot regularly runs offline, and a
+    # webfont that half-loads there falls back to serif (the same trap that made
+    # _TITLE_HTML pin its own stack).
+    return gr.themes.Base(
+        font=["-apple-system", "system-ui", "sans-serif"],
+        font_mono=["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+    ).set(
+        body_background_fill=FLEET_BG,
+        body_background_fill_dark=FLEET_BG,
+        background_fill_primary=FLEET_BG,
+        background_fill_primary_dark=FLEET_BG,
+        background_fill_secondary=FLEET_CARD,
+        background_fill_secondary_dark=FLEET_CARD,
+        block_background_fill=FLEET_CARD,
+        block_background_fill_dark=FLEET_CARD,
+        block_border_color=FLEET_BORDER,
+        block_border_color_dark=FLEET_BORDER,
+        block_label_background_fill="transparent",
+        block_label_background_fill_dark="transparent",
+        block_label_text_color=FLEET_MUTED,
+        block_label_text_color_dark=FLEET_MUTED,
+        block_title_text_color=FLEET_TEXT_SOFT,
+        block_title_text_color_dark=FLEET_TEXT_SOFT,
+        body_text_color=FLEET_TEXT,
+        body_text_color_dark=FLEET_TEXT,
+        body_text_color_subdued=FLEET_MUTED,
+        body_text_color_subdued_dark=FLEET_MUTED,
+        border_color_primary=FLEET_BORDER,
+        border_color_primary_dark=FLEET_BORDER,
+        panel_background_fill=FLEET_CARD,
+        panel_background_fill_dark=FLEET_CARD,
+        input_background_fill=FLEET_SURFACE,
+        input_background_fill_dark=FLEET_SURFACE,
+        button_primary_background_fill=FLEET_ACCENT,
+        button_primary_background_fill_dark=FLEET_ACCENT,
+        button_primary_text_color="#1a1a2e",
+        button_primary_text_color_dark="#1a1a2e",
+        button_secondary_background_fill="rgba(255,255,255,.08)",
+        button_secondary_background_fill_dark="rgba(255,255,255,.08)",
+        button_secondary_text_color=FLEET_TEXT_SOFT,
+        button_secondary_text_color_dark=FLEET_TEXT_SOFT,
+        # variant="stop" (Stop Capture, Power off now) maps to the "cancel"
+        # family — unset, it renders as an ordinary grey button, which is the
+        # last thing a shutdown control should look like.
+        button_cancel_background_fill="#ef4444",
+        button_cancel_background_fill_dark="#ef4444",
+        button_cancel_background_fill_hover="#dc2626",
+        button_cancel_background_fill_hover_dark="#dc2626",
+        button_cancel_text_color="#ffffff",
+        button_cancel_text_color_dark="#ffffff",
+        button_cancel_border_color="#ef4444",
+        button_cancel_border_color_dark="#ef4444",
+        block_radius="14px",
+        button_large_radius="8px",
+        button_small_radius="8px",
+        # The episode table is its own token family — left at the defaults it
+        # renders a white sheet in the middle of the dark page.
+        table_even_background_fill="rgba(255,255,255,.03)",
+        table_even_background_fill_dark="rgba(255,255,255,.03)",
+        table_odd_background_fill="rgba(255,255,255,.07)",
+        table_odd_background_fill_dark="rgba(255,255,255,.07)",
+        table_border_color=FLEET_BORDER,
+        table_border_color_dark=FLEET_BORDER,
+        table_text_color=FLEET_TEXT,
+        table_text_color_dark=FLEET_TEXT,
+        table_row_focus="rgba(59,130,246,.22)",
+        table_row_focus_dark="rgba(59,130,246,.22)",
+        table_radius="12px",
+    )
+
+
+# Applied by app/main.py at mount time — see create_ui. (This CSS silently did
+# nothing for as long as it was passed to gr.Blocks(css=...) under Gradio 6.)
+APP_CSS = """
+/* The gradient has to be painted on the app shell too: Gradio's container sits
+   on top of <body> with its own opaque fill, which would hide it. */
+.gradio-container, .app, .main, body {
+    background: linear-gradient(135deg,#1a1a2e,#16213e) !important;
+}
+.gradio-container { max-width: 1200px !important; }
+/* Blocks that only group other blocks (rows, columns) must stay transparent —
+   otherwise every nesting level stacks another translucent white veil. */
+.gradio-container .form, .gradio-container .gap,
+.gradio-container div.block:not(.padded) { background: transparent; }
+/* Gradio dims disabled buttons by lightening them, which on a dark ground
+   produces a near-white bar with unreadable text. Darken instead. */
+.gradio-container button:disabled, .gradio-container button[disabled] {
+    background: rgba(255,255,255,.05) !important;
+    color: #8b98ad !important;
+    opacity: 1 !important;
+}
 #hf-auth-modal {
     position: fixed !important;
     inset: 0 !important;
@@ -47,6 +155,12 @@ MODAL_CSS = """
     margin-left: auto !important;
     color: #f87171 !important;
 }
+#grabette-nav {
+    background: rgba(255,255,255,.04) !important;
+    border-bottom: 1px solid rgba(255,255,255,.12) !important;
+}
+#grabette-nav a { color: #c3cbe0 !important; }
+#grabette-nav a:hover { color: #ffffff !important; }
 """
 
 _HF_AUTH_IFRAME = (
@@ -74,6 +188,11 @@ _ANGLE_IFRAME_HTML = (
     'style="width:100%;height:28vh;border:none;'
     'border-radius:8px;background:transparent;"></iframe>'
 )
+# The Bluetooth provisioning tool (docs/index.html, published to GitHub Pages).
+# It has to be served from an https origin — Web Bluetooth is secure-context
+# only — which is why it lives there and not on the device.
+_BT_TOOL_URL = "https://pollen-robotics.github.io/grabette/"
+
 _WIFI_SETTINGS_HTML = (
     '<iframe src="/api/wifi/setup" id="wifi-iframe" scrolling="no"'
     ' onload="var f=this;(function r(){'
@@ -189,8 +308,51 @@ def _section_label(text: str) -> str:
     """Small uppercase gray column header used across the Live View page."""
     return (
         "<div style='font-size:0.72rem;text-transform:uppercase;"
-        "letter-spacing:0.09em;color:#94a3b8;margin-bottom:0.3rem;'>"
+        f"letter-spacing:0.09em;color:{FLEET_MUTED};margin-bottom:0.3rem;'>"
         f"{text}</div>"
+    )
+
+
+def _battery_colors(pct: float, charging: bool | None) -> tuple[str, str]:
+    """(value colour, border colour) for a battery level — one source of truth.
+
+    Charging is green whatever the level: the number is on its way up, and a red
+    badge on a device that is plugged in only teaches operators to ignore it.
+    """
+    if charging or pct > 40:
+        return "#6ee7b7", "rgba(16,185,129,.45)"
+    if pct > 20:
+        return "#fcd34d", "rgba(245,158,11,.5)"
+    return "#fca5a5", "rgba(239,68,68,.55)"
+
+
+def _info_card(
+    label: str,
+    value: str,
+    *,
+    value_color: str = FLEET_TEXT,
+    border_color: str = FLEET_BORDER,
+    extra_style: str = "",
+    title: str = "",
+) -> str:
+    """One translucent fleet-charter card: dim uppercase label over a bold value.
+
+    The single card shape behind every status strip in the dashboard (Home,
+    Episodes, Live View), so a badge means the same thing on every page.
+
+    ``title`` carries the long form (a hardware fault's full explanation) as a
+    hover tooltip: a card is one line and truncates, so a message that matters
+    cannot live in the value itself.
+    """
+    tip = f" title=\"{html.escape(title, quote=True)}\"" if title else ""
+    return (
+        f"<div{tip} style='background:{FLEET_CARD};border-radius:14px;padding:0.6rem 1rem;"
+        f"border:1px solid {border_color};flex:1;min-width:0;{extra_style}'>"
+        f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
+        f"color:{FLEET_MUTED};margin-bottom:0.2rem;'>{label}</div>"
+        f"<div style='font-size:0.9rem;font-weight:700;color:{value_color};"
+        f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{value}</div>"
+        f"</div>"
     )
 
 
@@ -202,35 +364,24 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     """
 
     # (value color, border color). Neutral gray covers off / N/A / unknown.
-    GRAY = ("#94a3b8", "#334155")
-    GREEN = ("#22c55e", "#166534")
-    ORANGE = ("#f97316", "#9a3412")
-    RED = ("#ef4444", "#991b1b")
+    # Palette matches the fleet's pill colours: soft foregrounds on translucent
+    # cards rather than the saturated hue on near-black it used to be.
+    GRAY = ("#a0aec0", "rgba(255,255,255,.14)")
+    GREEN = ("#6ee7b7", "rgba(16,185,129,.45)")
+    ORANGE = ("#fcd34d", "rgba(245,158,11,.5)")
+    RED = ("#fca5a5", "rgba(239,68,68,.55)")
 
     def _badge(label, value, colors, title=""):
         value_color, border_color = colors
-        # `title` carries the long form (a hardware fault's full explanation) as
-        # a hover tooltip: the badge row has one line per badge and truncates,
-        # so a message that matters can't live in the value itself.
-        tip = f" title=\"{html.escape(title, quote=True)}\"" if title else ""
-        return (
-            f"<div{tip} style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
-            f"border:2px solid {border_color};flex:1;min-width:0;'>"
-            f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
-            f"color:#94a3b8;margin-bottom:0.2rem;'>{label}</div>"
-            f"<div style='font-size:0.9rem;font-weight:700;color:{value_color};"
-            f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{value}</div>"
-            f"</div>"
-        )
+        return _info_card(label, value, value_color=value_color,
+                          border_color=border_color, title=title)
 
     # Battery (⚡ + green while charging, regardless of level)
     if sys_info and "battery_pct" in sys_info:
         pct = sys_info["battery_pct"]
-        if sys_info.get("battery_charging"):
-            batt_badge = _badge("Battery", f"⚡ {pct} %", GREEN)
-        else:
-            colors = GREEN if pct > 40 else ORANGE if pct > 20 else RED
-            batt_badge = _badge("Battery", f"{pct} %", colors)
+        charging = sys_info.get("battery_charging")
+        value = f"⚡ {pct} %" if charging else f"{pct} %"
+        batt_badge = _badge("Battery", value, _battery_colors(pct, charging))
     else:
         batt_badge = _badge("Battery", "N/A", GRAY)
 
@@ -696,10 +847,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # which re-fires the signal's `change` handler (recurring chime reminder).
     _batt_beep = {"n": 0}
 
-    def check_battery_warning():
-        """(popup_update, beep_signal) — bound to the battery timers/loads."""
-        return _battery_popup_html(client.get_system_info())
-
     # ── System bar ────────────────────────────────────────────────────
 
     def _battery_popup_html(info: dict | None):
@@ -720,12 +867,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             _batt_beep["n"] += 1
             html = (
                 "<div style='position:fixed;bottom:24px;right:24px;z-index:9999;"
-                "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
-                "padding:16px 20px;max-width:260px;"
-                "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
-                "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
+                "background:#16213e;border:1px solid rgba(248,113,113,.55);"
+                "border-radius:14px;padding:16px 20px;max-width:260px;"
+                "box-shadow:0 10px 30px rgba(0,0,0,.45);'>"
+                "<div style='font-weight:700;color:#fca5a5;font-size:1rem;"
                 "margin-bottom:4px;'>Battery low</div>"
-                f"<div style='font-size:0.88rem;color:#7f1d1d;'>{pct} % — please charge soon.</div>"
+                f"<div style='font-size:0.88rem;color:{FLEET_TEXT_SOFT};'>"
+                f"{pct} % — please charge soon.</div>"
                 "</div>"
             )
             return gr.update(visible=True, value=html), f"{pct}|{_batt_beep['n']}"
@@ -735,19 +883,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """Returns (system_bar_html, battery_popup_update, beep_signal)."""
         info = client.get_system_info()
         if info is None:
-            bar = "<p style='color:#64748b;font-size:0.85rem;margin:0.5rem 0;'>System disconnected</p>"
+            bar = (f"<p style='color:{FLEET_MUTED};font-size:0.85rem;margin:0.5rem 0;'>"
+                   "System disconnected</p>")
             return bar, gr.update(visible=False), ""
 
         def _card(label, value, extra_style=""):
-            return (
-                f"<div style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
-                f"border:1px solid #334155;flex:1;min-width:0;{extra_style}'>"
-                f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
-                f"color:#94a3b8;margin-bottom:0.2rem;'>{label}</div>"
-                f"<div style='font-size:0.9rem;font-weight:600;color:#f1f5f9;white-space:nowrap;"
-                f"overflow:hidden;text-overflow:ellipsis;'>{value}</div>"
-                f"</div>"
-            )
+            return _info_card(label, value, extra_style=extra_style)
 
         parts = []
 
@@ -761,24 +902,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if "battery_pct" in info:
             pct = info["battery_pct"]
             charging = info.get("battery_charging")
-            if charging or pct > 40:
-                batt_color = "#22c55e"
-                batt_border = "#166534"
-            elif pct > 20:
-                batt_color = "#f97316"
-                batt_border = "#9a3412"
-            else:
-                batt_color = "#ef4444"
-                batt_border = "#991b1b"
+            batt_color, batt_border = _battery_colors(pct, charging)
             batt_value = f"⚡ {pct} %" if charging else f"{pct} %"
-            parts.append(
-                f"<div style='background:#1e293b;border-radius:8px;padding:0.55rem 1rem;"
-                f"border:2px solid {batt_border};flex:1;min-width:0;'>"
-                f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
-                f"color:#94a3b8;margin-bottom:0.2rem;'>Battery</div>"
-                f"<div style='font-size:0.9rem;font-weight:700;color:{batt_color};'>{batt_value}</div>"
-                f"</div>"
-            )
+            parts.append(_info_card(
+                "Battery", batt_value, value_color=batt_color, border_color=batt_border,
+            ))
 
         bar = (
             "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;'>"
@@ -806,34 +934,95 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         popup_update, beep_signal = _battery_popup_html(info)
         return bar, popup_update, beep_signal
 
-    # ── WiFi network info (Settings page) ────────────────────────────
+    # ── Home page essentials (battery + identity + network) ──────────
 
-    def get_wifi_network_info():
-        status = client.wifi_status()
+    def get_home_status():
+        """(cards_html, battery_popup, beep_signal) — the four things you land on.
+
+        Battery, hostname, IP and network, in that order: the state you check
+        before touching anything, and — since there is no Settings page any more
+        — the only place the device's identity is written down. The battery
+        popup piggybacks on the same system-info read, as on the other pages.
+        """
         info = client.get_system_info() or {}
-        hostname = info.get("hostname", "—")
-        ssid = status.get("ssid") or "—"
-        ip = status.get("ip") or info.get("ip") or "—"
-        return (
-            f"**Hostname:** {hostname}  \n"
-            f"**Current network:** {ssid}  \n"
-            f"**IP address:** {ip}"
+        status = client.wifi_status()
+
+        parts = []
+
+        if "battery_pct" in info:
+            pct = info["battery_pct"]
+            charging = info.get("battery_charging")
+            color, border = _battery_colors(pct, charging)
+            parts.append(_info_card(
+                "Battery", f"⚡ {pct} %" if charging else f"{pct} %",
+                value_color=color, border_color=border,
+            ))
+        else:
+            parts.append(_info_card("Battery", "N/A", value_color=FLEET_MUTED))
+
+        parts.append(_info_card("Hostname", html.escape(info.get("hostname") or "—")))
+        parts.append(_info_card("IP address",
+                                html.escape(status.get("ip") or info.get("ip") or "—")))
+
+        # The network card doubles as the reachability verdict: on the hotspot
+        # the dashboard is only reachable from whoever is joined to grabette
+        # itself, which is worth seeing before wondering why nothing syncs.
+        mode = status.get("mode")
+        ssid = status.get("ssid")
+        if mode == "connected" and ssid:
+            net_value, net_color = html.escape(ssid), "#6ee7b7"
+        elif mode == "hotspot":
+            net_value, net_color = "Hotspot — not on a network", "#fcd34d"
+        else:
+            net_value, net_color = "Offline", "#fca5a5"
+        parts.append(_info_card("Network", net_value, value_color=net_color))
+
+        bar = (
+            "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;"
+            "margin:0.25rem 0 1rem;'>" + "".join(parts) + "</div>"
         )
+        popup_update, beep_signal = _battery_popup_html(info)
+        return bar, popup_update, beep_signal
 
     # ── Power off ─────────────────────────────────────────────────────
 
     def _poweroff_notice(text: str, color: str = "#f97316") -> str:
         return (
             f"<div style='max-width:520px;margin-top:0.75rem;padding:0.85rem 1.1rem;"
-            f"background:#1e293b;border-left:4px solid {color};border-radius:8px;"
-            f"color:#e2e8f0;font-size:0.92rem;'>{text}</div>"
+            f"background:{FLEET_CARD};border-left:4px solid {color};border-radius:12px;"
+            f"color:{FLEET_TEXT_SOFT};font-size:0.92rem;'>{text}</div>"
+        )
+
+    def _poweroff_header(hostname: str) -> str:
+        """The shutdown card, with the device it will shut down named in it.
+
+        Operators keep several grabettes open in several tabs; "Power off the
+        device" alone does not say WHICH, and the wrong tab costs a session.
+        """
+        who = (
+            f"<div style='font-size:1.05rem;font-weight:700;color:#fff;"
+            f"margin:0.15rem 0 0.6rem;'>{html.escape(hostname)}</div>"
+            if hostname else ""
+        )
+        return (
+            "<div style='max-width:520px;margin-top:1rem;padding:1.5rem;"
+            "background:rgba(239,68,68,.1);border:1px solid rgba(248,113,113,.45);"
+            "border-radius:14px;'>"
+            "<h2 style='margin:0;color:#fca5a5;font-size:1rem;'>Power off the device</h2>"
+            f"{who}"
+            f"<p style='color:{FLEET_TEXT_SOFT};margin:0;font-size:0.95rem;'>"
+            "This performs a clean shutdown of the Raspberry Pi. Once it has halted "
+            "you can safely disconnect power.</p></div>"
         )
 
     def load_poweroff_page():
-        """Arm the button when idle; disable + warn while a recording is active."""
+        """Name the device, then arm the button — unless a recording is running."""
+        hostname = (client.get_system_info() or {}).get("hostname", "")
+        header = _poweroff_header(hostname)
         cap = (client.get_state() or {}).get("capture", {})
         if cap.get("is_capturing") or cap.get("is_starting"):
             return (
+                header,
                 gr.update(
                     value=_poweroff_notice(
                         "A recording is in progress — stop the capture before powering off."
@@ -842,7 +1031,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 ),
                 gr.update(interactive=False, variant="secondary"),
             )
-        return gr.update(value="", visible=False), gr.update(interactive=True, variant="stop")
+        return (
+            header,
+            gr.update(value="", visible=False),
+            gr.update(interactive=True, variant="stop"),
+        )
 
     def on_poweroff():
         result = client.shutdown()
@@ -864,14 +1057,52 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 1 — Connection (landing): HF account + link out to the fleet
+    # Page 1 — Home (landing): the device's essentials, then network + account
     # ══════════════════════════════════════════════════════════════════
 
-    with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+    # NB: `theme` and `css` are NOT passed here. Gradio 6 moved both off the
+    # Blocks constructor — passing them raises a UserWarning and is otherwise
+    # ignored — so they are handed to mount_gradio_app in app/main.py instead.
+    with gr.Blocks(title="Grabette") as demo:
+        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
-        gr.Markdown("## HuggingFace Account")
-        gr.HTML(_HF_AUTH_IFRAME)
+
+        # Battery, hostname, IP, network — above everything else, because they
+        # are what you open the dashboard to check.
+        home_status_bar = gr.HTML("")
+
+        with gr.Row(equal_height=False):
+
+            # ── Network ──────────────────────────────────────────────
+            with gr.Column(scale=1):
+                gr.Markdown("## Network")
+                with gr.Accordion("Switch network", open=False):
+                    gr.HTML(_WIFI_SETTINGS_HTML)
+                # The Bluetooth tool is the way in when the device is on no
+                # network this browser can reach — which is exactly when this
+                # page cannot be loaded, so the link has to be somewhere an
+                # operator has already seen it. It is a normal https page on
+                # GitHub Pages (Web Bluetooth needs a secure context; the
+                # dashboard's own plain-HTTP origin cannot host it).
+                gr.HTML(
+                    f'<a href="{_BT_TOOL_URL}" target="_blank" rel="noopener" '
+                    'style="display:block;margin-top:.8rem;padding:1rem 1.2rem;'
+                    'border-radius:14px;text-decoration:none;color:#fff;text-align:left;'
+                    'background:rgba(255,255,255,.06);'
+                    'border:1px solid rgba(255,255,255,.18);">'
+                    '<div style="font-size:1rem;font-weight:700;">'
+                    'Bluetooth tool ↗</div>'
+                    f'<div style="font-size:.85rem;color:{FLEET_TEXT_SOFT};'
+                    'margin-top:.3rem;font-weight:400;line-height:1.45;">'
+                    'Move grabette to a brand-new network over Bluetooth — '
+                    'no network needed to reach it. Chrome or Edge.</div></a>'
+                )
+
+            # ── HuggingFace Account ──────────────────────────────────
+            with gr.Column(scale=1):
+                gr.Markdown("## HuggingFace Account")
+                gr.HTML(_HF_AUTH_IFRAME)
+
         # Big, obvious way to reach the fleet. We can't embed grabette-fleet
         # here — it's OAuth-gated and this dashboard is served over plain HTTP,
         # so its login can't render in an iframe — so we link out in a new tab,
@@ -886,12 +1117,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
             'Manage tasks, sessions and datasets on grabette-fleet</div></a>'
         )
+
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)
-        batt_timer_cn = gr.Timer(60.0)
-        batt_timer_cn.tick(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
+        # 30 s, not 60: this page is the battery read-out now, so the number on
+        # it has to be current, not just fresh enough to warn on.
+        batt_timer_cn = gr.Timer(30.0)
+        batt_timer_cn.tick(
+            fn=get_home_status,
+            outputs=[home_status_bar, batt_popup_cn, batt_beep_cn],
+        )
         batt_beep_cn.change(fn=None, inputs=batt_beep_cn, outputs=None, js=_BATTERY_BEEP_JS)
-        demo.load(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
+        demo.load(
+            fn=get_home_status,
+            outputs=[home_status_bar, batt_popup_cn, batt_beep_cn],
+        )
         demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
@@ -899,7 +1139,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Episodes") as episodes_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
         episode_status_bar = gr.HTML("")
 
@@ -1129,8 +1369,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         episodes_demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
         # One load fills the strip AND the battery popup/beep — get_episode_status_bar
-        # now returns all three from a single system-info read, so no separate
-        # check_battery_warning load is needed here.
+        # returns all three from a single system-info read, so this page needs no
+        # separate battery poll.
         episodes_demo.load(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
     # (Datasets page removed — dataset generation is done on the fleet.)
@@ -1140,7 +1380,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
@@ -1213,59 +1453,28 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         live_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 4 — Settings
-    # ══════════════════════════════════════════════════════════════════
-
-    with demo.route("Settings") as settings_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
-
-        with gr.Row(equal_height=False):
-
-            # ── HuggingFace Account ───────────────────────────────────
-            with gr.Column(scale=1):
-                gr.Markdown("## HuggingFace Account")
-                gr.HTML(_HF_AUTH_IFRAME)
-
-            # ── WiFi ─────────────────────────────────────────────────
-            with gr.Column(scale=1):
-                gr.Markdown("## WiFi")
-                wifi_network_info = gr.Markdown("*Loading…*")
-                gr.HTML(_WIFI_SETTINGS_HTML)
-
-        settings_demo.load(fn=get_wifi_network_info, outputs=wifi_network_info)
-
-        batt_popup_st = gr.HTML(visible=False)
-        batt_beep_st = gr.Textbox(visible=False)
-        # No status strip on this page to piggyback on; poll gently on its own.
-        batt_timer_st = gr.Timer(30.0)
-        batt_timer_st.tick(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
-        batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
-        settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
-        settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
-
-    # ══════════════════════════════════════════════════════════════════
-    # Page 5 — Power Off
+    # Page 4 — Power Off
+    #
+    # (There is no Settings page: its two panels — HuggingFace account and
+    # WiFi — are the Home page now, next to the device info that used to be
+    # split across the two.)
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("🔴 Power Off") as poweroff_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
-        gr.HTML(
-            "<div style='max-width:520px;margin-top:1rem;padding:1.5rem;"
-            "background:#1c1310;border:1px solid #991b1b;border-radius:12px;'>"
-            "<h2 style='margin:0 0 0.5rem;color:#f87171;'>Power off the device</h2>"
-            "<p style='color:#e2e8f0;margin:0;font-size:0.95rem;'>"
-            "This performs a clean shutdown of the Raspberry Pi. Once it has halted "
-            "you can safely disconnect power.</p></div>"
-        )
+        # Filled in on load with this device's hostname — see _poweroff_header.
+        poweroff_header = gr.HTML(_poweroff_header(""))
 
         poweroff_msg = gr.HTML(value="", visible=False)
         with gr.Row():
             poweroff_btn = gr.Button("Power off now", variant="stop", scale=0)
 
         poweroff_btn.click(fn=on_poweroff, outputs=[poweroff_msg, poweroff_btn])
-        poweroff_demo.load(fn=load_poweroff_page, outputs=[poweroff_msg, poweroff_btn])
+        poweroff_demo.load(
+            fn=load_poweroff_page,
+            outputs=[poweroff_header, poweroff_msg, poweroff_btn],
+        )
 
     return demo
