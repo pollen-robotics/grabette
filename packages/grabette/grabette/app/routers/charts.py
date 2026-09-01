@@ -7,17 +7,49 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter(tags=["charts"])
 
+# Shared <head> for every chart iframe.
+#
+# These are separate documents embedded in the dashboard, so they cannot inherit
+# its body.dark — they read the same localStorage key it writes. Two halves:
+# titles and legends are HTML and follow a CSS variable live, but uPlot bakes
+# the axis and grid colours into the canvas at construction, so those are
+# resolved once into AX/GR. A theme flip after that reloads the frame, which is
+# cheap here — the series are a live stream, not a document.
 _UPLOT_HEAD = """\
 <meta charset="utf-8">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css">
 <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
 <style>
+:root{--ch-title:#3f4a5f;--ch-label:#5f6b80}
+html.dark,body.dark{--ch-title:#c3cbe0;--ch-label:#8b98ad}
 body{margin:0;background:transparent;overflow:hidden}
-.u-title{color:#ccc;font-size:11px}
-.u-legend .u-label{color:#aaa}
-.u-legend .u-value{color:#ccc}
+.u-title{color:var(--ch-title);font-size:11px}
+.u-legend .u-label{color:var(--ch-label)}
+.u-legend .u-value{color:var(--ch-title)}
 .u-legend{font-size:10px}
-</style>"""
+</style>
+<script>
+var GB_DARK = (function () {
+  try {
+    var t = localStorage.getItem('grabette-theme');
+    if (t) { return t === 'dark'; }
+  } catch (e) {}
+  return window.matchMedia('(prefers-color-scheme: dark)').matches;
+})();
+// html gets the class now (body does not exist yet in <head>); body gets it as
+// soon as it does, which is also what the parent dashboard toggles.
+if (GB_DARK) { document.documentElement.classList.add('dark'); }
+var AX = GB_DARK ? '#8b98ad' : '#5f6b80';
+var GR = GB_DARK ? 'rgba(255,255,255,.13)' : 'rgba(22,33,62,.13)';
+document.addEventListener('DOMContentLoaded', function () {
+  document.body.classList.toggle('dark', GB_DARK);
+  // The parent flips this class on us when the operator switches theme. The
+  // canvas colours are already baked, so start over rather than half-repaint.
+  new MutationObserver(function () {
+    if (document.body.classList.contains('dark') !== GB_DARK) { location.reload(); }
+  }).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+});
+</script>"""
 
 IMU_CHART_HTML = f"""\
 <!DOCTYPE html>
@@ -38,8 +70,8 @@ var iT=[],ax=[],ay=[],az=[],gx=[],gy=[],gz=[],t0=null;
     return{{width:w,height:h,title:title,
       cursor:{{show:false}},legend:{{show:true,live:false}},
       scales:{{x:{{time:false}}}},series:[{{}}].concat(ser),
-      axes:[{{stroke:'#888',grid:{{stroke:'#333'}},size:30}},
-            {{stroke:'#888',grid:{{stroke:'#333'}},label:yLbl,size:50}}]}};
+      axes:[{{stroke:AX,grid:{{stroke:GR}},size:30}},
+            {{stroke:AX,grid:{{stroke:GR}},label:yLbl,size:50}}]}};
   }}
   var aC=new uPlot(opts('Accelerometer','m/s\\u00b2',[
     {{label:'X',stroke:'#e55',width:1}},
@@ -108,8 +140,8 @@ var aT=[],pr=[],di=[],t0=null;
     series:[{{}},
       {{label:'Proximal',stroke:'#4488cc',width:1.5}},
       {{label:'Distal',stroke:'#cc8844',width:1.5}}],
-    axes:[{{stroke:'#888',grid:{{stroke:'#333'}},size:30}},
-          {{stroke:'#888',grid:{{stroke:'#333'}},label:'Degrees',size:50}}]
+    axes:[{{stroke:AX,grid:{{stroke:GR}},size:30}},
+          {{stroke:AX,grid:{{stroke:GR}},label:'Degrees',size:50}}]
   }},[[],[],[]],document.getElementById('angle'));
 
   new ResizeObserver(function(){{
@@ -172,8 +204,8 @@ var iT=[],sx=[],sy=[],sz=[],t0=null;
       {{label:'X',stroke:'#e55',width:1}},
       {{label:'Y',stroke:'#5b5',width:1}},
       {{label:'Z',stroke:'#55e',width:1}}],
-    axes:[{{stroke:'#888',grid:{{stroke:'#333'}},size:30}},
-          {{stroke:'#888',grid:{{stroke:'#333'}},label:'{ylabel}',size:50}}]
+    axes:[{{stroke:AX,grid:{{stroke:GR}},size:30}},
+          {{stroke:AX,grid:{{stroke:GR}},label:'{ylabel}',size:50}}]
   }},[[],[],[],[]],document.getElementById('{div_id}'));
 
   new ResizeObserver(function(){{

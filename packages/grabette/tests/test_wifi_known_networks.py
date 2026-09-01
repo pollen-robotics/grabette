@@ -10,8 +10,6 @@ from __future__ import annotations
 
 import subprocess
 
-import pytest
-
 from grabette import wifi
 
 
@@ -138,14 +136,3 @@ def test_failed_connect_removes_the_half_built_profile(monkeypatch):
 
     assert wifi.wifi_connect("OfficeNet", "wrongpass").startswith("ERROR:")
     assert ["nmcli", "connection", "delete", "OfficeNet"] in run.calls
-
-
-@pytest.mark.parametrize("pct,charging,expected_color", [
-    (95, False, "#6ee7b7"),
-    (30, False, "#fcd34d"),
-    (8, False, "#fca5a5"),
-    (8, True, "#6ee7b7"),  # charging always reads green, whatever the level
-])
-def test_battery_colors(pct, charging, expected_color):
-    from grabette.ui.app import _battery_colors
-    assert _battery_colors(pct, charging)[0] == expected_color

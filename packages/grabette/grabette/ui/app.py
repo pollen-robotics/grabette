@@ -18,113 +18,227 @@ logger = logging.getLogger(__name__)
 
 # ── Visual charter ────────────────────────────────────────────────────────
 # Aligned with the grabette-fleet dashboard (and the Bluetooth tool, which
-# already mirrors it): the same #1a1a2e→#16213e gradient, translucent white
-# cards, #c3cbe0 / #a0aec0 text ramp and #ffcc4d primary accent. Operators move
-# between the three all day; they should look like one product.
-FLEET_BG = "linear-gradient(135deg,#1a1a2e,#16213e)"
-FLEET_SURFACE = "#16213e"
-FLEET_CARD = "rgba(255,255,255,.06)"
-FLEET_BORDER = "rgba(255,255,255,.12)"
-FLEET_TEXT = "#ffffff"
-FLEET_TEXT_SOFT = "#c3cbe0"
-FLEET_MUTED = "#8b98ad"
-FLEET_ACCENT = "#ffcc4d"
+# already mirrors it): the same gradient ground, translucent cards, soft text
+# ramp and #ffcc4d primary accent. Operators move between the three all day;
+# they should look like one product.
+#
+# Every colour is a CSS variable, defined twice in APP_CSS (light on :root,
+# dark under body.dark). Nothing in this module may hardcode a hex: the whole
+# dashboard has to survive a theme flip, and a literal colour is exactly the
+# thing that does not. The Gradio theme tokens below point at the same
+# variables, so there is ONE palette for both the framework's widgets and our
+# own hand-rolled HTML.
+C_CARD = "var(--gb-card)"
+C_SUNK = "var(--gb-sunk)"
+C_BORDER = "var(--gb-border)"
+C_TEXT = "var(--gb-text)"
+C_SOFT = "var(--gb-soft)"
+C_MUTED = "var(--gb-muted)"
+C_INPUT = "var(--gb-input)"
+C_ACCENT = "var(--gb-accent)"
+C_ACCENT_TEXT = "var(--gb-accent-text)"
+C_OK, C_OK_BD = "var(--gb-ok)", "var(--gb-ok-bd)"
+C_WARN, C_WARN_BD = "var(--gb-warn)", "var(--gb-warn-bd)"
+C_BAD, C_BAD_BD, C_BAD_BG = "var(--gb-bad)", "var(--gb-bad-bd)", "var(--gb-bad-bg)"
 
-# Both the light and the dark value of every token is set to the same colour:
-# the charter is a dark one, and the dashboard must not half-flip when the
-# browser is set to light (which is what the hardcoded slate cards used to do).
+
 def fleet_theme():
-    # System fonts only, no GoogleFont: the robot regularly runs offline, and a
-    # webfont that half-loads there falls back to serif (the same trap that made
-    # _TITLE_HTML pin its own stack).
+    """Gradio's own tokens, wired to the --gb-* palette defined in APP_CSS.
+
+    Both the light and the `_dark` value of each token is the same var()
+    reference — the variable itself is what changes under body.dark, so the two
+    themes never drift apart in two places.
+
+    System fonts only, no GoogleFont: the robot regularly runs offline, and a
+    webfont that only half-loads there falls back to serif — which used to force
+    the page title to carry its own hardcoded stack.
+    """
+    def both(**tokens):
+        """Set each token to the same value in light and dark."""
+        return {k: v for name, v in tokens.items()
+                for k in (name, f"{name}_dark")}
+
     return gr.themes.Base(
         font=["-apple-system", "system-ui", "sans-serif"],
         font_mono=["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
-    ).set(
-        body_background_fill=FLEET_BG,
-        body_background_fill_dark=FLEET_BG,
-        background_fill_primary=FLEET_BG,
-        background_fill_primary_dark=FLEET_BG,
-        background_fill_secondary=FLEET_CARD,
-        background_fill_secondary_dark=FLEET_CARD,
-        block_background_fill=FLEET_CARD,
-        block_background_fill_dark=FLEET_CARD,
-        block_border_color=FLEET_BORDER,
-        block_border_color_dark=FLEET_BORDER,
+    ).set(**both(
+        body_background_fill="var(--gb-bg)",
+        background_fill_primary="var(--gb-bg)",
+        background_fill_secondary=C_CARD,
+        block_background_fill=C_CARD,
+        block_border_color=C_BORDER,
         block_label_background_fill="transparent",
-        block_label_background_fill_dark="transparent",
-        block_label_text_color=FLEET_MUTED,
-        block_label_text_color_dark=FLEET_MUTED,
-        block_title_text_color=FLEET_TEXT_SOFT,
-        block_title_text_color_dark=FLEET_TEXT_SOFT,
-        body_text_color=FLEET_TEXT,
-        body_text_color_dark=FLEET_TEXT,
-        body_text_color_subdued=FLEET_MUTED,
-        body_text_color_subdued_dark=FLEET_MUTED,
-        border_color_primary=FLEET_BORDER,
-        border_color_primary_dark=FLEET_BORDER,
-        panel_background_fill=FLEET_CARD,
-        panel_background_fill_dark=FLEET_CARD,
-        input_background_fill=FLEET_SURFACE,
-        input_background_fill_dark=FLEET_SURFACE,
-        button_primary_background_fill=FLEET_ACCENT,
-        button_primary_background_fill_dark=FLEET_ACCENT,
-        button_primary_text_color="#1a1a2e",
-        button_primary_text_color_dark="#1a1a2e",
-        button_secondary_background_fill="rgba(255,255,255,.08)",
-        button_secondary_background_fill_dark="rgba(255,255,255,.08)",
-        button_secondary_text_color=FLEET_TEXT_SOFT,
-        button_secondary_text_color_dark=FLEET_TEXT_SOFT,
+        block_label_text_color=C_MUTED,
+        block_title_text_color=C_SOFT,
+        body_text_color=C_TEXT,
+        body_text_color_subdued=C_MUTED,
+        border_color_primary=C_BORDER,
+        panel_background_fill=C_CARD,
+        input_background_fill=C_INPUT,
+        input_border_color=C_BORDER,
+        button_primary_background_fill=C_ACCENT,
+        button_primary_text_color=C_ACCENT_TEXT,
+        button_secondary_background_fill=C_SUNK,
+        button_secondary_text_color=C_SOFT,
         # variant="stop" (Stop Capture, Power off now) maps to the "cancel"
         # family — unset, it renders as an ordinary grey button, which is the
         # last thing a shutdown control should look like.
         button_cancel_background_fill="#ef4444",
-        button_cancel_background_fill_dark="#ef4444",
         button_cancel_background_fill_hover="#dc2626",
-        button_cancel_background_fill_hover_dark="#dc2626",
         button_cancel_text_color="#ffffff",
-        button_cancel_text_color_dark="#ffffff",
         button_cancel_border_color="#ef4444",
-        button_cancel_border_color_dark="#ef4444",
-        block_radius="14px",
-        button_large_radius="8px",
-        button_small_radius="8px",
         # The episode table is its own token family — left at the defaults it
-        # renders a white sheet in the middle of the dark page.
-        table_even_background_fill="rgba(255,255,255,.03)",
-        table_even_background_fill_dark="rgba(255,255,255,.03)",
-        table_odd_background_fill="rgba(255,255,255,.07)",
-        table_odd_background_fill_dark="rgba(255,255,255,.07)",
-        table_border_color=FLEET_BORDER,
-        table_border_color_dark=FLEET_BORDER,
-        table_text_color=FLEET_TEXT,
-        table_text_color_dark=FLEET_TEXT,
-        table_row_focus="rgba(59,130,246,.22)",
-        table_row_focus_dark="rgba(59,130,246,.22)",
-        table_radius="12px",
-    )
+        # renders a white sheet in the middle of a dark page.
+        table_even_background_fill="var(--gb-row-even)",
+        table_odd_background_fill="var(--gb-row-odd)",
+        table_border_color=C_BORDER,
+        table_text_color=C_TEXT,
+        table_row_focus="var(--gb-row-focus)",
+    ), block_radius="14px", button_large_radius="8px",
+       button_small_radius="8px", table_radius="12px")
 
 
 # Applied by app/main.py at mount time — see create_ui. (This CSS silently did
 # nothing for as long as it was passed to gr.Blocks(css=...) under Gradio 6.)
 APP_CSS = """
-/* The gradient has to be painted on the app shell too: Gradio's container sits
-   on top of <body> with its own opaque fill, which would hide it. */
-.gradio-container, .app, .main, body {
-    background: linear-gradient(135deg,#1a1a2e,#16213e) !important;
+/* ── Palette ───────────────────────────────────────────────────────────────
+   Light on :root so it is the fallback everywhere, dark under body.dark —
+   which is the class Gradio itself toggles, so the built-in and our own
+   switch drive the same thing. */
+:root {
+    --gb-bg: linear-gradient(135deg,#f5f7fc,#e9eef7);
+    --gb-card: #ffffff;
+    --gb-sunk: rgba(22,33,62,.05);
+    --gb-border: rgba(22,33,62,.14);
+    --gb-text: #16213e;
+    --gb-soft: #3f4a5f;
+    --gb-muted: #5f6b80;
+    --gb-input: #ffffff;
+    --gb-accent: #ffcc4d;
+    --gb-accent-text: #1a1a2e;
+    --gb-ok: #047857;      --gb-ok-bd: rgba(4,120,87,.45);
+    --gb-warn: #b45309;    --gb-warn-bd: rgba(180,83,9,.45);
+    --gb-bad: #b91c1c;     --gb-bad-bd: rgba(185,28,28,.45);
+    --gb-bad-bg: rgba(239,68,68,.07);
+    --gb-row-even: #ffffff;
+    --gb-row-odd: rgba(22,33,62,.04);
+    --gb-row-focus: rgba(59,130,246,.14);
+    --gb-shadow: 0 1px 3px rgba(22,33,62,.09);
 }
-.gradio-container { max-width: 1200px !important; }
+body.dark {
+    --gb-bg: linear-gradient(135deg,#1a1a2e,#16213e);
+    --gb-card: rgba(255,255,255,.06);
+    --gb-sunk: rgba(255,255,255,.08);
+    --gb-border: rgba(255,255,255,.12);
+    --gb-text: #ffffff;
+    --gb-soft: #c3cbe0;
+    --gb-muted: #8b98ad;
+    --gb-input: #16213e;
+    --gb-accent: #ffcc4d;
+    --gb-accent-text: #1a1a2e;
+    --gb-ok: #6ee7b7;      --gb-ok-bd: rgba(16,185,129,.45);
+    --gb-warn: #fcd34d;    --gb-warn-bd: rgba(245,158,11,.5);
+    --gb-bad: #fca5a5;     --gb-bad-bd: rgba(239,68,68,.55);
+    --gb-bad-bg: rgba(239,68,68,.1);
+    --gb-row-even: rgba(255,255,255,.03);
+    --gb-row-odd: rgba(255,255,255,.07);
+    --gb-row-focus: rgba(59,130,246,.22);
+    --gb-shadow: none;
+}
+
+/* The ground has to be painted on the app shell too: Gradio's container sits
+   on top of <body> with its own opaque fill, which would hide it. */
+.gradio-container, .app, .main, body { background: var(--gb-bg) !important; }
+/* Full-bleed: the dashboard is the whole window. Gradio's default max-width
+   left the navbar stopping short of the right edge on a wide screen. */
+.gradio-container { max-width: 100% !important; width: 100% !important; }
+.gradio-container > .main, .gradio-container .contain { max-width: 100% !important; }
 /* Blocks that only group other blocks (rows, columns) must stay transparent —
-   otherwise every nesting level stacks another translucent white veil. */
+   otherwise every nesting level stacks another translucent veil. */
 .gradio-container .form, .gradio-container .gap,
 .gradio-container div.block:not(.padded) { background: transparent; }
+/* Our hand-rolled HTML already carries its own card padding. Gradio's block
+   padding on top of it left every strip at a slightly different width from its
+   neighbour — very visible once the page is full-bleed. */
+.gradio-container .html-container { padding: 0 !important; }
 /* Gradio dims disabled buttons by lightening them, which on a dark ground
-   produces a near-white bar with unreadable text. Darken instead. */
+   produces a near-white bar with unreadable text. Use the palette instead. */
 .gradio-container button:disabled, .gradio-container button[disabled] {
-    background: rgba(255,255,255,.05) !important;
-    color: #8b98ad !important;
+    background: var(--gb-sunk) !important;
+    color: var(--gb-muted) !important;
     opacity: 1 !important;
 }
+/* One theme switch, not two: Gradio's footer cog opens its own display-theme
+   picker, which does not write our stored preference and would be silently
+   undone on the next page. The ◐ button in the header is the control. */
+footer .settings, footer .settings + .divider { display: none !important; }
+
+/* ── Page header (device name + battery), identical on all four pages ───── */
+.gb-header-row { align-items: center !important; gap: .6rem !important; }
+.gb-theme-btn, .gb-theme-btn button {
+    min-width: 2.6rem !important; max-width: 3rem;
+    padding: .45rem 0 !important; font-size: 1.05rem !important;
+    background: var(--gb-sunk) !important; border: 1px solid var(--gb-border) !important;
+    color: var(--gb-soft) !important;
+}
+.gb-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; flex-wrap: wrap;
+    padding: .85rem 1.1rem; border-radius: 14px;
+    background: var(--gb-card); border: 1px solid var(--gb-border);
+    box-shadow: var(--gb-shadow);
+}
+.gb-brand {
+    font-size: .68rem; font-weight: 700; letter-spacing: .16em;
+    text-transform: uppercase; color: var(--gb-muted);
+}
+.gb-name {
+    font-size: 1.5rem; font-weight: 800; color: var(--gb-text);
+    line-height: 1.15; overflow-wrap: anywhere;
+}
+.gb-batt {
+    display: flex; align-items: baseline; gap: .45rem;
+    padding: .5rem .9rem; border-radius: 999px;
+    background: var(--gb-sunk); border: 1px solid var(--gb-batt-bd, var(--gb-border));
+    white-space: nowrap;
+}
+.gb-batt-label {
+    font-size: .62rem; font-weight: 700; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--gb-muted);
+}
+.gb-batt-value { font-size: 1.05rem; font-weight: 800; }
+
+/* ── Status cards ──────────────────────────────────────────────────────── */
+.gb-cards { display: flex; flex-direction: row; gap: .5rem; flex-wrap: wrap; }
+.gb-card {
+    flex: 1 1 11rem; min-width: 0;
+    padding: .6rem 1rem; border-radius: 14px;
+    background: var(--gb-card); border: 1px solid var(--gb-border);
+    box-shadow: var(--gb-shadow);
+}
+.gb-card-label {
+    font-size: .65rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--gb-muted); margin-bottom: .2rem;
+}
+.gb-card-value {
+    font-size: .9rem; font-weight: 700;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ── Phone ─────────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+    .gradio-container { padding: 0 .35rem !important; }
+    .gb-name { font-size: 1.2rem; }
+    .gb-head { padding: .7rem .8rem; }
+    /* One card per row beats four unreadable slivers. */
+    .gb-card { flex: 1 1 100%; }
+    .gb-card-value { white-space: normal; }
+    /* The navbar is a flex row that would otherwise scroll off-screen. */
+    #grabette-nav { flex-wrap: wrap !important; row-gap: .2rem !important; }
+    #grabette-nav a { padding: .35rem .55rem !important; font-size: .9rem !important; }
+    #grabette-nav a:last-child { margin-left: 0 !important; }
+}
+
 #hf-auth-modal {
     position: fixed !important;
     inset: 0 !important;
@@ -142,25 +256,96 @@ APP_CSS = """
 #hf-auth-card {
     max-width: 460px !important;
     width: 100% !important;
-    background: #1f2937 !important;
-    border-radius: 12px !important;
+    background: var(--gb-card) !important;
+    border-radius: 14px !important;
     padding: 2rem !important;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
-    border: 1px solid #374151 !important;
+    border: 1px solid var(--gb-border) !important;
 }
 /* "Power Off" is the last navbar entry — push it to the far right and tint it
    red so it reads as separate from the normal pages. Best-effort: relies on the
    navbar being a flex row (gradio 6.x); the 🔴 label is the guaranteed cue. */
 #grabette-nav a:last-child {
     margin-left: auto !important;
-    color: #f87171 !important;
+    color: #ef4444 !important;
 }
 #grabette-nav {
-    background: rgba(255,255,255,.04) !important;
-    border-bottom: 1px solid rgba(255,255,255,.12) !important;
+    background: var(--gb-card) !important;
+    border-bottom: 1px solid var(--gb-border) !important;
 }
-#grabette-nav a { color: #c3cbe0 !important; }
-#grabette-nav a:hover { color: #ffffff !important; }
+#grabette-nav a { color: var(--gb-soft) !important; }
+#grabette-nav a:hover { color: var(--gb-text) !important; }
+"""
+
+# Theme switching. Gradio toggles `dark` on document.body and offers its own
+# picker in the footer cog, but that picker keeps its choice in the URL — which
+# the navbar's plain <a> links drop on the very next page. So we own it: the
+# choice lives in localStorage and is re-applied on every page load.
+#
+# The two iframes (WiFi panel, HF widget) are separate documents that do not
+# inherit body.dark. They are same-origin, so the parent sets the class on them
+# directly; each also reads the same localStorage on its own load, which covers
+# the ones that arrive after a toggle.
+_THEME_JS_LIB = """
+  function gbStored() {
+    try { return localStorage.getItem('grabette-theme'); } catch (e) { return null; }
+  }
+  // Each iframe reads the stored theme itself on load, which covers the common
+  // case. It cannot cover the two where the parent's theme did not come from
+  // storage — ?__theme= in the parent URL, and a toggle while a frame is
+  // already open — so the parent pushes the class onto every frame as well,
+  // both now and whenever one (re)loads or Gradio re-renders one into the page.
+  function gbSyncFrame(f) {
+    try { f.contentDocument.body.classList.toggle('dark', !!window.__gbDark); }
+    catch (e) {}
+  }
+  function gbWatchFrames() {
+    document.querySelectorAll('iframe').forEach(function (f) {
+      if (!f.__gbWatched) {
+        f.__gbWatched = true;
+        f.addEventListener('load', function () { gbSyncFrame(f); });
+      }
+      gbSyncFrame(f);
+    });
+  }
+  if (!window.__gbFrameObserver) {
+    window.__gbFrameObserver = new MutationObserver(gbWatchFrames);
+    window.__gbFrameObserver.observe(document.documentElement,
+                                     { childList: true, subtree: true });
+  }
+
+  function gbApply(mode) {
+    var dark = mode === 'dark';
+    window.__gbDark = dark;
+    document.body.classList.toggle('dark', dark);
+    gbWatchFrames();
+    // The button says where a click takes you, not where you are.
+    document.querySelectorAll('.gb-theme-btn').forEach(function (w) {
+      var b = w.tagName === 'BUTTON' ? w : w.querySelector('button');
+      if (!b) { return; }
+      b.textContent = dark ? '\u2600' : '\u263E';
+      b.title = dark ? 'Switch to light theme' : 'Switch to dark theme';
+      b.setAttribute('aria-label', b.title);
+    });
+  }
+  window.__grabetteTheme = function () {
+    // ?__theme= wins: it is Gradio's own convention, it is what its footer
+    // picker writes, and a theme asked for in the URL is the most explicit
+    // request there is. Then our stored choice, then the OS preference.
+    var asked = new URL(window.location.href).searchParams.get('__theme');
+    if (asked === 'dark' || asked === 'light') { return asked; }
+    return gbStored()
+      || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  };
+  window.__grabetteApplyTheme = gbApply;
+"""
+
+_THEME_TOGGLE_JS = """
+() => {
+  var next = document.body.classList.contains('dark') ? 'light' : 'dark';
+  try { localStorage.setItem('grabette-theme', next); } catch (e) {}
+  window.__grabetteApplyTheme(next);
+}
 """
 
 _HF_AUTH_IFRAME = (
@@ -169,7 +354,7 @@ _HF_AUTH_IFRAME = (
     'if(!document.contains(f))return;'
     'try{f.style.height=f.contentDocument.body.scrollHeight+10+\'px\';}catch(e){}'
     'setTimeout(r,400);})()"'
-    ' style="width:100%;border:none;min-height:160px;"></iframe>'
+    ' style="width:100%;border:none;min-height:90px;"></iframe>'
 )
 
 
@@ -199,19 +384,8 @@ _WIFI_SETTINGS_HTML = (
     'if(!document.contains(f))return;'
     'try{f.style.height=f.contentDocument.body.scrollHeight+20+\'px\';}catch(e){}'
     'setTimeout(r,400);})()"'
-    ' style="width:100%;border:none;border-radius:8px;min-height:200px;">'
+    ' style="width:100%;border:none;border-radius:8px;min-height:110px;">'
     '</iframe>'
-)
-
-# Rendered as explicit HTML rather than Markdown so the title font is pinned to a
-# complete system sans-serif stack. The Markdown <h1> inherited the theme's
-# webfont (--font), which renders inconsistently — and falls back to serif — when
-# it loads partially or fails (e.g. the robot runs offline).
-_TITLE_HTML = (
-    "<h1 style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
-    "Roboto,Helvetica,Arial,sans-serif;font-weight:700;"
-    "font-size:var(--text-xxl,2rem);color:var(--body-text-color);"
-    "margin:var(--spacing-xxl) 0 var(--spacing-lg);\">GRABETTE</h1>"
 )
 
 # Battery percentage at/below which the low-battery warning popup + sound fire.
@@ -219,15 +393,22 @@ _BATTERY_WARN_PCT = 25
 
 # Run once per page load via `<page>.load(js=...)`. Gradio executes `js` load
 # handlers on the client (unlike the `head=` param, whose inline <script> is
-# injected via innerHTML and never runs). Defines window.__grabetteBatteryBeep()
-# — a two-tone Web Audio chime + system notification — and, because browser
-# autoplay policy blocks audio until the user interacts with the page, resumes
-# the AudioContext / requests Notification permission on the first user gesture.
-# A hidden/background tab (screen asleep, tab not focused) can still beep and
-# notify as long as the machine itself is not fully suspended — a real OS
-# suspend halts all JS and no local page can work around that.
-_BATTERY_INIT_JS = """
+# injected via innerHTML and never runs).
+#
+# Two jobs. First the stored theme, which must be re-applied on EVERY load —
+# hence above the one-shot guard below, not after it. Then window
+# .__grabetteBatteryBeep() — a two-tone Web Audio chime + system notification —
+# and, because browser autoplay policy blocks audio until the user interacts
+# with the page, resuming the AudioContext / requesting Notification permission
+# on the first user gesture. A hidden/background tab (screen asleep, tab not
+# focused) can still beep and notify as long as the machine itself is not fully
+# suspended — a real OS suspend halts all JS and no local page can work around
+# that.
+_PAGE_INIT_JS = """
 () => {
+""" + _THEME_JS_LIB + """
+  gbApply(window.__grabetteTheme());
+
   if (window.__grabetteBatteryBeep) { return; }
   var ctx = null;
   var lastBeep = 0;
@@ -305,10 +486,10 @@ _BATTERY_BEEP_JS = (
 
 
 def _section_label(text: str) -> str:
-    """Small uppercase gray column header used across the Live View page."""
+    """Small uppercase muted column header used across the Live View page."""
     return (
         "<div style='font-size:0.72rem;text-transform:uppercase;"
-        f"letter-spacing:0.09em;color:{FLEET_MUTED};margin-bottom:0.3rem;'>"
+        f"letter-spacing:0.09em;color:{C_MUTED};margin-bottom:0.3rem;'>"
         f"{text}</div>"
     )
 
@@ -320,25 +501,64 @@ def _battery_colors(pct: float, charging: bool | None) -> tuple[str, str]:
     badge on a device that is plugged in only teaches operators to ignore it.
     """
     if charging or pct > 40:
-        return "#6ee7b7", "rgba(16,185,129,.45)"
+        return C_OK, C_OK_BD
     if pct > 20:
-        return "#fcd34d", "rgba(245,158,11,.5)"
-    return "#fca5a5", "rgba(239,68,68,.55)"
+        return C_WARN, C_WARN_BD
+    return C_BAD, C_BAD_BD
+
+
+def _battery_text(info: dict | None) -> tuple[str, str, str]:
+    """(text, value colour, border colour) for the header's battery pill.
+
+    ``info`` is a /api/system/info dict, or None when the call failed — which is
+    not the same as a device with no battery, but reads the same to the operator
+    either way: the number cannot be trusted, so don't show one.
+    """
+    if not info or "battery_pct" not in info:
+        return "N/A", C_MUTED, C_BORDER
+    pct = info["battery_pct"]
+    charging = info.get("battery_charging")
+    color, border = _battery_colors(pct, charging)
+    return (f"⚡ {pct} %" if charging else f"{pct} %"), color, border
+
+
+def page_header_html(info: dict | None) -> str:
+    """The band at the top of EVERY page: device name on the left, battery right.
+
+    Same markup, same position, same four pages. An operator glancing at a
+    laptop with three grabettes open should not have to work out which tab this
+    is, nor hunt for the charge level in a different corner per page.
+    """
+    hostname = (info or {}).get("hostname") or "—"
+    batt, batt_color, batt_border = _battery_text(info)
+    return (
+        "<div class='gb-head'>"
+        "<div>"
+        "<div class='gb-brand'>Grabette</div>"
+        f"<div class='gb-name'>{html.escape(hostname)}</div>"
+        "</div>"
+        f"<div class='gb-batt' style='--gb-batt-bd:{batt_border}'>"
+        "<span class='gb-batt-label'>Battery</span>"
+        f"<span class='gb-batt-value' style='color:{batt_color}'>{batt}</span>"
+        "</div>"
+        "</div>"
+    )
 
 
 def _info_card(
     label: str,
     value: str,
     *,
-    value_color: str = FLEET_TEXT,
-    border_color: str = FLEET_BORDER,
-    extra_style: str = "",
+    value_color: str = C_TEXT,
+    border_color: str = C_BORDER,
     title: str = "",
 ) -> str:
-    """One translucent fleet-charter card: dim uppercase label over a bold value.
+    """One charter card: dim uppercase label over a bold value.
 
-    The single card shape behind every status strip in the dashboard (Home,
-    Episodes, Live View), so a badge means the same thing on every page.
+    The single card shape behind every status strip in the dashboard, so a badge
+    means the same thing on every page. Layout lives in APP_CSS (.gb-card) so it
+    can reflow to one-per-row on a phone — only the two colours that vary with
+    state are inline.
 
     ``title`` carries the long form (a hardware fault's full explanation) as a
     hover tooltip: a card is one line and truncates, so a message that matters
@@ -346,44 +566,38 @@ def _info_card(
     """
     tip = f" title=\"{html.escape(title, quote=True)}\"" if title else ""
     return (
-        f"<div{tip} style='background:{FLEET_CARD};border-radius:14px;padding:0.6rem 1rem;"
-        f"border:1px solid {border_color};flex:1;min-width:0;{extra_style}'>"
-        f"<div style='font-size:0.65rem;text-transform:uppercase;letter-spacing:0.09em;"
-        f"color:{FLEET_MUTED};margin-bottom:0.2rem;'>{label}</div>"
-        f"<div style='font-size:0.9rem;font-weight:700;color:{value_color};"
-        f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{value}</div>"
+        f"<div class='gb-card'{tip} style='border-color:{border_color}'>"
+        f"<div class='gb-card-label'>{label}</div>"
+        f"<div class='gb-card-value' style='color:{value_color}'>{value}</div>"
         f"</div>"
     )
 
 
-def _status_bar_html(sys_info, oakd_status, cam_status):
-    """Build the Episodes status strip (battery + RGB + OAK-D) from already-fetched dicts.
+def _card_row(cards: list[str], margin: str = "0") -> str:
+    """Wrap rendered cards in the flex row that reflows to one column on a phone."""
+    return f"<div class='gb-cards' style='margin:{margin}'>" + "".join(cards) + "</div>"
 
-    Pure function (no network calls) so it can be unit-tested. Each argument
+
+def _status_bar_html(oakd_status, cam_status):
+    """Build the Episodes camera strip (RGB + OAK-D) from already-fetched dicts.
+
+    Pure function (no network calls) so it can be unit-tested. Either argument
     may be None when the corresponding API call failed.
+
+    The battery is deliberately NOT here: it sits in the shared page header, in
+    the same place on all four pages.
     """
 
-    # (value color, border color). Neutral gray covers off / N/A / unknown.
-    # Palette matches the fleet's pill colours: soft foregrounds on translucent
-    # cards rather than the saturated hue on near-black it used to be.
-    GRAY = ("#a0aec0", "rgba(255,255,255,.14)")
-    GREEN = ("#6ee7b7", "rgba(16,185,129,.45)")
-    ORANGE = ("#fcd34d", "rgba(245,158,11,.5)")
-    RED = ("#fca5a5", "rgba(239,68,68,.55)")
+    # (value color, border color). Neutral covers off / N/A / unknown.
+    GRAY = (C_MUTED, C_BORDER)
+    GREEN = (C_OK, C_OK_BD)
+    ORANGE = (C_WARN, C_WARN_BD)
+    RED = (C_BAD, C_BAD_BD)
 
     def _badge(label, value, colors, title=""):
         value_color, border_color = colors
         return _info_card(label, value, value_color=value_color,
                           border_color=border_color, title=title)
-
-    # Battery (⚡ + green while charging, regardless of level)
-    if sys_info and "battery_pct" in sys_info:
-        pct = sys_info["battery_pct"]
-        charging = sys_info.get("battery_charging")
-        value = f"⚡ {pct} %" if charging else f"{pct} %"
-        batt_badge = _badge("Battery", value, _battery_colors(pct, charging))
-    else:
-        batt_badge = _badge("Battery", "N/A", GRAY)
 
     # RGB camera (3-state: connected / reinitializing / disconnected; N/A if call failed)
     if cam_status is None:
@@ -412,12 +626,27 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
     else:
         oakd_badge = _badge("OAK-D", "Off", GRAY)
 
-    return (
-        "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;"
-        "margin:0.25rem 0 0.75rem;'>"
-        + batt_badge + rgb_badge + oakd_badge
-        + "</div>"
-    )
+    return _card_row([rgb_badge, oakd_badge], margin="0.25rem 0 0.75rem")
+
+
+def _page_chrome():
+    """Navbar + the shared header band. Call first inside every page.
+
+    Returns the header's gr.HTML so the page can refresh it from its own poll —
+    the header carries the battery, which has to be live, and has to sit in the
+    same place whichever page you are on.
+    """
+    gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
+    with gr.Row(elem_classes=["gb-header-row"]):
+        header = gr.HTML(page_header_html(None))
+        theme_btn = gr.Button(
+            "\u263E", scale=0, min_width=44,
+            variant="secondary", elem_classes=["gb-theme-btn"],
+        )
+    # Client-side only: no round-trip, and the choice is kept in localStorage so
+    # it survives the navbar's plain-link navigation between pages.
+    theme_btn.click(fn=None, inputs=None, outputs=None, js=_THEME_TOGGLE_JS)
+    return header
 
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
@@ -867,12 +1096,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             _batt_beep["n"] += 1
             html = (
                 "<div style='position:fixed;bottom:24px;right:24px;z-index:9999;"
-                "background:#16213e;border:1px solid rgba(248,113,113,.55);"
+                f"background:{C_CARD};backdrop-filter:blur(8px);"
+                f"border:1px solid {C_BAD_BD};"
                 "border-radius:14px;padding:16px 20px;max-width:260px;"
-                "box-shadow:0 10px 30px rgba(0,0,0,.45);'>"
-                "<div style='font-weight:700;color:#fca5a5;font-size:1rem;"
+                "box-shadow:0 10px 30px rgba(0,0,0,.35);'>"
+                f"<div style='font-weight:700;color:{C_BAD};font-size:1rem;"
                 "margin-bottom:4px;'>Battery low</div>"
-                f"<div style='font-size:0.88rem;color:{FLEET_TEXT_SOFT};'>"
+                f"<div style='font-size:0.88rem;color:{C_SOFT};'>"
                 f"{pct} % — please charge soon.</div>"
                 "</div>"
             )
@@ -880,89 +1110,58 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(visible=False), ""
 
     def get_system_bar():
-        """Returns (system_bar_html, battery_popup_update, beep_signal)."""
-        info = client.get_system_info()
-        if info is None:
-            bar = (f"<p style='color:{FLEET_MUTED};font-size:0.85rem;margin:0.5rem 0;'>"
-                   "System disconnected</p>")
-            return bar, gr.update(visible=False), ""
+        """(header, system_bar, battery_popup, beep_signal) for the Live View page.
 
-        def _card(label, value, extra_style=""):
-            return _info_card(label, value, extra_style=extra_style)
+        Neither hostname nor battery appear in the bar: both live in the shared
+        header, in the same spot as on every other page. What is left here is
+        what Live View is actually for — the health numbers you watch while a
+        session runs.
+        """
+        info = client.get_system_info()
+        header = page_header_html(info)
+        if info is None:
+            bar = (f"<p style='color:{C_MUTED};font-size:0.85rem;margin:0.5rem 0;'>"
+                   "System disconnected</p>")
+            return header, bar, gr.update(visible=False), ""
 
         parts = []
-
-        if info.get("hostname"):
-            parts.append(_card("Host", info["hostname"]))
         if "cpu_temp_c" in info:
-            parts.append(_card("CPU Temp", f"{info['cpu_temp_c']} °C"))
+            parts.append(_info_card("CPU Temp", f"{info['cpu_temp_c']} °C"))
         if "disk_free_gb" in info:
-            parts.append(_card("Disk Free", f"{info['disk_free_gb']} GB"))
+            parts.append(_info_card("Disk Free", f"{info['disk_free_gb']} GB"))
 
-        if "battery_pct" in info:
-            pct = info["battery_pct"]
-            charging = info.get("battery_charging")
-            batt_color, batt_border = _battery_colors(pct, charging)
-            batt_value = f"⚡ {pct} %" if charging else f"{pct} %"
-            parts.append(_info_card(
-                "Battery", batt_value, value_color=batt_color, border_color=batt_border,
-            ))
-
-        bar = (
-            "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;'>"
-            + "".join(parts)
-            + "</div>"
-        )
         popup_update, beep_signal = _battery_popup_html(info)
-        return bar, popup_update, beep_signal
+        return header, _card_row(parts), popup_update, beep_signal
 
-    # ── Episodes status strip (battery + camera connections) ─────────
+    # ── Episodes status strip (camera connections) ───────────────────
 
     def get_episode_status_bar():
-        """(status_bar_html, battery_popup, beep_signal) from ONE system-info read.
+        """(header, camera_strip, battery_popup, beep_signal) from ONE system-info read.
 
-        The battery warning piggybacks on this 3 s poll rather than a dedicated
-        timer, so a single get_system_info() feeds both the strip and the popup
-        (no redundant I2C read).
+        The header (device name + battery) and the battery warning both
+        piggyback on this 3 s poll rather than a dedicated timer, so a single
+        get_system_info() feeds all three — no redundant I2C read.
         """
         info = client.get_system_info()
         bar = _status_bar_html(
-            info,
             client.get_oakd_status(),
             client.get_camera_status(),
         )
         popup_update, beep_signal = _battery_popup_html(info)
-        return bar, popup_update, beep_signal
+        return page_header_html(info), bar, popup_update, beep_signal
 
-    # ── Home page essentials (battery + identity + network) ──────────
+    # ── Home: header + the network facts ─────────────────────────────
 
     def get_home_status():
-        """(cards_html, battery_popup, beep_signal) — the four things you land on.
+        """(header, network_cards, battery_popup, beep_signal).
 
-        Battery, hostname, IP and network, in that order: the state you check
-        before touching anything, and — since there is no Settings page any more
-        — the only place the device's identity is written down. The battery
-        popup piggybacks on the same system-info read, as on the other pages.
+        The header carries the device name and the battery — the first section
+        of the page, and identical on every other page. What is left for Home's
+        Network section is where this grabette can be reached: its IP and the
+        network it is on.
         """
         info = client.get_system_info() or {}
         status = client.wifi_status()
-
-        parts = []
-
-        if "battery_pct" in info:
-            pct = info["battery_pct"]
-            charging = info.get("battery_charging")
-            color, border = _battery_colors(pct, charging)
-            parts.append(_info_card(
-                "Battery", f"⚡ {pct} %" if charging else f"{pct} %",
-                value_color=color, border_color=border,
-            ))
-        else:
-            parts.append(_info_card("Battery", "N/A", value_color=FLEET_MUTED))
-
-        parts.append(_info_card("Hostname", html.escape(info.get("hostname") or "—")))
-        parts.append(_info_card("IP address",
-                                html.escape(status.get("ip") or info.get("ip") or "—")))
 
         # The network card doubles as the reachability verdict: on the hotspot
         # the dashboard is only reachable from whoever is joined to grabette
@@ -970,59 +1169,72 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         mode = status.get("mode")
         ssid = status.get("ssid")
         if mode == "connected" and ssid:
-            net_value, net_color = html.escape(ssid), "#6ee7b7"
+            net_value, net_color = html.escape(ssid), C_OK
         elif mode == "hotspot":
-            net_value, net_color = "Hotspot — not on a network", "#fcd34d"
+            net_value, net_color = "Hotspot — not on a network", C_WARN
         else:
-            net_value, net_color = "Offline", "#fca5a5"
-        parts.append(_info_card("Network", net_value, value_color=net_color))
+            net_value, net_color = "Offline", C_BAD
 
-        bar = (
-            "<div style='display:flex;flex-direction:row;gap:0.5rem;flex-wrap:wrap;"
-            "margin:0.25rem 0 1rem;'>" + "".join(parts) + "</div>"
-        )
+        cards = _card_row([
+            _info_card("Network", net_value, value_color=net_color),
+            _info_card("IP address",
+                       html.escape(status.get("ip") or info.get("ip") or "—")),
+        ])
         popup_update, beep_signal = _battery_popup_html(info)
-        return bar, popup_update, beep_signal
+        return page_header_html(info), cards, popup_update, beep_signal
+
+    def get_header_only():
+        """(header, battery_popup, beep_signal) — for pages with no status strip."""
+        info = client.get_system_info()
+        popup_update, beep_signal = _battery_popup_html(info)
+        return page_header_html(info), popup_update, beep_signal
 
     # ── Power off ─────────────────────────────────────────────────────
 
-    def _poweroff_notice(text: str, color: str = "#f97316") -> str:
+    def _poweroff_notice(text: str, color: str = C_WARN) -> str:
         return (
             f"<div style='max-width:520px;margin-top:0.75rem;padding:0.85rem 1.1rem;"
-            f"background:{FLEET_CARD};border-left:4px solid {color};border-radius:12px;"
-            f"color:{FLEET_TEXT_SOFT};font-size:0.92rem;'>{text}</div>"
+            f"background:{C_CARD};border:1px solid {C_BORDER};"
+            f"border-left:4px solid {color};border-radius:12px;"
+            f"color:{C_SOFT};font-size:0.92rem;'>{text}</div>"
         )
 
-    def _poweroff_header(hostname: str) -> str:
-        """The shutdown card, with the device it will shut down named in it.
+    def _poweroff_card(hostname: str) -> str:
+        """The shutdown card, naming the device it will shut down.
 
-        Operators keep several grabettes open in several tabs; "Power off the
-        device" alone does not say WHICH, and the wrong tab costs a session.
+        The page header above says the same name, but a destructive action has
+        to name its target where the button is — not in a band you have already
+        scrolled past on a phone.
         """
         who = (
-            f"<div style='font-size:1.05rem;font-weight:700;color:#fff;"
-            f"margin:0.15rem 0 0.6rem;'>{html.escape(hostname)}</div>"
+            f"You are about to shut down <b>{html.escape(hostname)}</b>. "
             if hostname else ""
         )
         return (
             "<div style='max-width:520px;margin-top:1rem;padding:1.5rem;"
-            "background:rgba(239,68,68,.1);border:1px solid rgba(248,113,113,.45);"
+            f"background:{C_BAD_BG};border:1px solid {C_BAD_BD};"
             "border-radius:14px;'>"
-            "<h2 style='margin:0;color:#fca5a5;font-size:1rem;'>Power off the device</h2>"
-            f"{who}"
-            f"<p style='color:{FLEET_TEXT_SOFT};margin:0;font-size:0.95rem;'>"
-            "This performs a clean shutdown of the Raspberry Pi. Once it has halted "
-            "you can safely disconnect power.</p></div>"
+            f"<h2 style='margin:0 0 .5rem;color:{C_BAD};font-size:1rem;'>"
+            "Power off the device</h2>"
+            f"<p style='color:{C_SOFT};margin:0;font-size:0.95rem;line-height:1.5;'>"
+            f"{who}This performs a clean shutdown of the Raspberry Pi. Once it has "
+            "halted you can safely disconnect power.</p></div>"
         )
 
     def load_poweroff_page():
-        """Name the device, then arm the button — unless a recording is running."""
-        hostname = (client.get_system_info() or {}).get("hostname", "")
-        header = _poweroff_header(hostname)
+        """(header, card, notice, button) — name the device, then arm the button.
+
+        Disarmed while a recording is running: one system-info read feeds the
+        header and the card, as everywhere else.
+        """
+        info = client.get_system_info()
+        header = page_header_html(info)
+        card = _poweroff_card((info or {}).get("hostname", ""))
         cap = (client.get_state() or {}).get("capture", {})
         if cap.get("is_capturing") or cap.get("is_starting"):
             return (
                 header,
+                card,
                 gr.update(
                     value=_poweroff_notice(
                         "A recording is in progress — stop the capture before powering off."
@@ -1033,6 +1245,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             )
         return (
             header,
+            card,
             gr.update(value="", visible=False),
             gr.update(interactive=True, variant="stop"),
         )
@@ -1041,7 +1254,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         result = client.shutdown()
         if "error" in result:
             return (
-                gr.update(value=_poweroff_notice(f"⚠ {result['error']}", "#ef4444"), visible=True),
+                gr.update(value=_poweroff_notice(f"⚠ {result['error']}", C_BAD), visible=True),
                 gr.update(),
             )
         return (
@@ -1049,7 +1262,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 value=_poweroff_notice(
                     "Device is shutting down. This page will stop responding shortly — "
                     "wait ~20 s, then it is safe to unplug.",
-                    "#22c55e",
+                    C_OK,
                 ),
                 visible=True,
             ),
@@ -1057,51 +1270,47 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 1 — Home (landing): the device's essentials, then network + account
+    # Page 1 — Home (landing)
+    #
+    # Three sections, top to bottom: who this device is (+ battery), where it
+    # can be reached, and who it is logged in as.
     # ══════════════════════════════════════════════════════════════════
 
     # NB: `theme` and `css` are NOT passed here. Gradio 6 moved both off the
     # Blocks constructor — passing them raises a UserWarning and is otherwise
     # ignored — so they are handed to mount_gradio_app in app/main.py instead.
     with gr.Blocks(title="Grabette") as demo:
-        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        home_header = _page_chrome()
 
-        # Battery, hostname, IP, network — above everything else, because they
-        # are what you open the dashboard to check.
-        home_status_bar = gr.HTML("")
+        # ── Network ───────────────────────────────────────────────────
+        gr.Markdown("## Network")
+        home_network_cards = gr.HTML("")
 
-        with gr.Row(equal_height=False):
+        with gr.Accordion("Switch network", open=False):
+            gr.HTML(_WIFI_SETTINGS_HTML)
 
-            # ── Network ──────────────────────────────────────────────
-            with gr.Column(scale=1):
-                gr.Markdown("## Network")
-                with gr.Accordion("Switch network", open=False):
-                    gr.HTML(_WIFI_SETTINGS_HTML)
-                # The Bluetooth tool is the way in when the device is on no
-                # network this browser can reach — which is exactly when this
-                # page cannot be loaded, so the link has to be somewhere an
-                # operator has already seen it. It is a normal https page on
-                # GitHub Pages (Web Bluetooth needs a secure context; the
-                # dashboard's own plain-HTTP origin cannot host it).
-                gr.HTML(
-                    f'<a href="{_BT_TOOL_URL}" target="_blank" rel="noopener" '
-                    'style="display:block;margin-top:.8rem;padding:1rem 1.2rem;'
-                    'border-radius:14px;text-decoration:none;color:#fff;text-align:left;'
-                    'background:rgba(255,255,255,.06);'
-                    'border:1px solid rgba(255,255,255,.18);">'
-                    '<div style="font-size:1rem;font-weight:700;">'
-                    'Bluetooth tool ↗</div>'
-                    f'<div style="font-size:.85rem;color:{FLEET_TEXT_SOFT};'
-                    'margin-top:.3rem;font-weight:400;line-height:1.45;">'
-                    'Move grabette to a brand-new network over Bluetooth — '
-                    'no network needed to reach it. Chrome or Edge.</div></a>'
-                )
+        # Adding a network is the Bluetooth tool's job, not this page's: it
+        # works when the device is on no network this browser can reach — which
+        # is exactly the situation where the dashboard cannot be loaded at all,
+        # so the link has to be somewhere an operator has already seen it. It is
+        # a normal https page on GitHub Pages (Web Bluetooth needs a secure
+        # context; the dashboard's own plain-HTTP origin cannot host it).
+        gr.HTML(
+            f'<a href="{_BT_TOOL_URL}" target="_blank" rel="noopener" '
+            'style="display:block;margin-top:.8rem;padding:1rem 1.2rem;'
+            f'border-radius:14px;text-decoration:none;color:{C_TEXT};'
+            f'text-align:left;background:{C_CARD};border:1px solid {C_BORDER};">'
+            '<div style="font-size:1rem;font-weight:700;">'
+            'Add a new network — Bluetooth tool ↗</div>'
+            f'<div style="font-size:.85rem;color:{C_SOFT};'
+            'margin-top:.3rem;font-weight:400;line-height:1.45;">'
+            'Joins grabette to a network it has never seen, over Bluetooth — '
+            'no network needed to reach it. Chrome or Edge.</div></a>'
+        )
 
-            # ── HuggingFace Account ──────────────────────────────────
-            with gr.Column(scale=1):
-                gr.Markdown("## HuggingFace Account")
-                gr.HTML(_HF_AUTH_IFRAME)
+        # ── HuggingFace account ───────────────────────────────────────
+        gr.Markdown("## Hugging Face account")
+        gr.HTML(_HF_AUTH_IFRAME)
 
         # Big, obvious way to reach the fleet. We can't embed grabette-fleet
         # here — it's OAuth-gated and this dashboard is served over plain HTTP,
@@ -1109,38 +1318,32 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # where the HF session and OAuth work normally.
         gr.HTML(
             f'<a href="{settings.relay_url}" target="_blank" rel="noopener" '
-            'style="display:block;margin-top:1.2rem;padding:2.6rem 1.5rem;border-radius:16px;'
+            'style="display:block;margin-top:1.2rem;padding:2rem 1.5rem;border-radius:16px;'
             'text-align:center;text-decoration:none;color:#fff;'
             'background:linear-gradient(135deg,#10b981,#3b82f6);'
-            'box-shadow:0 6px 22px rgba(0,0,0,.28);">'
-            '<div style="font-size:1.7rem;font-weight:800;">Open fleet dashboard ↗</div>'
+            'box-shadow:0 6px 22px rgba(0,0,0,.2);">'
+            '<div style="font-size:1.4rem;font-weight:800;">Open fleet dashboard ↗</div>'
             '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
             'Manage tasks, sessions and datasets on grabette-fleet</div></a>'
         )
 
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)
-        # 30 s, not 60: this page is the battery read-out now, so the number on
-        # it has to be current, not just fresh enough to warn on.
+        home_outputs = [home_header, home_network_cards, batt_popup_cn, batt_beep_cn]
+        # 30 s: the header's battery reading has to be current, not merely fresh
+        # enough to warn on.
         batt_timer_cn = gr.Timer(30.0)
-        batt_timer_cn.tick(
-            fn=get_home_status,
-            outputs=[home_status_bar, batt_popup_cn, batt_beep_cn],
-        )
+        batt_timer_cn.tick(fn=get_home_status, outputs=home_outputs)
         batt_beep_cn.change(fn=None, inputs=batt_beep_cn, outputs=None, js=_BATTERY_BEEP_JS)
-        demo.load(
-            fn=get_home_status,
-            outputs=[home_status_bar, batt_popup_cn, batt_beep_cn],
-        )
-        demo.load(fn=None, js=_BATTERY_INIT_JS)
+        demo.load(fn=get_home_status, outputs=home_outputs)
+        demo.load(fn=None, js=_PAGE_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Episodes
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Episodes") as episodes_demo:
-        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        episodes_header = _page_chrome()
         episode_status_bar = gr.HTML("")
 
         # ── Main layout ───────────────────────────────────────────────
@@ -1359,11 +1562,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_popup_ep = gr.HTML(visible=False)
         batt_beep_ep = gr.Textbox(visible=False)
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
-        demo.load(fn=None, js=_BATTERY_INIT_JS)
+        demo.load(fn=None, js=_PAGE_INIT_JS)
 
         # Battery warning rides on the status-bar poll (one system-info read
         # feeds both the strip and the popup) — no dedicated battery timer.
-        status_bar_outputs = [episode_status_bar, batt_popup_ep, batt_beep_ep]
+        status_bar_outputs = [episodes_header, episode_status_bar,
+                              batt_popup_ep, batt_beep_ep]
         status_bar_timer = gr.Timer(3.0)
         status_bar_timer.tick(fn=get_episode_status_bar, outputs=status_bar_outputs)
 
@@ -1380,8 +1584,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        live_header = _page_chrome()
 
         # ── System bar (full width) ────────────────────────────────────
         dv_system_bar = gr.HTML()
@@ -1447,10 +1650,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_lv = gr.Textbox(visible=False)
 
         dv_system_timer = gr.Timer(10)
-        dv_system_timer.tick(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
+        dv_system_outputs = [live_header, dv_system_bar, batt_popup_lv, batt_beep_lv]
+        dv_system_timer.tick(fn=get_system_bar, outputs=dv_system_outputs)
         batt_beep_lv.change(fn=None, inputs=batt_beep_lv, outputs=None, js=_BATTERY_BEEP_JS)
-        live_demo.load(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
-        live_demo.load(fn=None, js=_BATTERY_INIT_JS)
+        live_demo.load(fn=get_system_bar, outputs=dv_system_outputs)
+        live_demo.load(fn=None, js=_PAGE_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 4 — Power Off
@@ -1461,11 +1665,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("🔴 Power Off") as poweroff_demo:
-        gr.Navbar(main_page_name="Home", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        poweroff_page_header = _page_chrome()
 
-        # Filled in on load with this device's hostname — see _poweroff_header.
-        poweroff_header = gr.HTML(_poweroff_header(""))
+        # Filled in on load with this device's hostname — see _poweroff_card.
+        poweroff_card = gr.HTML(_poweroff_card(""))
 
         poweroff_msg = gr.HTML(value="", visible=False)
         with gr.Row():
@@ -1474,7 +1677,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         poweroff_btn.click(fn=on_poweroff, outputs=[poweroff_msg, poweroff_btn])
         poweroff_demo.load(
             fn=load_poweroff_page,
-            outputs=[poweroff_header, poweroff_msg, poweroff_btn],
+            outputs=[poweroff_page_header, poweroff_card,
+                     poweroff_msg, poweroff_btn],
         )
+
+        # The header's battery has to keep ticking here too — it is the same
+        # readout in the same place as on the other three pages, and a frozen
+        # number is worse than none. Only the header is refreshed: re-running
+        # load_poweroff_page would re-arm the button under the operator.
+        batt_popup_po = gr.HTML(visible=False)
+        batt_beep_po = gr.Textbox(visible=False)
+        batt_timer_po = gr.Timer(30.0)
+        batt_timer_po.tick(
+            fn=get_header_only,
+            outputs=[poweroff_page_header, batt_popup_po, batt_beep_po],
+        )
+        batt_beep_po.change(fn=None, inputs=batt_beep_po, outputs=None, js=_BATTERY_BEEP_JS)
+        poweroff_demo.load(fn=None, js=_PAGE_INIT_JS)
 
     return demo

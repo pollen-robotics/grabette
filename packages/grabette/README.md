@@ -274,10 +274,12 @@ Once running (mock or on-device), open the dashboard at `http://<device>.local:8
 
 From the different sections, you can:
 
+Every page opens with the same header — the device's hostname and its battery — plus a light/dark theme switch. The layout works on a phone.
+
 **Home**:
-1. See the essentials at a glance: battery, hostname, IP address and current network
-2. Switch to a network this Grabette already knows in one click, or add a new one
-3. Open the Bluetooth tool — the way in when the device is on no network you can reach
+1. Network: the network this Grabette is on and its IP address
+2. Switch to a network it already knows, in one click and with no password
+3. Add a new network via the Bluetooth tool — the way in when the device is on no network you can reach
 4. Log in to Hugging Face
 
 **Episodes**:
@@ -293,7 +295,7 @@ From the different sections, you can:
 - Preview the cameras and live sensor charts.
 
 **Power Off**:
-- Clean shutdown of the Pi, with the device's hostname on the card so you can tell one open tab from another.
+- Clean shutdown of the Pi. The card names the device it is about to shut down.
 
 
 

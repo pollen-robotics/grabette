@@ -98,21 +98,36 @@ def widget_page() -> str:
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
-/* Same charter as grabette-fleet and result_page below: translucent card on a
-   transparent body, so the widget reads as part of whatever dark page iframes
-   it rather than as a white panel punched into it. */
-body{{margin:0;padding:.8rem;background:transparent;color:#fff;
+/* Same charter as the dashboard that iframes this widget. It is a separate
+   document, so it cannot inherit the parent's body.dark — it reads the same
+   localStorage key on load (same origin), and the parent pushes the class on it
+   when the theme is toggled while it is already open. */
+:root {{
+  --gb-card: #ffffff; --gb-sunk: rgba(22,33,62,.05);
+  --gb-border: rgba(22,33,62,.14); --gb-text: #16213e;
+  --gb-soft: #3f4a5f; --gb-muted: #5f6b80; --gb-input: #ffffff;
+  --gb-bad: #b91c1c; --gb-link: #1d4ed8;
+  --gb-shadow: 0 1px 3px rgba(22,33,62,.09);
+}}
+body.dark {{
+  --gb-card: rgba(255,255,255,.06); --gb-sunk: rgba(255,255,255,.08);
+  --gb-border: rgba(255,255,255,.12); --gb-text: #ffffff;
+  --gb-soft: #c3cbe0; --gb-muted: #8b98ad; --gb-input: #16213e;
+  --gb-bad: #fca5a5; --gb-link: #7dd3fc;
+  --gb-shadow: none;
+}}
+body{{margin:0;padding:.8rem;background:transparent;color:var(--gb-text);
 font-family:-apple-system,system-ui,sans-serif;font-size:.9rem;overflow:hidden}}
-.card{{background:rgba(255,255,255,.06);color:#fff;padding:1rem;border-radius:14px;
-border:1px solid rgba(255,255,255,.12)}}
-h2{{font-size:.95rem;margin:0 0 .7rem;color:#fff}}
+.card{{background:var(--gb-card);color:var(--gb-text);padding:1rem;border-radius:14px;
+border:1px solid var(--gb-border);box-shadow:var(--gb-shadow)}}
+h2{{font-size:.95rem;margin:0 0 .7rem;color:var(--gb-text)}}
 input{{box-sizing:border-box;padding:.45rem;border-radius:8px;
-border:1px solid rgba(255,255,255,.22);
-background:#16213e;color:#fff;font-family:monospace;width:100%}}
+border:1px solid var(--gb-border);
+background:var(--gb-input);color:var(--gb-text);font-family:monospace;width:100%}}
 input:focus{{outline:none;border-color:rgba(59,130,246,.7)}}
-input::placeholder{{color:#8b98ad}}
-.row{{display:flex;gap:.5rem;margin-bottom:.5rem}}
-.row input{{flex:1}}
+input::placeholder{{color:var(--gb-muted)}}
+.row{{display:flex;gap:.5rem;margin-bottom:.5rem;flex-wrap:wrap}}
+.row input{{flex:1;min-width:9rem}}
 button{{padding:.45rem .9rem;border:0;border-radius:8px;cursor:pointer;font-weight:600;
 font-family:inherit}}
 button.oauth{{background:linear-gradient(135deg,#10b981,#3b82f6);color:#fff;width:100%;
@@ -120,8 +135,24 @@ margin-bottom:.5rem}}
 button.primary{{background:#ffcc4d;color:#1a1a2e}}
 button.logout{{background:#ef4444;color:#fff}}
 .who-row{{display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap}}
-.muted{{color:#a0aec0;font-size:.78rem}}
-.err{{color:#fca5a5;font-size:.78rem;min-height:1rem}}
+.muted{{color:var(--gb-muted);font-size:.78rem}}
+.err{{color:var(--gb-bad);font-size:.78rem;min-height:1rem}}
+</style>
+<script>
+(function () {{
+  try {{
+    var t = localStorage.getItem('grabette-theme')
+      || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    if (t === 'dark') {{ document.documentElement.setAttribute('data-gb-dark', '1'); }}
+  }} catch (e) {{}}
+  // <body> does not exist yet at this point in <head>; apply as soon as it does.
+  document.addEventListener('DOMContentLoaded', function () {{
+    if (document.documentElement.getAttribute('data-gb-dark')) {{
+      document.body.classList.add('dark');
+    }}
+  }});
+}})();
+</script>
 </style></head>
 <body>{LOGIN_CARD}</body></html>"""
 
@@ -151,7 +182,7 @@ LOGIN_CARD = """
   <div class="row"><input id="hfTok" placeholder="hf_..." autocomplete="off">
    <button class="primary" id="hfSave">Save</button></div>
   <div class="err" id="hfErr"></div>
-  <p class="muted">Token: <a style="color:#7dd3fc;text-decoration:underline" href="https://huggingface.co/settings/tokens" target="_blank">hf.co/settings/tokens</a></p>
+  <p class="muted">Token: <a style="color:var(--gb-link);text-decoration:underline" href="https://huggingface.co/settings/tokens" target="_blank">hf.co/settings/tokens</a></p>
  </div></div>
 <script>
 const HF='/api/hf-auth',_$=id=>document.getElementById(id);

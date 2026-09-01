@@ -3,10 +3,17 @@
 GET  /api/wifi/status      → mode + current SSID
 GET  /api/wifi/scan        → list of visible networks that are NOT already known
 GET  /api/wifi/saved       → list of networks this device already has credentials for
-POST /api/wifi/connect     → connects grabette to the chosen network (async, returns 202)
+POST /api/wifi/connect     → joins a new network by SSID + password (async, returns 202)
 POST /api/wifi/switch      → switches to an already-known network (async, returns 202)
 GET  /api/wifi/connect-result → result of the last connection attempt
-GET  /api/wifi/setup       → HTML network panel embedded in the dashboard's Home page
+GET  /api/wifi/setup       → the "Switch network" panel iframed by the Home page
+
+The setup panel only switches between KNOWN networks. Joining a new one is the
+Bluetooth tool's job (docs/index.html → bluetooth/bluetooth_service.py), because
+that path works when the device is on no network the operator can reach — which
+is exactly when it is needed, and when this page cannot be loaded at all.
+/scan and /connect stay: they are the same capability over HTTP, still reachable
+over the device's own hotspot, and grabette-fleet builds on this API surface.
 """
 
 from __future__ import annotations
@@ -151,105 +158,111 @@ _WIFI_SETUP_HTML = """\
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Grabette — Network</title>
+<title>Grabette — Known networks</title>
 <style>
-  /* Visual language mirrors the grabette-fleet dashboard and the BT tool: the
-     same translucent cards, muted #a0aec0 labels and emerald→blue primary.
-     The body itself is TRANSPARENT — this page is iframed into the dashboard's
-     Home page, which already paints the fleet gradient behind it, so an opaque
-     background here would read as a box floating on top of the page. */
+  /* Same palette as the dashboard that iframes this page. It is a separate
+     document, so it cannot inherit the parent's body.dark — it reads the same
+     localStorage key on load (same origin), and the parent pushes the class on
+     it when the theme is toggled while it is already open. */
+  :root {
+    --gb-card: #ffffff;
+    --gb-sunk: rgba(22,33,62,.05);
+    --gb-border: rgba(22,33,62,.14);
+    --gb-text: #16213e;
+    --gb-soft: #3f4a5f;
+    --gb-muted: #5f6b80;
+    --gb-ok: #047857;
+    --gb-ok-bg: rgba(16,185,129,.12);
+    --gb-ok-bd: rgba(4,120,87,.45);
+    --gb-bad: #b91c1c;
+    --gb-bad-bg: rgba(239,68,68,.07);
+    --gb-bad-bd: rgba(185,28,28,.4);
+  }
+  body.dark {
+    --gb-card: rgba(255,255,255,.06);
+    --gb-sunk: rgba(255,255,255,.08);
+    --gb-border: rgba(255,255,255,.12);
+    --gb-text: #ffffff;
+    --gb-soft: #c3cbe0;
+    --gb-muted: #8b98ad;
+    --gb-ok: #6ee7b7;
+    --gb-ok-bg: rgba(16,185,129,.1);
+    --gb-ok-bd: rgba(16,185,129,.45);
+    --gb-bad: #fca5a5;
+    --gb-bad-bg: rgba(239,68,68,.14);
+    --gb-bad-bd: rgba(248,113,113,.4);
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  /* Transparent: the dashboard already paints its gradient behind this. */
   body {
-    background: transparent; color: #fff;
+    background: transparent; color: var(--gb-text);
     font-family: -apple-system, system-ui, sans-serif;
-    padding: 2px; max-width: 620px;
+    padding: 2px;
   }
-  h2 {
-    font-size: .78rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .07em; color: #8b98ad; margin: 1.1rem 0 .5rem;
-  }
-  h2:first-of-type { margin-top: 0; }
-  #status { font-size: .82rem; color: #a0aec0; margin-bottom: .6rem; min-height: 1.2em; }
-  #status.ok  { color: #6ee7b7; }
-  #status.err { color: #fca5a5; }
+  #status { font-size: .82rem; color: var(--gb-muted); margin-bottom: .6rem; min-height: 1.2em; }
+  #status.ok  { color: var(--gb-ok); }
+  #status.err { color: var(--gb-bad); }
   ul { list-style: none; }
   li {
     display: flex; justify-content: space-between; align-items: center; gap: .6rem;
     padding: .6rem .75rem; margin-bottom: .35rem; border-radius: 10px;
-    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    background: var(--gb-card); border: 1px solid var(--gb-border);
     font-size: .88rem;
   }
-  #networks li { cursor: pointer; }
-  #networks li:hover, #networks li.selected {
-    background: rgba(255,255,255,.12); border-color: rgba(59,130,246,.55);
-  }
-  .ssid { overflow-wrap: anywhere; }
-  .signal { font-size: .72rem; color: #8b98ad; white-space: nowrap; }
+  .ssid { overflow-wrap: anywhere; font-weight: 600; }
   /* The network you are on is not a switch target — it is state. */
-  li.current { border-color: rgba(16,185,129,.45); background: rgba(16,185,129,.1); }
+  li.current { border-color: var(--gb-ok-bd); background: var(--gb-ok-bg); }
   .tag {
-    font-size: .68rem; font-weight: 700; padding: .08rem .5rem; border-radius: 999px;
-    white-space: nowrap; background: rgba(16,185,129,.22); color: #a7f3d0;
+    font-size: .68rem; font-weight: 700; padding: .1rem .55rem; border-radius: 999px;
+    white-space: nowrap; background: var(--gb-ok-bg); color: var(--gb-ok);
+    border: 1px solid var(--gb-ok-bd);
   }
-  .empty { color: #8b98ad; font-size: .82rem; padding: .2rem 0 .4rem; }
-  #form {
-    display: none; background: rgba(255,255,255,.06); border-radius: 12px;
-    padding: .9rem; margin-bottom: .7rem; border: 1px solid rgba(255,255,255,.12);
-  }
-  #form label { display: block; margin-bottom: .45rem; color: #c3cbe0; font-size: .85rem; }
-  .pw-row { display: flex; gap: .5rem; margin-bottom: .7rem; }
-  .pw-row input {
-    flex: 1; padding: .5rem .6rem; border-radius: 8px; font-size: .95rem;
-    border: 1px solid rgba(255,255,255,.22); background: #16213e; color: #fff;
-  }
-  .pw-row input:focus { outline: none; border-color: rgba(59,130,246,.7); }
+  .empty { color: var(--gb-muted); font-size: .82rem; line-height: 1.5; padding: .2rem 0 .5rem; }
   #error-box {
-    display: none; background: rgba(239,68,68,.14); border: 1px solid rgba(248,113,113,.4);
+    display: none; background: var(--gb-bad-bg); border: 1px solid var(--gb-bad-bd);
     border-radius: 10px; padding: .6rem .75rem; margin-bottom: .7rem;
-    font-size: .82rem; color: #fca5a5; word-break: break-word;
+    font-size: .82rem; color: var(--gb-bad); word-break: break-word;
   }
   button {
-    padding: .45rem .9rem; border: 0; border-radius: 8px; cursor: pointer;
-    font-weight: 600; font-size: .85rem; font-family: inherit;
+    padding: .42rem .85rem; border: 0; border-radius: 8px; cursor: pointer;
+    font-weight: 600; font-size: .82rem; font-family: inherit;
     background: linear-gradient(135deg,#10b981,#3b82f6); color: #fff;
+    white-space: nowrap;
   }
-  button:hover { filter: brightness(1.1); }
+  button:hover { filter: brightness(1.08); }
   button:active { transform: scale(.97); }
   button:disabled { opacity: .45; cursor: not-allowed; filter: none; }
   button.ghost {
-    background: rgba(255,255,255,.08); color: #c3cbe0;
-    border: 1px solid rgba(255,255,255,.18);
+    background: var(--gb-sunk); color: var(--gb-soft);
+    border: 1px solid var(--gb-border);
   }
-  button.ghost:hover { background: rgba(255,255,255,.14); filter: none; }
-  button.small { padding: .3rem .7rem; font-size: .78rem; }
-  #spinner { display: none; color: #c3cbe0; font-size: .85rem; margin-bottom: .6rem; }
+  button.ghost:hover { filter: none; background: var(--gb-border); }
+  #spinner { display: none; color: var(--gb-soft); font-size: .85rem; margin-bottom: .6rem; }
+  @media (max-width: 480px) {
+    li { flex-wrap: wrap; }
+    li button, li .tag { margin-left: auto; }
+  }
 </style>
 </head>
 <body>
 
-<h2>Known networks</h2>
+<div id="status"></div>
+<div id="error-box"></div>
+<div id="spinner">Switching, please wait…</div>
 <div id="known-empty" class="empty">Looking for saved networks…</div>
 <ul id="known"></ul>
-
-<h2>Other networks</h2>
-<div id="status">Scanning networks…</div>
-<div id="error-box"></div>
-<div id="spinner">Connecting, please wait…</div>
-<ul id="networks"></ul>
-<div id="form">
-  <label id="net-label">Password for: <strong id="net-name"></strong></label>
-  <div class="pw-row">
-    <input type="password" id="password" placeholder="WiFi password" autocomplete="off"
-           onkeydown="if(event.key==='Enter') connect()">
-    <button type="button" class="ghost" id="pw-toggle" onclick="togglePw()">Show</button>
-  </div>
-  <button onclick="connect()">Connect</button>
-  <button class="ghost" onclick="cancelForm()">Cancel</button>
-</div>
-<button class="ghost small" onclick="refresh()">Refresh</button>
+<button class="ghost" onclick="loadKnown()">Refresh</button>
 
 <script>
-let selectedSsid = null;
+// Theme: same key the dashboard writes, read before first paint.
+(function () {
+  try {
+    var t = localStorage.getItem('grabette-theme')
+      || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    if (t === 'dark') { document.body.classList.add('dark'); }
+  } catch (e) {}
+})();
+
 let checkAttempts = 0;
 const MAX_CHECKS = 30; // 30 × 3 s = 90 s max
 
@@ -259,7 +272,9 @@ function fetchWithTimeout(url, timeout = 5000) {
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(id));
 }
 
-// ── Known networks: one click, no password ────────────────────────────────
+// This panel only ever SWITCHES between networks grabette already has
+// credentials for. Joining a network it has never seen is the Bluetooth tool's
+// job — it works when the device is unreachable, which is when it is needed.
 async function loadKnown() {
   const ul = document.getElementById('known');
   const empty = document.getElementById('known-empty');
@@ -268,7 +283,8 @@ async function loadKnown() {
     const nets = await r.json();
     ul.innerHTML = '';
     if (!nets.length) {
-      empty.textContent = 'No saved networks yet — pick one below to add the first.';
+      empty.textContent = 'No saved networks yet. Use the Bluetooth tool below '
+        + 'to join the first one — after that it shows up here.';
       empty.style.display = 'block';
       return;
     }
@@ -287,7 +303,6 @@ async function loadKnown() {
         li.appendChild(tag);
       } else {
         const btn = document.createElement('button');
-        btn.className = 'small';
         btn.textContent = 'Switch';
         btn.onclick = () => switchTo(n.ssid, btn);
         li.appendChild(btn);
@@ -302,7 +317,6 @@ async function loadKnown() {
 
 async function switchTo(ssid, btn) {
   hideError();
-  cancelForm();
   document.querySelectorAll('#known button').forEach(b => b.disabled = true);
   btn.textContent = 'Switching…';
   document.getElementById('spinner').style.display = 'block';
@@ -330,93 +344,6 @@ async function switchTo(ssid, btn) {
   }
 }
 
-// ── Other networks: scan + password ───────────────────────────────────────
-async function scan() {
-  setStatus('Scanning…');
-  hideError();
-  document.getElementById('networks').innerHTML = '';
-  try {
-    const r = await fetch('/api/wifi/scan');
-    const nets = await r.json();
-    if (!nets.length) { setStatus('No other networks in range.'); return; }
-    setStatus('Select a network to add it:');
-    const ul = document.getElementById('networks');
-    nets.forEach(n => {
-      const li = document.createElement('li');
-      const name = document.createElement('span');
-      name.className = 'ssid';
-      name.textContent = n.ssid;
-      const sig = document.createElement('span');
-      sig.className = 'signal';
-      sig.textContent = n.signal + '%';
-      li.appendChild(name);
-      li.appendChild(sig);
-      li.onclick = () => selectNet(n.ssid, li);
-      ul.appendChild(li);
-    });
-  } catch(e) { setStatus('Scan failed: ' + e, 'err'); }
-}
-
-function refresh() {
-  loadKnown();
-  scan();
-}
-
-function selectNet(ssid, el) {
-  document.querySelectorAll('#networks li').forEach(l => l.classList.remove('selected'));
-  el.classList.add('selected');
-  selectedSsid = ssid;
-  document.getElementById('net-name').textContent = ssid;
-  document.getElementById('password').value = '';
-  document.getElementById('pw-toggle').textContent = 'Show';
-  document.getElementById('password').type = 'password';
-  hideError();
-  document.getElementById('form').style.display = 'block';
-  document.getElementById('password').focus();
-}
-
-function cancelForm() {
-  document.getElementById('form').style.display = 'none';
-  selectedSsid = null;
-  hideError();
-}
-
-function togglePw() {
-  const pw = document.getElementById('password');
-  const btn = document.getElementById('pw-toggle');
-  if (pw.type === 'password') { pw.type = 'text';     btn.textContent = 'Hide'; }
-  else                        { pw.type = 'password'; btn.textContent = 'Show'; }
-}
-
-async function connect() {
-  if (!selectedSsid) return;
-  const pw = document.getElementById('password').value;
-  hideError();
-  document.getElementById('form').style.display = 'none';
-  document.getElementById('spinner').style.display = 'block';
-  setStatus('Connecting to ' + selectedSsid + '…');
-  checkAttempts = 0;
-  try {
-    const r = await fetch('/api/wifi/connect', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ssid: selectedSsid, password: pw})
-    });
-    if (r.status === 202) {
-      setTimeout(checkStatus, 3000);
-    } else {
-      const d = await r.json();
-      showError('HTTP ' + r.status + ': ' + (d.detail || 'Unknown error'));
-      document.getElementById('spinner').style.display = 'none';
-      document.getElementById('form').style.display = 'block';
-    }
-  } catch(e) {
-    showError('Request failed: ' + e);
-    document.getElementById('spinner').style.display = 'none';
-    document.getElementById('form').style.display = 'block';
-  }
-}
-
 async function checkStatus() {
   checkAttempts++;
   try {
@@ -430,8 +357,7 @@ async function checkStatus() {
     if (conn.status === 'error') {
       document.getElementById('spinner').style.display = 'none';
       showError(conn.message);
-      setStatus('Connection failed.', 'err');
-      if (selectedSsid) document.getElementById('form').style.display = 'block';
+      setStatus('Switch failed.', 'err');
       loadKnown();
       return;
     }
@@ -439,22 +365,21 @@ async function checkStatus() {
     if (wifi.mode === 'connected' && conn.status === 'ok') {
       document.getElementById('spinner').style.display = 'none';
       setStatus('✓ Connected to: ' + wifi.ssid, 'ok');
-      refresh();
+      loadKnown();
       return;
     }
 
     if (checkAttempts >= MAX_CHECKS) {
       document.getElementById('spinner').style.display = 'none';
-      showError('Connection timed out. Check the password and try again.');
-      setStatus('Connection timed out.', 'err');
-      if (selectedSsid) document.getElementById('form').style.display = 'block';
+      showError('Timed out. The network may be out of range.');
+      setStatus('Switch timed out.', 'err');
       loadKnown();
       return;
     }
 
-    setStatus('Connecting… (' + checkAttempts + ')');
+    setStatus('Switching… (' + checkAttempts + ')');
     setTimeout(checkStatus, 3000);
-  } catch(e) {
+  } catch (e) {
     // Grabette unreachable = it switched networks = success
     document.getElementById('spinner').style.display = 'none';
     setStatus('✓ Grabette switched to the new network.', 'ok');
@@ -463,7 +388,7 @@ async function checkStatus() {
 
 function setStatus(msg, cls) {
   const el = document.getElementById('status');
-  el.textContent = msg;
+  el.textContent = msg || '';
   el.className = cls || '';
 }
 
@@ -477,7 +402,7 @@ function hideError() {
   document.getElementById('error-box').style.display = 'none';
 }
 
-refresh();
+loadKnown();
 </script>
 </body>
 </html>
