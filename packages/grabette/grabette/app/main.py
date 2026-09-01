@@ -755,6 +755,12 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "space_url, source_repo, target_repo are required"}
         token = get_token()
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        # A SLAM check, not a dataset build: the run exists FOR its per-episode
+        # tracking report, and a clean one deliberately pushes nothing. Two things
+        # depend on knowing that — the Space's push decision, and the "no dataset"
+        # guard below — so the fleet states it rather than letting either side infer
+        # it from the target repo's name.
+        check_only = bool(args.get("check_only", False))
         payload = {
             "source_repo": source_repo, "target_repo": target_repo,
             "task": args.get("task") or target_repo.split("/")[-1],
@@ -763,6 +769,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             # default True there). Passed through untouched so the Space's own
             # default never silently deletes a raw we were asked to keep.
             "keep_raw": bool(args.get("keep_raw", True)),
+            "check_only": check_only,
         }
         # Cancelled while this command sat in the relay's queue → never even start
         # the conversion (it would push a dataset nobody asked for any more).
@@ -820,6 +827,17 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     if sstatus == "done":
                         result_url = st.get("result")
                         excluded = _space_excluded_episodes(st.get("quality"))
+                        if not result_url and check_only:
+                            # A clean check pushes NOTHING by design, so "done" with
+                            # no dataset is the GOOD outcome here — the answer is the
+                            # report, not a repo. The fleet reads the report itself
+                            # and words the verdict from it (including the case where
+                            # every take was rejected, which also lands here), so this
+                            # must not pre-empt it with a failure.
+                            res = {"status": "ok"}
+                            if excluded:
+                                res["excluded"] = excluded
+                            return res
                         if not result_url:
                             # "done" with no dataset is NOT a success. The Space
                             # finishes this way when every episode was rejected

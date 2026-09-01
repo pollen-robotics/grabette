@@ -72,8 +72,12 @@ def test_a_partial_conversion_forwards_the_episode_list(monkeypatch):
                                "reason": "missing oakd_calib_offline.json"}]
 
 
-def _process_result(status_payload):
-    """Drive process_dataset against a Space serving one canned /api/status."""
+def _process_result(status_payload, extra_args=None, posted=None):
+    """Drive process_dataset against a Space serving one canned /api/status.
+
+    extra_args: merged into the fleet's command args (e.g. check_only).
+    posted:     dict filled with the payload sent to /api/process, when given.
+    """
     class _Resp:
         def __init__(self, payload):
             self.status = 200
@@ -99,6 +103,8 @@ def _process_result(status_payload):
             return _Resp(status_payload)
 
         def post(self, url, **kw):
+            if posted is not None:
+                posted.update(kw.get("json") or {})
             return _Resp({"job_id": "job1"})
 
         async def __aenter__(self):
@@ -117,7 +123,7 @@ def _process_result(status_payload):
         return asyncio.run(main._handle_relay_command({
             "id": "cmd1", "type": "process_dataset",
             "args": {"space_url": "https://space.test", "source_repo": "u/raw",
-                     "target_repo": "u/ds"},
+                     "target_repo": "u/ds", **(extra_args or {})},
         }))
     finally:
         aiohttp.ClientSession, asyncio.sleep = orig_session, orig_sleep
@@ -145,6 +151,60 @@ def test_done_without_a_dataset_is_an_error_not_a_success(monkeypatch):
     assert res["excluded"] == [{"episode_id": "20250101_120000", "role": "left",
                                 "reason": "missing oakd_calib_offline.json"}]
     assert "oakd_calib_offline.json" not in res["message"]
+
+
+def test_a_clean_check_reports_ok_even_though_nothing_was_pushed(monkeypatch):
+    # THE regression, the other way round: a SLAM check exists for its report, and
+    # a CLEAN one pushes nothing on purpose. Judged by the build-only rule above,
+    # the good outcome came back as "no episode made it through" — so the check
+    # failed exactly when the answer was "nobody lost tracking".
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    res = _process_result({"status": "done", "result": None, "quality": [
+        {"name": "20250101_120000/left", "kind": "trajectory", "verdict": "GOOD"},
+    ]}, extra_args={"check_only": True})
+
+    assert res["status"] == "ok"
+    assert "result_url" not in res  # nothing was pushed — inventing a link is the bug
+    assert "excluded" not in res
+
+
+def test_a_check_forwards_check_only_to_the_space(monkeypatch):
+    # The Space also infers a check from the target repo's name, but that fallback
+    # only exists for devices too old to send the flag. The relay must send it, or
+    # the Space's push decision rests on a naming convention alone.
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    posted = {}
+    _process_result({"status": "done", "result": None},
+                    extra_args={"check_only": True}, posted=posted)
+    assert posted["check_only"] is True
+
+    posted_build = {}
+    _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"},
+                    posted=posted_build)
+    assert posted_build["check_only"] is False
+
+
+def test_a_check_where_every_take_was_rejected_still_reports_ok(monkeypatch):
+    # A check whose takes were ALL rejected also lands on "done" with no dataset.
+    # The device cannot tell that apart from a clean run, and must not try: the
+    # fleet reads the per-episode verdicts and words the verdict from them. The
+    # device's job is to stop pre-empting that with a failure.
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    res = _process_result({"status": "done", "result": None, "quality": [
+        {"name": "20250101_120000/left", "kind": "pre_check", "verdict": "ERROR",
+         "excluded": True, "errors": ["missing oakd_calib_offline.json"]},
+    ]}, extra_args={"check_only": True})
+
+    assert res["status"] == "ok"
+    # The reasons still ride across, so the fleet's report can name the takes.
+    assert res["excluded"] == [{"episode_id": "20250101_120000", "role": "left",
+                                "reason": "missing oakd_calib_offline.json"}]
 
 
 def test_a_conversion_that_says_nothing_at_all_points_at_the_log(monkeypatch):
