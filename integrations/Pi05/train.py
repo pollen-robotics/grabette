@@ -52,6 +52,18 @@ _CHUNK_RELATIVE = os.environ.get("GRABETTE_CHUNK_RELATIVE", "").lower() in ("1",
 _RELATIVE_MARKER = "action_relative_meta"
 
 
+def _as_int(value):
+    """Unwrap a stats leaf to a plain int.
+
+    Every leaf in meta/stats.json arrives as a numpy array: lerobot's
+    `cast_stats_to_numpy` runs `np.atleast_1d` over the flattened dict. Calling
+    `int()` on an ndim>0 array is deprecated and raises on newer numpy, so a
+    1-element array is unwrapped explicitly.
+    """
+    flat = getattr(value, "flat", None)
+    return int(next(iter(flat))) if flat is not None else int(value)
+
+
 def _check_stats_match_representation(policy_cfg, dataset_stats):
     """Refuse to train when the dataset's stats and the action representation
     disagree. Both directions are silent failures that a healthy-looking loss
@@ -85,8 +97,8 @@ def _check_stats_match_representation(policy_cfg, dataset_stats):
     # The stats are horizon-dependent: a 50-frame offset spans further than a
     # 15-frame one, so stats computed for another chunk length are the wrong
     # scale even though nothing looks wrong.
-    stats_chunk = int(meta["chunk_size"])
-    policy_chunk = int(getattr(policy_cfg, "chunk_size", stats_chunk))
+    stats_chunk = _as_int(meta["chunk_size"])
+    policy_chunk = _as_int(getattr(policy_cfg, "chunk_size", stats_chunk))
     if stats_chunk != policy_chunk:
         raise RuntimeError(
             f"action stats were computed for chunk_size={stats_chunk} but the "
