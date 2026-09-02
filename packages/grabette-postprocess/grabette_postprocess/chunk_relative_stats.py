@@ -34,7 +34,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from grabette_postprocess.chunk_relative import to_chunk_relative
+from grabette_chunkrel.chunk_relative import to_chunk_relative
 
 # Quantiles pi05's QUANTILES mode reads, plus the moments other modes use.
 _QUANTILES = {"q01": 0.01, "q99": 0.99}

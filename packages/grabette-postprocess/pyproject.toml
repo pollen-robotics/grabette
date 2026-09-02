@@ -17,6 +17,7 @@ dependencies = [
     # strategy or a full close means. Base gripette is pure wheels — the hardware
     # deps (rustypot, picamera2) are in its `rpi` extra and are not pulled here.
     "gripette",
+    "grabette-chunkrel",
 ]
 
 [project.optional-dependencies]
@@ -31,6 +32,7 @@ build-backend = "hatchling.build"
 [tool.uv.sources]
 # Resolved from the monorepo workspace (packages/gripette), not PyPI.
 gripette = { workspace = true }
+grabette-chunkrel = { workspace = true }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -12,7 +12,7 @@ import torch
 from lerobot.processor import DataProcessorPipeline, ProcessorStepRegistry
 from lerobot.types import TransitionKey
 
-from grabette_postprocess.chunk_relative_processor import (
+from grabette_chunkrel.chunk_relative_processor import (
     INVERSE_STEP_NAME,
     STEP_NAME,
     AbsoluteFromChunkRelativeStep,

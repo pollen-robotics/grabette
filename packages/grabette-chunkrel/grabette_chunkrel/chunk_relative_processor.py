@@ -31,7 +31,7 @@ from lerobot.configs import PipelineFeatureType, PolicyFeature
 from lerobot.processor import ProcessorStep, ProcessorStepRegistry
 from lerobot.types import EnvTransition, TransitionKey
 
-from grabette_postprocess.chunk_relative import (
+from grabette_chunkrel.chunk_relative import (
     DEFAULT_JUMP_CAP_DEG,
     DEFAULT_JUMP_CAP_M,
     from_chunk_relative,

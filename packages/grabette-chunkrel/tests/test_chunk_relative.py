@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
 
-from grabette_postprocess.chunk_relative import (
+from grabette_chunkrel.chunk_relative import (
     DEFAULT_JUMP_CAP_DEG,
     DEFAULT_JUMP_CAP_M,
     from_chunk_relative,

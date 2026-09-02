@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 import torch
 
-from grabette_postprocess.chunk_relative import to_chunk_relative
-from grabette_postprocess.chunk_relative_processor import ChunkRelativeActionsStep
+from grabette_chunkrel.chunk_relative import to_chunk_relative
+from grabette_chunkrel.chunk_relative_processor import ChunkRelativeActionsStep
 
 pytest.importorskip("lerobot", reason="needs lerobot")
 
