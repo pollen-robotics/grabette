@@ -312,6 +312,70 @@ over 2093 chunks (~1.2% / ~2.1%). Note rotation glitches outnumber translation
 ones here, which retro-justifies handling them — the first version of the
 splicer did translation only.
 
+## Executing it on the robot (built 2026-09-02)
+
+`evaluate.py --chunk_relative {auto,on,off}`. The conversion is
+`ChunkRelativeDeltas` in `grabette-chunkrel`.
+
+**The reference cancels, so the arm never learns it.** The arm service composes
+its delta against the integrator target, body-locally:
+
+```
+delta_pos_world = R_target @ delta_pos      target_pos  += delta_pos_world
+                                            R_target_new = R_target @ R_delta
+```
+
+So feeding it `delta_pos_i = A_{i-1}⁻¹ (a_i − a_{i-1})` and
+`R_delta_i = A_{i-1}⁻¹ A_i` reproduces the chunk exactly, wherever the arm
+happens to be. No absolute-pose RPC is needed and no proto changed. Verified by
+replaying the server's own algebra in the tests.
+
+**Each chunk is a fresh segment anchored at the arm's current pose.** Chunk
+*n+1* has its own reference, so the executed path is not continuous with the
+training trajectory across a boundary — that is the semantics, the same as any
+replanning scheme, not a defect. The consequence is that the reference must be
+reset at **every** replan; a missed reset differences two unrelated frames and
+commands a centimetre-scale jump. `policy._action_queue` emptying is the signal.
+
+**Relative action 0 is identically zero.** The reference is the chunk's first
+action, so `a_0 = R_ref⁻¹(p_ref − p_ref) = 0` and `A_0 = I`, for every sample in
+training. Three consequences:
+
+- one of every 50 supervised actions is a constant — wasteful but harmless;
+- the arm does not move on the first tick after a replan — benign;
+- **`select_action()` alone cannot gate the checkpoint.** Comparing two
+  episodes' first actions reads "input-independent" no matter how good the
+  policy is. `smoke_generation.py --chunk_relative` therefore uses
+  `predict_action_chunk` and drops action 0 before differencing.
+
+**The inverse step is removed at inference.** `AbsoluteFromChunkRelativeStep`
+rebuilds absolute poses from a reference only the robot has; it would refuse.
+Eval and the offline gates strip it from the postprocessor and consume the
+offsets directly.
+
+**Refused rather than guessed.** `auto` reads the registered step names from
+`policy_preprocessor.json` — exact, unlike the projection's normaliser-range
+heuristic, and not fooled by lerobot's own (disabled) `relative_actions_processor`
+that every existing checkpoint carries. The action width is cross-checked (8D vs
+11D) so a wrong flag fails at load rather than on the arm. `--async_exec` is
+refused: that path runs chunks on a background thread and drops head actions
+there, and the reference tracking is not wired through it.
+
+### Coupling, revisited
+
+The design's cost table flagged that the step must be importable wherever a
+checkpoint loads. Status:
+
+| | |
+|---|---|
+| HF Jobs container | `--with grabette-chunkrel @ git+…` — working |
+| eval loop / local gates | declared in `openarm-gripette-simu[eval]`; `uv sync` |
+| **ficelle server** | **not done** — `probe_task_sensitivity.py` needs `--policy_addr`, so that box needs the package installed and the inverse step stripped |
+
+To avoid blocking on the last row, `smoke_generation.py` gained `--task2`: it
+re-probes one frame with a second task string and scales the result against the
+scene effect, which is the task-conditioning check ficelle was needed for.
+
 ## Cost and what we give up
 
 | | |

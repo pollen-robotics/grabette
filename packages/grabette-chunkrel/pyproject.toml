@@ -18,7 +18,10 @@ dependencies = ["numpy", "scipy"]
 
 [project.optional-dependencies]
 # For running this package's own tests, which exercise the processor steps.
-test = ["pytest", "torch", "lerobot==0.6.0"]
+# lerobot carries the same `>= 3.12` marker as everywhere else in the workspace:
+# it declares Python>=3.12, and an unguarded pin here makes `uv lock` fail for
+# the whole workspace on the 3.11 split.
+test = ["pytest", "torch", "lerobot==0.6.0 ; python_version >= '3.12'"]
 
 [build-system]
 requires = ["hatchling"]

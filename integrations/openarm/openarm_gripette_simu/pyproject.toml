@@ -26,6 +26,11 @@ dataset = ["lerobot[dataset]==0.6.0 ; python_version >= '3.12'"]
 eval = [
     "lerobot[diffusion,pi]==0.6.0 ; python_version >= '3.12'",
     "scipy>=1.10",
+    # Chunk-relative checkpoints register a custom ProcessorStep, so lerobot
+    # cannot rebuild their pipeline without this import being available. Not
+    # optional-within-the-extra: evaluate.py refuses to guess the representation,
+    # and a missing import here fails at checkpoint load.
+    "grabette-chunkrel",
 ]
 # tests/ — needs the `eval` extra as well: the GripAssist regression tests load
 # examples/evaluate.py, which imports the policy stack.
@@ -39,6 +44,7 @@ build-backend = "hatchling.build"
 # Resolved from the monorepo workspace (integrations/openarm/openarm_gripette_model),
 # not PyPI. Was a local `../` path dep in the standalone repo.
 openarm-gripette-model = { workspace = true }
+grabette-chunkrel = { workspace = true }
 
 # OpenCV is intentionally headless by default: lerobot depends on
 # opencv-python-headless and the on-device services (grabette/Pi) need it, and
