@@ -171,6 +171,32 @@ def convert_episode(
     )
 
 
+def _drop_stale_action_stats(dst_root: Path) -> None:
+    """Remove action-stats provenance copied from the source dataset.
+
+    The source tree is copied wholesale, so if it carried chunk-relative action
+    stats its `action_relative_meta` marker survives — while this conversion has
+    just recomputed `action` for the NEW gripper channels, i.e. as absolute
+    stats. A dataset then claims relative stats while holding absolute ones,
+    which is exactly the mismatch the training guard exists to catch, and the
+    stale marker would make that guard PASS.
+
+    `action_absolute` goes for the same reason: it archives the pre-relative
+    stats of a different representation.
+    """
+    path = dst_root / "meta" / "stats.json"
+    if not path.is_file():
+        return
+    stats = json.loads(path.read_text())
+    dropped = [k for k in ("action_relative_meta", "action_absolute") if k in stats]
+    if not dropped:
+        return
+    for k in dropped:
+        del stats[k]
+    path.write_text(json.dumps(stats, indent=2) + "\n")
+    logger.info("Dropped stale action-stats provenance: %s", ", ".join(dropped))
+
+
 def _write_sidecar(dst_root: Path, gp: GraspProjection, src_root: Path) -> None:
     """Record which projection built this dataset, and from what.
 
@@ -329,6 +355,7 @@ def convert_dataset(
         recompute_stats(ds, skip_image_video=True)
         logger.info("Stats recomputed")
 
+    _drop_stale_action_stats(dst_root)
     _write_sidecar(dst_root, gp, src_root)
     _write_card(dst_root, repo_id=stats_repo_id)
 
