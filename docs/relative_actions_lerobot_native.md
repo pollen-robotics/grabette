@@ -208,6 +208,23 @@ better conditioned, without smoothing away hand dynamics.
 Note this is a *training* argument. Execution-time delta accumulation is a
 separate, probably smaller effect, and is not the reason to expect a win.
 
+## Measured so far (P1/P2 complete)
+
+| | |
+|---|---|
+| supervision SNR | per-step deltas 3.83 mm vs chunk offsets 49.7 mm (K=15) / 121.8 mm (K=50), same 1–2 mm jitter |
+| origin invariance | exact to machine precision under arbitrary rigid re-origin; built-in shifts 9.8 mm at 10° yaw, 117 mm at 180° |
+| round trip | exact to <2 mm on real poses |
+| glitch rate | 0.013% of steps; 0.20% of K=15 chunks, 0.59% of K=50 chunks |
+| normalised range | [-1.27, +1.20] with relative stats; **[-20.6, +18.7]** with the dataset's absolute stats |
+| step cost | 3.55 ms per batch at B=32/K=50 (0.111 ms/sample, ~9000 chunks/s) — noise against a pi05 step |
+
+Two defects were found by writing the tests rather than by training:
+`meta/stats.json` described the wrong distribution (rotation channels landed
+*outside* [-1, 1]), and the chunk-start enumeration never sampled the last
+`chunk_size - 1` frames of an episode — ~23% of a real episode, and the tail,
+where the grasp completes. Both fixed.
+
 ## Implementation plan
 
 All on a branch (`relative-actions`), in a worktree. Each phase has a pass
