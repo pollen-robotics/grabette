@@ -607,6 +607,12 @@ def parse_args():
                    help="--grip_assist: max total extra closure (rad) beyond the policy's "
                         "command. Reaching it without contact = nothing in the jaws → the "
                         "assist releases until the policy re-approaches.")
+    p.add_argument("--chunk_relative", choices=["auto", "on", "off"], default="auto",
+                   help="Policy trained with chunk-relative actions (each action is "
+                        "an offset from the chunk's reference pose, composed into "
+                        "its frame) rather than per-step deltas. 8D actions. "
+                        "'auto' reads the checkpoint's processor config, which is "
+                        "exact — the step is either registered there or it is not.")
     p.add_argument("--grasp_projection", choices=["auto", "on", "off"], default="auto",
                    help="Interpret the policy's last two action channels as "
                         "(strategy, closure) from the grasp projection rather than "
@@ -1011,6 +1017,63 @@ def detect_grasp_projection(checkpoint):
     return projected
 
 
+def detect_chunk_relative(checkpoint):
+    """Was this checkpoint trained with chunk-relative actions?
+
+    Returns True / False, or None when it cannot be determined.
+
+    Unlike detect_grasp_projection() this is exact rather than heuristic: the
+    processor config records the registered step NAMES, so the answer is simply
+    whether our step is in the preprocessor pipeline.
+    """
+    if not checkpoint:
+        return None  # remote inference with no --checkpoint; caller hard-errors
+    cfg = None
+    ckpt = _Path(checkpoint)
+    if ckpt.is_dir():
+        f = ckpt / "policy_preprocessor.json"
+        cfg = f if f.is_file() else None
+        cfg = str(cfg) if cfg else None
+    else:
+        try:
+            from huggingface_hub import hf_hub_download
+
+            cfg = hf_hub_download(checkpoint, "policy_preprocessor.json")
+        except Exception as e:
+            logger.warning(f"Could not fetch the processor config from the Hub ({e})")
+    if cfg is None:
+        return None
+    try:
+        with open(cfg) as f:
+            steps = _json.load(f).get("steps", [])
+    except Exception as e:
+        logger.warning(f"Could not read the processor config ({e}); "
+                       "pass --chunk_relative on|off explicitly")
+        return None
+    names = [st.get("registry_name") or st.get("class") or "" for st in steps
+             if isinstance(st, dict)]
+    found = any("chunk_relative" in str(x) for x in names)
+    logger.info(f"Chunk-relative auto-detect: preprocessor steps = {names} -> "
+                f"{'CHUNK-RELATIVE' if found else 'per-step deltas'}")
+    return found
+
+
+def policy_action_queue(policy):
+    """The action deque select_action() actually drains, or None.
+
+    Two attributes exist and only one is live: pi05 defines BOTH `_action_queue`
+    (drained by select_action) and `_queues[ACTION]` (created in reset() and
+    never touched), while ACT/diffusion use `_queues` alone. Reading the dead one
+    reports "queue empty" on every tick, so anything keyed on the chunk boundary
+    fires continuously.
+    """
+    q = getattr(policy, "_action_queue", None)
+    if q is not None:
+        return q
+    q = getattr(policy, "_queues", None)
+    return q.get("action") if isinstance(q, dict) else None
+
+
 def build_observation(
     arm_stub,
     arm_pb2,
@@ -1087,12 +1150,16 @@ def run_episode(
     grip_assist=None,
     assist_log=None,
     grasp_projection=None,
+    chunk_relative=None,
     client=None,
     remote_k=None,
     remote_img_wh=None,
     remote_frames=2,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats.
+
+    chunk_relative: if set, a ChunkRelativeDeltas converting the policy's chunk
+    offsets into the body-local deltas SendCartesianDelta expects.
 
     client: if set, a ficelle PolicyClient replaces local policy inference at
     CHUNK granularity (cartesian sync mode only) — see the remote branch in
@@ -1245,15 +1312,28 @@ def run_episode(
                 # them again overshoots (the "push through the object" failure).
                 # Discard them: k = staleness / measured loop period.
                 if client is None and skip_stale and loop_periods:
-                    q = getattr(policy, "_queues", None)
-                    q = q.get("action") if isinstance(q, dict) else None
+                    q = policy_action_queue(policy)
                     if q is not None and len(q) == 0:
                         period_ms = 1000.0 * float(np.median(loop_periods[-20:]))
                         k = int(np.clip(round(frame_staleness / max(period_ms, 1.0)),
                                         0, policy.config.n_action_steps - 1))
+                        if chunk_relative is not None and k:
+                            # The drops land inside the NEW chunk, so the
+                            # reference resets here rather than at the main
+                            # select_action below (whose queue is no longer
+                            # empty by then).
+                            chunk_relative.reset()
                         for _ in range(k):
                             with torch.no_grad():
-                                policy.select_action(batch)  # discard stale head
+                                a_drop = policy.select_action(batch)  # discard stale head
+                            if chunk_relative is not None:
+                                # Motion the arm has already made. Advance the
+                                # converter's cursor over it so the next command
+                                # is measured from the last SKIPPED action — feed
+                                # it nothing and the first delta replays the whole
+                                # dropped head.
+                                chunk_relative.step(
+                                    postprocessor(a_drop).squeeze(0).cpu().numpy())
                         if log_latency and k:
                             print(f"  skip_stale: dropped {k} chunk-head action(s) "
                                   f"(staleness {frame_staleness:.0f}ms / period {period_ms:.0f}ms)",
@@ -1298,13 +1378,27 @@ def run_episode(
                             }
                         reply = client.infer(obs)
                         action_queue.extend(list(reply["actions"][:remote_k]))
+                        if chunk_relative is not None:
+                            chunk_relative.reset()  # a fresh chunk, a fresh reference
                     a_np = action_queue.pop(0)
                 else:
+                    if chunk_relative is not None:
+                        q = policy_action_queue(policy)
+                        if q is not None and len(q) == 0:
+                            # About to replan: the next action opens a new chunk,
+                            # measured from a new reference pose.
+                            chunk_relative.reset()
                     with torch.no_grad():
                         a = policy.select_action(batch)
                     a = postprocessor(a)
                     a_np = a.squeeze(0).cpu().numpy()
-                dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
+                if chunk_relative is not None:
+                    # Offsets-from-reference -> body-local deltas. The chunk's
+                    # reference pose cancels in the difference, which is why the
+                    # arm never needs to be told what it was.
+                    dp, dr6, gripper_goal = chunk_relative.step(a_np)
+                else:
+                    dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
                 if clamp_pos_m is not None or clamp_rot_rad is not None:
                     dp, dr6, was = clamp_delta(dp, dr6, clamp_pos_m, clamp_rot_rad)
                     n_clamped += int(was)
@@ -1820,6 +1914,51 @@ def main():
         f"{'(strategy, closure) -> decoded to angles' if projection else 'raw angles'}"
     )
 
+    # Chunk-relative actions. Getting this wrong is as silent as the projection:
+    # 8D offsets read as 11D per-step deltas would slice the rotation out of the
+    # gripper channels and command centimetre steps every tick.
+    chunk_relative_on = None
+    if args.chunk_relative == "on":
+        chunk_relative_on = True
+    elif args.chunk_relative == "off":
+        chunk_relative_on = False
+    else:
+        chunk_relative_on = detect_chunk_relative(args.checkpoint)
+        if chunk_relative_on is None:
+            raise SystemExit(
+                "Could not determine whether this policy uses chunk-relative "
+                "actions"
+                + (" (remote inference — there is no local checkpoint to "
+                   "inspect)" if not args.checkpoint
+                   else " (no readable processor config)") + ".\n"
+                "Refusing to guess: the two representations have different action "
+                "widths and different meanings, and mixing them commands "
+                "nonsense.\n"
+                "Pass --chunk_relative on|off explicitly."
+            )
+    if chunk_relative_on and args.async_exec:
+        raise SystemExit(
+            "--chunk_relative needs sync mode (not --async_exec): the async "
+            "executor runs chunks on its own thread and drops head actions "
+            "there, so the converter's reference tracking is not wired through "
+            "it. Run without --async_exec."
+        )
+    chunk_relative = None
+    if chunk_relative_on:
+        try:
+            from grabette_chunkrel.chunk_relative import ChunkRelativeDeltas
+        except ImportError as e:
+            raise SystemExit(
+                f"This checkpoint needs the grabette-chunkrel package ({e}).\n"
+                "Install it where the policy runs:\n"
+                "  uv pip install -e packages/grabette-chunkrel"
+            ) from e
+        chunk_relative = ChunkRelativeDeltas()
+    logger.info(
+        f"Motion action space: "
+        f"{'chunk-relative offsets -> body-local deltas' if chunk_relative else 'per-step deltas'}"
+    )
+
     policy = preprocessor = postprocessor = None
     client = remote_k = remote_img_wh = None
     remote_frames = 2
@@ -1901,10 +2040,39 @@ def main():
             preprocessor_overrides={"device_processor": {"device": str(device)}},
         )
 
+        if chunk_relative is not None:
+            # The checkpoint's postprocessor ends with the inverse step, which
+            # rebuilds absolute poses from a reference. Eval wants the offsets
+            # themselves — it differences them for SendCartesianDelta — and the
+            # step would refuse anyway, having no measured reference to use.
+            before = len(postprocessor.steps)
+            postprocessor.steps = [
+                st for st in postprocessor.steps
+                if "AbsoluteFromChunkRelative" not in type(st).__name__
+            ]
+            logger.info(f"Removed {before - len(postprocessor.steps)} inverse "
+                        "chunk-relative step(s) from the postprocessor "
+                        "(eval consumes the offsets directly)")
+
         # Auto-detect state/action mode from the policy's feature shapes.
         state_dim = policy.config.robot_state_feature.shape[0]
         action_dim = policy.config.action_feature.shape[0]
         joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
+        # Cross-check the representation against the checkpoint's own width, so a
+        # wrong --chunk_relative fails at load rather than on the arm.
+        if chunk_relative is not None and action_dim != 8:
+            raise SystemExit(
+                f"--chunk_relative expects 8D actions (pos3, rotvec3, gripper2) "
+                f"but this checkpoint emits {action_dim}D. Either the flag is "
+                "wrong or the checkpoint is not chunk-relative."
+            )
+        if chunk_relative is None and action_dim == 8:
+            raise SystemExit(
+                "This checkpoint emits 8D actions, which is the chunk-relative "
+                "width, but chunk-relative handling is off. Running it as "
+                "per-step deltas would read the rotation's last dim as a gripper "
+                "command. Pass --chunk_relative on."
+            )
         use_relative_proprio = (state_dim > 2) and not joint_mode
         logger.info(
             f"Policy: action_space={'joint' if joint_mode else 'cartesian'}, "
@@ -2086,6 +2254,7 @@ def main():
             latch_close=args.latch_close,
             grip_assist=assist,
             grasp_projection=projection,
+            chunk_relative=chunk_relative,
             assist_log=args.assist_log,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,

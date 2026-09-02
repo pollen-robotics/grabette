@@ -247,3 +247,69 @@ def _r6d_to_matrix(v: np.ndarray) -> np.ndarray:
     b2 = a2p / np.linalg.norm(a2p, axis=1, keepdims=True)
     b3 = np.cross(b1, b2)
     return np.stack([b1, b2, b3], axis=-1)
+
+
+def rotvec_to_r6d(rotvec: np.ndarray) -> np.ndarray:
+    """Rotation vector -> the 6D encoding the arm service expects on the wire."""
+    m = Rotation.from_rotvec(np.asarray(rotvec, dtype=np.float64)).as_matrix()
+    return m[:, :2].T.reshape(6)
+
+
+class ChunkRelativeDeltas:
+    """Turns a stream of chunk-relative actions into arm-service deltas.
+
+    WHY THIS IS NOT `from_chunk_relative`
+    -------------------------------------
+    The arm takes body-local deltas against its INTEGRATOR TARGET:
+
+        delta_pos_world = R_target @ delta_pos      (grpc_server_real)
+        R_target_new    = R_target @ R_delta
+
+    Work through the algebra and the chunk's reference pose CANCELS. With
+    `p_i = p_ref + R_ref a_i` and `R_i = R_ref A_i`:
+
+        delta_pos_i = R_{i-1}^-1 (p_i - p_{i-1}) = A_{i-1}^-1 (a_i - a_{i-1})
+        R_delta_i   = R_{i-1}^-1 R_i             = A_{i-1}^-1 A_i
+
+    So executing a chunk needs neither the measured pose nor a reconstruction to
+    absolute — only consecutive relative actions. That also removes the reference
+    as a single point of failure: a mis-measured reference cannot offset the
+    whole chunk, because no reference is ever used.
+
+    `reset()` MUST be called at every replan. Within a chunk all actions share
+    one reference; across chunks they do not, so carrying `prev` over a boundary
+    would emit the difference between two unrelated frames — a large spurious
+    jump exactly when the policy re-plans.
+    """
+
+    def __init__(self, rot: str = "rotvec"):
+        if rot != "rotvec":
+            raise ValueError(f"only rot='rotvec' is supported, got {rot!r}")
+        self.reset()
+
+    def reset(self) -> None:
+        """Start a new chunk: the next action is measured from the reference."""
+        self._prev_pos = np.zeros(3)
+        self._prev_rot = Rotation.identity()
+
+    def step(self, action: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """One relative action -> (delta_pos, delta_r6d, gripper).
+
+        `action` is `[rel_x, rel_y, rel_z, rel_rotvec(3), gripper(2)]` as the
+        policy emits it. The gripper passes through untouched: it is absolute by
+        construction, and with the grasp projection `closure = 1.0` means "fully
+        closed", which a relative encoding could not express.
+        """
+        action = np.asarray(action, dtype=np.float64).reshape(-1)
+        if action.shape[0] != POSE_DIMS + GRIPPER_DIMS:
+            raise ValueError(f"expected an 8D relative action, got {action.shape}")
+
+        rel_pos = action[:3]
+        rel_rot = Rotation.from_rotvec(action[3:6])
+        prev_inv = self._prev_rot.inv()
+
+        delta_pos = prev_inv.apply(rel_pos - self._prev_pos)
+        delta_rot = prev_inv * rel_rot
+
+        self._prev_pos, self._prev_rot = rel_pos, rel_rot
+        return delta_pos, rotvec_to_r6d(delta_rot.as_rotvec()), action[POSE_DIMS:]
