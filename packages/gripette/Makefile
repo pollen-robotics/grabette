@@ -33,7 +33,10 @@ help:
 install-rpi: check-hand enable-uart harden-rpi
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
-	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev
+	@# python3-dev + libcap-dev: python-prctl and pidng still build from source
+	@# here. python3-dbus/-gi/bluez: the BLE WiFi service (DBus + GLib mainloop).
+	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev \
+	  python3-dev python3-dbus python3-gi bluez
 	@# sudo rm: if any service ran as root and left root-owned .pyc files in
 	@# the venv (we fixed this with PYTHONDONTWRITEBYTECODE=1 in the unit
 	@# files, but existing installs may still have leftover root-owned
