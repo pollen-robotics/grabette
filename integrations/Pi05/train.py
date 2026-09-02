@@ -45,6 +45,57 @@ _original = policy_factory.make_pre_post_processors
 _CHUNK_RELATIVE = os.environ.get("GRABETTE_CHUNK_RELATIVE", "").lower() in ("1", "true", "yes")
 
 
+# Marker key that `write_relative_action_stats` leaves in meta/stats.json. It
+# survives lerobot's stats loading (cast_stats_to_numpy flattens/unflattens the
+# whole dict), so training can see whether the dataset it was handed expects the
+# chunk-relative step.
+_RELATIVE_MARKER = "action_relative_meta"
+
+
+def _check_stats_match_representation(policy_cfg, dataset_stats):
+    """Refuse to train when the dataset's stats and the action representation
+    disagree. Both directions are silent failures that a healthy-looking loss
+    curve will not reveal:
+
+      - relative stats + absolute actions: what a 100-step smoke actually did on
+        2026-09-02 because `hf jobs` uploaded the train.py from the wrong
+        checkout. It ran to completion and checkpointed.
+      - absolute stats + relative actions: rotation channels normalise OUTSIDE
+        [-1, 1] (measured), i.e. values the model never sees in training.
+    """
+    meta = (dataset_stats or {}).get(_RELATIVE_MARKER)
+    if meta is not None and not _CHUNK_RELATIVE:
+        raise RuntimeError(
+            f"this dataset's action stats are CHUNK-RELATIVE (meta/stats.json "
+            f"carries '{_RELATIVE_MARKER}') but GRABETTE_CHUNK_RELATIVE is not "
+            "set, so the actions would stay absolute and be normalised with the "
+            "wrong scale. Set GRABETTE_CHUNK_RELATIVE=1 — and make sure the "
+            "train.py being uploaded is the one containing the hook."
+        )
+    if meta is None and _CHUNK_RELATIVE:
+        raise RuntimeError(
+            "GRABETTE_CHUNK_RELATIVE is set but this dataset's action stats are "
+            "ABSOLUTE. Run write_relative_action_stats(root, chunk_size=<policy "
+            "chunk_size>) first, or the rotation channels normalise outside "
+            "[-1, 1]."
+        )
+    if meta is None:
+        return
+
+    # The stats are horizon-dependent: a 50-frame offset spans further than a
+    # 15-frame one, so stats computed for another chunk length are the wrong
+    # scale even though nothing looks wrong.
+    stats_chunk = int(meta["chunk_size"])
+    policy_chunk = int(getattr(policy_cfg, "chunk_size", stats_chunk))
+    if stats_chunk != policy_chunk:
+        raise RuntimeError(
+            f"action stats were computed for chunk_size={stats_chunk} but the "
+            f"policy uses chunk_size={policy_chunk}. Relative-action stats scale "
+            "with the horizon; recompute them for this chunk size."
+        )
+    print(f"[chunk-relative] dataset stats match: chunk_size={stats_chunk}")
+
+
 def _install_chunk_relative(pre, post):
     """Swap LeRobot's elementwise relative steps for the composed ones.
 
@@ -108,6 +159,7 @@ def _fresh_pipeline(policy_cfg, pretrained_path=None, pretrained_revision=None, 
     # dataset_stats.
     kwargs.pop("preprocessor_overrides", None)
     kwargs.pop("postprocessor_overrides", None)
+    _check_stats_match_representation(policy_cfg, kwargs.get("dataset_stats"))
     pre, post = _original(policy_cfg, pretrained_path=None, pretrained_revision=None, **kwargs)
     if _CHUNK_RELATIVE:
         pre, post = _install_chunk_relative(pre, post)
