@@ -272,6 +272,46 @@ time.
 *Pass:* grasp success at least matching the current checkpoint. Anything less and
 the SNR argument did not translate.
 
+## The P4 dataset (built 2026-08-27, local only)
+
+There is **no raw 8D `pick3`** on the Hub — every 8D dataset is single-task — so
+the A/B dataset had to be assembled from the baseline's three ancestors. Built at
+`~/grabette-work/pick3_raw8d_chunkrel/merged`, id `local/pick3_raw8d_chunkrel`,
+nothing existing modified:
+
+| | |
+|---|---|
+| episodes / frames | **554 / 91 123** — identical to `pick3_graspproj_480` |
+| per task | can 166, mustard 199, cup 189 — identical to the baseline |
+| action | 8D absolute `[x,y,z,ax,ay,az,proximal,distal]` |
+| observation.state | 2D gripper only, `== action[6:8]` (verified) |
+| video | 1 camera, 480x360 |
+| stats | relative (chunk_size 50), absolute archived under `action_absolute` |
+
+Steps, in order: `clean_dataset.py --keep_cameras cam0` per source (the can
+cleaned 200 -> **166**, matching the baseline exactly; mustard and cup `clean/`
+dirs were already cached at 199 and 189) -> `resize_dataset_videos.py` to
+480x360 -> `merge_datasets` -> relabel `tasks.parquet` to the language strings
+-> `write_relative_action_stats(chunk_size=50)`. Deliberately **no**
+`convert_dataset.py`: the delta conversion is what is being replaced.
+
+Two things worth recording:
+
+- The sources carry **identifier task strings** (`test_pick_can_200`,
+  `Cup Grasping`), which pi05 would be conditioned on verbatim and which the
+  publish gate errors on. The relabel is keyed on the source identifier and
+  raises rather than guesses, because mapping by position would silently
+  mislabel which object an episode belongs to.
+- These older `clean` datasets predate `generate_dataset.py` emitting
+  `observation.state`, so it had to be added — as the gripper pair from the same
+  frame, following `convert_dataset.py`'s convention, with q01/q99 stats since
+  pi05 normalises STATE with QUANTILES too.
+
+Jump repair on the real merged data: **25 translation and 45 rotation** splices
+over 2093 chunks (~1.2% / ~2.1%). Note rotation glitches outnumber translation
+ones here, which retro-justifies handling them — the first version of the
+splicer did translation only.
+
 ## Cost and what we give up
 
 | | |
