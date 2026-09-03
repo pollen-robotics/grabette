@@ -376,6 +376,54 @@ To avoid blocking on the last row, `smoke_generation.py` gained `--task2`: it
 re-probes one frame with a second task string and scales the result against the
 scene effect, which is the task-conditioning check ficelle was needed for.
 
+## P4 results (2026-09-03)
+
+Trained 20k steps on `SteveNguyen/pick3_graspproj_chunkrel` (554 eps), final
+loss **0.013**, 12h37 on one GPU. Checkpoint
+`SteveNguyen/pick3_graspproj_chunkrel_pi05` (4.14B params, 9.35 GB).
+
+**The coupling risk is closed.** Our step survived `save_pretrained` at
+preprocessor position 3 — before the normaliser, as the training guard requires
+— and `AbsoluteFromChunkRelativeStep` at postprocessor position 1.
+
+**The SNR argument, measured in the checkpoint's own baked-in stats:**
+
+| | position q01…q99 | rotation q01…q99 |
+|---|---|---|
+| chunk-relative (8D) | x ±0.10 m, y ±0.14 m, z −0.10…0.21 m | up to 0.60 rad (34°) |
+| baseline (11D deltas) | x ±0.002 m, y −0.007…0.004 m, z ±0.006 m | dims 3,7 pinned 0.951→1.0 |
+
+~244 mm of supervised span against the baseline's ~8 mm, on the same 1–2 mm of
+SLAM jitter. Roughly 30× better conditioned, as predicted.
+
+**Gate 3 — generation health: PASS.**
+
+| | offset span | mean err | final-action err |
+|---|---|---|---|
+| ep0 (red can) | 89.2 mm | 7.7 mm (8.6%) | 11.9 mm |
+| ep100 (red can) | 100.2 mm | 5.3 mm (5.3%) | 8.5 mm |
+
+Over a 50-frame chunk, i.e. ~1.0 s of motion at 50 fps. Scene effect 0.0676
+(bar: 0.02–0.06; higher here because chunk-relative actions are simply larger).
+Predicted `action 0` pose dims came back at 1e-4…3e-3 against a structural
+zero — the encode/normalise/unnormalise chain is consistent end to end. The
+gripper is near-exact: closure 0.9956 vs GT 1.0 on ep0, 0.2053 vs 0.2073 on
+ep100, so the projection is learned precisely.
+
+**Gate 4 — task sensitivity: WEAK.** 0.0098 against a 0.0051 same-task
+re-sampling floor = **1.93×**. The baseline pi05 measured 0.0047/0.0036 =
+1.31× on the same measure, so this is ~1.5× better but still under the 3× bar.
+
+This is a **dataset** property, not a representation one: every training scene
+contains exactly one object, so the task is fully predictable from pixels and
+the language channel gets no gradient. Fixing it needs multi-object scenes, not
+a different action encoding. Practical consequence for P5: put one object on the
+table at a time and do not try to steer by instruction.
+
+**P4 verdict: pass.** The plan's bar was "observation-conditioned and
+task-sensitive, same bar as the current checkpoint" — observation-conditioning
+passes outright, task-sensitivity is better than the current checkpoint.
+
 ## Cost and what we give up
 
 | | |

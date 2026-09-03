@@ -63,6 +63,11 @@ def main():
     p.add_argument("--chunk_relative", action="store_true",
                    help="Checkpoint was trained with chunk-relative actions "
                         "(grabette-chunkrel). See the module docstring.")
+    p.add_argument("--task_samples", type=int, default=3,
+                   help="Draws per condition for --task2 (default 3). pi05 is a "
+                        "flow model, so both the noise floor and the task effect "
+                        "are random variables; one draw each gives a ratio too "
+                        "noisy to act on. Costs 2N forward passes.")
     p.add_argument("--fp32", action="store_true",
                    help="Load in float32 (the pi05 port has a bf16 dtype clash "
                         "in its flow path). Our pi05 checkpoints are 4.14B "
@@ -204,23 +209,35 @@ def main():
             # same-task floor — 1.3x, i.e. nothing — and reporting that 0.0047 as
             # "task-sensitive" is exactly the false pass this floor prevents.
             try:
-                same = comparable(predict(dict(first_batch)))
-                floor = float(np.abs(np.asarray(outs[0]) - np.asarray(same)).mean())
+                base = np.asarray(outs[0])
 
+                def mean_abs_diff(batch):
+                    return float(np.abs(base - np.asarray(comparable(predict(batch)))).mean())
+
+                # Averaged over several draws: a ratio of two single samples is
+                # itself noisy, and this number decides whether the instruction
+                # can be trusted.
+                n = max(1, args.task_samples)
                 b2 = dict(first_batch)
                 b2["task"] = args.task2
-                a2 = comparable(predict(b2))
-                tdiff = float(np.abs(np.asarray(outs[0]) - np.asarray(a2)).mean())
+                floors = [mean_abs_diff(dict(first_batch)) for _ in range(n)]
+                tdiffs = [mean_abs_diff(dict(b2)) for _ in range(n)]
+                floor, tdiff = float(np.mean(floors)), float(np.mean(tdiffs))
 
                 print()
-                print(f"task probe on ep{args.episodes[0]} frame {args.frame}:")
-                print(f"   same task, re-sampled  -> {floor:.6f}   (noise floor)")
+                print(f"task probe on ep{args.episodes[0]} frame {args.frame} "
+                      f"({n} draw{'s' if n > 1 else ''} each):")
+                print(f"   same task, re-sampled  -> {floor:.6f}   (noise floor)"
+                      f"   [{min(floors):.6f}..{max(floors):.6f}]")
                 print(f"   \"{args.task}\"")
-                print(f"     vs \"{args.task2}\" -> {tdiff:.6f}")
+                print(f"     vs \"{args.task2}\" -> {tdiff:.6f}"
+                      f"   [{min(tdiffs):.6f}..{max(tdiffs):.6f}]")
                 print(f"   scene effect (ep{args.episodes[0]} vs "
                       f"ep{args.episodes[1]}) -> {diff:.6f}")
                 snr = tdiff / floor if floor > 0 else float("inf")
                 print(f"   task effect / noise floor: {snr:.2f}x")
+                if min(tdiffs) < max(floors):
+                    print("   (ranges overlap — treat the ratio as indicative only)")
                 if snr < 1.5:
                     print("   TASK VERDICT: FAIL — the task swap is within sampling "
                           "noise. The language channel is not read; the policy will "
