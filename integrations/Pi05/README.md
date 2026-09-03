@@ -209,6 +209,36 @@ PASS = finite, sane-scale chunks that **differ across observations** (mean
 |diff| ~0.02–0.06 on our data) and roughly track each frame's ground truth.
 The collapsed pi0fast reference measured 0.000000. `--fp32` matters: the
 pi05 port has a bf16 dtype clash in its flow path — fp32 for all inference.
+Our pi05 checkpoints are 4.14B params, so fp32 is **16.6 GB of weights**
+before activations: use a ≥24 GB card, not the 16 GB the flag's help used
+to claim.
+
+**Chunk-relative checkpoints need `--chunk_relative`.** Two reasons the gate
+cannot just run as-is on one:
+
+- The chunk's reference pose *is* its first action, so relative action 0 is
+  identically zero in all six pose dims for every training sample. Comparing
+  two episodes' `select_action()` outputs therefore reads "input-INDEPENDENT"
+  however good the policy is. The flag switches to `predict_action_chunk` and
+  drops action 0 before differencing.
+- The checkpoint's postprocessor ends with the inverse step, which needs a
+  reference pose only the robot has. The flag strips it.
+
+It also sharpens check 3: the ground-truth chunk is encoded the same way
+training encoded it, so the gate reports a position error in **mm**.
+
+```bash
+uv run python smoke_generation.py \
+    --checkpoint SteveNguyen/pick3_graspproj_chunkrel_pi05 \
+    --policy_type pi05 --fp32 --chunk_relative \
+    --dataset_repo_id SteveNguyen/pick3_graspproj_chunkrel \
+    --episodes 0 100 --frame 60 \
+    --task "pick up the red can" --task2 "pick up the cup"
+```
+
+Both episodes come from the same task there (eps 0–165 are "pick up the red
+can"), so check 2 isolates the *scene* effect; `--task2` then measures the
+*language* effect on the same frame. See step 4.
 
 ### 4. Language gate (only if you rely on task strings)
 
@@ -218,6 +248,15 @@ predictable from pixels, so the language channel gets no gradient. Measured
 on our 3-task model: swapping the task string moved actions by 0.0047 vs a
 0.0036 same-task sampling-noise floor (i.e. nothing). It will grab its
 favorite object regardless of what you ask.
+
+`smoke_generation.py --task2 "<other task>"` runs the same check **without a
+Ficelle server**: it re-probes one frame with a second task string and scales
+the result against a same-task re-sampling **noise floor**. The floor is the
+whole point — pi05 is a flow model, so the same input does not give the same
+output twice, and the 0.0047 above is only meaningful next to its 0.0036 floor
+(1.3x = nothing). Verdicts: <1.5x FAIL, <3x WEAK, else PASS.
+
+The standalone probe below additionally sweeps frames and needs the server:
 
 ```bash
 # needs a Ficelle server running (step 5). All-local setup: start one on the

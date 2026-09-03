@@ -53,10 +53,11 @@ def main():
     p.add_argument("--task", default="pick", help="Task string (must match training)")
     p.add_argument("--task2", default=None,
                    help="Second task string. Re-probes the FIRST episode's frame "
-                        "with it and reports how much the prediction moves — the "
-                        "task-conditioning check, which matters for a multi-task "
-                        "dataset and otherwise needs probe_task_sensitivity.py and "
-                        "a running ficelle server.")
+                        "with it and compares the movement against a same-task "
+                        "re-sampling NOISE FLOOR (pi05 is a flow model, so the "
+                        "same input does not give the same output twice). The "
+                        "task-conditioning check, which otherwise needs "
+                        "probe_task_sensitivity.py and a running ficelle server.")
     p.add_argument("--policy_type", default="pi0_fast", choices=["pi0_fast", "pi05", "pi0"],
                    help="Policy class of the checkpoint")
     p.add_argument("--chunk_relative", action="store_true",
@@ -172,32 +173,44 @@ def main():
                   "the model may be ignoring observations.")
 
         if args.task2:
-            # Same pixels, same state, different sentence. On a multi-task
-            # dataset the prediction has to move, or the policy is ignoring the
-            # language and will pick whatever object it likes.
+            # Same pixels, same state, different sentence. On a multi-task dataset
+            # the prediction has to move, or the policy is ignoring the language
+            # and will pick whatever object it likes.
+            #
+            # It must be measured against a NOISE FLOOR, not against zero: pi05 is
+            # a flow model, so re-sampling the SAME input already moves the output.
+            # Our 3-task pi05 measured a task swap of 0.0047 against a 0.0036
+            # same-task floor — 1.3x, i.e. nothing — and reporting that 0.0047 as
+            # "task-sensitive" is exactly the false pass this floor prevents.
             try:
+                same = comparable(predict(dict(first_batch)))
+                floor = float(np.abs(np.asarray(outs[0]) - np.asarray(same)).mean())
+
                 b2 = dict(first_batch)
                 b2["task"] = args.task2
                 a2 = comparable(predict(b2))
                 tdiff = float(np.abs(np.asarray(outs[0]) - np.asarray(a2)).mean())
+
                 print()
                 print(f"task probe on ep{args.episodes[0]} frame {args.frame}:")
-                print(f"   \"{args.task}\" vs \"{args.task2}\" -> "
-                      f"mean |Δaction| = {tdiff:.6f}")
-                # Scale it against the observation effect measured above: a task
-                # that moves the prediction far less than a different scene did is
-                # weak conditioning, which is the failure worth catching.
-                ratio = tdiff / diff if diff > 0 else float("inf")
-                print(f"   relative to the scene effect: {ratio:.2f}x")
-                if tdiff <= 1e-6:
-                    print("   TASK VERDICT: FAIL — the language input is ignored "
-                          "entirely; a multi-task checkpoint cannot be steered.")
-                elif ratio < 0.1:
-                    print("   TASK VERDICT: WEAK — task conditioning is an order "
-                          "of magnitude below the scene effect. Expect the policy "
-                          "to go for whichever object it prefers.")
+                print(f"   same task, re-sampled  -> {floor:.6f}   (noise floor)")
+                print(f"   \"{args.task}\"")
+                print(f"     vs \"{args.task2}\" -> {tdiff:.6f}")
+                print(f"   scene effect (ep{args.episodes[0]} vs "
+                      f"ep{args.episodes[1]}) -> {diff:.6f}")
+                snr = tdiff / floor if floor > 0 else float("inf")
+                print(f"   task effect / noise floor: {snr:.2f}x")
+                if snr < 1.5:
+                    print("   TASK VERDICT: FAIL — the task swap is within sampling "
+                          "noise. The language channel is not read; the policy will "
+                          "grab its favourite object whatever you ask.")
+                elif snr < 3.0:
+                    print("   TASK VERDICT: WEAK — task effect is only just above "
+                          "the noise floor. Do not rely on the instruction to "
+                          "select the object.")
                 else:
-                    print("   TASK VERDICT: PASS — the prediction is task-sensitive.")
+                    print("   TASK VERDICT: PASS — the prediction is task-sensitive "
+                          "well beyond sampling noise.")
             except Exception as e:
                 print(f"task probe: ERROR — {type(e).__name__}: {str(e)[:200]}")
     else:
