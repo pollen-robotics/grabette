@@ -63,8 +63,10 @@ def main():
                    help="Checkpoint was trained with chunk-relative actions "
                         "(grabette-chunkrel). See the module docstring.")
     p.add_argument("--fp32", action="store_true",
-                   help="Load in float32 (the pi05 port has a bf16 dtype clash in "
-                        "its flow path — use this on cards with >=16GB)")
+                   help="Load in float32 (the pi05 port has a bf16 dtype clash "
+                        "in its flow path). Our pi05 checkpoints are 4.14B "
+                        "params, so fp32 is 16.6GB of WEIGHTS before "
+                        "activations: use a >=24GB card. A 16GB card OOMs.")
     args = p.parse_args()
 
     cfg = PreTrainedConfig.from_pretrained(args.checkpoint)
