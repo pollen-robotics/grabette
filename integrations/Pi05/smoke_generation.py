@@ -42,6 +42,98 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
 
+def report_execution_quality(pred, gt_rel, n_exec):
+    """What the ROBOT gets, which is not what check 3 measures.
+
+    Execution needs per-step motion, obtained by differencing consecutive chunk
+    offsets. Differencing is not free: d_i = a_i - a_{i-1} and d_{i+1} =
+    a_{i+1} - a_i share the term a_i with OPPOSITE sign, so white error on the
+    offsets drives the lag-1 autocorrelation of the executed deltas to -0.5 and
+    shows up as lateral jitter. A chunk can therefore have a small mean offset
+    error (check 3 passes) while the motion derived from it is noise.
+
+    Measured on hardware for reference: x travelled 40 mm of path for 0.5 mm of
+    net displacement (straightness 0.01), lag-1 autocorr -0.10/-0.32/-0.28 on
+    x/y/z. This tells us offline whether that is expected.
+    """
+    def lag1(x):
+        """Lag-1 autocorrelation, or None when the series is too flat to have one.
+
+        A near-constant axis has no meaningful autocorrelation: after subtracting
+        the mean only float rounding is left, which returns a spurious value
+        (a perfect constant-velocity axis measured -0.48 in testing, exactly the
+        differencing-noise signature). Report nothing rather than a false alarm.
+        """
+        x = np.asarray(x, float)
+        c = x - x.mean()
+        denom = float((c * c).sum())
+        if denom <= 0 or c.std() < 1e-4 * max(abs(x.mean()), 1e-9) + 1e-12:
+            return None
+        return float((c[:-1] * c[1:]).sum() / denom)
+
+    m = min(len(pred), len(gt_rel))
+    dp, dg = np.diff(pred[:m, :3], axis=0), np.diff(gt_rel[:m, :3], axis=0)
+    print("   -- executed deltas (what the arm actually receives), mm --")
+    print(f"   {'axis':>6} {'demo/step':>10} {'pred/step':>10} {'scatter':>9} "
+          f"{'straightness':>13} {'lag-1 ac':>9}")
+    for i, ax in enumerate("xyz"):
+        net, path = abs(dp[:, i].sum()), np.abs(dp[:, i]).sum()
+        ac = lag1(dp[:, i])
+        print(f"   {ax:>6} {np.abs(dg[:, i]).mean() * 1000:10.2f} "
+              f"{np.abs(dp[:, i]).mean() * 1000:10.2f} {dp[:, i].std() * 1000:9.2f} "
+              f"{(net / path if path else 0):13.2f} "
+              f"{'     flat' if ac is None else f'{ac:9.2f}'}")
+    err = np.linalg.norm(dp - dg, axis=1) * 1000
+    true = np.linalg.norm(dg, axis=1) * 1000
+    snr = (true.mean() / err.mean()) if err.mean() > 1e-9 else float("inf")
+    print(f"   per-step error {err.mean():5.2f} mm against {true.mean():5.2f} mm "
+          f"of true motion -> SNR "
+          + ("exact" if snr == float("inf") else f"{snr:.2f}"))
+    print("   (straightness ~0, or lag-1 ac toward -0.5, means differencing "
+          "noise rather than motion)")
+
+    if n_exec < len(pred):
+        de = np.diff(pred[:n_exec, :3], axis=0)
+        print(f"   over the {n_exec} actions --n_action_steps would execute: "
+              f"net {np.linalg.norm(de.sum(axis=0)) * 1000:.1f} mm of "
+              f"{np.abs(de).sum() * 1000:.1f} mm travelled")
+
+
+def report_gripper_schedule(pred, gt_rel, n_exec):
+    """WHEN in the chunk does the policy close? Decides --n_action_steps.
+
+    On the robot, closure reached ~1.0 only at chunk index 14 with
+    --n_action_steps 15 — the last action executed, twice out of two — so the
+    close command was issued once and then discarded at every replan. If the
+    ramp starts after n_exec, executing more of the chunk is the fix; if it
+    starts inside it, something else is wrong.
+    """
+    close = pred[:, -1]
+    gt_close = gt_rel[:min(len(gt_rel), len(pred)), -1]
+
+    def first_above(v, thr=0.9):
+        idx = np.where(np.asarray(v) >= thr)[0]
+        return int(idx[0]) if len(idx) else None
+
+    fp, fg = first_above(close), first_above(gt_close)
+    print("   -- gripper closure across the chunk --")
+    step = max(1, len(close) // 10)
+    print("   idx :  " + " ".join(f"{i:5d}" for i in range(0, len(close), step)))
+    print("   pred:  " + " ".join(f"{close[i]:5.2f}" for i in range(0, len(close), step)))
+    print("   GT  :  " + " ".join(
+        f"{gt_close[i]:5.2f}" if i < len(gt_close) else "    -"
+        for i in range(0, len(close), step)))
+    print(f"   first closure >= 0.9 : pred index {fp}, GT index {fg}")
+    if fp is None:
+        print("   -> no close anywhere in this chunk (frame is before the grasp?)")
+    elif fp >= n_exec:
+        print(f"   -> !! the close is at index {fp} but --n_action_steps only "
+              f"executes 0..{n_exec - 1}: the grasp command is DISCARDED every "
+              f"replan. Raise --n_action_steps above {fp}.")
+    else:
+        print(f"   -> the close falls inside the executed window (0..{n_exec - 1}).")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--checkpoint", required=True)
@@ -63,6 +155,12 @@ def main():
     p.add_argument("--chunk_relative", action="store_true",
                    help="Checkpoint was trained with chunk-relative actions "
                         "(grabette-chunkrel). See the module docstring.")
+    p.add_argument("--n_action_steps", type=int, default=15,
+                   help="How many of the chunk the EVAL loop would execute before "
+                        "replanning (evaluate.py's --n_action_steps). Only used to "
+                        "judge the diagnostics: whether the policy's close command "
+                        "falls inside the executed window, and how much real "
+                        "displacement those actions produce.")
     p.add_argument("--task_samples", type=int, default=3,
                    help="Draws per condition for --task2 (default 3). pi05 is a "
                         "flow model, so both the noise floor and the task effect "
@@ -174,6 +272,8 @@ def main():
                       f"| max {pos_err.max() * 1000:6.1f} mm")
                 print(f"   gripper pred[0]     = {np.round(a[0, 6:], 4)} "
                       f"| GT {np.round(gt_rel[0, 6:], 4)}")
+                report_execution_quality(a, gt_rel, args.n_action_steps)
+                report_gripper_schedule(a, gt_rel, args.n_action_steps)
             else:
                 print(f"ep {ep} frame {args.frame}:")
                 print(f"   pred = {np.round(a, 4)}")
