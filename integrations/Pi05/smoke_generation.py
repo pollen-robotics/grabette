@@ -70,6 +70,27 @@ def main():
                         "activations: use a >=24GB card. A 16GB card OOMs.")
     args = p.parse_args()
 
+    if args.chunk_relative:
+        # Importing this module is what REGISTERS the steps: the
+        # @ProcessorStepRegistry.register decorators run at import time, and
+        # make_pre_post_processors() below resolves the checkpoint's step NAMES
+        # against that registry. Merely depending on the package is not enough,
+        # and importing grabette_chunkrel.chunk_relative (the maths) is not
+        # either — the decorators live here. Without it lerobot raises a bare
+        # KeyError naming every step except ours.
+        try:
+            import grabette_chunkrel.chunk_relative_processor  # noqa: F401
+        except ImportError as e:
+            raise SystemExit(
+                "This checkpoint's processor pipeline needs the grabette-chunkrel "
+                f"package ({e}).\\n"
+                "Install it where the policy loads:\\n"
+                "  uv pip install -e packages/grabette-chunkrel\\n"
+                "or, standalone:\\n"
+                "  uv run --with 'grabette-chunkrel @ git+https://github.com/"
+                "pollen-robotics/grabette#subdirectory=packages/grabette-chunkrel' ..."
+            ) from e
+
     cfg = PreTrainedConfig.from_pretrained(args.checkpoint)
     cfg.device = "cpu"  # load on CPU first, then cast + move
     if hasattr(cfg, "compile_model"):

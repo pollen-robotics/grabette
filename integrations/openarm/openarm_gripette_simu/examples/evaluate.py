@@ -1947,6 +1947,14 @@ def main():
     if chunk_relative_on:
         try:
             from grabette_chunkrel.chunk_relative import ChunkRelativeDeltas
+
+            # Importing the PROCESSOR module is what registers the steps: the
+            # @ProcessorStepRegistry.register decorators run at import time, and
+            # make_pre_post_processors() below resolves the checkpoint's step
+            # NAMES against that registry. The line above imports the maths only
+            # — the decorators are in chunk_relative_processor — so without this
+            # the checkpoint fails to load with a bare KeyError from lerobot.
+            import grabette_chunkrel.chunk_relative_processor  # noqa: F401
         except ImportError as e:
             raise SystemExit(
                 f"This checkpoint needs the grabette-chunkrel package ({e}).\n"
