@@ -1982,8 +1982,17 @@ def main():
         try:
             from ficelle_client import open_client
         except ImportError as e:
+            # An iroh ticket needs the [iroh] extra, and the old hint omitted it
+            # — so following it produced a second failure one line later. The
+            # address form says which is needed, so say the right one.
+            iroh = args.policy_addr.startswith("endpoint") and ":" not in args.policy_addr
             raise SystemExit(
-                "--policy_addr requires the ficelle_client package (uv pip install ./ficelle/client)"
+                "--policy_addr requires the ficelle_client package:\n"
+                f"  uv pip install -e '<ficelle>/client{'[iroh]' if iroh else ''}'\n"
+                + ("The [iroh] extra is required: this --policy_addr is an iroh "
+                   "ticket, not a host:port." if iroh else
+                   "A host:port address needs only the base package; add [iroh] "
+                   "for an iroh ticket.")
             ) from e
         client_kw = {"jpeg_quality": args.jpeg_quality, "resize": args.resize}
         if args.policy_addr.startswith("endpoint") and ":" not in args.policy_addr:
