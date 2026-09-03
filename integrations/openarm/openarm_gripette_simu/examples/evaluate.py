@@ -2003,15 +2003,32 @@ def main():
         client = open_client(args.policy_addr, **client_kw)
         metadata = client.metadata
         state_spec = metadata.get("observations", {}).get("observation.state", {})
-        if (metadata.get("action_dim") != 11
+        # 11D = per-step cartesian deltas [dp(3), dr6d(6), gripper(2)].
+        #  8D = chunk-relative offsets [pos(3), rotvec(3), gripper(2)], which this
+        #       loop differences into deltas itself — so the width that is correct
+        #       here depends on --chunk_relative, exactly as for a local
+        #       checkpoint. Checking against the server's metadata is the only
+        #       cross-check available on this path: there is no local checkpoint.
+        want_dim = 8 if chunk_relative is not None else 11
+        if (metadata.get("action_dim") != want_dim
                 or list(state_spec.get("frame_shape", [])) != [2]
                 or metadata.get("n_obs_steps") not in (1, 2)):
+            served = metadata.get("action_dim")
+            hint = ""
+            if served == 8 and chunk_relative is None:
+                hint = ("\nThis server is chunk-relative (8D). Pass "
+                        "--chunk_relative on.")
+            elif served == 11 and chunk_relative is not None:
+                hint = ("\nThis server serves per-step deltas (11D), but "
+                        "--chunk_relative is on. Pass --chunk_relative off.")
             raise SystemExit(
                 f"--policy_addr server at {args.policy_addr} reports action_dim="
-                f"{metadata.get('action_dim')}, state frame_shape="
+                f"{served}, state frame_shape="
                 f"{state_spec.get('frame_shape')}, n_obs_steps={metadata.get('n_obs_steps')} "
-                "— this eval only supports 11D-cartesian/2D-gripper-state policies "
-                "with n_obs_steps 1 (Pi0/Pi0.5 single frame) or 2 (Diffusion pair)."
+                f"— expected action_dim={want_dim}.{hint}\n"
+                "This eval supports 11D-cartesian (or 8D chunk-relative) actions "
+                "with 2D gripper state, and n_obs_steps 1 (Pi0/Pi0.5 single "
+                "frame) or 2 (Diffusion pair)."
             )
         joint_mode = False
         use_relative_proprio = False
