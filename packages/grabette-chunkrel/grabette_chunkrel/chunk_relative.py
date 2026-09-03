@@ -250,9 +250,23 @@ def _r6d_to_matrix(v: np.ndarray) -> np.ndarray:
 
 
 def rotvec_to_r6d(rotvec: np.ndarray) -> np.ndarray:
-    """Rotation vector -> the 6D encoding the arm service expects on the wire."""
+    """Rotation vector -> the 6D encoding the arm service expects on the wire.
+
+    The convention is the first two ROWS of the matrix, flattened, matching
+    `rotation_matrix_to_rotation_6d_numpy` in integrations/DiffusionPolicy —
+    which is what the working per-step-delta pipeline emits and therefore what
+    the arm's Gram-Schmidt decoder expects.
+
+    This was `m[:, :2].T` (the first two COLUMNS) and shipped to the robot: that
+    encodes the TRANSPOSE, i.e. the inverse rotation, so every commanded
+    rotation delta was backwards. It survived the tests because the decoder in
+    those tests was hand-written to the same column convention, so encoder and
+    decoder agreed with each other and disagreed with the arm. Do not verify
+    this function against a locally written decoder; verify it against
+    `rotation_6d_to_rotation_matrix_numpy`.
+    """
     m = Rotation.from_rotvec(np.asarray(rotvec, dtype=np.float64)).as_matrix()
-    return m[:, :2].T.reshape(6)
+    return m[:2, :].reshape(6)
 
 
 class ChunkRelativeDeltas:

@@ -13,7 +13,7 @@ prediction time.
 
 | | |
 |---|---|
-| **the idea** | sound in training, **but it failed on the robot** — see [P5 result](#p5-result-the-robot-ab-fails-2026-09-03). 0 grasps vs the baseline's first-try success. |
+| **the idea** | sound in training. The first robot attempts failed, but **those runs were invalid** — a wire-encoding bug inverted every commanded rotation. See [P5](#p5-result-the-robot-ab-fails-2026-09-03). Untested as of the fix. |
 | **LeRobot's built-in implementation** | **not usable for us** — 2 measured blockers below |
 | **a custom `ProcessorStep`** | doable, ~150–200 lines, no fork |
 
@@ -424,7 +424,61 @@ table at a time and do not try to steer by instruction.
 task-sensitive, same bar as the current checkpoint" — observation-conditioning
 passes outright, task-sensitivity is better than the current checkpoint.
 
-## P5 result: the robot A/B fails (2026-09-03)
+## P5, attempt 1: INVALID — inverted rotation on the wire (2026-09-03)
+
+**The first three robot runs do not measure the representation.** `rotvec_to_r6d`
+encoded the first two **columns** of the rotation matrix; the convention the arm
+decodes with — `rotation_matrix_to_rotation_6d_numpy`, which the working
+per-step-delta pipeline emits — is the first two **rows**. Columns-transposed is
+`R^T = R^-1`, so **every commanded rotation delta was inverted**.
+
+At 0.5-0.85 deg per step that is 12-21 deg of accumulated orientation error over
+a 25-50 action window, and since the arm applies `target_pos += R_target @
+delta_pos`, the position integration drifts with it. "Smooth but completely
+misses the target" is exactly the expected symptom.
+
+Found by comparing my conversion against `convert_dataset.compute_delta_actions`
+on real trajectories — the known-good path, since it drives the policies that
+work. Position agreed to 0.00000 mm; rotation disagreed at **every** step by
+**exactly twice** the raw step rotation (1.6930 vs 0.847 deg, 1.5841 vs 0.792,
+1.5319 vs 0.766 ...), with zero splices. A 2x angle is the signature of an
+inverse: `R^-1` compared against `R` gives `R^2`. After the fix: 0.00000 mm and
+0.00001 deg.
+
+**Why the tests missed it.** The decoder in the tests was hand-written to the
+same column convention as the encoder, so the two agreed with each other and
+disagreed with the arm. Every round-trip and every end-to-end test passed. I had
+written the decoder twice — in `test_chunk_relative_deltas.py` and in
+`test_chunk_relative_eval.py` — and both copies carried the same error, so the
+"end to end against the arm server's own algebra" test was checking my algebra
+against my mirror of it. `test_grip_assist.py` in this repo warns about exactly
+this ("an earlier mirrored-logic test grew a bug of its own and passed while the
+real code was wrong"); I cited the principle and then broke it.
+
+Now guarded by two tests that reference the real implementation rather than a
+local copy: `test_the_wire_encoding_matches_the_repo_convention` compares
+`rotvec_to_r6d` against `rotation_matrix_to_rotation_6d_numpy`, and
+`test_deltas_match_the_known_good_delta_pipeline` compares the whole conversion
+against `compute_delta_actions`. Restoring the old encoder fails 12 tests.
+
+### What survives from attempt 1
+
+The offline measurements do not involve the wire encoding and still stand:
+
+- offsets are accurate (2.9 / 5.8 mm mean; 50-action endpoint within a few mm);
+- grasp timing is learned (predicted close index 40 vs GT 39, 10 vs 8);
+- per-step SNR from differencing is 0.98 in the grasp phase;
+- endpoint error is constant with horizon, so err/net falls 0.27 -> 0.05 from
+  n_exec 5 -> 50;
+- `--n_action_steps 15` discards the close entirely when it lands at index 40.
+
+What is **no longer established** is that any of this is fatal. The horizon
+trade-off below was inferred from runs with inverted rotations, so the claim that
+"no setting of `--n_action_steps` fixes it" is unsupported. The `n=50` run was
+smooth, which is consistent with the jitter analysis being right about the
+translation; whether it can grasp with correct rotations is untested.
+
+## P5 result: the robot A/B fails (2026-09-03) — SUPERSEDED, see above
 
 **Chunk-relative: 0 grasps.** Two configurations, mustard bottle:
 

@@ -6,6 +6,8 @@ property the robot depends on; anything less would only be testing my arithmetic
 against itself.
 """
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -21,12 +23,22 @@ from grabette_chunkrel.chunk_relative import (
 
 
 def r6d_to_matrix(v):
-    """Same Gram-Schmidt the arm service uses to read dr6d off the wire."""
+    """Gram-Schmidt in the repo's ROW convention: the 6D vector is the first two
+    ROWS of the matrix (see rotation_6d_to_rotation_matrix_numpy in
+    integrations/DiffusionPolicy/rotation.py, which is what the arm decodes with).
+
+    This was written with `axis=1` — stacking the basis vectors as COLUMNS — and
+    it agreed with an encoder that had the same mistake. Encoder and decoder were
+    consistent with each other and inverted relative to the arm, so every test
+    here passed while the robot received backwards rotations. Hence
+    test_the_wire_encoding_matches_the_repo_convention below, which checks
+    against the real implementation rather than against this one.
+    """
     a1, a2 = np.asarray(v[:3], float), np.asarray(v[3:6], float)
     b1 = a1 / np.linalg.norm(a1)
     a2p = a2 - b1.dot(a2) * b1
     b2 = a2p / np.linalg.norm(a2p)
-    return np.stack([b1, b2, np.cross(b1, b2)], axis=1)
+    return np.stack([b1, b2, np.cross(b1, b2)], axis=0)
 
 
 def simulate_arm(deltas, start_pos, start_rot):
@@ -202,3 +214,90 @@ def test_a_spliced_chunk_follows_the_repaired_path():
         assert np.abs(pos - repaired[i, :3]).max() < 1e-6, f"position drift at {i}"
         err = (R.inv() * Rotation.from_rotvec(repaired[i, 3:6])).magnitude()
         assert np.rad2deg(err) < 1e-3, f"rotation drift at {i}"
+
+
+# ── the wire convention, checked against the REAL decoder ───────────────
+
+def _repo_rotation_module():
+    """integrations/DiffusionPolicy/rotation.py — the encoder the working
+    per-step-delta pipeline uses, hence the arm's convention."""
+    import importlib.util
+
+    path = (Path(__file__).resolve().parents[3] / "integrations" / "DiffusionPolicy"
+            / "rotation.py")
+    if not path.is_file():
+        pytest.skip("integrations/DiffusionPolicy/rotation.py not in this checkout")
+    spec = importlib.util.spec_from_file_location("_repo_rotation", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_the_wire_encoding_matches_the_repo_convention(seed):
+    """THE regression test for the bug that reached the robot.
+
+    rotvec_to_r6d used the first two COLUMNS while the pipeline the arm actually
+    decodes uses the first two ROWS, so every commanded rotation delta was the
+    inverse. Compare against the real implementation, never against a decoder
+    written here.
+    """
+    rot = _repo_rotation_module()
+    rv = np.random.default_rng(seed).normal(scale=0.5, size=3)
+    mine = np.asarray(rotvec_to_r6d(rv), float)
+    theirs = rot.rotation_matrix_to_rotation_6d_numpy(
+        Rotation.from_rotvec(rv).as_matrix().reshape(1, 3, 3))[0]
+    assert np.abs(mine - theirs).max() < 1e-9, (
+        f"wire convention disagrees with the repo/arm encoder\n"
+        f"  ours   {np.round(mine, 4)}\n  theirs {np.round(theirs, 4)}"
+    )
+
+
+def test_deltas_match_the_known_good_delta_pipeline():
+    """Equivalence with convert_dataset.compute_delta_actions, which drives the
+    per-step-delta policies that work on the robot.
+
+    Both must command the same motion from the same absolute poses:
+        chunk-relative:  A_{i-1}^-1 (a_i - a_{i-1}) = R_{i-1}^-1 (p_i - p_{i-1})
+        baseline:        actions[t] = R_t^-1 (p_{t+1} - p_t)
+    so ours at index i equals the baseline at t = i-1. This is the test that
+    localises a frame or convention error to one side or the other.
+    """
+    import importlib.util
+    import sys as _sys
+
+    root = Path(__file__).resolve().parents[3] / "integrations" / "DiffusionPolicy"
+    if not (root / "convert_dataset.py").is_file():
+        pytest.skip("integrations/DiffusionPolicy not in this checkout")
+    _sys.path.insert(0, str(root))
+    try:
+        rot = _repo_rotation_module()
+        spec = importlib.util.spec_from_file_location(
+            "_convert_dataset", root / "convert_dataset.py")
+        cd = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cd)
+    finally:
+        _sys.path.remove(str(root))
+
+    absolute = make_chunk(t=40, seed=5)
+    poses11 = np.zeros((len(absolute), 11), dtype=np.float32)
+    poses11[:, :3] = absolute[:, :3]
+    poses11[:, 3:9] = rot.rotvec_to_rotation_6d(absolute[:, 3:6])
+    poses11[:, 9:] = absolute[:, 6:8]
+    base = cd.compute_delta_actions(poses11, np.zeros(len(absolute), dtype=int))
+
+    rel, rep = to_chunk_relative(absolute)
+    assert rep["n_jumps_spliced"] == 0 and rep["n_rot_jumps_spliced"] == 0, (
+        "the splice repairs glitches the baseline does not, so a spliced chunk "
+        "is legitimately not comparable"
+    )
+    conv = ChunkRelativeDeltas()
+    mine = [conv.step(a) for a in rel]
+
+    for i in range(1, len(absolute) - 1):
+        assert np.abs(np.asarray(mine[i][0]) - base[i - 1, :3]).max() < 1e-6, (
+            f"position delta disagrees at index {i}")
+        a = Rotation.from_matrix(r6d_to_matrix(np.asarray(mine[i][1])))
+        b = Rotation.from_matrix(r6d_to_matrix(base[i - 1, 3:9]))
+        err = np.rad2deg((a.inv() * b).magnitude())
+        assert err < 1e-3, f"rotation delta disagrees at index {i} by {err:.4f} deg"

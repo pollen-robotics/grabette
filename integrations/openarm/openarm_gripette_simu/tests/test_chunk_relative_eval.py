@@ -155,11 +155,16 @@ def drive(ev, chunks, n_chunks, grasp_projection=None, chunk_relative=True):
 def replay(deltas, start_pos, start_rot):
     """The arm server's own algebra (grpc_server_real.SendCartesianDelta)."""
     def r6d(v):
+        """ROW convention — the 6D vector is the first two ROWS of the matrix,
+        matching rotation_6d_to_rotation_matrix_numpy, which is what the arm
+        decodes with. Written with axis=1 (columns) originally, agreeing with an
+        encoder that had the same error: both tests passed while the robot was
+        sent inverse rotations."""
         a1, a2 = np.asarray(v[:3]), np.asarray(v[3:6])
         b1 = a1 / np.linalg.norm(a1)
         a2p = a2 - b1.dot(a2) * b1
         b2 = a2p / np.linalg.norm(a2p)
-        return np.stack([b1, b2, np.cross(b1, b2)], axis=1)
+        return np.stack([b1, b2, np.cross(b1, b2)], axis=0)
 
     pos, R, out = np.asarray(start_pos, float).copy(), start_rot, []
     for dp, dr in deltas:
