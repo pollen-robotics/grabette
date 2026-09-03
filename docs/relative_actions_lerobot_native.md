@@ -13,7 +13,7 @@ prediction time.
 
 | | |
 |---|---|
-| **the idea** | **works** — grasped first try at `--n_action_steps 50` once a wire-encoding bug was fixed. n=1; see [P5 result](#p5-result-it-grasps-2026-09-03). |
+| **the idea** | **works**, and is *equivalent* to per-step deltas on this task — which is too easy to discriminate. Not worth its coupling cost on this evidence; see [P5 result](#p5-result-it-grasps-2026-09-03). |
 | **LeRobot's built-in implementation** | **not usable for us** — 2 measured blockers below |
 | **a custom `ProcessorStep`** | doable, ~150–200 lines, no fork |
 
@@ -500,6 +500,37 @@ gripper. Runs 1-3 measured a bug, not the idea.
 least matching the current checkpoint"). The baseline's record is 2/2 (red can,
 earlier session) plus 1/1 today. To call P5 passed the comparison needs several
 episodes per object, run one at a time.
+
+### Follow-up runs, and the limit of this A/B
+
+- **`--n_action_steps 15`, encoding fixed: the jitter is still there.** The one
+  offline prediction that survived the bug is confirmed on hardware. Short
+  horizons are not usable with this representation, and the reason is measured:
+  per-step SNR 0.98 in the grasp phase, because differencing shares `a_i`
+  between consecutive deltas with opposite sign.
+- **`--n_action_steps 50`: behaves well, and looks like the baseline.** Not
+  visibly better.
+
+**The task cannot tell them apart.** A single mustard bottle on a clear table,
+grasped from a fixed start pose, is comfortably within what per-step deltas
+already do — so "equivalent" is the most this experiment can conclude, whichever
+representation is actually better. The SNR argument predicts an advantage in
+*fitting fine motion*, which a task with this much tolerance will not expose.
+
+That matters for the adopt/park decision, because the costs are not symmetric.
+Chunk-relative needs the custom `ProcessorStep` importable wherever a checkpoint
+loads (Jobs container, ficelle, eval loop, offline gates — four places, each of
+which broke at least once here), and it needs `--n_action_steps >= 40`, i.e.
+about a second of open-loop execution per replan. Per-step deltas need none of
+that and run on stock upstream lerobot.
+
+**Recommendation: do not adopt as the default on this evidence.** Keep it behind
+`--chunk_relative` (default off, refuses to guess), keep the note, and revisit
+if a task appears that discriminates — tighter tolerance, longer horizon, or
+data where `--smooth-poses` was doing real work. The cleanest single test of the
+original claim, if it ever matters, is a delta baseline trained on *unsmoothed*
+poses: the SNR argument says chunk-relative should be the one that does not need
+the smoothing.
 
 ### What the offline measurements got right, and wrong
 
