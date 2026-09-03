@@ -13,7 +13,7 @@ prediction time.
 
 | | |
 |---|---|
-| **the idea** | sound, and likely better than our per-step deltas — see [Why it might win](#why-it-might-win) |
+| **the idea** | sound in training, **but it failed on the robot** — see [P5 result](#p5-result-the-robot-ab-fails-2026-09-03). 0 grasps vs the baseline's first-try success. |
 | **LeRobot's built-in implementation** | **not usable for us** — 2 measured blockers below |
 | **a custom `ProcessorStep`** | doable, ~150–200 lines, no fork |
 
@@ -423,6 +423,103 @@ table at a time and do not try to steer by instruction.
 **P4 verdict: pass.** The plan's bar was "observation-conditioned and
 task-sensitive, same bar as the current checkpoint" — observation-conditioning
 passes outright, task-sensitivity is better than the current checkpoint.
+
+## P5 result: the robot A/B fails (2026-09-03)
+
+**Chunk-relative: 0 grasps.** Two configurations, mustard bottle:
+
+| `--n_action_steps` | outcome |
+|---|---|
+| 15 | jerky motion; one close tick per replan, then reopen; arm ran 81 mm behind its target and the watchdog tripped |
+| 50 | smooth motion, but misses the object; when it reaches, the grasp misses |
+
+**Baseline (per-step deltas): grasped first time**, same object, same start pose,
+same session — run *after* the chunk-relative attempts specifically to rule out
+a scene change, which had been raised as a possible confounder. It is not the
+explanation.
+
+Per the plan's P5 criterion — "grasp success at least matching the current
+checkpoint. Anything less and the SNR argument did not translate" — this phase
+fails, and the plan says a failing phase stops rather than being worked around.
+
+### The mechanism, measured
+
+The representation was learned *well*. Offsets are accurate (gate: 2.9 mm and
+5.8 mm mean error; the 50-action endpoint predicted `[-6.9, -0.4, 27.2] mm`
+against GT `[-3.1, -2.9, 26.4]`), and the grasp timing is nearly exact
+(predicted close at chunk index 40 vs GT 39; index 10 vs GT 8).
+
+The failure is entirely in converting offsets into per-step motion:
+
+```
+offset prediction error        2.50 mm
+per-step motion, grasp phase   2.46 mm   -> per-step SNR 0.98
+per-step motion, dataset avg   3.83 mm   -> per-step SNR 1.53
+```
+
+Differencing gives `d_i = a_i - a_{i-1}`, so consecutive deltas share `a_i` with
+opposite sign and white offset error drives the lag-1 autocorrelation of the
+executed deltas toward -0.5. Measured on hardware: **-0.10 / -0.32 / -0.28** on
+x/y/z, and x travelled **40 mm of path for 0.5 mm of net displacement**
+(straightness 0.01). Confirmed offline on the checkpoint: ep200's y axis,
+straightness 0.00 and lag-1 -0.53.
+
+### Why no setting of `--n_action_steps` fixes it
+
+The endpoint error is roughly CONSTANT with horizon (2.3-2.7 mm over 40 real
+grasp-phase chunks), so a longer horizon spends the same error over more travel:
+
+| `n_exec` | net moved | err/net | replans | failure mode |
+|---|---|---|---|---|
+| 15 | 30.3 mm | 0.08 | 3.3/s | differencing jitter |
+| 25 | 41.6 mm | 0.06 | 2.0/s | untested |
+| 50 | 49.8 mm | 0.05 | 1.0/s | 1 s open-loop, targeting uncorrected |
+
+The two failure modes sit at **opposite ends of one dial**. Chunk-relative needs
+a long horizon to average out the offset error; a long horizon costs the visual
+feedback that corrects targeting. Per-step deltas replan continuously, which is
+why the baseline tolerated a changed scene (it grasped a paper cup trained in a
+different environment). And the horizon long enough to average the noise
+(>= 40) is the horizon over which the plan's own grasp command goes stale.
+
+Chunk smoothing (Savitzky-Golay over the chunk, gripper excluded) removes the
+jitter — lag-1 autocorr -0.39 -> +0.74, SNR 0.69 -> 1.21 on real trajectories
+with calibrated noise — but makes the motion *smooth*, not *accurate*. The
+information is not there.
+
+### What would have to change
+
+- **Offsets accurate to ~1.2 mm** (2x better) for per-step SNR 2, or ~0.8 mm
+  (3x) for SNR 3. That is a model/data question, not a representation one.
+- Or a task whose motion per step is much larger than 2.5 mm, where the SNR
+  arithmetic works out. The grasp phase is the worst case precisely because the
+  hand slows down for fine positioning.
+
+### What I got wrong
+
+The note previously said execution-time delta accumulation was "a separate,
+probably smaller effect, and is not the reason to expect a win". It is the
+**dominant** effect. The training-time SNR argument was right and verified
+(244 mm of supervised span against the baseline's 8 mm, ~30x better
+conditioned); it simply does not survive the conversion back to per-step
+commands that the arm interface requires.
+
+### What is worth keeping regardless
+
+Independent of the representation, this branch produced:
+
+- `--skip_stale` read pi05's dead `_queues[ACTION]` instead of `_action_queue`,
+  so it dropped chunk-head actions on *every* tick rather than once per replan.
+- `smoke_generation.py` now measures execution quality (per-axis straightness,
+  lag-1 autocorrelation, per-step SNR) and the gripper schedule against
+  `--n_action_steps`. Check 3 passed on a checkpoint that could not grasp, so
+  offset accuracy alone was never a sufficient gate.
+- `--task2` with a same-task re-sampling noise floor: task conditioning is
+  1.93-2.23x the floor, versus the baseline's 1.31x. Still WEAK — a dataset
+  property (one object per scene), not a representation one.
+- ficelle serves checkpoints with external processor steps, and drops
+  postprocessor steps that cannot run one action at a time.
+- `uv lock` was broken workspace-wide by an unguarded `lerobot==0.6.0` pin.
 
 ## Cost and what we give up
 
