@@ -220,6 +220,15 @@ def _write_card(dst_root: Path, repo_id: str | None = None) -> None:
     The viewer badge needs the repo id, which only exists at upload time — hence
     `repo_id`. Without it the card is still written (tags are the valuable part)
     and check_publish reports the missing viewer link.
+
+    CAVEAT: `LeRobotDataset.push_to_hub` REPLACES README.md with LeRobot's own
+    template, so this card does not survive that route — the template keeps a
+    correct viewer badge (set `ds.repo_id` before pushing) but carries only the
+    `LeRobot` tag, and check_publish then reports the missing `grasp-projection`
+    tag. After such a push the tags have to be merged back into the uploaded
+    card, preserving the template's `configs:` block, which drives the Hub
+    dataset viewer. This card survives an `hf upload`, which renders no template
+    of its own.
     """
     path = dst_root / "README.md"
     if path.exists():
