@@ -262,3 +262,35 @@ def test_capture_ignores_other_lines():
     h.emit(logging.LogRecord("x", logging.INFO, "f", 1,
                              "step:3K smpl:96K loss:0.013", None, None))
     assert state["loss"] is None
+
+
+# ── locating the action data ────────────────────────────────────────────
+
+def test_actions_are_found_from_a_local_root():
+    """Regression: the first run of this code fell back to the tail split with
+    'no action data found'. Only meta/ is downloaded when our hook runs — the
+    data and video files arrive inside the function we wrap, AFTER us — so
+    globbing the dataset root finds nothing on a fresh machine. It now resolves
+    each episode's parquet by name and fetches it if absent."""
+    root = Path("/home/steve/grabette-work/sugar_cup_chunkrel/graspproj")
+    if not root.is_dir():
+        pytest.skip("local sugar-cup build not present")
+    by_ep, meta = ck._actions_by_episode("local/sugar_graspproj_chunkrel", root)
+    assert len(by_ep) == 150, f"found {len(by_ep)} episodes, expected 150"
+    assert all(a.shape[1] == 8 for a in by_ep.values())
+
+
+def test_the_whole_selection_runs_end_to_end_locally():
+    """The path that actually failed in production: descriptors -> plan -> spread."""
+    root = Path("/home/steve/grabette-work/sugar_cup_chunkrel/graspproj")
+    if not root.is_dir():
+        pytest.skip("local sugar-cup build not present")
+    by_ep, meta = ck._actions_by_episode("local/sugar_graspproj_chunkrel", root)
+    names = (meta.features.get("action") or {}).get("names") or []
+    closure = next((i for i, n in enumerate(names) if str(n).lower() == "closure"), None)
+    assert closure == 7
+    desc = ck.episode_descriptors(by_ep, closure)
+    held = ck.plan_eval_split({"t": sorted(by_ep)}, desc, 0.15, "diverse")
+    assert len(held) == 23
+    assert ck.spread(desc, held) > ck.spread(desc, sorted(desc)), (
+        "the held-out set should cover MORE ground than the dataset average")

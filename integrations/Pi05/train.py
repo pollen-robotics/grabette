@@ -404,15 +404,37 @@ _orig_save_checkpoint = lerobot_train.save_checkpoint
 def _actions_by_episode(repo_id, root):
     """Per-episode action arrays, read straight from the parquet files.
 
-    Cheaper than building a second LeRobotDataset (make_dataset is about to build
-    one anyway) and it avoids decoding any video.
+    Only meta/ has been downloaded at this point: `make_dataset` -- which fetches
+    the data and video files -- runs inside the function we are wrapping, AFTER
+    this. So globbing the dataset root finds nothing on a fresh machine, which is
+    exactly how the first run of this code fell back to the tail split. Fetch the
+    data parquet explicitly instead; it is a few MB and no video is touched.
+
+    Avoids building a second LeRobotDataset, which would download everything.
     """
     import pandas as pd
     from lerobot.datasets.lerobot_dataset import LeRobotDatasetMetadata
 
     meta = LeRobotDatasetMetadata(repo_id, root=root)
-    frames = [pd.read_parquet(p, columns=["episode_index", "action"])
-              for p in sorted(Path(meta.root).rglob("data/**/*.parquet"))]
+    # DatasetInfo is a dataclass on newer lerobot and dict-style access is
+    # deprecated there; the pinned revision may be either.
+    try:
+        n_eps = int(meta.info.total_episodes)
+    except AttributeError:
+        n_eps = int(meta.info["total_episodes"])
+    rel = sorted({str(meta.get_data_file_path(e)) for e in range(n_eps)})
+
+    paths = []
+    for r in rel:
+        local = Path(meta.root) / r
+        if local.is_file():
+            paths.append(local)
+            continue
+        from huggingface_hub import hf_hub_download
+
+        paths.append(Path(hf_hub_download(repo_id, r, repo_type="dataset")))
+
+    frames = [pd.read_parquet(p, columns=["episode_index", "action"]) for p in paths]
     if not frames:
         return {}, meta
     df = pd.concat(frames, ignore_index=True)
@@ -463,7 +485,11 @@ def _make_train_eval_datasets(cfg):
             1000 * spread(descriptors, held),
             1000 * spread(descriptors, base))
     except Exception as e:  # noqa: BLE001 - never lose a run over the eval split
-        logging.warning("[eval-split] falling back to lerobot's tail split: %r", e)
+        logging.warning(
+            "[eval-split] FELL BACK to lerobot's STOCK TAIL SPLIT (%r). The "
+            "held-out episodes are the contiguous tail of the recording session "
+            "and the eval loss is a weak generalisation signal. Not fatal, but "
+            "this is not the split you asked for.", e)
         return _orig_make_datasets(cfg)
     return _orig_make_datasets(cfg)
 
