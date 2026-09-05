@@ -14,9 +14,24 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+pytest.importorskip("lerobot")
 
-import checkpointing as ck  # noqa: E402
+_PI05 = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_PI05))
+
+
+def _load_train():
+    """These helpers live inside train.py because `hf jobs uv run` uploads one
+    file. Load them from there rather than keeping a second copy to test."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_pi05_train", _PI05 / "train.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+ck = _load_train()
 
 
 # ── eval-set selection ──────────────────────────────────────────────────
