@@ -525,7 +525,10 @@ def _rewrite_last_push_target(argv):
     if not (repo and steps) or repo.endswith(f"_step{steps}"):
         return argv, repo
     target = f"{repo}_step{steps}"
-    logging.info("[checkpoints] last -> %s, best -> %s_best", target, repo)
+    # print, not logging: this runs before lerobot's main() configures logging,
+    # so a logging call here goes nowhere and the rewrite looks like it never
+    # happened. Observed on the first run with these patches.
+    print(f"[checkpoints] last -> {target}, best -> {repo}_best", flush=True)
     return [f"--policy.repo_id={target}" if a.startswith("--policy.repo_id=") else a
             for a in argv], repo
 
