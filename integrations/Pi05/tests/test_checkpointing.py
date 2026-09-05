@@ -294,3 +294,33 @@ def test_the_whole_selection_runs_end_to_end_locally():
     assert len(held) == 23
     assert ck.spread(desc, held) > ck.spread(desc, sorted(desc)), (
         "the held-out set should cover MORE ground than the dataset average")
+
+
+def test_capture_survives_lerobots_logging_reset():
+    """THE bug from the second run: lerobot's init_logging calls
+    logger.handlers.clear() on the root logger, so a handler installed before
+    main() is discarded — no [best] events, no pruning, and every save kept."""
+    root = logging.getLogger()
+    saved = list(root.handlers)
+    try:
+        root.handlers.clear()
+        ck._EVAL_STATE.update(step=None, loss=None)
+        ck._init_logging()
+        assert any(isinstance(h, ck.EvalLossCapture) for h in root.handlers)
+        logging.getLogger("x").info("step 750: eval_loss=0.0695")
+        assert ck._EVAL_STATE == {"step": 750, "loss": 0.0695}
+    finally:
+        root.handlers[:] = saved
+
+
+def test_capture_is_not_attached_twice():
+    root = logging.getLogger()
+    saved = list(root.handlers)
+    try:
+        root.handlers.clear()
+        ck._init_logging()
+        ck._init_logging()
+        n = sum(isinstance(h, ck.EvalLossCapture) for h in root.handlers)
+        assert n == 1, f"{n} capture handlers attached"
+    finally:
+        root.handlers[:] = saved

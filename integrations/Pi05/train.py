@@ -364,6 +364,7 @@ class BestCheckpointKeeper:
         self.best_step: int | None = None
         self.best_dir: Path | None = None
         self._prunable: Path | None = None
+        self._warned = False
 
     def offer(self, checkpoint_dir: Path, step: int, loss: float | None,
               final_step: int | None) -> None:
@@ -505,6 +506,13 @@ def _save_checkpoint(*args, **kwargs):
     if ckpt_dir is None or step is None:
         return
     loss = _EVAL_STATE["loss"] if _EVAL_STATE["step"] == step else None
+    if loss is None and _EVAL_STATE["step"] is None and not _KEEPER._warned:
+        _KEEPER._warned = True
+        logging.warning(
+            "[best] no eval_loss has been captured, so nothing can be selected "
+            "and NOTHING WILL BE PRUNED — every save_freq checkpoint will be "
+            "kept (9.35 GB each for pi05). Either --eval_steps is unset or the "
+            "log capture is not attached.")
     _KEEPER.offer(Path(ckpt_dir), int(step), loss,
                   getattr(cfg, "steps", None) if cfg is not None else None)
 
@@ -533,6 +541,25 @@ def _rewrite_last_push_target(argv):
             for a in argv], repo
 
 
+_orig_init_logging = lerobot_train.init_logging
+
+
+def _init_logging(*args, **kwargs):
+    """Re-attach the eval-loss capture after lerobot resets logging.
+
+    `init_logging` calls `logger.handlers.clear()` on the ROOT logger, so a
+    handler installed before `main()` is silently discarded — which is exactly
+    what happened on the first run: no [best] events, no pruning, and 16
+    checkpoints of 9.35 GB each heading for the bucket. Re-adding it here is the
+    only placement that survives.
+    """
+    _orig_init_logging(*args, **kwargs)
+    root = logging.getLogger()
+    if not any(isinstance(h, EvalLossCapture) for h in root.handlers):
+        root.addHandler(EvalLossCapture(_EVAL_STATE))
+    print("[checkpoints] eval-loss capture attached", flush=True)
+
+
 def _push_best(repo_id):
     """Upload the best checkpoint's pretrained_model/ as a loadable repo."""
     if not (_SAVE_BEST and repo_id and _KEEPER.best_dir):
@@ -558,9 +585,9 @@ policy_factory.make_pre_post_processors = _fresh_pipeline
 lerobot_train.make_pre_post_processors = _fresh_pipeline
 lerobot_train.make_train_eval_datasets = _make_train_eval_datasets
 lerobot_train.save_checkpoint = _save_checkpoint
+lerobot_train.init_logging = _init_logging
 
 if __name__ == "__main__":
-    logging.getLogger().addHandler(EvalLossCapture(_EVAL_STATE))
     _base_repo = None
     if _SAVE_BEST:
         sys.argv, _base_repo = _rewrite_last_push_target(sys.argv)
