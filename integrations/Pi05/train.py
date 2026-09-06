@@ -377,6 +377,19 @@ class BestCheckpointKeeper:
         if loss is None:
             return  # not an eval step: leave the cadence save alone
         if loss < self.best_loss:
+            # Read a byte of the weights NOW. On a bucket mount the write can
+            # appear to succeed and the read fail hours later with EIO, which is
+            # how a 13-hour run ended with an empty _best repo.
+            weights = checkpoint_dir / "pretrained_model" / "model.safetensors"
+            try:
+                with open(weights, "rb") as fh:
+                    fh.read(1)
+            except OSError as e:
+                logger.error(
+                    "[best] step %d saved but its weights are NOT READABLE "
+                    "(%r). --output_dir is probably a bucket mount; move it to "
+                    "local disk or this run will produce no best checkpoint.",
+                    step, e)
             stale = self.best_dir
             self.best_loss, self.best_step, self.best_dir = loss, step, checkpoint_dir
             (checkpoint_dir / "grabette_best.json").write_text(json.dumps(
@@ -397,6 +410,7 @@ _EVAL_SELECT = os.environ.get("GRABETTE_EVAL_SELECT", "diverse").lower()
 _SAVE_BEST = os.environ.get("GRABETTE_SAVE_BEST", "1").lower() not in ("0", "false", "no")
 
 _EVAL_STATE: dict = {"step": None, "loss": None}
+_BASE_REPO: dict = {"id": None, "pushed_step": None}
 _KEEPER = BestCheckpointKeeper()
 _orig_make_datasets = lerobot_train.make_train_eval_datasets
 _orig_save_checkpoint = lerobot_train.save_checkpoint
@@ -506,6 +520,17 @@ def _save_checkpoint(*args, **kwargs):
     if ckpt_dir is None or step is None:
         return
     loss = _EVAL_STATE["loss"] if _EVAL_STATE["step"] == step else None
+    if loss is not None and loss < _KEEPER.best_loss:
+        # Upload NOW rather than at the end of training. The checkpoint has just
+        # been written, and deferring cost us a 13-hour run: --output_dir was on
+        # the bucket FUSE mount, which cannot hold 9.35 GB files, so reading the
+        # step-1000 checkpoint back 12 hours later raised OSError(EIO) and the
+        # best model was lost. Pushing on selection also means a job that dies
+        # mid-run still leaves its best checkpoint on the Hub — and the Hub is
+        # the only storage here that demonstrably keeps weights.
+        _pending_push = Path(str(ckpt_dir))
+    else:
+        _pending_push = None
     if loss is None and _EVAL_STATE["step"] is None and not _KEEPER._warned:
         _KEEPER._warned = True
         logging.warning(
@@ -515,6 +540,8 @@ def _save_checkpoint(*args, **kwargs):
             "log capture is not attached.")
     _KEEPER.offer(Path(ckpt_dir), int(step), loss,
                   getattr(cfg, "steps", None) if cfg is not None else None)
+    if _pending_push is not None and _BASE_REPO["id"]:
+        _upload_best(_pending_push, _BASE_REPO["id"], int(step), float(loss))
 
 
 def _rewrite_last_push_target(argv):
@@ -560,24 +587,44 @@ def _init_logging(*args, **kwargs):
     print("[checkpoints] eval-loss capture attached", flush=True)
 
 
+def _upload_best(ckpt_dir, repo_id, step, loss):
+    """Upload one checkpoint's pretrained_model/ as a loadable model repo.
+
+    Never raises: a failed upload must not kill a training run that is otherwise
+    fine. It logs loudly instead, and names the step so the checkpoint can be
+    recovered by hand.
+    """
+    folder = Path(ckpt_dir) / "pretrained_model"
+    target = f"{repo_id}_best"
+    try:
+        if not folder.is_dir():
+            raise FileNotFoundError(folder)
+        from huggingface_hub import HfApi
+
+        api = HfApi()
+        api.create_repo(target, repo_type="model", exist_ok=True)
+        api.upload_folder(
+            folder_path=str(folder), repo_id=target, repo_type="model",
+            commit_message=f"best on eval: step {step} (eval_loss={loss:.4f})")
+        _BASE_REPO["pushed_step"] = step
+        logging.info("[best] pushed step %d (eval_loss=%.4f) -> %s",
+                     step, loss, target)
+    except Exception as e:  # noqa: BLE001
+        logging.error(
+            "[best] FAILED to push step %d to %s: %r. Training continues. If "
+            "--output_dir is on a bucket mount, move it to local disk: that "
+            "mount does not reliably hold multi-GB files.", step, target, e)
+
+
 def _push_best(repo_id):
-    """Upload the best checkpoint's pretrained_model/ as a loadable repo."""
+    """End-of-run fallback: push the best only if the on-selection push missed."""
     if not (_SAVE_BEST and repo_id and _KEEPER.best_dir):
         return
-    folder = Path(_KEEPER.best_dir) / "pretrained_model"
-    if not folder.is_dir():
-        logging.warning("[best] %s missing; nothing pushed", folder)
+    if _BASE_REPO.get("pushed_step") == _KEEPER.best_step:
+        logging.info("[best] step %d already pushed during training",
+                     _KEEPER.best_step)
         return
-    from huggingface_hub import HfApi
-
-    target = f"{repo_id}_best"
-    api = HfApi()
-    api.create_repo(target, repo_type="model", exist_ok=True)
-    api.upload_folder(folder_path=str(folder), repo_id=target, repo_type="model",
-                      commit_message=f"best on eval: step {_KEEPER.best_step} "
-                                     f"(eval_loss={_KEEPER.best_loss:.4f})")
-    logging.info("[best] pushed step %d (eval_loss=%.4f) -> %s",
-                 _KEEPER.best_step, _KEEPER.best_loss, target)
+    _upload_best(_KEEPER.best_dir, repo_id, _KEEPER.best_step, _KEEPER.best_loss)
 
 
 # Patch both the factory and the reference lerobot_train imported.
@@ -588,10 +635,9 @@ lerobot_train.save_checkpoint = _save_checkpoint
 lerobot_train.init_logging = _init_logging
 
 if __name__ == "__main__":
-    _base_repo = None
     if _SAVE_BEST:
-        sys.argv, _base_repo = _rewrite_last_push_target(sys.argv)
+        sys.argv, _BASE_REPO["id"] = _rewrite_last_push_target(sys.argv)
     try:
         lerobot_train.main()
     finally:
-        _push_best(_base_repo)
+        _push_best(_BASE_REPO["id"])

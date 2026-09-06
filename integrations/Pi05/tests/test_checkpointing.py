@@ -324,3 +324,64 @@ def test_capture_is_not_attached_twice():
         assert n == 1, f"{n} capture handlers attached"
     finally:
         root.handlers[:] = saved
+
+
+# ── the best checkpoint must survive an unreliable output_dir ───────────
+
+def _ckpt(tmp_path, step, weights=b"x" * 16):
+    d = tmp_path / f"{step:06d}" / "pretrained_model"
+    d.mkdir(parents=True)
+    (d / "model.safetensors").write_bytes(weights)
+    (d / "config.json").write_text("{}")
+    return d.parent
+
+
+def test_unreadable_weights_are_reported_at_selection(tmp_path, caplog):
+    """The 13-hour loss: --output_dir was a bucket mount, the write appeared to
+    succeed, and the read failed with EIO twelve hours later. The check must fire
+    when the checkpoint is selected, not when the run ends."""
+    d = _ckpt(tmp_path, 1000)
+    w = d / "pretrained_model" / "model.safetensors"
+    w.unlink()
+    w.mkdir()          # a path that exists but cannot be read as a file
+    k = ck.BestCheckpointKeeper()
+    with caplog.at_level(logging.ERROR):
+        k.offer(d, 1000, 0.05, 20000)
+    assert "NOT READABLE" in caplog.text
+    assert k.best_step == 1000, "selection should still proceed"
+
+
+def test_readable_weights_are_silent(tmp_path, caplog):
+    k = ck.BestCheckpointKeeper()
+    with caplog.at_level(logging.ERROR):
+        k.offer(_ckpt(tmp_path, 1000), 1000, 0.05, 20000)
+    assert "NOT READABLE" not in caplog.text
+
+
+def test_upload_failure_does_not_kill_training(tmp_path, caplog, monkeypatch):
+    """An upload problem must never take down an otherwise healthy run."""
+    d = _ckpt(tmp_path, 1000)
+
+    class Boom:
+        def create_repo(self, *a, **k):
+            pass
+
+        def upload_folder(self, *a, **k):
+            raise OSError(5, "Input/output error")
+
+    monkeypatch.setitem(__import__("sys").modules, "huggingface_hub",
+                        type("m", (), {"HfApi": Boom})())
+    with caplog.at_level(logging.ERROR):
+        ck._upload_best(d, "user/model", 1000, 0.05)      # must not raise
+    assert "FAILED to push step 1000" in caplog.text
+    assert "bucket mount" in caplog.text, "should name the likely cause"
+
+
+def test_end_of_run_push_is_skipped_when_already_pushed(tmp_path, caplog):
+    ck._KEEPER.best_dir = _ckpt(tmp_path, 1000)
+    ck._KEEPER.best_step = 1000
+    ck._KEEPER.best_loss = 0.05
+    ck._BASE_REPO["pushed_step"] = 1000
+    with caplog.at_level(logging.INFO):
+        ck._push_best("user/model")
+    assert "already pushed during training" in caplog.text
