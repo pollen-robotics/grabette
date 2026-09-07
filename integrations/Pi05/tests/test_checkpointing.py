@@ -385,3 +385,51 @@ def test_end_of_run_push_is_skipped_when_already_pushed(tmp_path, caplog):
     with caplog.at_level(logging.INFO):
         ck._push_best("user/model")
     assert "already pushed during training" in caplog.text
+
+
+# ── the diagnostics must work for BOTH representations ─────────────────
+
+def _smoke():
+    import importlib.util
+    p = _PI05 / "smoke_generation.py"
+    spec = importlib.util.spec_from_file_location("_sg", p)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_delta_representation_is_not_differenced(capsys):
+    """Per-step deltas ARE the motion. Differencing them would invent noise that
+    is not there and make the two representations look falsely alike — which is
+    the comparison this whole exercise turns on."""
+    sg = _smoke()
+    K = 50
+    gt = np.zeros((K, 11))
+    gt[:, 2] = 0.00283            # a clean 2.83 mm/step descent
+    sg.report_execution_quality(gt.copy(), gt, 50, differenced=False)
+    out = capsys.readouterr().out
+    assert "2.83" in out, "the per-step motion should be reported as-is"
+    assert "SNR exact" in out, "a perfect prediction must not show residual error"
+
+
+def test_differencing_is_still_applied_for_chunk_relative(capsys):
+    sg = _smoke()
+    K = 50
+    gt = np.zeros((K, 8))
+    gt[:, 2] = np.arange(K) * 0.00283      # offsets, so the STEP is the diff
+    sg.report_execution_quality(gt.copy(), gt, 50, differenced=True)
+    out = capsys.readouterr().out
+    assert "2.83" in out, "differencing offsets should recover the 2.83 mm step"
+
+
+def test_gripper_schedule_is_width_agnostic(capsys):
+    """Closure is the LAST channel in both layouts (index 7 of 8, index 10 of
+    11), so the schedule report must work unchanged on either."""
+    sg = _smoke()
+    for width in (8, 11):
+        a = np.zeros((50, width))
+        a[:, -1] = 0.16
+        a[30:, -1] = 1.0
+        sg.report_gripper_schedule(a.copy(), a, 50)
+        out = capsys.readouterr().out
+        assert "pred index 30, GT index 30" in out, f"failed at width {width}"

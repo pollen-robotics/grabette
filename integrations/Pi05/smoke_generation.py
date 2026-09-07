@@ -42,7 +42,7 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
 
-def report_execution_quality(pred, gt_rel, n_exec):
+def report_execution_quality(pred, gt_rel, n_exec, differenced=True):
     """What the ROBOT gets, which is not what check 3 measures.
 
     Execution needs per-step motion, obtained by differencing consecutive chunk
@@ -72,7 +72,15 @@ def report_execution_quality(pred, gt_rel, n_exec):
         return float((c[:-1] * c[1:]).sum() / denom)
 
     m = min(len(pred), len(gt_rel))
-    dp, dg = np.diff(pred[:m, :3], axis=0), np.diff(gt_rel[:m, :3], axis=0)
+    if differenced:
+        # Chunk-relative: the actions are OFFSETS from the chunk reference, so
+        # the per-step motion is their difference.
+        dp, dg = np.diff(pred[:m, :3], axis=0), np.diff(gt_rel[:m, :3], axis=0)
+    else:
+        # Per-step deltas: the actions ARE the motion. No differencing, and
+        # therefore none of the differencing noise — which is the whole point of
+        # comparing the two representations here.
+        dp, dg = pred[:m, :3], gt_rel[:m, :3]
     print("   -- executed deltas (what the arm actually receives), mm --")
     print(f"   {'axis':>6} {'demo/step':>10} {'pred/step':>10} {'scatter':>9} "
           f"{'straightness':>13} {'lag-1 ac':>9}")
@@ -278,6 +286,26 @@ def main():
                 print(f"ep {ep} frame {args.frame}:")
                 print(f"   pred = {np.round(a, 4)}")
                 print(f"   GT   = {np.round(gt[: len(a)], 4)}")
+                # The same chunk-level diagnostics, for the per-step-delta
+                # representation. Without these the two representations cannot
+                # be compared offline at all — which is what made the first
+                # attempt at this A/B uninformative.
+                policy.reset()
+                with torch.no_grad():
+                    chunk = post(policy.predict_action_chunk(pre(batch))
+                                 ).squeeze(0).float().cpu().numpy()
+                idx = min(args.frame, len(ds) - 1)
+                gt_chunk = np.stack([np.asarray(ds[j]["action"], dtype=np.float64)
+                                     for j in range(idx, min(idx + len(chunk),
+                                                             len(ds)))])
+                n_pred = chunk.shape[0]
+                m = min(len(gt_chunk), n_pred)
+                err = np.linalg.norm(chunk[:m, :3] - gt_chunk[:m, :3], axis=1)
+                print(f"   chunk of {n_pred} ({m} GT frames): per-step error "
+                      f"mean {err.mean() * 1000:5.2f} mm | max {err.max() * 1000:5.2f} mm")
+                report_execution_quality(chunk, gt_chunk, args.n_action_steps,
+                                         differenced=False)
+                report_gripper_schedule(chunk, gt_chunk, args.n_action_steps)
             outs.append(comparable(a))
         except AssertionError as e:
             print(f"ep {ep}: DEGENERATE GENERATION — {str(e)[:200]}")
