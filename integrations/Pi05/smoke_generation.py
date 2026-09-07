@@ -288,8 +288,8 @@ def main():
                       f"| GT {np.round(gt_rel[0, 6:], 4)}")
                 q = report_execution_quality(a, gt_rel, args.n_action_steps)
                 g = report_gripper_schedule(a, gt_rel, args.n_action_steps)
-                rows.append({"ep": ep, "pos_err_mm": float(pos_err.mean()),
-                             "pos_max_mm": float(pos_err.max()), **q, **g})
+                rows.append({"ep": ep, "chunk_err_mm": float(pos_err.mean()) * 1000,
+                             "chunk_max_mm": float(pos_err.max()) * 1000, **q, **g})
             else:
                 print(f"ep {ep} frame {args.frame}:")
                 print(f"   pred = {np.round(a, 4)}")
@@ -314,8 +314,8 @@ def main():
                 q = report_execution_quality(chunk, gt_chunk, args.n_action_steps,
                                              differenced=False)
                 g = report_gripper_schedule(chunk, gt_chunk, args.n_action_steps)
-                rows.append({"ep": ep, "pos_err_mm": float(err.mean()),
-                             "pos_max_mm": float(err.max()), **q, **g})
+                rows.append({"ep": ep, "chunk_err_mm": float(err.mean()) * 1000,
+                             "chunk_max_mm": float(err.max()) * 1000, **q, **g})
             outs.append(comparable(a))
         except AssertionError as e:
             print(f"ep {ep}: DEGENERATE GENERATION — {str(e)[:200]}")
@@ -327,7 +327,13 @@ def main():
     print()
     if rows:
         print("=== summary across episodes ===")
-        print(f"  {'ep':>5} {'pos err':>9} {'pos max':>9} {'step err':>9} "
+        # `chunk err` is NOT comparable across representations: for
+        # chunk-relative it is the error in an OFFSET from the chunk reference
+        # (which accumulates over 50 steps), for per-step deltas it is a single
+        # step. `step err` — the motion the arm actually executes, in mm — is
+        # the column to compare. Reading the wrong one made chunk-relative look
+        # 20x worse than it is.
+        print(f"  {'ep':>5} {'chunk err':>10} {'chunk max':>10} {'STEP err':>9} "
               f"{'SNR':>6} {'close pred':>11} {'close GT':>9} {'timing':>8}")
         tim = []
         for r in rows:
@@ -337,12 +343,22 @@ def main():
                 d = r["pred_close"] - r["gt_close"]
                 tim.append(d)
                 t = f"{d:+d}"
-            print(f"  {r['ep']:>5} {r['pos_err_mm']:8.2f}m {r['pos_max_mm']:8.2f}m "
-                  f"{r['step_err_mm']:8.2f}m {r['snr']:6.2f} "
+            print(f"  {r['ep']:>5} {r['chunk_err_mm']:9.1f} {r['chunk_max_mm']:10.1f} "
+                  f"{r['step_err_mm'] * 1000:8.2f} {r['snr']:6.2f} "
                   f"{str(r['pred_close']):>11} {str(r['gt_close']):>9} {t:>8}")
-        pe = np.array([r["pos_err_mm"] for r in rows])
-        print(f"  position error   median {np.median(pe):6.2f} mm  "
-              f"range {pe.min():.2f}..{pe.max():.2f}")
+        ce = np.array([r["chunk_err_mm"] for r in rows])
+        se = np.array([r["step_err_mm"] * 1000 for r in rows])
+        print(f"  chunk error      median {np.median(ce):6.1f} mm  "
+              f"range {ce.min():.1f}..{ce.max():.1f}   "
+              f"(NOT comparable across representations)")
+        print(f"  STEP error       median {np.median(se):6.2f} mm  "
+              f"range {se.min():.2f}..{se.max():.2f}   "
+              f"<- the comparable one: mm of executed motion")
+        n_none = sum(1 for r in rows if r["pred_close"] is None)
+        if n_none:
+            print(f"  NEVER CLOSES     {n_none} of {len(rows)} episodes — a "
+                  f"grasp that is never commanded cannot be mistimed, so these "
+                  f"are excluded from the timing median below")
         if tim:
             tim = np.array(tim)
             print(f"  timing error     median {np.median(tim):+.1f} frames  "

@@ -460,3 +460,22 @@ def test_gripper_schedule_reports_no_close_as_none():
     gt[28:, 7] = 1.0
     g = sg.report_gripper_schedule(a, gt, 50)
     assert g["pred_close"] is None and g["gt_close"] == 28
+
+
+def test_step_error_is_returned_in_metres_and_shown_in_mm():
+    """The summary printed metres with an 'm' suffix that read as millimetres,
+    so a 1.9 mm error displayed as 0.00 and the delta model looked perfect.
+    Pin the unit at the boundary."""
+    sg = _smoke()
+    K = 20
+    gt = np.zeros((K, 8))
+    gt[:, 2] = np.arange(K) * 0.010      # 10 mm per step
+    pred = gt.copy()
+    pred[:, 0] += 0.002                  # a constant 2 mm offset -> 0 step error
+    q = sg.report_execution_quality(pred, gt, 20)
+    assert q["step_err_mm"] < 1e-6, "a constant offset is not a per-step error"
+    bad = gt.copy()
+    bad[:, 2] = np.arange(K) * 0.012     # 12 mm per step -> 2 mm step error
+    q2 = sg.report_execution_quality(bad, gt, 20)
+    assert 0.0015 < q2["step_err_mm"] < 0.0025, (
+        f"expected ~0.002 (metres), got {q2['step_err_mm']}")
