@@ -344,10 +344,10 @@ def main():
                 tim.append(d)
                 t = f"{d:+d}"
             print(f"  {r['ep']:>5} {r['chunk_err_mm']:9.1f} {r['chunk_max_mm']:10.1f} "
-                  f"{r['step_err_mm'] * 1000:8.2f} {r['snr']:6.2f} "
+                  f"{r['step_err_mm']:8.2f} {r['snr']:6.2f} "
                   f"{str(r['pred_close']):>11} {str(r['gt_close']):>9} {t:>8}")
         ce = np.array([r["chunk_err_mm"] for r in rows])
-        se = np.array([r["step_err_mm"] * 1000 for r in rows])
+        se = np.array([r["step_err_mm"] for r in rows])   # already mm
         print(f"  chunk error      median {np.median(ce):6.1f} mm  "
               f"range {ce.min():.1f}..{ce.max():.1f}   "
               f"(NOT comparable across representations)")

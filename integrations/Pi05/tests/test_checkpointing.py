@@ -462,10 +462,14 @@ def test_gripper_schedule_reports_no_close_as_none():
     assert g["pred_close"] is None and g["gt_close"] == 28
 
 
-def test_step_error_is_returned_in_metres_and_shown_in_mm():
-    """The summary printed metres with an 'm' suffix that read as millimetres,
-    so a 1.9 mm error displayed as 0.00 and the delta model looked perfect.
-    Pin the unit at the boundary."""
+def test_step_error_is_returned_in_millimetres():
+    """Pin the unit at the return boundary.
+
+    Two bugs lived here. The summary printed the CHUNK error (metres) with an
+    'm' suffix that read as millimetres, so the delta model's 1.9 mm showed as
+    0.00 and looked perfect. Fixing that, I then multiplied step_err_mm by 1000
+    as well — but it is already millimetres, so it would have printed 2610 mm.
+    This test caught the second bug."""
     sg = _smoke()
     K = 20
     gt = np.zeros((K, 8))
@@ -477,5 +481,5 @@ def test_step_error_is_returned_in_metres_and_shown_in_mm():
     bad = gt.copy()
     bad[:, 2] = np.arange(K) * 0.012     # 12 mm per step -> 2 mm step error
     q2 = sg.report_execution_quality(bad, gt, 20)
-    assert 0.0015 < q2["step_err_mm"] < 0.0025, (
-        f"expected ~0.002 (metres), got {q2['step_err_mm']}")
+    assert 1.5 < q2["step_err_mm"] < 2.5, (
+        f"expected ~2.0 mm, got {q2['step_err_mm']}")
