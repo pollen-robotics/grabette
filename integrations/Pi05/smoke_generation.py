@@ -105,6 +105,7 @@ def report_execution_quality(pred, gt_rel, n_exec, differenced=True):
         print(f"   over the {n_exec} actions --n_action_steps would execute: "
               f"net {np.linalg.norm(de.sum(axis=0)) * 1000:.1f} mm of "
               f"{np.abs(de).sum() * 1000:.1f} mm travelled")
+    return {"step_err_mm": float(err.mean()), "snr": float(snr)}
 
 
 def report_gripper_schedule(pred, gt_rel, n_exec):
@@ -140,6 +141,7 @@ def report_gripper_schedule(pred, gt_rel, n_exec):
               f"replan. Raise --n_action_steps above {fp}.")
     else:
         print(f"   -> the close falls inside the executed window (0..{n_exec - 1}).")
+    return {"pred_close": fp, "gt_close": fg}
 
 
 def main():
@@ -147,8 +149,11 @@ def main():
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--dataset_repo_id", required=True)
     p.add_argument("--dataset_root", default=None)
-    p.add_argument("--episodes", type=int, nargs=2, default=[0, 5],
-                   help="Two episodes to probe (different scenes)")
+    p.add_argument("--episodes", type=int, nargs="+", default=[0, 5],
+                   help="Episodes to probe (2 or more, different scenes). More "
+                        "than two turns the per-episode diagnostics into a "
+                        "SUMMARY with a median and a range, which is what a "
+                        "grasp-timing claim needs — two episodes is an anecdote.")
     p.add_argument("--frame", type=int, default=10, help="Frame index within each episode")
     p.add_argument("--task", default="pick", help="Task string (must match training)")
     p.add_argument("--task2", default=None,
@@ -242,6 +247,7 @@ def main():
         return a[1:].reshape(-1) if args.chunk_relative else a
 
     outs = []
+    rows = []          # per-episode diagnostics, for the summary
     first_batch = None
     for ep in args.episodes:
         ds = LeRobotDataset(args.dataset_repo_id, root=args.dataset_root, episodes=[ep])
@@ -280,8 +286,10 @@ def main():
                       f"| max {pos_err.max() * 1000:6.1f} mm")
                 print(f"   gripper pred[0]     = {np.round(a[0, 6:], 4)} "
                       f"| GT {np.round(gt_rel[0, 6:], 4)}")
-                report_execution_quality(a, gt_rel, args.n_action_steps)
-                report_gripper_schedule(a, gt_rel, args.n_action_steps)
+                q = report_execution_quality(a, gt_rel, args.n_action_steps)
+                g = report_gripper_schedule(a, gt_rel, args.n_action_steps)
+                rows.append({"ep": ep, "pos_err_mm": float(pos_err.mean()),
+                             "pos_max_mm": float(pos_err.max()), **q, **g})
             else:
                 print(f"ep {ep} frame {args.frame}:")
                 print(f"   pred = {np.round(a, 4)}")
@@ -303,9 +311,11 @@ def main():
                 err = np.linalg.norm(chunk[:m, :3] - gt_chunk[:m, :3], axis=1)
                 print(f"   chunk of {n_pred} ({m} GT frames): per-step error "
                       f"mean {err.mean() * 1000:5.2f} mm | max {err.max() * 1000:5.2f} mm")
-                report_execution_quality(chunk, gt_chunk, args.n_action_steps,
-                                         differenced=False)
-                report_gripper_schedule(chunk, gt_chunk, args.n_action_steps)
+                q = report_execution_quality(chunk, gt_chunk, args.n_action_steps,
+                                             differenced=False)
+                g = report_gripper_schedule(chunk, gt_chunk, args.n_action_steps)
+                rows.append({"ep": ep, "pos_err_mm": float(err.mean()),
+                             "pos_max_mm": float(err.max()), **q, **g})
             outs.append(comparable(a))
         except AssertionError as e:
             print(f"ep {ep}: DEGENERATE GENERATION — {str(e)[:200]}")
@@ -315,9 +325,42 @@ def main():
             outs.append(None)
 
     print()
-    if all(o is not None for o in outs):
-        diff = float(np.abs(np.asarray(outs[0]) - np.asarray(outs[1])).mean())
-        print(f"mean |a(ep{args.episodes[0]}) - a(ep{args.episodes[1]})| = {diff:.6f}")
+    if rows:
+        print("=== summary across episodes ===")
+        print(f"  {'ep':>5} {'pos err':>9} {'pos max':>9} {'step err':>9} "
+              f"{'SNR':>6} {'close pred':>11} {'close GT':>9} {'timing':>8}")
+        tim = []
+        for r in rows:
+            if r["pred_close"] is None or r["gt_close"] is None:
+                t = "-"
+            else:
+                d = r["pred_close"] - r["gt_close"]
+                tim.append(d)
+                t = f"{d:+d}"
+            print(f"  {r['ep']:>5} {r['pos_err_mm']:8.2f}m {r['pos_max_mm']:8.2f}m "
+                  f"{r['step_err_mm']:8.2f}m {r['snr']:6.2f} "
+                  f"{str(r['pred_close']):>11} {str(r['gt_close']):>9} {t:>8}")
+        pe = np.array([r["pos_err_mm"] for r in rows])
+        print(f"  position error   median {np.median(pe):6.2f} mm  "
+              f"range {pe.min():.2f}..{pe.max():.2f}")
+        if tim:
+            tim = np.array(tim)
+            print(f"  timing error     median {np.median(tim):+.1f} frames  "
+                  f"range {tim.min():+d}..{tim.max():+d}  "
+                  f"|median| {np.median(np.abs(tim)):.1f}")
+            print(f"                   at ~4.8 mm/step that is "
+                  f"{np.median(np.abs(tim)) * 4.8:.0f} mm of misjudged arrival")
+        else:
+            print("  timing: no close detected in any chunk — check --frame")
+        print()
+
+    if all(o is not None for o in outs) and len(outs) >= 2:
+        # Mean over ALL pairs, so the number means the same thing for any count.
+        pairs = [float(np.abs(np.asarray(outs[i]) - np.asarray(outs[j])).mean())
+                 for i in range(len(outs)) for j in range(i + 1, len(outs))]
+        diff = float(np.mean(pairs))
+        print(f"mean pairwise |a(ep_i) - a(ep_j)| over {len(pairs)} pair(s) "
+              f"= {diff:.6f}")
         if diff > 1e-6:
             print("VERDICT: PASS — well-formed, input-dependent generation. "
                   "Worth a robot session (open-loop only; run the DiffusionPolicy "

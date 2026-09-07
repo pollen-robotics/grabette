@@ -433,3 +433,30 @@ def test_gripper_schedule_is_width_agnostic(capsys):
         sg.report_gripper_schedule(a.copy(), a, 50)
         out = capsys.readouterr().out
         assert "pred index 30, GT index 30" in out, f"failed at width {width}"
+
+
+def test_reports_return_the_numbers_the_summary_needs():
+    """The N-episode summary aggregates what these return; if they go back to
+    printing only, the summary silently reports nothing."""
+    sg = _smoke()
+    K = 50
+    gt = np.zeros((K, 8))
+    gt[:, 2] = np.arange(K) * 0.00283
+    gt[:, 7] = 0.2
+    gt[28:, 7] = 1.0
+    q = sg.report_execution_quality(gt.copy(), gt, 50)
+    g = sg.report_gripper_schedule(gt.copy(), gt, 50)
+    assert set(q) == {"step_err_mm", "snr"}
+    assert g == {"pred_close": 28, "gt_close": 28}
+
+
+def test_gripper_schedule_reports_no_close_as_none():
+    """An episode where the model never closes must not be silently counted as
+    a zero timing error — that is the ep0 case that started this."""
+    sg = _smoke()
+    a = np.zeros((50, 8))
+    a[:, 7] = 0.2                     # never reaches 0.9
+    gt = a.copy()
+    gt[28:, 7] = 1.0
+    g = sg.report_gripper_schedule(a, gt, 50)
+    assert g["pred_close"] is None and g["gt_close"] == 28
