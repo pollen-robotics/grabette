@@ -1,4 +1,4 @@
-"""Geometry and token bookkeeping. Pure numpy; no torch, no lerobot.
+"""Geometry and token bookkeeping. Plain dataclasses; no numpy, no torch, no lerobot.
 
 This module is where multi-camera genericity is won or lost. Every number it
 returns is derived from shapes and config passed in by the caller. Nothing here

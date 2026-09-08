@@ -22,9 +22,10 @@ grabette-attn --checkpoint <user>/<model>_best \
               --dump-obs eval_dump/ep003 --task "pick the sugar cube"
 ```
 
-Output per episode: one overlay per frame per camera, plus `summary.txt` with
-each camera's attention mass, its ablation delta in millimetres and the per-axis
-breakdown, the language mass, and the provenance.
+Output: one overlay per frame per camera, under a per-episode directory, plus a
+single `summary.txt` at the output root with a header per episode, carrying
+each camera's attention mass, its ablation delta in millimetres and the
+per-axis breakdown, the language mass, and the provenance.
 
 ## What it does not do
 
