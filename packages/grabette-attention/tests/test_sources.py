@@ -103,8 +103,8 @@ class _FakeLeRobotDataset:
 
     Mirrors the one real fact this exercises: `dataset[idx]["task"]` already
     carries the episode's own task string (`DatasetReader.get_item` sets it
-    from `meta.tasks`), which `DatasetSource` must prefer over the
-    caller-supplied fallback.
+    from `meta.tasks`). `DatasetSource` must prefer an explicitly supplied
+    `task` over it, and fall back to it only when no `task` was supplied.
     """
 
     def __init__(self, item_task, repo_id="user/d", root=None, episodes=None):
@@ -130,10 +130,22 @@ def _install_fake_lerobot_dataset(monkeypatch, item_task):
     monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", module)
 
 
-def test_the_datasets_own_task_is_preferred_over_the_supplied_one(monkeypatch):
+def test_an_explicitly_supplied_task_overrides_the_datasets_own(monkeypatch):
+    _install_fake_lerobot_dataset(monkeypatch, item_task="test_pick_mustard_200")
+    source = DatasetSource(
+        "user/d", episodes=[0], camera_keys=["cam0"],
+        task="pick up the mustard bottle",
+        selection="stride", count=1,
+    )
+    obs = next(iter(source.frames()))
+    assert obs.task == "pick up the mustard bottle"
+    assert source.task_source[0] == "override"
+
+
+def test_the_datasets_own_task_is_used_when_none_was_supplied(monkeypatch):
     _install_fake_lerobot_dataset(monkeypatch, item_task="pick the sugar cube")
     source = DatasetSource(
-        "user/d", episodes=[0], camera_keys=["cam0"], task="fallback task",
+        "user/d", episodes=[0], camera_keys=["cam0"], task=None,
         selection="stride", count=1,
     )
     obs = next(iter(source.frames()))
@@ -141,12 +153,11 @@ def test_the_datasets_own_task_is_preferred_over_the_supplied_one(monkeypatch):
     assert source.task_source[0] == "dataset"
 
 
-def test_the_supplied_task_is_used_when_the_dataset_item_carries_none(monkeypatch):
+def test_neither_a_supplied_nor_a_dataset_task_raises(monkeypatch):
     _install_fake_lerobot_dataset(monkeypatch, item_task=None)
     source = DatasetSource(
-        "user/d", episodes=[0], camera_keys=["cam0"], task="fallback task",
+        "user/d", episodes=[0], camera_keys=["cam0"], task=None,
         selection="stride", count=1,
     )
-    obs = next(iter(source.frames()))
-    assert obs.task == "fallback task"
-    assert source.task_source[0] == "supplied"
+    with pytest.raises(ValueError, match="no --task supplied"):
+        next(iter(source.frames()))

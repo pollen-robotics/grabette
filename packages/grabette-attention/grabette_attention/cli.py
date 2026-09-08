@@ -31,7 +31,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="observation.images.cam0",
         help="which camera the dump_obs PNGs belong to (they carry no name)",
     )
-    parser.add_argument("--task", default="", help="language prompt; required for dump_obs")
+    parser.add_argument(
+        "--task",
+        default=None,
+        help=(
+            "language prompt; overrides the dataset's own task when given, "
+            "required for dump_obs"
+        ),
+    )
     parser.add_argument(
         "--frames",
         nargs="*",
@@ -99,11 +106,15 @@ def main(argv=None) -> int:
                 f"--camera-key {args.camera_key!r} is not one of this "
                 f"checkpoint's cameras {adapter.camera_keys}"
             )
+        if args.task is None:
+            # dump_obs carries no dataset task to fall back to, so an absent
+            # --task must be a clear error, not a silently empty prompt.
+            parser.error("--task is required with --dump-obs")
         source = DumpObsSource(
             args.dump_obs, task=args.task, camera_key=args.camera_key
         )
         notes = {0: f"dump_obs capture {args.dump_obs}"}
-        task_sources = {0: "supplied (dump_obs carries no per-frame task)"}
+        task_sources = {0: "override (dump_obs carries no per-frame task)"}
     else:
         source = DatasetSource(
             args.dataset,

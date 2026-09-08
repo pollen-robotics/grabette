@@ -76,7 +76,7 @@ class DatasetSource:
         *,
         episodes: Sequence[int],
         camera_keys: Sequence[str],
-        task: str,
+        task: str | None,
         root: Path | str | None = None,
         selection: str | Sequence[int] = "grasp",
         count: int = 1,
@@ -91,9 +91,10 @@ class DatasetSource:
         self._count = count
         self._gripper_channel = gripper_channel
         self.notes: dict[int, str] = {}
-        # Per episode, which task string ended up in the observation: "dataset"
-        # when the item's own task was used, "supplied" when it fell back to
-        # `task`. `analyse_frame`'s provenance records this, since this policy
+        # Per episode, which task string ended up in the observation:
+        # "override" when the caller explicitly passed `task`, "dataset" when
+        # none was passed and the item's own task was used instead.
+        # `analyse_frame`'s provenance records this, since this policy
         # discretizes the robot state INTO the language prompt, so analysing
         # under the wrong task also corrupts the reported language mass.
         self.task_source: dict[int, str] = {}
@@ -122,16 +123,24 @@ class DatasetSource:
                         np.clip(chw.transpose(1, 2, 0) * 255.0, 0, 255)
                         .astype(np.uint8)
                     )
-                # The dataset already knows each item's own task from its
-                # episode; prefer it over the caller-supplied one, which the
-                # CLI defaults to "". Falling back silently to an empty prompt
-                # would analyse the policy under a prompt it was never trained
-                # on.
+                # An explicitly supplied task always wins: the dataset's own
+                # task can be a directory slug rather than language, and this
+                # policy discretizes the robot state INTO the language prompt,
+                # so silently overriding a caller's `--task` would analyse the
+                # policy under a prompt it was never trained on. The dataset's
+                # own task is only the default when the caller supplied none;
+                # if neither is available, that's an error, not an empty
+                # prompt.
                 item_task = item.get("task")
-                if item_task:
+                if self._task is not None:
+                    task, self.task_source[episode] = self._task, "override"
+                elif item_task:
                     task, self.task_source[episode] = item_task, "dataset"
                 else:
-                    task, self.task_source[episode] = self._task, "supplied"
+                    raise ValueError(
+                        f"episode {episode}: no --task supplied and the "
+                        "dataset item carries none"
+                    )
                 yield FrameObservation(
                     episode=episode,
                     frame=index,

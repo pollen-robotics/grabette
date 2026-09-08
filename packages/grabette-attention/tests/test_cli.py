@@ -182,7 +182,7 @@ def test_a_missing_png_extra_still_leaves_the_summary_written(monkeypatch, tmp_p
     out_dir = tmp_path / "out"
     exit_code = main([
         "--checkpoint", "c", "--dataset", "d", "--episodes", "0",
-        "--out", str(out_dir),
+        "--task", "t", "--out", str(out_dir),
     ])
 
     assert exit_code == 0
