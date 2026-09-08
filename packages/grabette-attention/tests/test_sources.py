@@ -5,11 +5,13 @@ them (cv2.imwrite, so BGR on disk). The dataset source is exercised in the
 GPU integration test; here we test the selection logic that both share.
 """
 import json
+import sys
+import types
 
 import numpy as np
 import pytest
 
-from grabette_attention.sources import DumpObsSource, select_frames
+from grabette_attention.sources import DatasetSource, DumpObsSource, select_frames
 
 cv2 = pytest.importorskip("cv2")
 
@@ -94,3 +96,57 @@ def test_stride_note_reports_actual_count_not_requested():
     assert indices == [0, 1, 2]
     # Note should report actual count sampled, not requested count
     assert "3" in note and "5" not in note
+
+
+class _FakeLeRobotDataset:
+    """One camera, one frame; item["task"] is set (or omitted) per test.
+
+    Mirrors the one real fact this exercises: `dataset[idx]["task"]` already
+    carries the episode's own task string (`DatasetReader.get_item` sets it
+    from `meta.tasks`), which `DatasetSource` must prefer over the
+    caller-supplied fallback.
+    """
+
+    def __init__(self, item_task, repo_id="user/d", root=None, episodes=None):
+        self._item_task = item_task
+
+    def __len__(self):
+        return 1
+
+    def __getitem__(self, idx):
+        item = {
+            "cam0": np.zeros((3, 4, 4), np.float32),
+            "observation.state": np.zeros(2, np.float32),
+            "action": np.zeros(3, np.float32),
+        }
+        if self._item_task is not None:
+            item["task"] = self._item_task
+        return item
+
+
+def _install_fake_lerobot_dataset(monkeypatch, item_task):
+    module = types.ModuleType("lerobot.datasets.lerobot_dataset")
+    module.LeRobotDataset = lambda *a, **k: _FakeLeRobotDataset(item_task, *a, **k)
+    monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", module)
+
+
+def test_the_datasets_own_task_is_preferred_over_the_supplied_one(monkeypatch):
+    _install_fake_lerobot_dataset(monkeypatch, item_task="pick the sugar cube")
+    source = DatasetSource(
+        "user/d", episodes=[0], camera_keys=["cam0"], task="fallback task",
+        selection="stride", count=1,
+    )
+    obs = next(iter(source.frames()))
+    assert obs.task == "pick the sugar cube"
+    assert source.task_source[0] == "dataset"
+
+
+def test_the_supplied_task_is_used_when_the_dataset_item_carries_none(monkeypatch):
+    _install_fake_lerobot_dataset(monkeypatch, item_task=None)
+    source = DatasetSource(
+        "user/d", episodes=[0], camera_keys=["cam0"], task="fallback task",
+        selection="stride", count=1,
+    )
+    obs = next(iter(source.frames()))
+    assert obs.task == "fallback task"
+    assert source.task_source[0] == "supplied"

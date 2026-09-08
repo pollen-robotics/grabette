@@ -91,6 +91,12 @@ class DatasetSource:
         self._count = count
         self._gripper_channel = gripper_channel
         self.notes: dict[int, str] = {}
+        # Per episode, which task string ended up in the observation: "dataset"
+        # when the item's own task was used, "supplied" when it fell back to
+        # `task`. `analyse_frame`'s provenance records this, since this policy
+        # discretizes the robot state INTO the language prompt, so analysing
+        # under the wrong task also corrupts the reported language mass.
+        self.task_source: dict[int, str] = {}
 
     def frames(self) -> Iterator[FrameObservation]:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -116,12 +122,22 @@ class DatasetSource:
                         np.clip(chw.transpose(1, 2, 0) * 255.0, 0, 255)
                         .astype(np.uint8)
                     )
+                # The dataset already knows each item's own task from its
+                # episode; prefer it over the caller-supplied one, which the
+                # CLI defaults to "". Falling back silently to an empty prompt
+                # would analyse the policy under a prompt it was never trained
+                # on.
+                item_task = item.get("task")
+                if item_task:
+                    task, self.task_source[episode] = item_task, "dataset"
+                else:
+                    task, self.task_source[episode] = self._task, "supplied"
                 yield FrameObservation(
                     episode=episode,
                     frame=index,
                     images=images,
                     state=np.asarray(item["observation.state"], dtype=np.float32),
-                    task=self._task,
+                    task=task,
                 )
 
     def _gripper_track(self, dataset, n_frames: int) -> np.ndarray | None:

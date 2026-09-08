@@ -57,3 +57,27 @@ def test_giving_neither_input_is_rejected():
 def test_giving_both_inputs_is_rejected():
     with pytest.raises(SystemExit):
         main(["--checkpoint", "c", "--dataset", "d", "--dump-obs", "out/ep0"])
+
+
+def test_a_camera_key_not_in_the_checkpoint_is_rejected(monkeypatch):
+    # Finding 3: otherwise this only surfaces later as "no usable camera",
+    # which names the symptom rather than the mismatched --camera-key that
+    # caused it.
+    import grabette_attention.adapters.pi05 as pi05_mod
+    import grabette_attention.loader as loader_mod
+
+    monkeypatch.setattr(loader_mod, "load_pi05", lambda *a, **k: (None, None, None))
+
+    class FakeAdapter:
+        camera_keys = ("observation.images.cam0",)
+
+        def __init__(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(pi05_mod, "Pi05Adapter", FakeAdapter)
+
+    with pytest.raises(SystemExit):
+        main([
+            "--checkpoint", "c", "--dump-obs", "out/ep0",
+            "--camera-key", "observation.images.nope",
+        ])

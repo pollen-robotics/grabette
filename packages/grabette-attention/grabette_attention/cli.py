@@ -83,18 +83,26 @@ def main(argv=None) -> int:
     from .loader import load_pi05
     from .sources import DatasetSource, DumpObsSource
 
-    policy, preprocessor = load_pi05(
+    policy, preprocessor, postprocessor = load_pi05(
         args.checkpoint, device=args.device, fp32=args.fp32
     )
     adapter = Pi05Adapter(
-        policy, preprocessor, device=args.device, seed=args.seed
+        policy, preprocessor, postprocessor, device=args.device, seed=args.seed
     )
 
     if args.dump_obs is not None:
+        if args.camera_key not in adapter.camera_keys:
+            # Otherwise this surfaces much later as "no usable camera", which
+            # names the symptom rather than the mismatched key that caused it.
+            parser.error(
+                f"--camera-key {args.camera_key!r} is not one of this "
+                f"checkpoint's cameras {adapter.camera_keys}"
+            )
         source = DumpObsSource(
             args.dump_obs, task=args.task, camera_key=args.camera_key
         )
         notes = {0: f"dump_obs capture {args.dump_obs}"}
+        task_sources = {0: "supplied (dump_obs carries no per-frame task)"}
     else:
         source = DatasetSource(
             args.dataset,
@@ -106,6 +114,7 @@ def main(argv=None) -> int:
             count=args.count,
         )
         notes = source.notes
+        task_sources = source.task_source
 
     out_root = Path(args.out)
     recording = None
@@ -127,6 +136,7 @@ def main(argv=None) -> int:
                     "checkpoint": args.checkpoint,
                     "seed": str(args.seed),
                     "dtype": "fp32" if args.fp32 else "bf16",
+                    "task_source": task_sources.get(obs.episode, "supplied"),
                 },
             )
         )
