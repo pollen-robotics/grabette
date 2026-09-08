@@ -8,13 +8,12 @@ path, and camera keys taken from the CHECKPOINT rather than the dataset.
 
 from typing import Any, Callable
 
-import torch
-
 
 def load_pi05(
     checkpoint: str, *, device: str = "cuda", fp32: bool = True
 ) -> tuple[Any, Callable[[dict], dict]]:
     """Return (policy, preprocessor) ready for the adapter."""
+    import torch
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.policies.factory import get_policy_class, make_pre_post_processors
 
@@ -28,7 +27,8 @@ def load_pi05(
 
     config = PreTrainedConfig.from_pretrained(checkpoint)
     config.device = "cpu"
-    config.compile_model = False
+    if hasattr(config, "compile_model"):
+        config.compile_model = False
 
     policy = get_policy_class(config.type).from_pretrained(checkpoint, config=config)
     policy = policy.to(dtype=torch.float32 if fp32 else torch.bfloat16).eval()
