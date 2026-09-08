@@ -97,6 +97,23 @@ class StubPolicy(nn.Module):
         return images, masks
 
 
+class RecordingStubModel(StubModel):
+    """Like StubModel, but keeps what it was actually handed by `run()`, so a
+    test can inspect `images`/`img_masks` at the operational layer instead of
+    only through `layout()`'s metadata."""
+
+    def sample_actions(self, images, img_masks, tokens, masks, noise=None):
+        self.received_images = list(images)
+        self.received_img_masks = list(img_masks)
+        return super().sample_actions(images, img_masks, tokens, masks, noise=noise)
+
+
+class RecordingStubPolicy(StubPolicy):
+    def __init__(self, cameras):
+        super().__init__(cameras)
+        self.model = RecordingStubModel()
+
+
 def observation(cameras) -> FrameObservation:
     rng = np.random.default_rng(0)
     return FrameObservation(
@@ -106,8 +123,8 @@ def observation(cameras) -> FrameObservation:
     )
 
 
-def make_adapter(cameras):
-    policy = StubPolicy(cameras)
+def make_adapter(cameras, policy=None):
+    policy = policy or StubPolicy(cameras)
 
     def preprocessor(batch):
         batch = dict(batch)
@@ -183,6 +200,38 @@ def test_dropping_a_camera_preserves_the_token_order():
     assert layout.camera_keys == ("cam_a", "cam_b")
     assert layout.camera_slice("cam_b") == slice(256, 512)
     assert layout.masked_cameras == frozenset({"cam_a"})
+
+
+def test_dropping_a_camera_masks_in_place_not_by_deletion():
+    """Guards `run()` itself, not just `layout()`'s metadata: if the mask
+    mutation at pi05.py were ever regressed to deleting the list entries
+    instead of assigning them in place, the length assertion below would
+    catch it — `StubModel.sample_actions`'s `zip(images, img_masks)` would
+    otherwise tolerate a shortened list with no complaint of its own, so a
+    chunk-differs assertion alone cannot distinguish "masked in place" from
+    "removed, so the next camera slid into its slot"."""
+    policy = RecordingStubPolicy(["cam_a", "cam_b"])
+    adapter = make_adapter(["cam_a", "cam_b"], policy=policy)
+    obs, noise = observation(["cam_a", "cam_b"]), adapter.draw_noise()
+
+    adapter.run(obs, noise, capture=False)
+    baseline_cam_a = policy.model.received_images[0].clone()
+
+    adapter.run(obs, noise, capture=False, drop_camera="cam_b")
+    images = policy.model.received_images
+    masks = policy.model.received_img_masks
+
+    # One entry per configured camera, still — a `del` would shrink this.
+    assert len(images) == len(masks) == len(adapter.camera_keys) == 2
+
+    # cam_b (index 1, the dropped one): padding value, mask cleared.
+    assert torch.all(images[1] == -1)
+    assert not bool(masks[1].any())
+
+    # cam_a (index 0, untouched): bitwise identical to the un-ablated pass,
+    # so it is still at its own slot rather than having shifted.
+    assert torch.equal(images[0], baseline_cam_a)
+    assert bool(masks[0].all())
 
 
 def test_dropping_an_unknown_camera_is_an_error():
