@@ -40,11 +40,31 @@ class StubExpert(nn.Module):
 
 
 class StubTwoTower(nn.Module):
-    """Mirrors `paligemma_with_expert`: the adapter resolves this exact path."""
+    """Mirrors `paligemma_with_expert`: the adapter resolves this exact path.
 
-    def __init__(self, n_layers):
+    `patch_size=None` omits the `.paligemma` vision-config path entirely, for
+    the one test that exercises its absence; every other test wants a
+    reachable default (SigLIP-so400m's own patch size, 14), since `.patch` no
+    longer falls back to a constant when it is unreachable (Finding 2).
+    """
+
+    def __init__(self, n_layers, patch_size: int | None = 14):
         super().__init__()
         self.gemma_expert = StubExpert(n_layers)
+        if patch_size is not None:
+            inner = type("Inner", (), {})()
+            inner.vision_tower = type("Tower", (), {})()
+            inner.vision_tower.config = type("VisionCfg", (), {"patch_size": patch_size})()
+            self.paligemma = type("PG", (), {})()
+            self.paligemma.model = inner
+
+
+class _Feature:
+    """Duck-types `lerobot.configs.PolicyFeature` for the one attribute used
+    here: `.shape`."""
+
+    def __init__(self, shape):
+        self.shape = shape
 
 
 class StubConfig:
@@ -55,15 +75,19 @@ class StubConfig:
         self.max_action_dim = 32
         self.tokenizer_max_length = 200
         self.compile_model = False
+        # Real action width is 11 (8 pose dims + gripper, or similar); the
+        # padded model output is max_action_dim (32) wide, and `run()` must
+        # truncate down to this before returning.
+        self.output_features = {"action": _Feature(shape=(11,))}
 
 
 class StubModel(nn.Module):
     """Its action depends on the SUM of the unmasked images, so masking a
     camera provably changes the output — that is what the ablation must see."""
 
-    def __init__(self, n_layers=18):
+    def __init__(self, n_layers=18, patch_size: int | None = 14):
         super().__init__()
-        self.paligemma_with_expert = StubTwoTower(n_layers)
+        self.paligemma_with_expert = StubTwoTower(n_layers, patch_size=patch_size)
         self.steps = 10
 
     def sample_actions(self, images, img_masks, tokens, masks, noise=None):
@@ -74,15 +98,18 @@ class StubModel(nn.Module):
             float(img.mean()) * float(m.float().mean())
             for img, m in zip(images, img_masks)
         )
-        chunk = noise[:, :, :11] * 0.0 + signal * 0.001
+        # Padded to max_action_dim (32), like the real `sample_actions` -- the
+        # adapter, not the model, is responsible for truncating to the real
+        # action width (11) and for converting to real units.
+        chunk = noise * 0.0 + signal * 0.001
         return chunk
 
 
 class StubPolicy(nn.Module):
-    def __init__(self, cameras):
+    def __init__(self, cameras, patch_size: int | None = 14):
         super().__init__()
         self.config = StubConfig(cameras)
-        self.model = StubModel()
+        self.model = StubModel(patch_size=patch_size)
 
     def _preprocess_images(self, batch):
         present = [k for k in self.config.image_features if k in batch]
@@ -123,8 +150,9 @@ def observation(cameras) -> FrameObservation:
     )
 
 
-def make_adapter(cameras, policy=None):
+def make_adapter(cameras, policy=None, postprocessor=None):
     policy = policy or StubPolicy(cameras)
+    postprocessor = postprocessor or (lambda chunk: chunk)   # identity by default
 
     def preprocessor(batch):
         batch = dict(batch)
@@ -132,7 +160,7 @@ def make_adapter(cameras, policy=None):
         batch["observation.language.attention_mask"] = torch.ones(1, 200, dtype=torch.long)
         return batch
 
-    return Pi05Adapter(policy, preprocessor, device="cpu", seed=0)
+    return Pi05Adapter(policy, preprocessor, postprocessor, device="cpu", seed=0)
 
 
 def test_camera_keys_come_from_the_config_in_order():
@@ -178,8 +206,8 @@ def test_the_same_noise_gives_a_bitwise_identical_chunk():
 
 
 def test_draw_noise_is_deterministic_for_a_given_seed():
-    a = Pi05Adapter(StubPolicy(["cam_a"]), lambda b: b, device="cpu", seed=7)
-    b = Pi05Adapter(StubPolicy(["cam_a"]), lambda b: b, device="cpu", seed=7)
+    a = Pi05Adapter(StubPolicy(["cam_a"]), lambda b: b, lambda c: c, device="cpu", seed=7)
+    b = Pi05Adapter(StubPolicy(["cam_a"]), lambda b: b, lambda c: c, device="cpu", seed=7)
     np.testing.assert_array_equal(a.draw_noise().numpy(), b.draw_noise().numpy())
 
 
@@ -251,15 +279,20 @@ def test_the_patch_size_is_read_from_the_vision_config_when_reachable():
     inner.vision_tower = tower
     policy.model.paligemma_with_expert.paligemma = type("PG", (), {})()
     policy.model.paligemma_with_expert.paligemma.model = inner
-    adapter = Pi05Adapter(policy, lambda b: b, device="cpu", seed=0)
+    adapter = Pi05Adapter(policy, lambda b: b, lambda c: c, device="cpu", seed=0)
     assert adapter.patch == 16
 
 
-def test_the_patch_size_falls_back_to_the_siglip_default():
-    # SigLIP-so400m as PaliGemma configures it uses patch 14. This fallback is
-    # the documented default, not test scaffolding.
-    adapter = make_adapter(["cam_a"])
-    assert adapter.patch == 14
+def test_the_patch_size_raises_when_the_vision_config_is_unreachable():
+    # No SigLIP-default fallback (Finding 2): a wrong guess would keep
+    # tokens-per-image and grid rows*cols mutually consistent BY CONSTRUCTION
+    # while silently disagreeing with the captured attention tensor, so every
+    # camera block would be misaligned while looking fine. A policy that does
+    # not expose the vision config is a programming error to surface.
+    policy = StubPolicy(["cam_a"], patch_size=None)
+    adapter = make_adapter(["cam_a"], policy=policy)
+    with pytest.raises(AttributeError, match="vision_tower"):
+        adapter.patch
 
 
 def test_a_policy_without_the_pi05_module_tree_is_rejected_clearly():
@@ -270,4 +303,28 @@ def test_a_policy_without_the_pi05_module_tree_is_rejected_clearly():
             self.model = nn.Module()
 
     with pytest.raises(AttributeError, match="paligemma_with_expert"):
-        Pi05Adapter(NotPi05(), lambda b: b, device="cpu", seed=0)
+        Pi05Adapter(NotPi05(), lambda b: b, lambda c: c, device="cpu", seed=0)
+
+
+def test_the_postprocessor_converts_the_raw_chunk_to_real_units():
+    """Pins Finding 1 (CRITICAL). `sample_actions` returns the chunk in the
+    policy's normalized (quantile) action space; only the postprocessor's
+    Unnormalizer + AbsoluteActions steps convert it to real units. A stub
+    postprocessor that scales by a known factor lets this test see whether the
+    adapter actually applies it -- returning the raw model output straight
+    through, unscaled, is exactly the bug this pins.
+    """
+    scale = 1000.0
+
+    def scaling_postprocessor(chunk):
+        return chunk * scale
+
+    obs = observation(["cam_a"])
+    noise = torch.zeros(1, 50, 32)     # zeroed out by StubModel; shape only
+
+    raw = make_adapter(["cam_a"]).run(obs, noise, capture=False).chunk
+    scaled = make_adapter(
+        ["cam_a"], postprocessor=scaling_postprocessor
+    ).run(obs, noise, capture=False).chunk
+
+    np.testing.assert_allclose(scaled, raw * scale)

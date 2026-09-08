@@ -25,8 +25,8 @@ def test_a_real_checkpoint_yields_maps_masses_and_an_ablation():
     from grabette_attention.loader import load_pi05
     from grabette_attention.sources import DatasetSource
 
-    policy, preprocessor = load_pi05(CKPT, device="cuda", fp32=True)
-    adapter = Pi05Adapter(policy, preprocessor, device="cuda", seed=0)
+    policy, preprocessor, postprocessor = load_pi05(CKPT, device="cuda", fp32=True)
+    adapter = Pi05Adapter(policy, preprocessor, postprocessor, device="cuda", seed=0)
 
     source = DatasetSource(
         DATASET, episodes=[0], camera_keys=adapter.camera_keys,

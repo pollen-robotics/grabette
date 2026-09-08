@@ -25,10 +25,6 @@ from ..layout import LetterboxGeometry, TokenLayout
 from ..records import FrameObservation
 from .base import RunResult
 
-# SigLIP-so400m as PaliGemma configures it. Read from the model where possible;
-# this is the fallback when the vision config is not reachable.
-_DEFAULT_PATCH = 14
-
 
 class Pi05Adapter:
     """Wraps a loaded pi0.5 policy and its checkpoint preprocessor."""
@@ -37,12 +33,14 @@ class Pi05Adapter:
         self,
         policy: Any,
         preprocessor: Callable[[dict], dict],
+        postprocessor: Callable[[Any], Any],
         *,
         device: str = "cpu",
         seed: int = 0,
     ):
         self._policy = policy
         self._preprocessor = preprocessor
+        self._postprocessor = postprocessor
         self._device = device
         self._seed = seed
         self._config = policy.config
@@ -56,14 +54,26 @@ class Pi05Adapter:
 
     @property
     def patch(self) -> int:
+        """Side of one spatial cell in model-input pixels, read from the model.
+
+        No fallback: a wrong guess here would keep tokens-per-image and grid
+        rows*cols mutually consistent by construction while silently
+        disagreeing with the tensor `reduce_attention` actually receives, which
+        is exactly the "looks plausible and means nothing" failure
+        `_find_expert_layers` below refuses to risk.
+        """
         vision = getattr(
             getattr(getattr(self._policy, "model", None), "paligemma_with_expert", None),
             "paligemma", None,
         )
         try:
             return int(vision.model.vision_tower.config.patch_size)
-        except AttributeError:
-            return _DEFAULT_PATCH
+        except AttributeError as exc:
+            raise AttributeError(
+                "expected policy.model.paligemma_with_expert.paligemma.model."
+                "vision_tower.config.patch_size; "
+                f"{type(self._policy).__name__} does not expose it"
+            ) from exc
 
     def _resolution(self) -> tuple[int, int]:
         return tuple(self._config.image_resolution)
@@ -146,6 +156,7 @@ class Pi05Adapter:
                 chunk = self._policy.model.sample_actions(
                     images, img_masks, tokens, masks, noise=noise
                 )
+            chunk = self._finalize_chunk(chunk)
             return RunResult(chunk=self._to_numpy(chunk))
 
         with AttentionCapture(self._expert_layers) as cap, torch.no_grad():
@@ -153,9 +164,24 @@ class Pi05Adapter:
                 images, img_masks, tokens, masks, noise=noise
             )
             captures = dict(cap.captures)
+        chunk = self._finalize_chunk(chunk)
         return RunResult(chunk=self._to_numpy(chunk), captures=captures)
 
     # ---- helpers -------------------------------------------------------------
+
+    def _finalize_chunk(self, chunk: torch.Tensor) -> torch.Tensor:
+        """Truncate to the real action width, then convert to real units.
+
+        `sample_actions` returns `(batch, chunk_size, max_action_dim)`: padded,
+        and in the policy's normalized (quantile) action space. `predict_action_chunk`
+        does both these steps before returning; calling `sample_actions` directly,
+        as `run()` does to reach the attention hooks, skips them, so this mirrors
+        `predict_action_chunk`'s truncation and applies the postprocessor
+        (Unnormalizer + AbsoluteActions) that converts to real units.
+        """
+        original_action_dim = int(self._config.output_features["action"].shape[0])
+        chunk = chunk[:, :, :original_action_dim]
+        return self._postprocessor(chunk)
 
     def _build_batch(self, obs: FrameObservation) -> dict:
         """Frames as the policy expects them: CHW float32 in [0, 1], batch of 1.
