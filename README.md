@@ -28,6 +28,7 @@ https://github.com/user-attachments/assets/6db9dd7b-1762-4004-8a76-ce76323499ba
 | [`grabette`](packages/grabette) | Hand held data-collection device | Raspberry Pi | HTTP/WebSocket, :8000 |
 | [`gripette`](packages/gripette) | Robot mounted Gripper motor | Raspberry Pi Zero 2W | gRPC, :50051 |
 | [`grabette-postprocess`](packages/grabette-postprocess) | Data postprocess + SLAM → LeRobot dataset generation | Workstation | CLI |
+| [`grabette-chunkrel`](packages/grabette-chunkrel) | Optional chunk-relative action representation (maths + LeRobot processor steps); per-step deltas stay the default | Workstation / GPU | Python library |
 | [`casquette (WIP)`](packages/casquette) | POV head-mounted device | Raspberry Pi Zero 2W | HTTP/WebSocket, :8001 |
 
 ### `integrations/` — integration example (OpenArm 7-DOF arm + Gripette)
