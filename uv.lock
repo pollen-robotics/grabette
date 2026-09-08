@@ -1684,6 +1684,7 @@ rerun = [
 test = [
     { name = "lerobot", marker = "python_full_version >= '3.12'" },
     { name = "matplotlib" },
+    { name = "opencv-python-headless" },
     { name = "pytest" },
     { name = "torch" },
 ]
@@ -1694,6 +1695,7 @@ requires-dist = [
     { name = "matplotlib", marker = "extra == 'png'" },
     { name = "matplotlib", marker = "extra == 'test'" },
     { name = "numpy" },
+    { name = "opencv-python-headless", marker = "extra == 'test'" },
     { name = "pytest", marker = "extra == 'test'" },
     { name = "rerun-sdk", marker = "extra == 'rerun'" },
     { name = "torch", marker = "extra == 'test'" },
