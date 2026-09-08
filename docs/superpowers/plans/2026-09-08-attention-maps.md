@@ -817,7 +817,9 @@ git commit -m "feat(attention): forward-hook capture with per-layer step bookkee
 
 **Interfaces:**
 - Consumes: `TokenLayout` and `LetterboxGeometry` from `layout.py` (Tasks 2-3), `CameraAttention` from `records.py` (Task 1).
-- Produces: `reduce_attention(captures: dict[tuple[int, int], np.ndarray], layout: TokenLayout, geometry: LetterboxGeometry, *, patch: int, denoise_step: str | int = "last", layers: str | Sequence[int] = "all") -> tuple[dict[str, CameraAttention], float]`.
+- Produces: `reduce_attention(captures: dict[tuple[int, int], np.ndarray], layout: TokenLayout, geometries: Mapping[str, LetterboxGeometry], *, patch: int, denoise_step: str | int = "last", layers: str | Sequence[int] = "all") -> tuple[dict[str, CameraAttention], float]`.
+
+**Note:** `geometries` is a mapping keyed by camera name, one entry per visible camera — NOT a single geometry. Views may differ in resolution and aspect ratio, so each camera's padding crop must come from its own frame. Applying one camera's geometry to all of them would assume every view shares a resolution, which the Global Constraints forbid.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -837,7 +839,22 @@ from grabette_attention.layout import LetterboxGeometry, TokenLayout
 from grabette_attention.reduce import reduce_attention
 
 PATCH = 14
-GEOM = LetterboxGeometry.from_shapes(src_hw=(720, 960), dst_hw=(224, 224))
+
+
+class _SameGeometryEverywhere(dict):
+    """Test fixture: the 4:3 live-camera geometry, for whatever camera is asked.
+
+    Real callers pass one entry per camera; these tests mostly use views that
+    share a resolution, so a mapping that answers for any name keeps them short.
+    `test_cameras_with_different_geometries_are_cropped_independently` uses a
+    real per-camera dict, which is the case this mapping must not paper over.
+    """
+
+    def __missing__(self, _camera):
+        return LetterboxGeometry.from_shapes(src_hw=(720, 960), dst_hw=(224, 224))
+
+
+GEOM = _SameGeometryEverywhere()
 
 
 def layout(n_cams: int, masked=frozenset()) -> TokenLayout:
@@ -932,6 +949,27 @@ def test_a_hot_patch_lands_at_the_right_grid_cell():
 def test_an_empty_capture_set_is_an_error_not_an_empty_map():
     with pytest.raises(ValueError, match="no attention"):
         reduce_attention({}, layout(1), GEOM, patch=PATCH)
+
+
+def test_cameras_with_different_geometries_are_cropped_independently():
+    # cam0 is 4:3 and padded top and bottom; cam1 is square and unpadded. Each
+    # camera's crop must come from ITS OWN geometry, so the two grids differ in
+    # height. One shared geometry would give both the same shape and silently
+    # crop real content off the square view.
+    geometries = {
+        "cam0": LetterboxGeometry.from_shapes(src_hw=(720, 960), dst_hw=(224, 224)),
+        "cam1": LetterboxGeometry.from_shapes(src_hw=(480, 480), dst_hw=(224, 224)),
+    }
+    cams, _ = reduce_attention(captures(2), layout(2), geometries, patch=PATCH)
+    assert cams["cam0"].grid.shape == (12, 16)
+    assert cams["cam1"].grid.shape == (16, 16)
+
+
+def test_a_missing_geometry_is_an_error_not_a_guess():
+    with pytest.raises(KeyError):
+        reduce_attention(captures(2), layout(2), {"cam0": LetterboxGeometry
+                         .from_shapes(src_hw=(720, 960), dst_hw=(224, 224))},
+                         patch=PATCH)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -955,7 +993,7 @@ one and a camera the policy barely uses reads as a small number rather than
 being renormalised into looking important.
 """
 
-from typing import Sequence
+from typing import Mapping, Sequence
 
 import numpy as np
 
@@ -1002,13 +1040,18 @@ def _select(
 def reduce_attention(
     captures: dict[tuple[int, int], np.ndarray],
     layout: TokenLayout,
-    geometry: LetterboxGeometry,
+    geometries: Mapping[str, LetterboxGeometry],
     *,
     patch: int,
     denoise_step: str | int = "last",
     layers: str | Sequence[int] = "all",
 ) -> tuple[dict[str, CameraAttention], float]:
     """Reduce captures to per-camera grids plus each camera's prefix mass.
+
+    `geometries` holds ONE ENTRY PER VISIBLE CAMERA, keyed by camera name. Each
+    camera's padding crop comes from its own frame, because views may differ in
+    resolution and aspect ratio; a camera with no entry is a KeyError rather
+    than a guess.
 
     Returns (per-camera attention keyed by camera name, language mass).
     """
@@ -1027,6 +1070,7 @@ def reduce_attention(
     for key in layout.visible_cameras():
         block = prefix[layout.camera_slice(key)]
         grid = block.reshape(layout.grid_rows, layout.grid_cols)
+        geometry = geometries[key]          # KeyError if a camera was forgotten
         row0, row1 = geometry.content_rows(patch)
         col0, col1 = geometry.content_cols(patch)
         cameras[key] = CameraAttention(
@@ -1041,7 +1085,7 @@ def reduce_attention(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `uv run --project packages/grabette-attention pytest packages/grabette-attention/tests/test_reduce.py -v`
-Expected: PASS, 10 tests
+Expected: PASS, 12 tests
 
 - [ ] **Step 5: Commit**
 
@@ -1240,6 +1284,34 @@ class StubAttention(nn.Module):
         return x, torch.rand(1, 8, 50, 506)
 
 
+class StubDecoderLayer(nn.Module):
+    """Mirrors a Gemma decoder layer: the attention hangs off `self_attn`."""
+
+    def __init__(self):
+        super().__init__()
+        self.self_attn = StubAttention()
+
+
+class StubExpertInner(nn.Module):
+    def __init__(self, n_layers):
+        super().__init__()
+        self.layers = nn.ModuleList(StubDecoderLayer() for _ in range(n_layers))
+
+
+class StubExpert(nn.Module):
+    def __init__(self, n_layers):
+        super().__init__()
+        self.model = StubExpertInner(n_layers)
+
+
+class StubTwoTower(nn.Module):
+    """Mirrors `paligemma_with_expert`: the adapter resolves this exact path."""
+
+    def __init__(self, n_layers):
+        super().__init__()
+        self.gemma_expert = StubExpert(n_layers)
+
+
 class StubConfig:
     def __init__(self, cameras):
         self.image_features = {c: None for c in cameras}
@@ -1256,13 +1328,13 @@ class StubModel(nn.Module):
 
     def __init__(self, n_layers=18):
         super().__init__()
-        self.layers = nn.ModuleList(StubAttention() for _ in range(n_layers))
+        self.paligemma_with_expert = StubTwoTower(n_layers)
         self.steps = 10
 
     def sample_actions(self, images, img_masks, tokens, masks, noise=None):
         for _ in range(self.steps):
-            for layer in self.layers:
-                layer(torch.zeros(1))
+            for layer in self.paligemma_with_expert.gemma_expert.model.layers:
+                layer.self_attn(torch.zeros(1))
         signal = sum(
             float(img.mean()) * float(m.float().mean())
             for img, m in zip(images, img_masks)
@@ -1383,6 +1455,38 @@ def test_dropping_an_unknown_camera_is_an_error():
     with pytest.raises(KeyError):
         adapter.run(observation(["cam_a"]), adapter.draw_noise(),
                     capture=False, drop_camera="wrist")
+
+
+def test_the_patch_size_is_read_from_the_vision_config_when_reachable():
+    # A real checkpoint exposes it; the adapter must prefer the model's own
+    # value over any constant, so a differently-configured SigLIP still works.
+    policy = StubPolicy(["cam_a"])
+    tower = type("Tower", (), {})()
+    tower.config = type("VisionCfg", (), {"patch_size": 16})()
+    inner = type("Inner", (), {})()
+    inner.vision_tower = tower
+    policy.model.paligemma_with_expert.paligemma = type("PG", (), {})()
+    policy.model.paligemma_with_expert.paligemma.model = inner
+    adapter = Pi05Adapter(policy, lambda b: b, device="cpu", seed=0)
+    assert adapter.patch == 16
+
+
+def test_the_patch_size_falls_back_to_the_siglip_default():
+    # SigLIP-so400m as PaliGemma configures it uses patch 14. This fallback is
+    # the documented default, not test scaffolding.
+    adapter = make_adapter(["cam_a"])
+    assert adapter.patch == 14
+
+
+def test_a_policy_without_the_pi05_module_tree_is_rejected_clearly():
+    class NotPi05(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = StubConfig(["cam_a"])
+            self.model = nn.Module()
+
+    with pytest.raises(AttributeError, match="paligemma_with_expert"):
+        Pi05Adapter(NotPi05(), lambda b: b, device="cpu", seed=0)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1656,27 +1760,25 @@ class Pi05Adapter:
     def _find_expert_layers(policy: Any) -> list[Any]:
         """The action expert's attention modules — the queries we want.
 
-        Falls back to the stub layout used in tests so the adapter is testable
-        without a real checkpoint.
+        Resolved by the real attribute path only. A policy that does not expose
+        it is a programming error to surface, not something to guess around: a
+        fallback here would silently hook the wrong modules and produce maps
+        that look plausible and mean nothing.
         """
-        model = getattr(policy, "model", None)
-        expert = getattr(
-            getattr(model, "paligemma_with_expert", None), "gemma_expert", None
-        )
-        if expert is not None:
-            return [layer.self_attn for layer in expert.model.layers]
-        layers = getattr(model, "layers", None)
-        if layers is None:
+        try:
+            expert = policy.model.paligemma_with_expert.gemma_expert
+        except AttributeError as exc:
             raise AttributeError(
-                "cannot find the action expert's attention layers on this policy"
-            )
-        return list(layers)
+                "expected policy.model.paligemma_with_expert.gemma_expert; "
+                f"{type(policy).__name__} does not expose the pi0.5 module tree"
+            ) from exc
+        return [layer.self_attn for layer in expert.model.layers]
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `uv run --project packages/grabette-attention pytest packages/grabette-attention/tests/test_pi05_adapter.py -v`
-Expected: PASS, 10 tests
+Expected: PASS, 13 tests
 
 - [ ] **Step 6: Commit**
 
@@ -2193,16 +2295,17 @@ def analyse_frame(
     layout = adapter.layout(obs)
     baseline = adapter.run(obs, adapter.draw_noise(), capture=True)
 
-    # Geometry is per camera: views may differ in resolution or aspect ratio.
+    # Geometry is per camera: views may differ in resolution or aspect ratio, so
+    # each camera's padding crop must come from its own frame.
     visible = layout.visible_cameras()
     if not visible:
         raise ValueError(f"frame {obs.frame} has no usable camera")
-    geometry = adapter.geometry(obs, visible[0])
+    geometries = {camera: adapter.geometry(obs, camera) for camera in visible}
 
     cameras, language_mass = reduce_attention(
         baseline.captures,
         layout,
-        geometry,
+        geometries,
         patch=adapter.patch,
         denoise_step=denoise_step,
         layers=layers,
@@ -3169,7 +3272,15 @@ from grabette_attention.layout import LetterboxGeometry, TokenLayout
 from grabette_attention.metrics import translation_delta
 from grabette_attention.reduce import reduce_attention
 
-GEOM = LetterboxGeometry.from_shapes(src_hw=(720, 960), dst_hw=(224, 224))
+
+class _SameGeometryEverywhere(dict):
+    """The 4:3 live-camera geometry, for whatever camera is asked."""
+
+    def __missing__(self, _camera):
+        return LetterboxGeometry.from_shapes(src_hw=(720, 960), dst_hw=(224, 224))
+
+
+GEOM = _SameGeometryEverywhere()
 
 
 def test_a_hard_coded_256_token_block_would_break_a_smaller_grid():
@@ -3179,8 +3290,10 @@ def test_a_hard_coded_256_token_block_would_break_a_smaller_grid():
         language_tokens=10, masked_cameras=frozenset(),
     )
     caps = {(0, 0): np.ones((8, 50, 64 + 10 + 50), np.float32)}
-    geom = LetterboxGeometry.from_shapes(src_hw=(112, 112), dst_hw=(112, 112))
-    cams, _ = reduce_attention(caps, layout, geom, patch=14)
+    geoms = {
+        "cam0": LetterboxGeometry.from_shapes(src_hw=(112, 112), dst_hw=(112, 112))
+    }
+    cams, _ = reduce_attention(caps, layout, geoms, patch=14)
     assert cams["cam0"].grid.shape == (8, 8)
 
 
