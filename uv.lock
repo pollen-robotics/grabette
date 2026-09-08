@@ -1682,7 +1682,7 @@ rerun = [
     { name = "rerun-sdk" },
 ]
 test = [
-    { name = "lerobot", marker = "python_full_version >= '3.12'" },
+    { name = "lerobot", extra = ["pi"], marker = "python_full_version >= '3.12'" },
     { name = "matplotlib" },
     { name = "opencv-python-headless" },
     { name = "pytest" },
@@ -1691,7 +1691,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'test'", specifier = "==0.6.0" },
+    { name = "lerobot", extras = ["pi"], marker = "python_full_version >= '3.12' and extra == 'test'", specifier = "==0.6.0" },
     { name = "matplotlib", marker = "extra == 'png'" },
     { name = "matplotlib", marker = "extra == 'test'" },
     { name = "numpy" },

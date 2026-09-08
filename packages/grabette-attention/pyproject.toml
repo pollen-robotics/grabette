@@ -20,8 +20,12 @@ rerun = ["rerun-sdk"]
 # torch is needed to exercise the forward-hook capture with stub modules.
 # lerobot carries the workspace's usual >= 3.12 marker: it declares
 # Python>=3.12, and an unguarded pin makes `uv lock` fail on the 3.11 split.
+# lerobot's [pi] extra (transformers, scipy) is required to load a pi0.5
+# checkpoint at all; plain lerobot fails with "'transformers' is required
+# but not installed" the moment loader.load_pi05() is exercised for real,
+# which is what tests/test_integration_gpu.py does.
 # opencv-python-headless is needed so cv2-gated tests run on all supported Python versions.
-test = ["pytest", "torch", "matplotlib", "opencv-python-headless", "lerobot==0.6.0 ; python_version >= '3.12'"]
+test = ["pytest", "torch", "matplotlib", "opencv-python-headless", "lerobot[pi]==0.6.0 ; python_version >= '3.12'"]
 
 [project.scripts]
 grabette-attn = "grabette_attention.cli:main"
