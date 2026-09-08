@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from .analysis import analyse
+from .frontends import camera_labels
 from .frontends.png import write_overlays, write_summary
 
 
@@ -147,10 +148,11 @@ def main(argv=None) -> int:
 
             log_analysis(analysis, obs, recording=recording)
         analyses.append(analysis)
+        labels = camera_labels(analysis.cameras)
         print(
             f"ep{obs.episode:03d} frame {obs.frame}: "
             + "  ".join(
-                f"{c.rsplit('.', 1)[-1]} mass {a.mass:.2f}"
+                f"{labels[c]} mass {a.mass:.2f}"
                 + (
                     f" ablate {analysis.ablations[c].delta_mm:.1f}mm"
                     if c in analysis.ablations

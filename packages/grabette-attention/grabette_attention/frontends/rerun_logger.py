@@ -12,6 +12,7 @@ Entity naming follows the repo's existing visualiser
 from typing import Any
 
 from ..records import FrameAnalysis, FrameObservation
+from . import camera_labels
 
 
 def _rerun():
@@ -38,8 +39,9 @@ def log_analysis(
     rr = recording or _rerun()
     rr.set_time("frame", sequence=analysis.frame)
 
+    labels = camera_labels(analysis.cameras)
     for camera, attention in analysis.cameras.items():
-        short = camera.rsplit(".", 1)[-1]
+        short = labels[camera]
         rr.log(f"camera_feed/{short}", rr.Image(obs.images[camera]))
         rr.log(f"camera_feed/{short}/attention", rr.Image(attention.grid))
         rr.log(f"metrics/mass/{short}", rr.Scalars(attention.mass))

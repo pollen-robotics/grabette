@@ -139,3 +139,36 @@ def test_a_missing_rerun_install_gives_a_clear_message(monkeypatch):
     monkeypatch.setitem(sys.modules, "rerun", None)
     with pytest.raises(ImportError, match="rerun"):
         rerun_logger.log_analysis(analysis(), observation())
+
+
+def test_two_cameras_sharing_a_trailing_segment_both_get_distinct_entities(fake_rerun):
+    # A stereo pair: "observation.images.left.cam0" and
+    # "observation.images.right.cam0" both collapse to "cam0" under a naive
+    # last-dot-segment split, which would log both under the same entity path
+    # and silently lose one view (Finding 4).
+    from grabette_attention.frontends import rerun_logger
+
+    left, right = "observation.images.left.cam0", "observation.images.right.cam0"
+    ana = FrameAnalysis(
+        episode=3, frame=42,
+        cameras={
+            left: CameraAttention(grid=np.zeros((12, 16), np.float32), mass=0.5),
+            right: CameraAttention(grid=np.ones((12, 16), np.float32), mass=0.5),
+        },
+        language_mass=0.0, ablations={},
+    )
+    obs = FrameObservation(
+        episode=3, frame=42,
+        images={
+            left: np.zeros((720, 960, 3), np.uint8),
+            right: np.zeros((720, 960, 3), np.uint8),
+        },
+        state=np.zeros(2, np.float32), task="t",
+    )
+    rerun_logger.log_analysis(ana, obs)
+    logged_paths = {p for p, _ in fake_rerun.logged}
+
+    assert left != right
+    assert f"camera_feed/{left}" in logged_paths
+    assert f"camera_feed/{right}" in logged_paths
+    assert "camera_feed/cam0" not in logged_paths

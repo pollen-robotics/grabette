@@ -103,3 +103,16 @@ def test_the_summary_warns_that_a_broad_map_is_normal():
     out = pathlib.Path(tempfile.mkdtemp())
     text = write_summary([analysis()], out).read_text()
     assert "broad" in text.lower()
+
+
+def test_two_cameras_sharing_a_trailing_segment_both_survive():
+    # A stereo pair is exactly the scenario this package exists to serve:
+    # "observation.images.left.cam0" and "observation.images.right.cam0" both
+    # collapse to "cam0" under a naive last-dot-segment split, which would
+    # write both overlays to the same filename and silently drop one.
+    cams = ("observation.images.left.cam0", "observation.images.right.cam0")
+    out = pathlib.Path(tempfile.mkdtemp())
+    paths = write_overlays(analysis(cams), observation(cams), out)
+    assert len(paths) == 2
+    assert len({p.name for p in paths}) == 2   # distinct filenames
+    assert all(p.exists() and p.stat().st_size > 0 for p in paths)

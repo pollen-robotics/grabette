@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from ..records import FrameAnalysis, FrameObservation
+from . import camera_labels
 
 _GUARD = (
     "NOTE: pi0.5 spreads attention broadly with low peaks, and action "
@@ -35,10 +36,12 @@ def write_overlays(
     directory = Path(out_dir)
     directory.mkdir(parents=True, exist_ok=True)
 
+    labels = camera_labels(analysis.cameras)
+
     written = []
     for camera, attention in analysis.cameras.items():
         frame = obs.images[camera]
-        short = camera.rsplit(".", 1)[-1]
+        short = labels[camera]
         path = directory / f"frame_{analysis.frame:05d}_{short}_attn.png"
 
         figure, axis = plt.subplots(figsize=(6, 4.5), dpi=110)
