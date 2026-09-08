@@ -125,6 +125,7 @@ def main(argv=None) -> int:
         recording = open_recording()
 
     analyses = []
+    png_warned = False
     for obs in source.frames():
         analysis = next(
             analyse(
@@ -142,7 +143,21 @@ def main(argv=None) -> int:
             )
         )
         episode_dir = out_root / f"ep{obs.episode:03d}"
-        write_overlays(analysis, obs, episode_dir)
+        try:
+            write_overlays(analysis, obs, episode_dir)
+        except ImportError as exc:
+            # The plotting dependency (the 'png' extra) is absent. An expensive
+            # run -- possibly after loading a multi-gigabyte checkpoint -- must
+            # not be lost entirely: warn once and keep going, so summary.txt
+            # still gets written.
+            if not png_warned:
+                print(
+                    f"warning: skipping PNG overlays ({exc}); install the "
+                    "'png' extra to enable them. Continuing with summary.txt "
+                    "only.",
+                    file=sys.stderr,
+                )
+                png_warned = True
         if recording is not None:
             from .frontends.rerun_logger import log_analysis
 

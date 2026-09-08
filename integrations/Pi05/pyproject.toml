@@ -25,7 +25,10 @@ dependencies = [
     # needs it too, for encoding the ground-truth chunk the same way training did.
     # Runtime deps are only numpy+scipy, so it does not touch the lerobot pin above.
     "grabette-chunkrel",
-    "grabette-attention",
+    # The 'png' extra: grabette-attn's overlay writer needs matplotlib, and
+    # nothing else in this environment pulls it in. Without it the import
+    # fails after loading the checkpoint and computing the first frame.
+    "grabette-attention[png]",
 ]
 
 [project.optional-dependencies]
