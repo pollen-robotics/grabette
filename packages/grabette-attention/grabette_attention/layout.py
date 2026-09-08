@@ -76,3 +76,64 @@ class LetterboxGeometry:
         content_end = self.dst_w - self.pad_right
         last = -(-content_end // patch)
         return first, last
+
+
+@dataclass(frozen=True)
+class TokenLayout:
+    """Where each camera's image tokens sit in the policy's prefix.
+
+    The prefix is `[cam_0][cam_1]...[language]`, with patches in row-major order
+    inside each camera's block, exactly as `embed_prefix` assembles it.
+
+    `camera_keys` must be given in the order the POLICY assembles them, which is
+    present cameras in `config.image_features` order followed by absent ones —
+    not the order they appear in a batch. Absent cameras keep their slot (their
+    tokens exist, padded, with mask 0) so that the indices of the cameras after
+    them stay correct; `masked_cameras` records them so they are excluded from
+    output instead of being plotted as attention on nothing.
+    """
+
+    camera_keys: tuple[str, ...]
+    tokens_per_image: int
+    grid_rows: int
+    grid_cols: int
+    language_tokens: int
+    masked_cameras: frozenset[str]
+
+    @property
+    def prefix_len(self) -> int:
+        return len(self.camera_keys) * self.tokens_per_image + self.language_tokens
+
+    @property
+    def image_tokens(self) -> int:
+        return len(self.camera_keys) * self.tokens_per_image
+
+    def camera_index(self, key: str) -> int:
+        try:
+            return self.camera_keys.index(key)
+        except ValueError as exc:
+            raise KeyError(
+                f"{key!r} is not one of this policy's cameras {self.camera_keys}"
+            ) from exc
+
+    def camera_slice(self, key: str) -> slice:
+        start = self.camera_index(key) * self.tokens_per_image
+        return slice(start, start + self.tokens_per_image)
+
+    def language_slice(self) -> slice:
+        return slice(self.image_tokens, self.image_tokens + self.language_tokens)
+
+    def visible_cameras(self) -> tuple[str, ...]:
+        return tuple(k for k in self.camera_keys if k not in self.masked_cameras)
+
+    def token_to_cell(self, index: int) -> tuple[str, int, int]:
+        """Prefix token index -> (camera key, grid row, grid column)."""
+        if index < 0 or index >= self.prefix_len:
+            raise ValueError(f"token {index} is outside the prefix ({self.prefix_len})")
+        if index >= self.image_tokens:
+            raise ValueError(
+                f"token {index} is a language token, not an image patch"
+            )
+        camera = index // self.tokens_per_image
+        within = index % self.tokens_per_image
+        return (self.camera_keys[camera], within // self.grid_cols, within % self.grid_cols)
