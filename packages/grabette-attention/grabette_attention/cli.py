@@ -45,6 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--out", default="attention_out")
+    parser.add_argument(
+        "--rerun", action="store_true", help="also log to a rerun timeline"
+    )
     parser.set_defaults(ablate=True, fp32=True)
     return parser
 
@@ -105,6 +108,12 @@ def main(argv=None) -> int:
         notes = source.notes
 
     out_root = Path(args.out)
+    recording = None
+    if args.rerun:
+        from .frontends.rerun_logger import open_recording
+
+        recording = open_recording()
+
     analyses = []
     for obs in source.frames():
         analysis = next(
@@ -123,6 +132,10 @@ def main(argv=None) -> int:
         )
         episode_dir = out_root / f"ep{obs.episode:03d}"
         write_overlays(analysis, obs, episode_dir)
+        if recording is not None:
+            from .frontends.rerun_logger import log_analysis
+
+            log_analysis(analysis, obs, recording=recording)
         analyses.append(analysis)
         print(
             f"ep{obs.episode:03d} frame {obs.frame}: "
