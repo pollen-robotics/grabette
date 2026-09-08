@@ -76,6 +76,24 @@ def reduce_attention(
 
     # (heads, queries, keys) each -> mean over layers/steps, heads, then queries.
     stacked = np.stack(chosen, axis=0).mean(axis=0)      # (heads, queries, keys)
+
+    # If the patch size is wrong, tokens-per-image and grid rows*cols stay
+    # mutually consistent BY CONSTRUCTION (both derived from the same wrong
+    # patch), so the reshape below would still succeed and every camera block
+    # would be silently misaligned. Check the captured tensor itself, not just
+    # the layout's own arithmetic: keys must be exactly the prefix plus the
+    # query count (the action tokens appended after the prefix).
+    queries, keys = stacked.shape[-2], stacked.shape[-1]
+    expected_keys = layout.prefix_len + queries
+    if keys != expected_keys:
+        raise ValueError(
+            f"captured key axis ({keys}) does not match the derived layout: "
+            f"expected prefix_len ({layout.prefix_len}) + query count "
+            f"({queries}) = {expected_keys}. This usually means the patch size "
+            "used to derive the layout does not match what actually produced "
+            "this capture."
+        )
+
     over_keys = stacked.mean(axis=(0, 1))                # (keys,)
 
     prefix = over_keys[: layout.prefix_len]

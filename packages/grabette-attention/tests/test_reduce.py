@@ -143,3 +143,15 @@ def test_a_missing_geometry_is_an_error_not_a_guess():
         reduce_attention(captures(2), layout(2), {"cam0": LetterboxGeometry
                          .from_shapes(src_hw=(720, 960), dst_hw=(224, 224))},
                          patch=PATCH)
+
+
+def test_a_key_axis_that_disagrees_with_the_layout_is_rejected():
+    # If the patch size used to derive the layout is wrong, tokens-per-image
+    # and grid rows*cols stay mutually consistent BY CONSTRUCTION (both come
+    # from the same wrong patch), so the reshape would still succeed and every
+    # camera block would be silently misaligned. This must be checked against
+    # what was ACTUALLY captured, not re-derived from the layout alone:
+    # captures(2) has 2*256+200+50=762 keys, but layout(1) expects a prefix of
+    # 456 (+ 50 queries = 506).
+    with pytest.raises(ValueError, match="key axis"):
+        reduce_attention(captures(2), layout(1), GEOM, patch=PATCH)

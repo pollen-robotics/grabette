@@ -53,7 +53,12 @@ class FakeAdapter:
             chunk[:, 2] = 0.004                # 4 mm on z when cam0 is removed
         captures = {}
         if capture:
-            keys = 2 * 256 + 200 + 50
+            # Must match THIS adapter's own camera count, not a hard-coded
+            # two: reduce_attention now asserts the captured key axis against
+            # the derived layout (Finding 2), and a single-camera adapter
+            # reporting a two-camera-shaped capture is exactly the mismatch
+            # that check exists to catch.
+            keys = len(self._cameras) * 256 + 200 + 50
             captures = {(0, 0): np.ones((8, 50, keys), np.float32)}
         return RunResult(chunk=chunk, captures=captures)
 
