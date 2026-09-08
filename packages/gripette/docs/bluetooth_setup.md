@@ -106,7 +106,7 @@ Enter the PIN (default: `00000`) and click **"Authenticate"**. The log should sh
 
 ### 5. Send WiFi credentials
 
-Enter the SSID and password, then click **"Connect WiFi"**. The Pi will attempt to connect via `nmcli`.
+Enter the SSID and password, then click **"Connect WiFi"**. The tool exchanges keys and seals the password before sending it (see the command reference below); the Pi then connects via an explicit WPA-PSK `nmcli` profile.
 
 ### 6. Verify
 
@@ -125,9 +125,13 @@ The web tool wraps these, but the commands are also usable directly — written 
 | Command | Response | Description |
 |---|---|---|
 | `PING` | `PONG` | Health check |
-| `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` | Authenticate (required before WIFI/WIFI_RESET) |
-| `WIFI ssid password` | `OK: Connecting to <ssid>` / `ERROR: ...` | Connect to WiFi via nmcli |
-| `WIFI_RESET` | `OK: WiFi connections cleared` | Delete all saved WiFi networks |
+| `PIN_xxxxx` | `OK: Connected` / `ERROR: Incorrect PIN` | Authenticate (required before the WIFI commands); rate-limited, 5 wrong PINs lock further attempts for 30s, doubling on each repeat |
+| `WIFI_SCAN` | JSON array of SSIDs | Nearby networks, strongest first |
+| `WIFI_KEYEX` | `{"kid","pk","alg"}` | The robot's ephemeral X25519 public key; no auth needed |
+| `WIFI_CONNECT_ENC <json>` | `OK: Connecting to <ssid>` / `ERROR: ...` | Connect, with the password sealed (see below) |
+| `WIFI_RESET` | `OK: WiFi connections cleared (<n> removed)` | Delete all saved WiFi networks |
+
+The WiFi password is **never sent in clear**: the client runs `WIFI_KEYEX`, derives a shared key from its own ephemeral X25519 key with `HKDF-SHA256` (salt = the PIN), seals the password with `AES-256-GCM` (AAD = the SSID), and sends `{ssid,kid,epk,nonce,ct}`. `WIFI_CONNECT_ENC` and `WIFI_RESET` consume the authentication — re-send `PIN_xxxxx` before another one; `WIFI_SCAN` does not.
 
 Network status is also readable from a dedicated BLE characteristic (auto-updates every 10s).
 

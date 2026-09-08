@@ -63,6 +63,54 @@ def test_imu_sample_count_from_metadata(tmp_path):
 # back to Unassigned), while delete_task_by_name() is the fleet's destructive
 # path (the recordings go too). See #98.
 
+# ── an unreadable episode must not blank the dashboard ────────────────────────
+
+def test_a_truncated_metadata_does_not_break_the_episode(tmp_path):
+    # A power cut (or a full SD card) between open() and flush leaves a 0-byte
+    # metadata.json. Raising here 500'd GET /api/tasks.
+    ep = _make_episode(tmp_path, "ep_bad", ["raw_video.mp4"])
+    (ep / "metadata.json").write_text("")
+
+    info = TaskManager(data_dir=tmp_path)._get_episode_info("ep_bad")
+
+    assert info.metadata_ok is False, "a zeroed metadata must be reported as such"
+    assert info.has_video is True, "the episode's files are still on disk"
+    assert info.duration_seconds == 0.0
+
+
+def test_one_unreadable_episode_does_not_hide_every_other_task(tmp_path):
+    # THE regression: one bad episode used to take the whole listing down, so
+    # the dashboard showed no tasks at all — while the fleet, which reports from
+    # the registry and never reads these files, still showed them.
+    _make_episode(tmp_path, "ep_ok", ["raw_video.mp4"], {"duration_seconds": 4.0})
+    bad = _make_episode(tmp_path, "ep_bad", ["raw_video.mp4"])
+    (bad / "metadata.json").write_text("")
+    tm = TaskManager(data_dir=tmp_path)
+    good = tm.create_task("good")
+    broken = tm.create_task("broken")
+    tm._find_task(good)["episode_ids"].append("ep_ok")
+    tm._find_task(broken)["episode_ids"].append("ep_bad")
+
+    tasks = tm.list_tasks()   # must not raise
+
+    by_name = {t.name: t for t in tasks}
+    assert by_name["good"].episodes[0].duration_seconds == 4.0
+    assert by_name["broken"].episodes[0].metadata_ok is False
+    assert {"Unassigned", "good", "broken"} <= set(by_name)
+
+
+def test_a_missing_metadata_is_reported_as_not_ok(tmp_path):
+    # metadata.json is written LAST so its presence means "fully saved". Absent
+    # therefore means the episode never finished — not that it has no counters.
+    ep = tmp_path / "episodes" / "ep_partial"
+    ep.mkdir(parents=True)
+    (ep / "raw_video.mp4").write_text("x")
+
+    info = TaskManager(data_dir=tmp_path)._get_episode_info("ep_partial")
+
+    assert info.metadata_ok is False
+
+
 def test_delete_task_keeps_episodes(tmp_path):
     # #98: delete_task() preserves the episodes, reassigning them to Unassigned.
     _make_episode(tmp_path, "ep_a", ["oakd_imu.json"])

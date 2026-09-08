@@ -1,0 +1,12 @@
+- sections:
+    - local: index
+      title: Grabette
+    - local: get_started
+      title: Getting started
+    - local: dashboard
+      title: The dashboard
+    - local: spaces
+      title: Hugging Face Spaces
+    - local: faq
+      title: FAQ
+  title: Get Started

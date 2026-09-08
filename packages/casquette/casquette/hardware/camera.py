@@ -5,6 +5,8 @@ Ported from grabette-capture/grabette_capture/video.py.
 
 import logging
 import subprocess
+import threading
+import time
 from pathlib import Path
 
 from .sync import SyncManager
@@ -24,6 +26,13 @@ class VideoCapture:
     DEFAULT_RESOLUTION = (1296, 972)
     DEFAULT_FPS = 46
     DEFAULT_BITRATE = 5_000_000
+
+    # Background mux threads, tracked across all VideoCapture instances so a
+    # new capture can detect that a previous clip's ffmpeg mux is still
+    # running. RpiBackend builds a fresh VideoCapture per capture, so each
+    # background thread keeps its own instance's paths alive — no cross-clip
+    # race — but stacked ffmpegs compete for CPU on the Pi Zero 2W, so we warn.
+    _live_mux_threads: list[threading.Thread] = []
 
     def __init__(
         self,
@@ -140,6 +149,20 @@ class VideoCapture:
         if not self.sync.is_started:
             raise RuntimeError("SyncManager must be started before video capture")
 
+        # Sweep finished background mux threads; warn if a previous clip's
+        # mux is still running (safe — different files — but ffmpeg will
+        # compete for CPU with this recording on the Pi Zero 2W).
+        VideoCapture._live_mux_threads = [
+            t for t in VideoCapture._live_mux_threads if t.is_alive()
+        ]
+        if VideoCapture._live_mux_threads:
+            logger.warning(
+                "start_recording: %d previous mux thread(s) still running; "
+                "recording will start fine but ffmpeg competes for CPU until "
+                "they finish",
+                len(VideoCapture._live_mux_threads),
+            )
+
         self._output_path = Path(output_path)
         self._h264_path = self._output_path.with_suffix(".h264")
         self._frame_timestamps = []
@@ -155,19 +178,63 @@ class VideoCapture:
             return self._frame_timestamps
 
         self._recording = False
+        # Per-phase timing, emitted at DEBUG only (set CASQUETTE_LOG_LEVEL=DEBUG).
+        t: dict[str, float] = {}
+
+        _s = time.monotonic()
         self._picam2.stop_encoder()
+        t["stop_encoder"] = (time.monotonic() - _s) * 1000
+
+        _s = time.monotonic()
         if self.preview:
             try:
                 self._picam2.stop_preview()
             except Exception:
                 pass
         self._picam2.stop()
+        t["picam2_stop"] = (time.monotonic() - _s) * 1000
+
+        _s = time.monotonic()
         self._picam2.close()
         self._picam2 = None
         self._encoder = None
+        t["picam2_close"] = (time.monotonic() - _s) * 1000
 
-        self._mux_to_mp4()
+        # Background the ffmpeg mux. On the Pi Zero 2W ffmpeg takes ~5-7 s for
+        # typical clips, and the .mp4 doesn't need to be ready when stop()
+        # returns — running it off-thread keeps the stop path from blocking
+        # the next recording. The .h264 is durable on disk; the .mp4
+        # materialises when the thread finishes (logged on completion). If the
+        # daemon is killed mid-mux the .h264 survives for offline muxing.
+        self._mux_thread = threading.Thread(
+            target=self._mux_to_mp4_background,
+            daemon=True,
+            name="mux-to-mp4",
+        )
+        self._mux_thread.start()
+        VideoCapture._live_mux_threads.append(self._mux_thread)
+
+        logger.debug(
+            "VideoCapture.stop timing ms: %s total=%.0f (mux backgrounded)",
+            " ".join(f"{k}={v:.0f}" for k, v in t.items()),
+            sum(t.values()),
+        )
         return self._frame_timestamps
+
+    def _mux_to_mp4_background(self) -> None:
+        """Run the ffmpeg mux off the stop path (see stop())."""
+        t0 = time.monotonic()
+        try:
+            self._mux_to_mp4()
+        except Exception:
+            logger.exception(
+                "Background mux failed; .h264 left on disk for manual recovery"
+            )
+            return
+        logger.info(
+            "Background mux completed in %.0f ms → %s",
+            (time.monotonic() - t0) * 1000, self._output_path,
+        )
 
     def _mux_to_mp4(self) -> None:
         if self._h264_path is None or self._output_path is None:

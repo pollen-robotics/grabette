@@ -49,7 +49,14 @@ require Python >= 3.12 because that is LeRobot 0.6's minimum.
 uv sync --package grabette-postprocess
 ```
 
-The OAK SLAM step requires Docker with a locally built image:
+The OAK SLAM step requires Docker. The image is published, so pull it:
+
+```bash
+docker pull pollenrobotics/oak-vslam
+```
+
+Pin `:2026-07-22` instead of `:latest` when a result has to stay comparable.
+To build it yourself (Dockerfile + `offline_vslam.cpp` are both in the repo):
 
 ```bash
 docker build -t pollenrobotics/oak-vslam docker/oak_vslam/
