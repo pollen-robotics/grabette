@@ -594,3 +594,32 @@ episodes and over `--dump_obs` captures, not a runtime signal on the robot: the
 hidden-state probes, and even those report unusable false-alarm rates. Keeping
 it offline also keeps it out of the control loop entirely, which is the right
 place for anything experimental given the arm.
+
+---
+
+## 8. First run against a real checkpoint
+
+A record of the tool's first run against a real checkpoint, not a conclusion.
+
+- Checkpoint `SteveNguyen/pick3_graspproj_chunkrel_pi05`, chunk-relative
+  representation, action width 8.
+- Dataset: the local mustard grasp-projected recording, 199 episodes. Its own
+  task string is the slug `test_pick_mustard_200`, so the prompt was overridden
+  to "pick up the mustard bottle", one of the three language tasks the pick3
+  dataset the model trained on actually carries. The summary's provenance
+  records `task_source: override`.
+- Episode 0, grasp frame 192, selected by gripper closure crossing 0.5.
+- Camera attention mass 0.29, language mass 0.71. pi0.5 discretizes the robot
+  state into the language prompt, so that 0.71 covers task text and state
+  together, not language alone.
+- Removing the single camera changed the commanded chunk by 15.9 mm, per-axis
+  8.1, 13.1 and 4.1 mm.
+- Ran on CPU in float32 in a couple of minutes; an 8 GB GPU cannot hold the
+  16.6 GB of float32 weights.
+
+This is one frame of one episode: a demonstration that the pipeline runs end
+to end, not a result about the policy. Two things not to over-read: the
+brightest point in the map sits in the bottom-left corner, away from the
+bottle, with no explanation yet; and the per-axis ablation figures cannot yet
+be interpreted, since which index is the vertical axis in this frame's
+convention has not been confirmed.
