@@ -163,21 +163,24 @@ def select_frames(
         return indices, "explicit indices"
 
     if mode == "stride":
-        return _stride(n_frames, count), f"even stride of {count}"
+        indices = _stride(n_frames, count)
+        return indices, f"even stride of {len(indices)}"
 
     if mode != "grasp":
         raise ValueError(f"unknown frame selection {mode!r}")
 
     if gripper is None:
+        indices = _stride(n_frames, count)
         return (
-            _stride(n_frames, count),
-            f"no gripper channel found; even stride of {count}",
+            indices,
+            f"no gripper channel found; even stride of {len(indices)}",
         )
     closed = np.flatnonzero(np.asarray(gripper) >= threshold)
     if closed.size == 0:
+        indices = _stride(n_frames, count)
         return (
-            _stride(n_frames, count),
-            f"gripper never closes (threshold {threshold}); even stride of {count}",
+            indices,
+            f"gripper never closes (threshold {threshold}); even stride of {len(indices)}",
         )
 
     first = int(closed[0])

@@ -25,11 +25,9 @@ def write_dump(tmp_path, n=3):
     return tmp_path
 
 
-def test_dump_obs_frames_come_back_as_rgb():
-    import tempfile, pathlib
-    tmp = pathlib.Path(tempfile.mkdtemp())
-    write_dump(tmp)
-    source = DumpObsSource(tmp, task="pick the sugar cube", camera_key="observation.images.cam0")
+def test_dump_obs_frames_come_back_as_rgb(tmp_path):
+    write_dump(tmp_path)
+    source = DumpObsSource(tmp_path, task="pick the sugar cube", camera_key="observation.images.cam0")
     frames = list(source.frames())
     assert len(frames) == 3
     first = frames[0].images["observation.images.cam0"]
@@ -39,11 +37,9 @@ def test_dump_obs_frames_come_back_as_rgb():
     assert first[0, 0, 2] == 0
 
 
-def test_dump_obs_pairs_each_frame_with_its_state():
-    import tempfile, pathlib
-    tmp = pathlib.Path(tempfile.mkdtemp())
-    write_dump(tmp)
-    source = DumpObsSource(tmp, task="t", camera_key="cam0")
+def test_dump_obs_pairs_each_frame_with_its_state(tmp_path):
+    write_dump(tmp_path)
+    source = DumpObsSource(tmp_path, task="t", camera_key="cam0")
     frames = list(source.frames())
     assert frames[2].state[0] == pytest.approx(0.2)
     assert frames[1].frame == 1
@@ -89,3 +85,12 @@ def test_explicit_indices_are_returned_untouched():
 def test_an_out_of_range_explicit_index_is_rejected():
     with pytest.raises(ValueError, match="out of range"):
         select_frames(None, n_frames=5, mode=[9])
+
+
+def test_stride_note_reports_actual_count_not_requested():
+    indices, note = select_frames(None, n_frames=3, mode="stride", count=5)
+    # Should return only 3 frames (all available), not 5
+    assert len(indices) == 3
+    assert indices == [0, 1, 2]
+    # Note should report actual count sampled, not requested count
+    assert "3" in note and "5" not in note

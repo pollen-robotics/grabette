@@ -20,7 +20,8 @@ rerun = ["rerun-sdk"]
 # torch is needed to exercise the forward-hook capture with stub modules.
 # lerobot carries the workspace's usual >= 3.12 marker: it declares
 # Python>=3.12, and an unguarded pin makes `uv lock` fail on the 3.11 split.
-test = ["pytest", "torch", "matplotlib", "lerobot==0.6.0 ; python_version >= '3.12'"]
+# opencv-python-headless is needed so cv2-gated tests run on all supported Python versions.
+test = ["pytest", "torch", "matplotlib", "opencv-python-headless", "lerobot==0.6.0 ; python_version >= '3.12'"]
 
 [build-system]
 requires = ["hatchling"]
