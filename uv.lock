@@ -17,6 +17,7 @@ resolution-markers = [
 members = [
     "casquette",
     "grabette",
+    "grabette-attention",
     "grabette-chunkrel",
     "grabette-postprocess",
     "gripette",
@@ -1664,6 +1665,40 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
 provides-extras = ["rpi", "vision", "hf", "urdf", "ui", "teleop-bridge", "test"]
+
+[[package]]
+name = "grabette-attention"
+version = "0.1.0"
+source = { editable = "packages/grabette-attention" }
+dependencies = [
+    { name = "numpy" },
+]
+
+[package.optional-dependencies]
+png = [
+    { name = "matplotlib" },
+]
+rerun = [
+    { name = "rerun-sdk" },
+]
+test = [
+    { name = "lerobot", marker = "python_full_version >= '3.12'" },
+    { name = "matplotlib" },
+    { name = "pytest" },
+    { name = "torch" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'test'", specifier = "==0.6.0" },
+    { name = "matplotlib", marker = "extra == 'png'" },
+    { name = "matplotlib", marker = "extra == 'test'" },
+    { name = "numpy" },
+    { name = "pytest", marker = "extra == 'test'" },
+    { name = "rerun-sdk", marker = "extra == 'rerun'" },
+    { name = "torch", marker = "extra == 'test'" },
+]
+provides-extras = ["png", "rerun", "test"]
 
 [[package]]
 name = "grabette-chunkrel"
