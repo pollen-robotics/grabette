@@ -217,3 +217,46 @@ def test_an_existing_card_is_never_overwritten(tmp_path):
     (root / "README.md").write_text("hand written, do not clobber\n")
     _write_card(root, repo_id="user/ds")
     assert (root / "README.md").read_text() == "hand written, do not clobber\n"
+
+
+def test_stale_relative_stats_provenance_is_dropped(tmp_path):
+    """A source dataset carrying chunk-relative action stats must not pass its
+    `action_relative_meta` marker to the converted copy.
+
+    The tree is copied wholesale and `action` is then recomputed for the new
+    gripper channels — i.e. as ABSOLUTE stats. Keeping the marker would leave a
+    dataset claiming relative stats while holding absolute ones, and the
+    training guard keys on exactly that marker, so it would pass wrongly.
+    """
+    import json
+
+    from grabette_postprocess.grasp_projection_convert import _drop_stale_action_stats
+
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "stats.json").write_text(json.dumps({
+        "action": {"min": [0.0], "max": [1.0]},
+        "action_absolute": {"min": [0.0], "max": [2.0]},
+        "action_relative_meta": {"chunk_size": 50},
+        "observation.state": {"min": [0.0], "max": [1.0]},
+    }))
+
+    _drop_stale_action_stats(root)
+
+    st = json.loads((root / "meta" / "stats.json").read_text())
+    assert "action_relative_meta" not in st
+    assert "action_absolute" not in st
+    assert "action" in st and "observation.state" in st, "unrelated keys must survive"
+
+
+def test_dropping_provenance_is_a_no_op_when_absent(tmp_path):
+    import json
+
+    from grabette_postprocess.grasp_projection_convert import _drop_stale_action_stats
+
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+    before = {"action": {"min": [0.0], "max": [1.0]}}
+    (root / "meta" / "stats.json").write_text(json.dumps(before))
+    _drop_stale_action_stats(root)
+    assert json.loads((root / "meta" / "stats.json").read_text()) == before

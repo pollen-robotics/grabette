@@ -95,16 +95,16 @@ uv run python train.py \
 **HF Jobs (cloud)** — same account/token/credit prerequisites as the
 DiffusionPolicy integration (see its README's cloud section). Two cloud
 specifics: `--dataset.video_backend=pyav` (the Jobs image has no system
-FFmpeg) and, if you want the intermediate checkpoints (you do — the
-mid-training gates read them), mount a storage bucket and point
-`--output_dir` INTO it. A relative or container-local output_dir **silently
-loses every checkpoint** when the container exits; only the final Hub push
-would survive.
+FFmpeg), and **keep `--output_dir` on container-local disk** — checkpoints
+reach you through the Hub, not through the filesystem (see *Checkpoint
+selection* below). Do **not** point it at a bucket mount: across three runs
+the bucket retained only the 2 KB `config.json` of each checkpoint, never the
+weights, and reading a checkpoint back off the mount twelve hours later raised
+`OSError(EIO)` and lost the run's best model.
 
 ```bash
-# $2 smoke first: verify training runs AND the checkpoint lands in the bucket
+# $2 smoke first: verify training runs end to end
 hf jobs uv run --flavor a100-large --timeout 1h -s HF_TOKEN \
-    -v hf://buckets/<namespace>/<bucket>:/bucket \
     train.py -- \
     --policy.type=pi05 --policy.pretrained_path=lerobot/pi05_base \
     --policy.empty_cameras=0 \
@@ -114,13 +114,12 @@ hf jobs uv run --flavor a100-large --timeout 1h -s HF_TOKEN \
     --dataset.repo_id=<user>/<dataset>_graspproj \
     --dataset.video_backend=pyav \
     --steps=100 --batch_size=32 --num_workers=4 \
-    --save_freq=100 --output_dir=/bucket/outputs/<task>_pi05_smoke
-# then check: hf jobs logs, and that the bucket contains
-# outputs/<task>_pi05_smoke/checkpoints/000100/pretrained_model/
+    --save_freq=100 --output_dir=/root/outputs/<task>_pi05_smoke
+# then check `hf jobs logs`: "[checkpoints] eval-loss capture attached" at start,
+# and "End of training" at the end. (Nothing is pushed on a smoke run.)
 
 # real run (~12 h on a100-large ≈ $30)
 hf jobs uv run --flavor a100-large --timeout 24h -s HF_TOKEN \
-    -v hf://buckets/<namespace>/<bucket>:/bucket \
     train.py -- \
     --policy.type=pi05 --policy.pretrained_path=lerobot/pi05_base \
     --policy.empty_cameras=0 \
@@ -131,45 +130,59 @@ hf jobs uv run --flavor a100-large --timeout 24h -s HF_TOKEN \
     --policy.scheduler_decay_lr=1e-5 \
     --dataset.repo_id=<user>/<dataset>_graspproj \
     --dataset.video_backend=pyav \
-    --dataset.eval_split=0.05 --eval_steps=1000 \
+    --dataset.eval_split=0.15 --eval_steps=500 --save_freq=500 \
     --steps=20000 --batch_size=32 --num_workers=4 \
-    --output_dir=/bucket/outputs/<task>_pi05 \
+    --output_dir=/root/outputs/<task>_pi05 \
     --policy.push_to_hub=true --policy.repo_id=<user>/<task>_pi05
+# lands TWO repos on the Hub: <user>/<task>_pi05_best (best on held-out eval,
+# pushed the moment it is selected) and <user>/<task>_pi05_step20000 (the last).
+# Nothing lands on the bare id — see "Checkpoint selection" below.
 ```
 
-Two things about the bucket mount, both learned by hitting them:
+#### Checkpoint selection and what lands where
 
-- **Do NOT mount at `/data`.** HF reserves it for Jobs artifacts when running a
-  local script, and the job is rejected outright: *"Mount path '/data' is
-  reserved for Jobs artifacts when running local scripts."* Any other path works;
-  `/bucket` above is arbitrary. `hf buckets list` shows what you already have,
-  `hf buckets create <name>` makes one.
+`train.py` wraps lerobot's trainer with two behaviours that are **on by
+default** (both learned by hitting them):
+
+- **Best-checkpoint keeping (`GRABETTE_SAVE_BEST=1`, default).** Every
+  `--save_freq` checkpoint that follows an eval point is compared on held-out
+  eval loss; the best one is pushed to `<repo_id>_best` **the moment it is
+  selected**, and the final checkpoint is pushed to `<repo_id>_step<N>`.
+  Nothing lands on the bare `<repo_id>`. Older checkpoints are pruned once the
+  best has been pushed, so local disk holds at most two (~24.5 GB each: 9.35 GB
+  weights + 15.13 GB optimizer state). Motivation: a 20k-step run overfitted
+  from its first eval point and `--save_freq 10000` had kept only the two worst
+  checkpoints. Keep `--save_freq` equal to `--eval_steps` (500 above) so every
+  eval point is a candidate. `GRABETTE_SAVE_BEST=0` restores lerobot's stock
+  behaviour (one push, to the bare id).
+- **Diverse eval split (`GRABETTE_EVAL_SELECT=diverse`, default).** lerobot's
+  stock split holds out the contiguous *tail* of the recording session, i.e.
+  the last N correlated episodes. `diverse` picks the held-out episodes by
+  farthest-point sampling on per-episode descriptors (start pose, grasp pose,
+  path length, closure frame): 2× the spatial coverage on sugar cup.
+  `GRABETTE_EVAL_SELECT=tail` restores the stock split; if the selector cannot
+  read the episode data it prints `FELL BACK to lerobot's STOCK TAIL SPLIT` and
+  continues.
+- **Chunk-relative actions (`GRABETTE_CHUNK_RELATIVE=1`, default off).**
+  Trains on UMI-style chunk-relative offsets instead of per-step deltas; needs
+  relative stats in the dataset (`write_relative_action_stats`) and the guard
+  refuses a stats/representation mismatch. Measured *not* better than deltas —
+  see `docs/relative_actions_lerobot_native.md`. Deltas remain the default.
+
+Eval loss is a weak selection criterion (on pick3 a 20k checkpoint at 1.71×
+the minimum eval loss grasped 2/2); treat `_best` and `_step<N>` as two
+candidates for the gates below, not as a verdict.
+
+Two more operational notes:
+
 - **The smoke run needs `--policy.push_to_hub=false`.** lerobot defaults
   `push_to_hub` to *true*, so without either that flag or a `--policy.repo_id`
   the job dies in `cfg.validate()` with *"'repo_id' argument missing"* — before
   training starts, and after you have already paid for the GPU to boot.
-- **Pass `--save_freq` explicitly — and budget the storage.** Measured on a
-  100-step smoke, ONE checkpoint is **~24.5 GB**:
-
-  | file | size |
-  |---|---|
-  | `pretrained_model/model.safetensors` | 9.35 GB |
-  | `training_state/optimizer_state.safetensors` | **15.13 GB** |
-
-  The optimizer state is two thirds of it and is only needed to *resume* — not to
-  evaluate or to run the gates. Left unset, lerobot's default `save_freq` applies;
-  `--save_freq=5000` over 20k steps means four checkpoints ≈ **98 GB**, and
-  `--save_freq=10000` two ≈ 49 GB, which still leaves one mid-training checkpoint
-  for the gates. Budget accordingly: a fresh bucket starts empty.
-
-  Failed multipart uploads also leave orphaned `.tmpXXXXXX` files the size of the
-  file they were writing (a stray 9.35 GB one after our smoke). Check with
-  `hf buckets ls -R` and delete them with `hf buckets rm`.
-
 - **Enable wandb, or the loss curve is gone.** With `wandb.enable=false`
   (lerobot's default) the run logs only to stdout. HF Jobs logs are not
   retrievable after the job leaves the queue (`hf jobs logs <id>` → 404), and
-  nothing is written into the bucket beside the checkpoints. We finished a 12 h /
+  nothing survives the container beside the pushed checkpoints. We finished a 12 h /
   $30 run whose training and eval losses are **unrecoverable** — so the recipe's
   own success criterion (eval loss descending, reference 0.755 → 0.447) could not
   be checked at all. Pass `--wandb.enable=true --wandb.project=<project>` with a
@@ -183,7 +196,7 @@ Recipe rationale (matched to the verified `lerobot/pi05-libero` fine-tune):
 | chunk_size / n_action_steps | 50 / 50 (defaults) | π0.5's native flow horizon — don't shrink at training; the eval replans on a prefix instead |
 | cameras | your 1 real camera, `empty_cameras=0` | do NOT zero-pad camera slots (prime suspect in the pi0fast collapse) |
 | LR schedule | 2.5e-5, warmup 4000, decay horizon 100k → ≈constant over 20k | **the three scheduler flags are mandatory**: lerobot's auto-scaled default decays to 2.5e-6 by 20k, 10× below recipe |
-| eval split | `--dataset.eval_split=0.05 --eval_steps=1000` | held-out CE loss each 1000 steps; expect it descending (reference: 0.755 → 0.447), no overfit gap |
+| eval split | `--dataset.eval_split=0.15 --eval_steps=500 --save_freq=500` | held-out loss each 500 steps on a *diverse* split (see above); expect it descending (reference: 0.755 → 0.447). On small tasks it can bottom out at ~1k steps — that is what `_best` is for |
 | compile | **off** | `compile_model=true` + inline eval crashes (inductor layout conflict → illegal memory access at the first eval step) |
 | image transforms | off | |
 | action tokenizer | none | flow matching — no FAST stage, nothing to fit or verify |
@@ -210,6 +223,53 @@ PASS = finite, sane-scale chunks that **differ across observations** (mean
 The collapsed pi0fast reference measured 0.000000. `--fp32` matters: the
 pi05 port has a bf16 dtype clash in its flow path — fp32 for all inference.
 
+**Execution-quality summary (`--episodes N`).** Beyond the PASS/FAIL sanity
+gate, each held-out episode reports what the arm would actually do with the
+chunk, for deltas and chunk-relative alike:
+
+- `STEP err` — per-step command error in **mm** after the chunk is turned into
+  the commands the server receives (deltas: as stored; chunk-relative:
+  differenced). Comparable across representations. `chunk err` is the raw
+  chunk-offset error (×1000) and is **not** comparable between the two.
+- `snr` and lag-1 autocorrelation of the command error (chunk-relative
+  differencing yields ≈ −0.5 by construction).
+- gripper schedule: predicted vs ground-truth closure frame, its gap in mm
+  along the trajectory, and the count of episodes where the model never
+  closes. This is the number that separated models when eval loss did not.
+
+Use `--chunk_relative` when the checkpoint was trained with
+`GRABETTE_CHUNK_RELATIVE=1`; the script aborts on an 8-D/11-D width mismatch.
+Our pi05 checkpoints are 4.14B params, so fp32 is **16.6 GB of weights**
+before activations: use a ≥24 GB card, not the 16 GB the flag's help used
+to claim.
+
+**Chunk-relative checkpoints need `--chunk_relative`.** Two reasons the gate
+cannot just run as-is on one:
+
+- The chunk's reference pose *is* its first action, so relative action 0 is
+  identically zero in all six pose dims for every training sample. Comparing
+  two episodes' `select_action()` outputs therefore reads "input-INDEPENDENT"
+  however good the policy is. The flag switches to `predict_action_chunk` and
+  drops action 0 before differencing.
+- The checkpoint's postprocessor ends with the inverse step, which needs a
+  reference pose only the robot has. The flag strips it.
+
+It also sharpens check 3: the ground-truth chunk is encoded the same way
+training encoded it, so the gate reports a position error in **mm**.
+
+```bash
+uv run python smoke_generation.py \
+    --checkpoint SteveNguyen/pick3_graspproj_chunkrel_pi05 \
+    --policy_type pi05 --fp32 --chunk_relative \
+    --dataset_repo_id SteveNguyen/pick3_graspproj_chunkrel \
+    --episodes 0 100 --frame 60 \
+    --task "pick up the red can" --task2 "pick up the cup"
+```
+
+Both episodes come from the same task there (eps 0–165 are "pick up the red
+can"), so check 2 isolates the *scene* effect; `--task2` then measures the
+*language* effect on the same frame. See step 4.
+
 ### 4. Language gate (only if you rely on task strings)
 
 A multi-task fine-tune where **every training scene contains exactly one
@@ -218,6 +278,15 @@ predictable from pixels, so the language channel gets no gradient. Measured
 on our 3-task model: swapping the task string moved actions by 0.0047 vs a
 0.0036 same-task sampling-noise floor (i.e. nothing). It will grab its
 favorite object regardless of what you ask.
+
+`smoke_generation.py --task2 "<other task>"` runs the same check **without a
+Ficelle server**: it re-probes one frame with a second task string and scales
+the result against a same-task re-sampling **noise floor**. The floor is the
+whole point — pi05 is a flow model, so the same input does not give the same
+output twice, and the 0.0047 above is only meaningful next to its 0.0036 floor
+(1.3x = nothing). Verdicts: <1.5x FAIL, <3x WEAK, else PASS.
+
+The standalone probe below additionally sweeps frames and needs the server:
 
 ```bash
 # needs a Ficelle server running (step 5). All-local setup: start one on the
@@ -341,5 +410,6 @@ Deployment settings that matter (each traced to a measured failure):
 | `train.py` | `lerobot-train` + fresh-pipeline fix — the training entry point |
 | `smoke_pi05_reference.py` | Port health check on lerobot's own libero π0.5 (step 0) |
 | `smoke_generation.py` | Observation-conditioning gate on YOUR fine-tune (step 3) |
+| `tests/test_checkpointing.py` | 37 tests for the eval-split selector, the best-checkpoint keeper, the eval-loss capture, and the push targets (`uv run pytest`). |
 | `probe_task_sensitivity.py` | Language-channel gate via the Ficelle server (step 4) |
 | `pi0fast/` | The Pi0-FAST attempt: tokenizer tooling + recipe + why it failed |

@@ -20,10 +20,21 @@ dependencies = [
     "num2words",
     "accelerate",
     "protobuf",
+    # Chunk-relative checkpoints register a custom ProcessorStep, so lerobot
+    # cannot rebuild their processor pipeline without this import. smoke_generation
+    # needs it too, for encoding the ground-truth chunk the same way training did.
+    # Runtime deps are only numpy+scipy, so it does not touch the lerobot pin above.
+    "grabette-chunkrel",
 ]
 
 [project.optional-dependencies]
 wandb = ["wandb"]
+
+[tool.uv.sources]
+# From the monorepo, not PyPI. The HF Jobs training run installs the same package
+# with `--with "grabette-chunkrel @ git+...#subdirectory=packages/grabette-chunkrel"`
+# because `hf jobs uv run` uploads only the script, never this pyproject.
+grabette-chunkrel = { path = "../../packages/grabette-chunkrel", editable = true }
 
 [tool.uv]
 # Scripts-only project: manage the dependency env, don't build/install this dir.

@@ -118,6 +118,33 @@ for episode in range(n_episodes):
             break
 ```
 
+### Action representation at eval (`--chunk_relative`)
+
+`evaluate.py` speaks two action representations. **Per-step deltas are the
+default** and need no flag. A checkpoint trained with chunk-relative actions
+(`GRABETTE_CHUNK_RELATIVE=1` in `integrations/Pi05/train.py`) emits 8-D
+chunk offsets that must be differenced back into per-step deltas before the
+arm server sees them:
+
+```
+--chunk_relative auto   # default: read the checkpoint's policy_preprocessor.json
+                        # and enable iff a chunk-relative step is registered
+--chunk_relative on     # force on (remote --policy_addr: the checkpoint is not
+                        # local, so say it explicitly or auto refuses to guess)
+--chunk_relative off    # force off
+```
+
+Chunk-relative needs `--n_action_steps 40` or more; the reference (the
+chunk's first action) cancels in the differencing, so short horizons replay
+the model's per-step noise as jitter (15 is visibly jerky). The width of the
+action vector is cross-checked against the mode (8-D chunk-relative, 11-D
+delta) and a mismatch aborts with a hint instead of silently misinterpreting.
+Install with the `eval` extra (`grabette-chunkrel` is a workspace dependency)
+— see `docs/relative_actions_lerobot_native.md` for the design and results.
+
+Note: `--skip_stale` used to read a dead action queue on pi05 and dropped the
+chunk head on every tick; it now drops exactly once per replan.
+
 ### View the camera stream
 
 ```bash

@@ -210,6 +210,42 @@ uv run lerobot-dataset-viz \
 `--episode-index` picks the episode inside the dataset. See
 `lerobot-dataset-viz --help` for `--mode local/distant` and other flags.
 
+### 6. Normalize a raw capture
+
+Raw captures recorded with a camera prefix (e.g. `observation.images.right_cam0`)
+and no state column do not fit the pipeline above. `normalize_raw` renames the
+camera feature everywhere it appears (info.json, video dir, episode parquet
+columns, stats.json), optionally strips the prefix from every feature name,
+and adds the gripper-only `observation.state` the training scripts expect:
+
+```bash
+uv run python -m grabette_postprocess.normalize_raw \
+    --src_root /path/to/raw --dst_root /path/to/normalized --repo_id <user>/<dataset> \
+    --camera right_cam0 --strip_prefix right_ --task "pick the sugar cube"
+```
+
+### 7. Publish gate
+
+Before pushing a dataset, `check_publish` (a library function, no CLI yet)
+verifies info.json, the task string (natural language, not a slug), the
+gripper channel naming and unit range, the grasp-projection sidecar, the
+stats file and its representation provenance, the dataset card (viewer link),
+the LeRobot tag, and the fps (`deep=True` decodes the videos):
+
+```python
+from grabette_postprocess.checks.publish import check_publish
+status = check_publish("<user>/<dataset>")   # Hub id or local path -> dict of findings
+```
+
+### 8. Relative action stats (optional chunk-relative mode)
+
+Chunk-relative training (`GRABETTE_CHUNK_RELATIVE=1`, see
+`docs/relative_actions_lerobot_native.md`) normalizes actions with statistics
+of the *relative* representation, not of the stored deltas.
+`write_relative_action_stats` computes them and stamps the stats file with a
+provenance marker; the training guard refuses a stats/representation mismatch.
+Deltas (the default) do not need this step.
+
 ## Project structure
 
 ```
@@ -221,7 +257,9 @@ grabette-postprocess/
 │   ├── oak_slam.py         # OAK-D RTAB-Map orchestration (delta integration + gravity align)
 │   ├── dataset.py          # LeRobot v3 dataset builder
 │   ├── episode_manager.py  # episode discovery / dropping
-│   └── checks/             # validation logic (recording, sync, trajectory)
+│   ├── normalize_raw.py    # rename camera / strip prefix / add gripper state on raw captures
+│   ├── chunk_relative_stats.py  # relative-action stats + provenance (chunk-relative mode)
+│   └── checks/             # validation logic (recording, sync, trajectory, publish gate)
 ├── docker/
 │   └── oak_vslam/       # RTAB-Map offline_vslam C++ + Dockerfile
 └── scripts/                           # local CLIs (mirror the post-processing pipeline)

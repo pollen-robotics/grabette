@@ -439,11 +439,31 @@ wheels = [
 ]
 
 [[package]]
+name = "grabette-chunkrel"
+version = "0.1.0"
+source = { editable = "../../packages/grabette-chunkrel" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "lerobot", marker = "python_full_version >= '3.12' and extra == 'test'", specifier = "==0.6.0" },
+    { name = "numpy" },
+    { name = "pytest", marker = "extra == 'test'" },
+    { name = "scipy" },
+    { name = "torch", marker = "extra == 'test'" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "grabette-pi05"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "accelerate" },
+    { name = "grabette-chunkrel" },
     { name = "lerobot", extra = ["dataset", "pi"] },
     { name = "num2words" },
     { name = "protobuf" },
@@ -459,6 +479,7 @@ wandb = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate" },
+    { name = "grabette-chunkrel", editable = "../../packages/grabette-chunkrel" },
     { name = "lerobot", extras = ["pi", "dataset"], git = "https://github.com/huggingface/lerobot?rev=e40b58a8dfa9e7b86918c374791599d070518d11" },
     { name = "num2words" },
     { name = "protobuf" },
