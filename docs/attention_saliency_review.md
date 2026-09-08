@@ -282,7 +282,7 @@ targets and stacking the maps beats one summed map.
   forward passes and an MSE.
 
 Full annotated bibliography with per-entry verification status:
-`scratchpad/biblio_saliency.md`.
+`attention_maps_refs/biblio_saliency.md`.
 
 ---
 
@@ -369,9 +369,137 @@ these are the acceptance criteria for the implementation:
 
 ## 5. Implementation notes for `lerobot` pi0.5 and Diffusion
 
-_(pending: repo/tooling agent still running — attention hook points, whether
-weights are discarded, prefix KV cache across denoising steps, gradient
-availability under `no_grad`, Diffusion Grad-CAM layer, `--dump_obs` reuse.)_
+All of this was verified against the installed sources. The four venvs that
+matter carry byte-identical `modeling_pi05.py`, so there is one target, not
+four. Details and line numbers: `attention_maps_refs/repo_internals.md`.
+
+### 5.1 pi0.5 attention is available with a forward hook and no patching
+
+This is the headline, and it corrects an assumption I had been carrying. The
+fused `compute_layer_complete`, where attention weights are computed and
+dropped, is **training-only**. At inference the path is different and friendlier:
+
+- `sample_actions` sets `_attn_implementation = "eager"` on both towers before
+  every call, and stock `GemmaAttention.forward` **returns
+  `(attn_output, attn_weights)`**. So a plain `register_forward_hook` on each
+  attention module receives the probabilities in `output[1]`. No monkeypatching,
+  no fork of lerobot.
+- Two hook sets: the 18 **action-expert** layers give
+  `(B, 8, 50, prefix_len + 50)` — 50 action-token queries against the cached
+  prefix then the action tokens — and fire **once per layer per denoising
+  step**, so 180 calls per chunk. The 18 **PaliGemma** layers give
+  `(B, 8, prefix_len, prefix_len)` once per chunk, at prefill.
+- Denoising steps are distinguished by counting calls (18 per step) or by
+  wrapping `denoise_step`, which is a plain method.
+- The prefix KV cache is computed once and **reused unchanged by every
+  denoising step**; only the 50 suffix tokens are recomputed. So a
+  per-step comparison is genuinely about the action tokens' reading of a fixed
+  prefix, which makes the unpublished per-step sweep (§7.2) clean to interpret.
+- `compile_model` is forced off by every loader in the repo, so hooks are not
+  swallowed by a graph.
+- Caveat if we ever want SigLIP's internal patch-to-patch attention: the vision
+  tower is left at the transformers default, which is SDPA, and SDPA returns
+  `None` for weights. Set `_attn_implementation = "eager"` on the vision config
+  first.
+
+### 5.2 The token layout, which is where multi-camera genericity is won
+
+- Prefix is `[cam_0: 0..255][cam_1: 256..511]...[language: 256*N .. +199]`, so
+  `token_index -> (camera = idx // 256, row = (idx % 256) // 16, col = idx % 16)`.
+  Patch order is row-major. Today, with one camera and `empty_cameras=0`,
+  `prefix_len = 456`: image tokens 0-255, language 256-455.
+- **Camera order is the order of `config.image_features`**, not batch order,
+  and **missing cameras are appended after the present ones** with their mask
+  zeroed, which masks them as both keys and queries. So the tool must read the
+  order from the config at runtime and exclude masked blocks — exactly the
+  genericity requirement in §4(b), now with a concrete rule to implement.
+- Attention inside the prefix is **fully bidirectional** between image and
+  language tokens. Action tokens attend to all of the prefix and to each other;
+  the prefix cannot see the actions.
+- The state is **not** a separate token: it is discretised into 256 bins and
+  written into the language prompt. So "how much does it attend to
+  proprioception" is a question about language tokens, which is worth knowing
+  given the earlier proprioception discussion.
+- Letterbox inverse map: our frames go to 224x168 padded to 224x224 with 28 px
+  top and bottom, extra pixel to bottom/right. Only grid rows 2-13 carry image
+  content. For a pixel `(u, v)` in the letterboxed image,
+  `x_orig = u * ratio`, `y_orig = (v - 28) * ratio`, `ratio = 4.2857` for
+  960x720 and 2.143 for the 480x360 training copy. The padding rows must be
+  dropped, not plotted.
+
+### 5.3 Gradients are reachable, memory is the constraint
+
+- `sample_actions`, `select_action` and `predict_action_chunk` are decorated
+  with `@torch.no_grad()`, but **not** `inference_mode`, and the decorator uses
+  `functools.wraps`, so `sample_actions.__wrapped__` is the undecorated
+  function. Either call that under `enable_grad`, or re-implement the ~15-line
+  denoising loop, which is cleaner because it lets us choose which step to
+  attribute.
+- `_preprocess_images`, `embed_prefix`, `embed_image` and `denoise_step` are all
+  undecorated, and the path from input pixels through the letterbox, SigLIP and
+  the projector to the expert is fully differentiable. Make the image tensor a
+  leaf before `_preprocess_images`.
+- Grad-CAM feature-layer candidates, in order of convenience: the
+  `multi_modal_projector` output `(B, 256, 2048)` per camera, the last SigLIP
+  encoder layer `(B, 256, 1152)`, or the assembled prefix embedding sliced per
+  camera.
+- **Cost**: the repo runs pi0.5 in fp32 because the bf16 flow path is broken,
+  which is already 16.6 GB of weights. Backward through prefill plus SigLIP
+  adds a few GB of activations, so full pixel-space attribution wants a 32-48 GB
+  card. Attributing only through the expert with the prefix frozen as a constant
+  cache is cheap but kills the gradient to pixels, so it works for
+  attention-style maps only. This cost asymmetry is a real argument for
+  starting with the interventional method, which needs no backward pass at all.
+
+### 5.4 Diffusion Policy has a free attention map already
+
+- `SpatialSoftmax` computes a per-keypoint softmax over the feature map. That
+  tensor **is** a K-channel attention map. Hook `encoder.pool.nets` for the
+  `(B, K, H, W)` logits, or `encoder.pool` for the `(B, K, 2)` keypoints to
+  plot as points. With our config that is 32 keypoints on a 7x7 grid. Worth
+  plotting before writing any attribution code.
+- Grad-CAM layer: the last ResNet stage, `encoder.backbone[7]`, giving
+  `(N, 512, 7, 7)` for a 224 crop. `generate_actions` and `conditional_sample`
+  are undecorated, so gradients are available without unwrapping anything.
+- **Multi-camera trap specific to our config**: we use a **shared** encoder
+  (`use_separate_rgb_encoder_per_camera=False`), so images are flattened into
+  the encoder batch with index `(b*S + s)*N + n` over sample, observation step
+  and camera. Any per-camera attribution must unflatten that correctly, and it
+  changes shape if the config ever flips to per-camera encoders. Camera order is
+  again `config.image_features`.
+- Our pixel path differs from pi0.5: `Resize((236, 236))` is a
+  **non-aspect-preserving squash**, then a 224 centre crop, so the inverse map
+  is `x = (u + 6)/236 * W`, `y = (v + 6)/236 * H`. Two different geometries in
+  one tool, which is another reason the mapping must be per-policy and derived,
+  not a constant.
+
+### 5.5 Where the tool plugs in
+
+- **`--dump_obs` is already the right input.** It writes, per control step, the
+  exact frame fed to the policy as a full-resolution RGB PNG plus a
+  `state.jsonl` line, one subdirectory per episode, before normalisation and
+  before the letterbox. An offline tool can consume that directly, and the
+  async path additionally logs commanded and measured poses.
+- **`smoke_generation.py` is the offline harness to reuse.** It loads a
+  checkpoint on CPU then moves it, forces `compile_model=False`, casts to fp32,
+  and — importantly — enumerates camera keys **from the checkpoint config**
+  rather than the dataset, zero-filling any the dataset lacks. That is the
+  behaviour our tool should copy.
+- **Remote serving cannot provide attention today.** Ficelle's wire reply
+  contains only actions and timing. Adding attention would need a server-side
+  hook, an extra reply key and a protocol bump. So the tool targets the local
+  checkpoint path, which is also where the offline analysis belongs.
+- **No prior art in the repo**: no mention of attention, saliency, Grad-CAM or
+  heatmap anywhere outside the virtualenvs, and no colormap overlay exists yet.
+  The closest existing tools are `vision_check.py` ("does the policy actually
+  use the image?"), `ood_check.py` (which already hooks
+  `policy.diffusion.rgb_encoder`, a precedent for reaching into the policy) and
+  `probe_task_sensitivity.py`. The new tool should sit beside them in the
+  documentation.
+- House conventions to follow: RGB in memory and BGR only at write time,
+  headless-safe fallback from `imshow` to numbered PNGs, matplotlib on `Agg`
+  with a graceful skip if unavailable, and rerun with `world/...` entity paths
+  if we want a 3D front end.
 
 ---
 
@@ -390,7 +518,7 @@ availability under `no_grad`, Diffusion Grad-CAM layer, `--dump_obs` reuse.)_
 
 Neither `openpi` nor `lerobot` ships an attention-visualisation utility; expect
 to hook the eager attention path ourselves. Full annotated bibliography with
-verification status per entry: `scratchpad/biblio_vla_attention.md`.
+verification status per entry: `attention_maps_refs/biblio_vla_attention.md`.
 
 ---
 
@@ -425,6 +553,8 @@ So:
    loop re-attends the cached prefix at every step, so the answer is cheap and
    ours to find. Expect a broad, low-peak map: that is normal for pi0.5, and a
    diagnostic tuned to expect a crisp blob on the sugar cube will mislead.
+   Feasibility is settled: a forward hook on the 18 expert attention modules,
+   no lerobot fork, no monkeypatching (§5.1).
 2. **View ablation for N views**, via the attention mask rather than pixel
    occlusion, since missing-camera masking is in distribution for pi0.5. Report
    change-in-chunk per dropped view. This is the measure that will answer "does
