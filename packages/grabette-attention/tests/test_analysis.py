@@ -21,6 +21,7 @@ class FakeAdapter:
     def __init__(self, cameras=("cam0", "cam1")):
         self._cameras = cameras
         self.calls: list[tuple[bool, str | None]] = []
+        self.draw_noise_count = 0
 
     @property
     def camera_keys(self):
@@ -41,6 +42,7 @@ class FakeAdapter:
         )
 
     def draw_noise(self):
+        self.draw_noise_count += 1
         return "fixed-noise"
 
     def run(self, obs, noise, *, capture, drop_camera=None):
@@ -125,3 +127,35 @@ def test_a_single_camera_policy_needs_no_special_case():
     result = analyse_frame(adapter, obs)
     assert set(result.cameras) == {"cam0"}
     assert result.cameras["cam0"].mass == pytest.approx(256 / 456)
+
+
+def test_noise_is_drawn_once_per_frame():
+    adapter = FakeAdapter()
+    analyse_frame(adapter, observation())
+    assert adapter.draw_noise_count == 1
+
+
+def test_no_usable_camera_raises_without_running_the_model():
+    adapter = FakeAdapter(cameras=())  # No cameras
+    obs = FrameObservation(
+        episode=0, frame=0,
+        images={},
+        state=np.zeros(2, np.float32), task="t",
+    )
+    with pytest.raises(ValueError, match="no usable camera"):
+        analyse_frame(adapter, obs)
+    # The check happens before any run(), so no calls should be recorded
+    assert adapter.calls == []
+
+
+def test_provenance_always_records_what_was_actually_computed():
+    # Even if caller passes provenance with denoise_step/layers, the actual
+    # values used take precedence (unconditional assignment, not setdefault).
+    result = analyse_frame(
+        FakeAdapter(), observation(),
+        denoise_step="first", layers=[0, 1],
+        provenance={"denoise_step": "wrong", "layers": "wrong", "model": "v1"},
+    )
+    assert result.provenance["denoise_step"] == "first"
+    assert result.provenance["layers"] == "[0, 1]"
+    assert result.provenance["model"] == "v1"  # caller values preserved

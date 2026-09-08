@@ -24,13 +24,19 @@ def analyse_frame(
     provenance: dict[str, str] | None = None,
 ) -> FrameAnalysis:
     layout = adapter.layout(obs)
-    baseline = adapter.run(obs, adapter.draw_noise(), capture=True)
 
     # Geometry is per camera: views may differ in resolution or aspect ratio, so
     # each camera's padding crop must come from its own frame.
     visible = layout.visible_cameras()
     if not visible:
         raise ValueError(f"frame {obs.frame} has no usable camera")
+
+    # Draw noise once and reuse it across all passes (baseline + ablations).
+    # This is the structural guarantee that "camera removed" deltas measure
+    # camera effect, not sampling variance.
+    noise = adapter.draw_noise()
+
+    baseline = adapter.run(obs, noise, capture=True)
     geometries = {camera: adapter.geometry(obs, camera) for camera in visible}
 
     cameras, language_mass = reduce_attention(
@@ -46,13 +52,13 @@ def analyse_frame(
     if ablate:
         for camera in visible:
             dropped = adapter.run(
-                obs, adapter.draw_noise(), capture=False, drop_camera=camera
+                obs, noise, capture=False, drop_camera=camera
             )
             ablations[camera] = translation_delta(baseline.chunk, dropped.chunk)
 
     record = dict(provenance or {})
-    record.setdefault("denoise_step", str(denoise_step))
-    record.setdefault("layers", str(layers))
+    record["denoise_step"] = str(denoise_step)
+    record["layers"] = str(layers)
     return FrameAnalysis(
         episode=obs.episode,
         frame=obs.frame,
