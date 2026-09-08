@@ -32,3 +32,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["grabette_attention"]
+
+[tool.pytest.ini_options]
+markers = ["gpu: needs a GPU and a real checkpoint; run by hand"]
+addopts = "-m 'not gpu'"
