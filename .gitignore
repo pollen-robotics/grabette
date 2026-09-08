@@ -34,3 +34,6 @@ gripette-data/
 
 # evaluate.py --debug headless frame dumps
 eval_debug_frames/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/
