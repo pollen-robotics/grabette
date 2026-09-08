@@ -155,3 +155,12 @@ def test_a_key_axis_that_disagrees_with_the_layout_is_rejected():
     # 456 (+ 50 queries = 506).
     with pytest.raises(ValueError, match="key axis"):
         reduce_attention(captures(2), layout(1), GEOM, patch=PATCH)
+
+
+def test_denoise_step_all_is_rejected_rather_than_silently_averaged():
+    # Finding 7: 'all' must not be a silent synonym for 'mean' -- a per-step
+    # comparison is unpublished territory the spec explicitly calls out, and
+    # this tool's record shape holds one map per camera per frame, not one per
+    # step. Reject clearly rather than pretend to support it.
+    with pytest.raises(ValueError, match="denoise_step='all'"):
+        reduce_attention(captures(1), layout(1), GEOM, patch=PATCH, denoise_step="all")

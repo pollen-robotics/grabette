@@ -31,8 +31,22 @@ def _select(
         wanted_steps = {steps[-1]}
     elif denoise_step == "first":
         wanted_steps = {steps[0]}
-    elif denoise_step in ("mean", "all"):
+    elif denoise_step == "mean":
         wanted_steps = set(steps)
+    elif denoise_step == "all":
+        # "all" here would silently mean the same as "mean": averaging the
+        # steps together. That throws away exactly the per-step comparison the
+        # spec calls for -- across-step maps are unpublished territory, unlike
+        # across-layer averaging, which `layers="all"` legitimately does. This
+        # tool's record shape holds one map per camera per frame, not one per
+        # step, so a true per-step comparison needs a bigger change than this
+        # fix wave; reject clearly instead of pretending to support it.
+        raise ValueError(
+            "denoise_step='all' is not supported: it would silently average "
+            "steps together like 'mean' rather than compare them per step. "
+            "Pass 'mean' to average across steps, 'last', 'first', or an "
+            "explicit step index."
+        )
     elif isinstance(denoise_step, int):
         wanted_steps = {denoise_step}
     else:
