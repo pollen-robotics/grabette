@@ -25,6 +25,7 @@ dependencies = [
     # needs it too, for encoding the ground-truth chunk the same way training did.
     # Runtime deps are only numpy+scipy, so it does not touch the lerobot pin above.
     "grabette-chunkrel",
+    "grabette-attention",
 ]
 
 [project.optional-dependencies]
@@ -35,6 +36,7 @@ wandb = ["wandb"]
 # with `--with "grabette-chunkrel @ git+...#subdirectory=packages/grabette-chunkrel"`
 # because `hf jobs uv run` uploads only the script, never this pyproject.
 grabette-chunkrel = { path = "../../packages/grabette-chunkrel", editable = true }
+grabette-attention = { path = "../../packages/grabette-attention", editable = true }
 
 [tool.uv]
 # Scripts-only project: manage the dependency env, don't build/install this dir.

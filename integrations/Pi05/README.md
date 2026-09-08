@@ -412,4 +412,5 @@ Deployment settings that matter (each traced to a measured failure):
 | `smoke_generation.py` | Observation-conditioning gate on YOUR fine-tune (step 3) |
 | `tests/test_checkpointing.py` | 37 tests for the eval-split selector, the best-checkpoint keeper, the eval-loss capture, and the push targets (`uv run pytest`). |
 | `probe_task_sensitivity.py` | Language-channel gate via the Ficelle server (step 4) |
+| `grabette-attn` (from `packages/grabette-attention`) | Offline attention maps per camera plus view-ablation deltas in mm. Answers "where is it looking" and "which camera does it rely on". The maps are hypotheses; the ablation numbers are the measurement. See `docs/attention_saliency_review.md`. |
 | `pi0fast/` | The Pi0-FAST attempt: tokenizer tooling + recipe + why it failed |
