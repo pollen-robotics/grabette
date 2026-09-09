@@ -16,10 +16,10 @@ odometry, run in Docker.
 
 ```
 Episode directory (from Grabette)
-├── oakd_left.mp4 + oakd_depth.mkv     OAK-D stereo + depth
-├── oakd_*_timestamps.json             frame timestamps
-├── oakd_imu.json                      accel/gyro/rotation
-├── oakd_calib_offline.json            intrinsics + imu_to_cam
+├── dcam_left.mp4 + dcam_depth.mkv     OAK-D stereo + depth
+├── dcam_*_timestamps.json             frame timestamps
+├── dcam_imu.json                      accel/gyro/rotation
+├── dcam_calib_offline.json            intrinsics + imu_to_cam
 └── metadata.json
 
     │  convert_episode_to_oak.py → run_oak_slam.py

@@ -34,3 +34,8 @@ gripette-data/
 
 # evaluate.py --debug headless frame dumps
 eval_debug_frames/
+
+# The Orbbec SDK writes Log/OrbbecSDK.log.txt into the CWD of whatever loads it.
+# On a deployed Pi the daemon's WorkingDirectory IS this repo, so a checkout
+# running depth_camera=gemini305 grows an untracked Log/ (1.8 MB after a day).
+Log/

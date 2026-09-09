@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+from grabette_postprocess.episode_files import resolve
+
 import click
 import cv2
 import numpy as np
@@ -197,19 +199,19 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
         print("IMU: not found (expected oak/imu_acc.csv and oak/imu_gyro.csv)")
 
     # --- Open OAK left video (what the SLAM actually saw) ---
-    # We use oakd_left.mp4 — NOT raw_video.mp4 — because:
+    # We use dcam_left.mp4 — NOT raw_video.mp4 — because:
     #   1. raw_video.mp4 is the RPi fisheye camera, not the SLAM input.
-    #   2. oakd_left.mp4 is the rectified SLAM input; its frames are 1:1
+    #   2. dcam_left.mp4 is the rectified SLAM input; its frames are 1:1
     #      with the trajectory (encoder order == SLAM frame_idx), so no
     #      timestamp arithmetic is needed.
-    video_path = episode_dir / "oakd_left.mp4"
+    video_path = resolve(episode_dir, "dcam_left.mp4")
     print(f"Looking for video at: {video_path}  (exists={video_path.exists()})")
     video_cap = None
     video_fps = None
     if show_video and video_path.exists():
         video_cap = cv2.VideoCapture(str(video_path))
         if not video_cap.isOpened():
-            print("Warning: Could not open oakd_left.mp4")
+            print("Warning: Could not open dcam_left.mp4")
             video_cap = None
         else:
             video_fps = video_cap.get(cv2.CAP_PROP_FPS)
@@ -218,7 +220,7 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
             vid_h = int(video_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             print(f"OAK left video: {n_vframes} frames at {video_fps:.2f} fps ({vid_w}x{vid_h})")
     elif show_video:
-        print("Video: oakd_left.mp4 not found, camera feed disabled")
+        print("Video: dcam_left.mp4 not found, camera feed disabled")
 
     # --- Initialize Rerun ---
     rr.init(app_id, spawn=True)
@@ -333,7 +335,7 @@ def main(episode_dir, show_video, video_skip, app_id, gravity_align):
             ))
 
         if video_cap is not None:
-            # oakd_left.mp4 frames are 1:1 with SLAM trajectory frame_idx —
+            # dcam_left.mp4 frames are 1:1 with SLAM trajectory frame_idx —
             # both came from the same StereoDepth output in encoding order.
             video_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
             ret, frame = video_cap.read()

@@ -39,6 +39,28 @@ FPS = 46
 OAKD_READY_TIMEOUT_S = 5.0
 
 
+def _camera_metadata(model: str, cap) -> dict:
+    """The `depth_camera` block for metadata.json.
+
+    Filenames are vendor-neutral, so without this an episode does not say what
+    recorded it — and the two cameras differ in ways that matter downstream (IMU
+    or not, frame-drop rate). `model` is the configured value; the rest comes
+    from the device.
+
+    Values are NOT filtered here. Each camera already omits fields it could not
+    read, so a null that reaches this dict is meaningful: the Gemini reports
+    `"imu": None` to say the hardware has none, and filtering nulls out
+    (as an earlier version did) silently deleted exactly that signal.
+    """
+    info = {"model": model}
+    if cap is not None:
+        try:
+            info.update(cap.camera_info())
+        except Exception as e:
+            logger.warning("Could not read camera info: %s", e)
+    return info
+
+
 # Hardware faults that make this grabette unable to record CONVERTIBLE episodes.
 # Keyed, not one string: the two are independent, and a single field would let
 # a successful OAK-D bring-up quietly clear a live angle-sensor fault. Listed in
@@ -58,7 +80,8 @@ class RpiBackend(Backend):
 
     def __init__(
         self, enable_angle: bool = False, enable_oakd: bool = True,
-        oakd_keepalive_s: float = 30.0,
+        oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
+        orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
     ) -> None:
         super().__init__()
         self._running = False
@@ -79,6 +102,9 @@ class RpiBackend(Backend):
         self._enable_angle = enable_angle
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
+        self._depth_camera = depth_camera
+        self._orbbec_ir_exposure_us = orbbec_ir_exposure_us
+        self._orbbec_ir_gain = orbbec_ir_gain
 
         self._sync = None
         self._camera = None
@@ -129,22 +155,38 @@ class RpiBackend(Backend):
         logger.info("RpiBackend started")
 
     def _init_oakd(self) -> None:
-        """Initialize OAK-D SR (always-on pipeline, used for live view + recording).
+        """Initialize the depth camera (always-on pipeline: live view + recording).
 
-        A missing/unusable offline calibration is singled out from every other
-        init failure: the OAK-D is reachable, so the device looks healthy, yet
+        Which model is brought up depends on `depth_camera`; both satisfy
+        hardware.depth_camera.DepthCameraCapture, so nothing else in this class
+        needs to know which one it got. The orbbec import stays inside its
+        branch because pyorbbecsdk2 is installed separately (--no-deps) and is
+        absent on an OAK-D-only device; importing oakd is free either way, since
+        that module only pulls depthai inside its own functions.
+
+        A missing/unusable OAK-D offline calibration is singled out from every
+        other init failure: the device is reachable, so it looks healthy, yet
         every episode it records is unconvertible (the SLAM Space rejects them
-        with "missing oakd_calib_offline.json"). That one is latched as a
+        with "missing dcam_calib_offline.json"). That one is latched as a
         hardware error, which refuses capture and blinks the error pattern.
         Other failures keep the historical behaviour (log + carry on without the
-        OAK-D) so a deliberately OAK-less bench setup still works.
+        camera) so a deliberately camera-less bench setup still works. The
+        Gemini has no equivalent fault: it derives its calibration on the host.
         """
         from grabette.hardware.oakd import OakdCalibrationError, OakdCapture
         try:
-            self._oakd = OakdCapture(self._sync)
+            if self._depth_camera == "gemini305":
+                from grabette.hardware.orbbec import OrbbecCapture
+                self._oakd = OrbbecCapture(
+                    self._sync,
+                    ir_exposure_us=self._orbbec_ir_exposure_us,
+                    ir_gain=self._orbbec_ir_gain,
+                )
+            else:
+                self._oakd = OakdCapture(self._sync)
             self._oakd.init_device()
             self._clear_hw_error(_HW_OAKD)
-            logger.info("OAK-D SR initialized")
+            logger.info("Depth camera initialized: %s", self._depth_camera)
         except OakdCalibrationError as e:
             self._oakd = None
             self._set_hw_error(_HW_OAKD, (
@@ -153,7 +195,10 @@ class RpiBackend(Backend):
             ))
             logger.error("OAK-D calibration unusable — recording disabled: %s", e)
         except Exception as e:
-            logger.warning("OAK-D not available, continuing without it: %s", e)
+            logger.warning(
+                "Depth camera (%s) not available, continuing without it: %s",
+                self._depth_camera, e,
+            )
             self._oakd = None
 
     def _init_speaker(self) -> None:
@@ -229,6 +274,15 @@ class RpiBackend(Backend):
         return self._needs_reinit
 
     # ── OAK-D runtime enable/disable (UI-driven, battery saver) ────────────────
+
+    @property
+    def depth_camera_model(self) -> str:
+        """Which depth camera this backend drives ("oakd" / "gemini305").
+
+        Surfaced so the UI can name the hardware it is actually talking to
+        instead of hardcoding "OAK-D".
+        """
+        return self._depth_camera
 
     @property
     def is_oakd_enabled(self) -> bool:
@@ -698,7 +752,12 @@ class RpiBackend(Backend):
             "urdf": urdf_name,
         }
         if oakd_stats:
-            meta["oakd"] = oakd_stats
+            # Per-stream capture stats. Key is "dcam" since the camera may be an
+            # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
+            meta["dcam"] = oakd_stats
+
+        meta["depth_camera"] = _camera_metadata(self._depth_camera, self._oakd)
+
         # Drain the sync metadata while state is still live — _take_sync_metadata
         # consumes it, so it has to happen here and not in the deferred writer.
         sync_meta = self._take_sync_metadata()

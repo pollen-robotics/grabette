@@ -10,6 +10,19 @@ ExecStart=/home/rasp/Project/Repo/grabette/.venv/bin/python -m grabette
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Cap glibc malloc arenas.
+#
+# The capture threads churn ~1 MB per frame of numpy buffers, and glibc keeps
+# freed memory in per-thread arenas rather than returning it to the OS. On a
+# 4-core Pi it will open up to 8*cores = 32 arenas of up to 64 MB each, so RSS
+# ratchets upward without anything actually leaking: measured 318 -> 478 MB over
+# six depth-camera enable/disable cycles, reaching 1.66 GB in normal use, at
+# which point memory pressure cost ~50% of the depth frames.
+#
+# Verified not to be a leak: the Python heap stays flat at 4.2 MB across cycles
+# and malloc_trim(0) hands 6-8 MB back each time. With arenas capped at 2 the
+# daemon plateaus at ~310 MB and stops growing.
+Environment=MALLOC_ARENA_MAX=2
 # Per-device persistent config (GRABETTE_HAND, GRABETTE_*_SIGN, …).
 # Written by 'make install-rpi HAND=...'. Leading '-' makes it optional so
 # a fresh dev install (no file yet) still boots.
