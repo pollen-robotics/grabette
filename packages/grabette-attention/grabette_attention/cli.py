@@ -138,55 +138,58 @@ def main(argv=None) -> int:
     analyses = []
     png_warned = False
     for obs in source.frames():
-        analysis = next(
-            analyse(
-                adapter,
-                [obs],
-                denoise_step=_denoise_step(args.denoise_step),
-                layers=_layers(args.layers),
-                ablate=args.ablate,
-                provenance={
-                    "checkpoint": args.checkpoint,
-                    "seed": str(args.seed),
-                    "dtype": "fp32" if args.fp32 else "bf16",
-                    "task_source": task_sources.get(obs.episode, "supplied"),
-                },
-            )
-        )
-        episode_dir = out_root / f"ep{obs.episode:03d}"
-        try:
-            write_overlays(analysis, obs, episode_dir)
-        except ImportError as exc:
-            # The plotting dependency (the 'png' extra) is absent. An expensive
-            # run -- possibly after loading a multi-gigabyte checkpoint -- must
-            # not be lost entirely: warn once and keep going, so summary.txt
-            # still gets written.
-            if not png_warned:
-                print(
-                    f"warning: skipping PNG overlays ({exc}); install the "
-                    "'png' extra to enable them. Continuing with summary.txt "
-                    "only.",
-                    file=sys.stderr,
-                )
-                png_warned = True
-        if recording is not None:
-            from .frontends.rerun_logger import log_analysis
+        # One frame yields ONE record for every --denoise-step except 'all',
+        # which fans it out into one record per denoising step. Iterate rather
+        # than taking the first, or 'all' would silently discard every step
+        # but the earliest.
+        for analysis in analyse(
+            adapter,
+            [obs],
+            denoise_step=_denoise_step(args.denoise_step),
+            layers=_layers(args.layers),
+            ablate=args.ablate,
+            provenance={
+                "checkpoint": args.checkpoint,
+                "seed": str(args.seed),
+                "dtype": "fp32" if args.fp32 else "bf16",
+                "task_source": task_sources.get(obs.episode, "supplied"),
+            },
+        ):
+            episode_dir = out_root / f"ep{obs.episode:03d}"
+            try:
+                write_overlays(analysis, obs, episode_dir)
+            except ImportError as exc:
+                # The plotting dependency (the 'png' extra) is absent. An
+                # expensive run -- possibly after loading a multi-gigabyte
+                # checkpoint -- must not be lost entirely: warn once and keep
+                # going, so summary.txt still gets written.
+                if not png_warned:
+                    print(
+                        f"warning: skipping PNG overlays ({exc}); install the "
+                        "'png' extra to enable them. Continuing with "
+                        "summary.txt only.",
+                        file=sys.stderr,
+                    )
+                    png_warned = True
+            if recording is not None:
+                from .frontends.rerun_logger import log_analysis
 
-            log_analysis(analysis, obs, recording=recording)
-        analyses.append(analysis)
-        labels = camera_labels(analysis.cameras)
-        print(
-            f"ep{obs.episode:03d} frame {obs.frame}: "
-            + "  ".join(
-                f"{labels[c]} mass {a.mass:.2f}"
-                + (
-                    f" ablate {analysis.ablations[c].delta_mm:.1f}mm"
-                    if c in analysis.ablations
-                    else ""
+                log_analysis(analysis, obs, recording=recording)
+            analyses.append(analysis)
+            labels = camera_labels(analysis.cameras)
+            step = analysis.provenance.get("denoise_step", "")
+            print(
+                f"ep{obs.episode:03d} frame {obs.frame} step {step}: "
+                + "  ".join(
+                    f"{labels[c]} mass {a.mass:.2f}"
+                    + (
+                        f" ablate {analysis.ablations[c].delta_mm:.1f}mm"
+                        if c in analysis.ablations
+                        else ""
+                    )
+                    for c, a in analysis.cameras.items()
                 )
-                for c, a in analysis.cameras.items()
             )
-        )
 
     summary = write_summary(analyses, out_root, notes=notes)
     print(f"wrote {summary}")

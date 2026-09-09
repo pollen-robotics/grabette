@@ -7,7 +7,7 @@ not recomputed per camera.
 import numpy as np
 import pytest
 
-from grabette_attention.analysis import analyse, analyse_frame
+from grabette_attention.analysis import analyse, analyse_frame, analyse_frame_steps
 from grabette_attention.adapters.base import RunResult
 from grabette_attention.layout import LetterboxGeometry, TokenLayout
 from grabette_attention.records import FrameObservation
@@ -18,8 +18,9 @@ class FakeAdapter:
 
     patch = 14
 
-    def __init__(self, cameras=("cam0", "cam1")):
+    def __init__(self, cameras=("cam0", "cam1"), steps=1):
         self._cameras = cameras
+        self._steps = steps
         self.calls: list[tuple[bool, str | None]] = []
         self.draw_noise_count = 0
 
@@ -59,7 +60,20 @@ class FakeAdapter:
             # reporting a two-camera-shaped capture is exactly the mismatch
             # that check exists to catch.
             keys = len(self._cameras) * 256 + 200 + 50
-            captures = {(0, 0): np.ones((8, 50, keys), np.float32)}
+            for step in range(self._steps):
+                weights = np.ones((8, 50, keys), np.float32)
+                if self._steps > 1:
+                    # Give each step a distinct PATTERN, not a distinct scale.
+                    # Mass is normalised by the prefix total, so a scalar
+                    # multiple would reduce to an identical grid and a test
+                    # could not tell a true per-step reduction from an average
+                    # over steps. Row 2+step, col step of cam0 — inside the
+                    # content crop, which for a 720x960 frame drops rows 0-1
+                    # and 14-15. Only applied for a multi-step capture, so the
+                    # single-step default stays exactly uniform and the mass
+                    # arithmetic the other tests pin is untouched.
+                    weights[:, :, (2 + step) * 16 + step] += 100.0
+                captures[(step, 0)] = weights
         return RunResult(chunk=chunk, captures=captures)
 
 
@@ -114,6 +128,60 @@ def test_provenance_records_how_the_map_was_made():
 def test_the_episode_and_frame_are_carried_through():
     result = analyse_frame(FakeAdapter(), observation())
     assert (result.episode, result.frame) == (3, 42)
+
+
+def test_per_step_analysis_returns_one_record_per_denoising_step():
+    adapter = FakeAdapter(steps=4)
+    records = analyse_frame_steps(adapter, observation())
+    assert len(records) == 4
+    assert [r.provenance["denoise_step"] for r in records] == ["0", "1", "2", "3"]
+
+
+def test_per_step_analysis_costs_no_extra_inference():
+    # The captures from ONE pass already hold every step. Reducing four steps
+    # must not run the policy four times — that was the whole reason
+    # denoise_step='all' was rejected rather than implemented naively.
+    adapter = FakeAdapter(steps=4)
+    analyse_frame_steps(adapter, observation())
+    assert adapter.calls == [(True, None), (False, "cam0"), (False, "cam1")]
+    assert adapter.draw_noise_count == 1
+
+
+def test_per_step_maps_actually_differ_between_steps():
+    # The point of per-step output. The fake puts its hot cell at
+    # (row=step, col=step) after cropping, so an implementation that averaged
+    # the steps together would give every record the same argmax.
+    records = analyse_frame_steps(FakeAdapter(steps=3), observation())
+    peaks = [
+        np.unravel_index(int(r.cameras["cam0"].grid.argmax()), r.cameras["cam0"].grid.shape)
+        for r in records
+    ]
+    assert peaks == [(0, 0), (1, 1), (2, 2)]
+
+
+def test_the_per_step_ablation_is_marked_as_step_independent():
+    # The ablation measures the emitted chunk, so it is identical in every
+    # record. Say so, or a reader will see the same number ten times and
+    # believe they are looking at a flat per-step trend.
+    records = analyse_frame_steps(FakeAdapter(steps=3), observation())
+    deltas = {r.ablations["cam0"].delta_mm for r in records}
+    assert len(deltas) == 1
+    assert all("identical across steps" in r.provenance["ablation_scope"] for r in records)
+
+
+def test_each_per_step_record_owns_its_ablation_mapping():
+    # Shared mutable state between records would let one consumer's edit show
+    # up in every other record.
+    records = analyse_frame_steps(FakeAdapter(steps=2), observation())
+    records[0].ablations.pop("cam0")
+    assert "cam0" in records[1].ablations
+
+
+def test_analyse_fans_a_frame_out_when_denoise_step_is_all():
+    adapter = FakeAdapter(steps=3)
+    results = list(analyse(adapter, [observation()], denoise_step="all"))
+    assert len(results) == 3
+    assert [r.provenance["denoise_step"] for r in results] == ["0", "1", "2"]
 
 
 def test_analyse_streams_over_many_frames():

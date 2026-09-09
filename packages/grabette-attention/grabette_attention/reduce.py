@@ -18,6 +18,17 @@ from .layout import LetterboxGeometry, TokenLayout
 from .records import CameraAttention
 
 
+def captured_steps(captures: dict[tuple[int, int], np.ndarray]) -> list[int]:
+    """The denoising step indices present in a capture, in order.
+
+    The caller needs these to iterate steps without knowing how many denoising
+    steps the policy ran, which is a property of the checkpoint's sampler.
+    """
+    if not captures:
+        raise ValueError("no attention was captured; were the hooks installed?")
+    return sorted({step for step, _ in captures})
+
+
 def _select(
     captures: dict[tuple[int, int], np.ndarray],
     denoise_step: str | int,
@@ -34,18 +45,17 @@ def _select(
     elif denoise_step == "mean":
         wanted_steps = set(steps)
     elif denoise_step == "all":
-        # "all" here would silently mean the same as "mean": averaging the
-        # steps together. That throws away exactly the per-step comparison the
-        # spec calls for -- across-step maps are unpublished territory, unlike
-        # across-layer averaging, which `layers="all"` legitimately does. This
-        # tool's record shape holds one map per camera per frame, not one per
-        # step, so a true per-step comparison needs a bigger change than this
-        # fix wave; reject clearly instead of pretending to support it.
+        # This function returns ONE grid per camera, so "all" has no meaning
+        # here: collapsing every step into one grid is just "mean" under a
+        # misleading name, and that is precisely the per-step comparison it
+        # would destroy. A real per-step result is a sequence of records, which
+        # is `analysis.analyse_frame_steps` -- it reduces these same captures
+        # once per step, so it costs no extra inference.
         raise ValueError(
-            "denoise_step='all' is not supported: it would silently average "
-            "steps together like 'mean' rather than compare them per step. "
-            "Pass 'mean' to average across steps, 'last', 'first', or an "
-            "explicit step index."
+            "denoise_step='all' is not a single-grid reduction: collapsing "
+            "every step into one grid is what 'mean' already does. For a true "
+            "per-step comparison use analysis.analyse_frame_steps(), which "
+            "returns one record per step from a single forward pass."
         )
     elif isinstance(denoise_step, int):
         wanted_steps = {denoise_step}

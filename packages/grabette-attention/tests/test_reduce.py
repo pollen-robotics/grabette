@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from grabette_attention.layout import LetterboxGeometry, TokenLayout
-from grabette_attention.reduce import reduce_attention
+from grabette_attention.reduce import captured_steps, reduce_attention
 
 PATCH = 14
 
@@ -158,9 +158,24 @@ def test_a_key_axis_that_disagrees_with_the_layout_is_rejected():
 
 
 def test_denoise_step_all_is_rejected_rather_than_silently_averaged():
-    # Finding 7: 'all' must not be a silent synonym for 'mean' -- a per-step
-    # comparison is unpublished territory the spec explicitly calls out, and
-    # this tool's record shape holds one map per camera per frame, not one per
-    # step. Reject clearly rather than pretend to support it.
-    with pytest.raises(ValueError, match="denoise_step='all'"):
+    # 'all' must not be a silent synonym for 'mean'. This function returns one
+    # grid per camera, so it has no way to express a per-step result; the error
+    # has to point at the function that does, or the caller will reach for
+    # 'mean' and believe they compared the steps.
+    with pytest.raises(ValueError, match="analyse_frame_steps"):
         reduce_attention(captures(1), layout(1), GEOM, patch=PATCH, denoise_step="all")
+
+
+def test_the_captured_steps_are_reported_in_order():
+    # The per-step caller must not have to know how many denoising steps the
+    # sampler ran; that is a property of the checkpoint.
+    # Out of order, and repeated across layers: the step list must be sorted
+    # and deduplicated, since every layer fires once per step.
+    grid = np.zeros((1, 1, 1), np.float32)
+    caps = {(3, 0): grid, (1, 5): grid, (1, 0): grid, (2, 17): grid}
+    assert captured_steps(caps) == [1, 2, 3]
+
+
+def test_captured_steps_rejects_an_empty_capture():
+    with pytest.raises(ValueError, match="no attention was captured"):
+        captured_steps({})

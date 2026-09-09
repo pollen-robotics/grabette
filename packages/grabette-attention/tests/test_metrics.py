@@ -26,13 +26,16 @@ def test_an_identical_chunk_gives_exactly_zero():
     assert result.per_axis_mm == (0.0, 0.0, 0.0)
 
 
-def test_the_per_axis_breakdown_isolates_the_vertical_component():
-    # The question we care about: does removing a view change HEIGHT?
+def test_the_per_axis_breakdown_keeps_each_channel_in_its_own_slot():
+    # Channel order is load-bearing: slot 1 is VERTICAL and slot 2 is DEPTH in
+    # this action space (see ViewAblation), and the two answer different
+    # questions. A breakdown that leaked one into the other would be read as a
+    # physical claim about the wrong axis.
     baseline = np.zeros((10, 11), np.float32)
     ablated = baseline.copy()
-    ablated[:, 2] = 0.005                     # 5 mm on z only
+    ablated[:, 1] = 0.005                     # 5 mm on y (vertical) only
     result = translation_delta(baseline, ablated)
-    assert result.per_axis_mm == pytest.approx((0.0, 0.0, 5.0))
+    assert result.per_axis_mm == pytest.approx((0.0, 5.0, 0.0))
     assert result.delta_mm == pytest.approx(5.0)
 
 

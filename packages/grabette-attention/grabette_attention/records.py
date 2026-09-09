@@ -51,8 +51,19 @@ class ViewAblation:
 
     Both figures are in MILLIMETRES and are computed on the translation channels
     of the chunk. `delta_mm` is the RMS over chunk steps of the 3-D difference;
-    `per_axis_mm` is the RMS per axis, which is what tells us whether a view
-    carries the vertical (range) information.
+    `per_axis_mm` is the RMS per axis, in channel order.
+
+    AXIS CONVENTION for this project's action space -- the standard OpenCV
+    CAMERA frame, so the axes are relative to the gripper-mounted view, not to
+    the world:
+
+        per_axis_mm[0]  x  lateral, +right
+        per_axis_mm[1]  y  VERTICAL, +DOWN
+        per_axis_mm[2]  z  DEPTH / range, +FORWARD along the optical axis
+
+    Vertical and range are different axes and they behave very differently, so
+    do not read either off the wrong slot. The README records how this was
+    measured (172 episodes) and how to re-verify it for another robot.
     """
 
     delta_mm: float

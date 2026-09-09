@@ -3,8 +3,11 @@
 The chunk's translation channels are in METRES; everything reported here is in
 MILLIMETRES, converted exactly once. `delta_mm` is the RMS over chunk steps of
 the 3-D difference, so it does not grow with the chunk length. `per_axis_mm` is
-the same RMS per axis, which is the figure that says whether a view carries the
-vertical (range) information.
+the same RMS per axis.
+
+Vertical and range are DIFFERENT axes and they do not behave alike, so read
+`per_axis_mm` against the convention recorded in `records.ViewAblation` rather
+than assuming the interesting axis is the last one.
 
 For a chunk-relative checkpoint the chunk holds offsets rather than per-step
 deltas; the metric still measures how far the two predictions diverge, which is

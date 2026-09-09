@@ -114,6 +114,10 @@ class _FakeAdapterForMain:
     def draw_noise(self):
         return "noise"
 
+    # How many denoising steps this fake's capture reports. Raise it to
+    # exercise the per-step fan-out through the whole CLI.
+    steps = 1
+
     def run(self, obs, noise, *, capture, drop_camera=None):
         import numpy as np
 
@@ -123,7 +127,10 @@ class _FakeAdapterForMain:
         captures = {}
         if capture:
             keys = 256 + 200 + 50   # tokens_per_image + language_tokens + queries
-            captures = {(0, 0): np.ones((8, 50, keys), np.float32)}
+            captures = {
+                (step, 0): np.ones((8, 50, keys), np.float32)
+                for step in range(self.steps)
+            }
         return RunResult(chunk=chunk, captures=captures)
 
 
@@ -189,3 +196,36 @@ def test_a_missing_png_extra_still_leaves_the_summary_written(monkeypatch, tmp_p
     assert (out_dir / "summary.txt").exists()
     err = capsys.readouterr().err
     assert "png" in err.lower() or "matplotlib" in err.lower()
+
+
+def test_denoise_step_all_writes_one_record_per_step_through_the_cli(
+    monkeypatch, tmp_path
+):
+    # The CLI took only the FIRST record from analyse(). That was correct while
+    # one frame meant one record, and became a silent nine-tenths data loss the
+    # moment 'all' began fanning a frame out. Nothing tested the CLI's
+    # CONSUMPTION of analyse(), so the unit tests for the fan-out all passed
+    # while the tool wrote a single step.
+    pytest.importorskip("matplotlib")
+
+    _patch_fake_policy(monkeypatch)
+    _patch_fake_dataset(monkeypatch)
+    monkeypatch.setattr(_FakeAdapterForMain, "steps", 3)
+
+    out_dir = tmp_path / "out"
+    assert main([
+        "--checkpoint", "c", "--dataset", "d", "--episodes", "0",
+        "--task", "t", "--denoise-step", "all", "--out", str(out_dir),
+    ]) == 0
+
+    overlays = sorted(p.name for p in out_dir.rglob("*_attn.png"))
+    assert len(overlays) == 3
+    # Distinct, zero-padded, one per step: a collision would silently collapse
+    # them back to a single file.
+    assert [n.split("_step")[1][:2] for n in overlays] == ["00", "01", "02"]
+
+    text = (out_dir / "summary.txt").read_text()
+    assert text.count("frame 0  step") == 3
+    # The merged provenance block must name every step it covers, not just the
+    # last record's.
+    assert "denoise_step: 0,1,2" in text
