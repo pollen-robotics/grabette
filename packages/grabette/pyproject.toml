@@ -28,14 +28,22 @@ rpi = [
     "depthai>=3.6,<4",
     # pyorbbecsdk2 (depth_camera=gemini305) is deliberately NOT listed here.
     # Its declared deps are for its examples, not the binding: opencv-python
-    # (the full build, against this extra's headless one), pygame, pynput, and
-    # numpy>=2.1.0 — and that last one would install numpy INTO the venv,
-    # shadowing the system numpy picamera2 needs, exactly as the note above
-    # warns. Installed --no-deps by `make install-orbbec-sdk`, verified working
-    # against the system numpy on a Pi 4 / Trixie / Python 3.13.
-    "opencv-python-headless>=4.8",
+    # (the full build, against the headless one [vision] pulls in), pygame,
+    # pynput, and numpy>=2.1.0 — and that last one would install numpy INTO the
+    # venv, shadowing the system numpy picamera2 needs, exactly as the note
+    # above warns. Installed --no-deps by `make install-orbbec-sdk`, verified
+    # working against the system numpy on a Pi 4 / Trixie / Python 3.13.
+    "grabette[vision]",
     "scipy",  # quaternion + rotation math (teleop, dataset processing)
     "rerun-sdk",  # live trajectory visualization for teleop
+]
+# The host-installable half of the OAK-D stack. Split out of `rpi` because that
+# extra is unusable off a Pi (picamera2, depthai, gpiod), yet grabette.hardware.oakd
+# imports cv2 at module level — so CI could not import the module it tests, and
+# test_hardware_error.py failed collection on every run. This is a feature set,
+# not test tooling: it stays out of the `test` extra on purpose.
+vision = [
+    "opencv-python-headless>=4.8",
 ]
 hf = [
     "huggingface-hub>=0.20.0",

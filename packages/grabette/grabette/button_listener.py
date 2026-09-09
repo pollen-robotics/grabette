@@ -10,7 +10,19 @@ BOTH grabettes reflect their own status, even the peer started via the fleet:
   - Blink:      initializing (warming up / waiting for the shared T0)
   - Solid:      recording in progress
   - Fast blink: stopping (from the stop until the capture is fully torn down)
+  - 1 pulse, pause, repeat:  busy with dataset work (upload / conversion) —
+    recording is refused until it finishes (see Backend.busy_reason)
+  - 3 pulses, pause, repeat: hardware fault — this device REFUSES to record
+    (see Backend.hardware_error; today: no usable OAK-D offline calibration)
 (Teleop mode reuses the LED: solid = sending, off = repositioning.)
+
+The press paths also cue the speaker when a command FAILS. That matters most
+here of all the entry points: the button is used with no screen in front of it,
+and the failures it can hit before the backend is even reached — the fleet
+refusing a group start, a scheduled start that never fires — would otherwise
+show up only as the LED dropping back to idle, which is indistinguishable from
+a press that didn't register. Audible cues for the start/stop of a recording
+itself live in the backend, at the real stream boundaries.
 """
 
 from __future__ import annotations
@@ -20,6 +32,8 @@ import logging
 import threading
 import time
 from datetime import datetime
+
+from grabette.hardware.sound import cue_error
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +52,20 @@ STOP_ACK_S = 1.2
 # internal states, which must NOT flash the LED off mid-initialization. An 'off'
 # has to persist this long (while blinking/solid) before it's applied.
 _OFF_DEBOUNCE_S = 1.0
+
+# Hardware-fault pattern: N short pulses, then a dark gap, repeating. Read off
+# the LED alone, it must not be confusable with the busy patterns — hence a burst
+# rather than yet another duty cycle.
+_ERROR_PULSES = 3
+_ERROR_PULSE_ON_S = 0.1
+_ERROR_PULSE_OFF_S = 0.1
+_ERROR_GAP_S = 1.0
+
+# Busy pattern: the SAME burst shape with a single pulse and a longer pause, so
+# the two read as one family — count the blips: one = busy, three = broken. A
+# busy device must not look idle (dark), or an operator picks it up and presses.
+_BUSY_PULSES = 1
+_BUSY_GAP_S = 1.5
 
 
 class ButtonListener:
@@ -105,9 +133,14 @@ class ButtonListener:
         - Capturing     : press stops the capture
         - Idle          : press starts a capture
         """
-        btn = self._button
+        # This thread does NOT touch the LED: _led_monitor is the single writer
+        # (see start()). It used to switch the LED off on entry and on exit, which
+        # was harmless while every run began and ended idle — but a device that
+        # comes up in a hardware fault starts on the error pattern, and a stray
+        # led_off() here would race the monitor, win, and leave the LED dark with
+        # the monitor believing it had already applied the pattern. Teardown is
+        # covered by stop(), which switches the LED off after joining both threads.
         try:
-            btn.led_off()
             while not self._stop_event.is_set():
                 self._wait_for_press()
                 if self._stop_event.is_set():
@@ -115,22 +148,27 @@ class ButtonListener:
                 self._on_press()
         except Exception:
             logger.exception("Button listener error")
-        finally:
-            if btn is not None:
-                btn.led_off()
 
     # -- LED state monitor (runs in its own thread) --
 
     def _desired_led(self) -> str:
         """The LED state that reflects what this device is doing right now:
-        'on' | 'blink' | 'blink_fast' | 'off'. State-driven (not press-driven) so
-        every group member shows its own status:
+        'error' | 'on' | 'blink' | 'blink_fast' | 'off'. State-driven (not
+        press-driven) so every group member shows its own status:
           off        → idle
           blink      → initializing (warming up / waiting for the shared T0)
           on         → recording (solid)
-          blink_fast → stopping (from stop until the capture is fully torn down)."""
+          blink_fast → stopping (from stop until the capture is fully torn down)
+          busy       → dataset work in progress, capture refused (1 pulse / pause)
+          error      → hardware fault, capture refused (3 pulses / pause)."""
         from grabette.capture_scheduler import get_capture_scheduler
         b = self._backend
+        # Highest priority, above teleop and above any capture state: the device
+        # is refusing to record, and the LED is the only place an operator holding
+        # a screenless grabette can find that out. A fault that is outranked by a
+        # busy pattern is a fault nobody sees.
+        if getattr(b, "hardware_error", ""):
+            return "error"
         if b.is_teleop_active:
             return "on" if b.is_teleop_sending else "off"
         # Stopping wins over is_capturing: the backend keeps is_capturing True
@@ -149,6 +187,11 @@ class ButtonListener:
             return "blink"       # initializing: warming up / waiting for T0
         if b.is_capturing:
             return "on"          # recording (solid)
+        # Below the capture states on purpose: if a recording IS somehow running,
+        # showing it wins. Above idle, because a device busy uploading is not
+        # available, and dark is the signal for available.
+        if getattr(b, "busy_reason", ""):
+            return "busy"
         return "off"             # idle
 
     def _led_monitor(self) -> None:
@@ -168,7 +211,12 @@ class ButtonListener:
         while not self._stop_event.is_set():
             try:
                 raw = self._desired_led()
-                if self._backend.is_teleop_active:
+                if raw == "error":
+                    # Never debounced and never latched away: while the fault
+                    # stands the LED shows nothing else.
+                    want = raw
+                    off_since = None
+                elif self._backend.is_teleop_active:
                     want = raw  # teleop: snappy, no latching
                     off_since = None
                 elif raw == "off":
@@ -185,7 +233,13 @@ class ButtonListener:
                     # scheduled/starting reading — hold solid until stop/idle.
                     want = "on" if (raw == "blink" and applied == "on") else raw
                 if want != applied:
-                    if want == "on":
+                    if want == "error":
+                        btn.led_pulses(_ERROR_PULSES, _ERROR_PULSE_ON_S,
+                                       _ERROR_PULSE_OFF_S, _ERROR_GAP_S)
+                    elif want == "busy":
+                        btn.led_pulses(_BUSY_PULSES, _ERROR_PULSE_ON_S,
+                                       _ERROR_PULSE_OFF_S, _BUSY_GAP_S)
+                    elif want == "on":
                         btn.led_on()
                     elif want == "blink":
                         btn.led_blink(0.3)        # initializing: steady blink
@@ -242,6 +296,11 @@ class ButtonListener:
             logger.info("Button capture started")
         except Exception:
             logger.exception("Button start_capture failed")
+            # Covers what start_capture's own cue cannot: a fleet refusal, or a
+            # scheduled start that never fired — neither ever reaches the
+            # backend. When it DID reach the backend, the cue debounce collapses
+            # the two reports into one buzz.
+            cue_error()
 
     async def _start_capture_coro(self) -> None:
         """Runs on the event loop: request group sync, then start (scheduled
@@ -314,6 +373,7 @@ class ButtonListener:
             future.result(timeout=30.0)
         except Exception:
             logger.exception("Button stop_capture failed")
+            cue_error()
 
     async def _stop_capture_coro(self) -> None:
         from grabette.capture_scheduler import get_capture_scheduler
@@ -325,6 +385,10 @@ class ButtonListener:
             outcome = await scheduler.cancel_or_wait(self._backend)
         except RuntimeError:
             logger.exception("Button stop: refusing to interrupt in-flight start")
+            # The press is being dropped, and this path RETURNS rather than
+            # raising, so _do_stop_capture's handler never sees it — buzz here
+            # or the operator gets no feedback at all that the stop was refused.
+            cue_error()
             return
         if outcome == "cancelled":
             sm.discard_pending_episode()

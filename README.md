@@ -1,5 +1,8 @@
 
 # GRABETTE
+
+[![Discord](https://img.shields.io/badge/Discord-Join_the_Community-7289DA?logo=discord&logoColor=white)](https://discord.gg/Y7FgMqHsub)
+
 <img align="left" width="20%" src="docs/images/grabette_logo_small.png">
 <br><br><br>
 Open-source toolkit for collecting robotic manipulation demonstrations and

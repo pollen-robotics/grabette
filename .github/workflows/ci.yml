@@ -83,7 +83,14 @@ jobs:
         # relay_client imports aiohttp at module level. The alternative, putting a
         # runtime library in the `test` extra, would blur what that extra means:
         # test tooling, installed on top of the feature set under test.
-        run: uv run --package grabette --extra test --extra hf pytest packages/grabette/tests -q
+        #
+        # --extra vision installs opencv-python-headless for the same reason:
+        # grabette.hardware.oakd imports cv2 at module level, so without it
+        # test_hardware_error.py cannot even be COLLECTED — and a collection
+        # error fails the whole run, not just that file. It lives in its own
+        # extra rather than in `rpi`, which is unusable off a Pi (picamera2,
+        # depthai, gpiod) and so can never be installed here.
+        run: uv run --package grabette --extra test --extra hf --extra vision pytest packages/grabette/tests -q
 
       - name: Postprocess unit tests
         # Trajectory math + SLAM-quality / recording checks + episode tags.

@@ -177,4 +177,7 @@ class MockBackend(Backend):
             "device_id": settings.device_id,
             "wall_clock_start_utc": self._wall_clock_start,
         }
+        sync_meta = self.get_sync_metadata()
+        if sync_meta:
+            meta["sync"] = sync_meta
         (session_dir / "metadata.json").write_text(json.dumps(meta, indent=2))

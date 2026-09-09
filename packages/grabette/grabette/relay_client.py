@@ -52,6 +52,11 @@ _BATTERY_INTERVAL_S = 30.0
 # command types here that do no hardware work and return fast.
 _FAST_PATH_TYPES = frozenset({"cancel_dataset"})
 
+# Hardware-fault text is reported on the heartbeat, i.e. in a query string. The
+# messages name the fault, the consequence and the fix, so they are a sentence or
+# two — long enough to be worth capping, short enough that the cap never bites.
+_FAULT_MAX_CHARS = 300
+
 logger = logging.getLogger("grabette.relay_client")
 
 CommandHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -119,6 +124,14 @@ class RelayClient:
         # recording while the device is busy. In-memory & fast (unlike battery's
         # I2C), so it's read inline on the heartbeat path.
         activity_provider: Optional[Callable[[], Optional[str]]] = None,
+        # Optional callable returning why this device is in a HARDWARE FAULT —
+        # a state where it refuses to record because every episode would be
+        # unconvertible (no OAK-D calibration, no angle sensors) — or "" when
+        # healthy. A separate channel from activity on purpose: the two are
+        # orthogonal (a faulted device can also be uploading), and folding a
+        # fault into the activity enum would have made it invisible to a fleet
+        # that only knows the four activity values.
+        fault_provider: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -132,6 +145,7 @@ class RelayClient:
         self.unassigned_provider = unassigned_provider
         self.tasks_rev_provider = tasks_rev_provider
         self.activity_provider = activity_provider
+        self.fault_provider = fault_provider
         self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
         self._battery: Optional[float] = None  # cached; refreshed off the heartbeat path
         self.status = "offline"
@@ -274,6 +288,16 @@ class RelayClient:
                             act = None
                         if act:
                             params["status"] = act
+                    if self.fault_provider is not None:  # in-memory, safe inline
+                        try:
+                            fault = self.fault_provider()
+                        except Exception:
+                            fault = None
+                        # Sent on EVERY beat, empty included: the fleet must learn
+                        # that a fault cleared as promptly as it learned of it, and
+                        # a field that only appears when broken can never say
+                        # "fixed". Truncated because it rides in a query string.
+                        params["error"] = (fault or "")[:_FAULT_MAX_CHARS]
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",

@@ -54,6 +54,70 @@ class Backend(ABC):
         Default: no-op (backends with no slow init)."""
         return None
 
+    @property
+    def hardware_error(self) -> str:
+        """Why this device must not record right now ("" = fine).
+
+        A backend sets this when it detects a fault that would make every
+        recorded episode unusable downstream (see RpiBackend: no OAK-D offline
+        calibration). Capture is refused while it is set, and the button
+        listener blinks the error pattern so the fault is visible on the device
+        itself. Default: no backend-detectable fault."""
+        return ""
+
+    # --- busy gate -----------------------------------------------------------
+    # A recording must not start on top of dataset work. On a Pi the upload is
+    # not a sleeping socket: hf_xet chunks and hashes in native threads, so it
+    # competes for CPU with the H.264 encoders and the OAK-D drainers and the
+    # episode comes out with dropped frames and jittered timestamps — an episode
+    # that looks recorded and is quietly worse than nothing.
+    #
+    # The fleet already refuses to start a recording on a device it knows is
+    # uploading, but that gate is fleet-side only: the PHYSICAL BUTTON and the
+    # local dashboard walk straight past it. So the device enforces it too, for
+    # itself, whoever asks.
+    #
+    # Injected as a probe rather than read directly: knowing about HF uploads is
+    # not a backend's business. app/main.py owns that knowledge (it is the same
+    # source the fleet heartbeat reports from) and installs it at startup, so
+    # there is exactly one answer to "what is this device doing".
+
+    def set_busy_probe(self, probe) -> None:
+        """Install the callable answering "why is this device too busy to
+        record?" — a reason string, or "" when free."""
+        self._busy_probe = probe
+
+    @property
+    def busy_reason(self) -> str:
+        """Why capture is refused for BUSY reasons ("" = free).
+
+        Never raises: a probe that fails must not take recording down with it,
+        so a broken probe reads as free. Distinct from hardware_error — that one
+        is a fault needing intervention, this one clears on its own."""
+        probe = getattr(self, "_busy_probe", None)
+        if probe is None:
+            return ""
+        try:
+            return probe() or ""
+        except Exception:  # noqa: BLE001 — a probe must never block recording
+            return ""
+
+    def raise_if_capture_blocked(self) -> None:
+        """Refuse to start a capture that would produce unusable data.
+
+        Public and called from EVERY start path — the backends' start_capture
+        and CaptureScheduler.schedule — because gating the callers one by one is
+        how the next start path silently bypasses it.
+
+        RuntimeError so it travels like any other start failure: the REST routes
+        turn it into an error response, the relay reports it to the fleet, and
+        the button listener logs it (the LED is already showing the state)."""
+        if self.hardware_error:
+            raise RuntimeError(self.hardware_error)
+        busy = self.busy_reason
+        if busy:
+            raise RuntimeError(busy)
+
     @abstractmethod
     async def stop_capture(self) -> CaptureStatus: ...
 
