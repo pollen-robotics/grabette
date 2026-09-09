@@ -71,6 +71,34 @@ class ViewAblation:
 
 
 @dataclass(frozen=True)
+class PromptAblation:
+    """How much the commanded chunk changed under a different prompt.
+
+    Same metric as `ViewAblation`, applied to the language input instead of a
+    camera: MILLIMETRES of RMS change in the chunk's translation channels.
+    `per_axis_mm` follows the same axis convention.
+    """
+
+    prompt: str
+    delta_mm: float
+    per_axis_mm: tuple[float, ...]
+
+
+@dataclass(frozen=True)
+class PromptSensitivity:
+    """A frame's response to a set of alternative prompts.
+
+    baseline_mm is the RMS translation magnitude the policy commands under its
+    real prompt, so a variant's delta can be read as a fraction of the motion
+    it perturbs rather than as a bare number.
+    """
+
+    baseline_prompt: str
+    baseline_mm: float
+    variants: tuple[PromptAblation, ...]
+
+
+@dataclass(frozen=True)
 class OcclusionMap:
     """Per-region causal effect of covering part of one camera's image.
 
