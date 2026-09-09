@@ -104,15 +104,27 @@ range.** That is scale-invariant range perception, not coarse targeting. The
 last two rows are an artefact of dividing by a vanishing denominator, not a
 spike in dependence.
 
-### Vertical is phase-invariant and entirely vision-determined
+### Which axis the camera controls migrates over the approach
 
-`y/vert` sits at 14–15 mm at every offset (r = −0.084 against remaining
-distance), against ~10.2 mm of demonstrated vertical travel — over 100% of
-the signal. Per frame, y is the largest component in 60% of frames and the
-smallest in 10%; z is the smallest in 56%.
+Within the swept window (≤54 mm remaining) `y/vert` sits at 14–15 mm at every
+offset, r = −0.084 against remaining distance, against ~10.2 mm of
+demonstrated vertical travel — over 100% of the signal.
 
-So the camera continuously determines height, and supplies a fixed proportion
-of range. Both matter; they just have different shapes.
+**That flatness is an artefact of the window, not a property of the policy.**
+A later run reaching the true start of each episode (~200 mm out, 6 episodes ×
+5 timings, `docs/attention_maps_refs/episode_grid.py`) shows the dominant axis
+crossing over:
+
+| phase | depth | vertical |
+| --- | --- | --- |
+| start of episode, ~200 mm out | 50–84 mm | 4–12 mm |
+| at the grasp | 3–12 mm | 13–24 mm |
+
+Far from the object the camera almost entirely determines **range**; by the
+grasp it almost entirely determines **height**. The sweep in the table above
+never went far enough out to see it. Read the two together: §3's ~0.55
+proportional range dependence is the near-field tail of a much larger
+far-field range dependence.
 
 ## 4. Attention mass is not causal importance
 
@@ -148,19 +160,97 @@ it is the tool's current default.** Early steps read cleaner. The default is
 left at `last` pending a decision, since changing it changes every map
 produced so far.
 
-With p99 clipping in place, the earlier impression that the policy "looks at
-everything but the object" was substantially a display artefact: one cell at
-36× the median, holding 6% of the mass, owned the whole colour ramp. Clipped,
-the attention is visibly structured around the bottle's base and the near
-table edge rather than its textured interior — consistent with attending to
-contact geometry — plus the usual border activation. That reading is a
-hypothesis; §4 is why it must stay one.
+## 6. What the map is actually made of
 
-## 6. Open
+48 frames, 8 episodes, every timing from episode start to grasp, first
+denoising step. Three components, separated by three different tests.
+
+### A dominant component fixed to the gripper
+
+The camera rides on the gripper, so the fingers occupy the same image
+coordinates in every frame of every episode while the object's position
+varies. Anything fixed in image space is therefore fixed on the hardware.
+
+Each frame's map has cosine similarity **0.928** (min 0.831) to the
+across-frame mean, and the peak cell sits in one three-cell cluster
+(rows 8–10, cols 11–12) in **83%** of frames. Attention is also strongly
+bottom-weighted — mean share by grid row climbs monotonically from 0.25–0.45×
+uniform in rows 0–5 to 1.67 / 1.85 / 2.32 / 2.48× in rows 8–11 — so roughly
+the bottom third of the image, the fingers and the near table, carries most of
+it.
+
+### A real but modest component that follows the object
+
+This one needs care to see, and two earlier attempts of mine got it wrong.
+Measuring attention at the red **cap's single cell** gave 0.84× uniform and
+suggested the object was below baseline — but the cap is the top of the bottle
+and the warm region sits on the body. Taking the argmax of (map − template)
+gave 8% hits against 5% chance — but the variance is largest at the finger
+cluster, so that argmax is captured by the fingers brightening and dimming.
+Both errors bias against detecting object attention.
+
+The test that works needs no template model at all. For each frame, compare
+its attention on **its own** object footprint against its attention on **other
+frames'** footprints. Every fixed structure — fingers, borders, sinks —
+contributes equally to both, so any gap is object-following and nothing else
+(`docs/attention_maps_refs/object_and_corners.py`):
+
+| | |
+| --- | --- |
+| attention on own object footprint | 0.00927 |
+| attention on other frames' footprints | 0.00791 |
+| ratio | **1.17×** |
+| frames preferring their own footprint | **38/48 (79%)**, chance 50% |
+
+79% of 48 against a fair-coin null is p ≈ 10⁻⁴. **Attention does follow the
+object.** It is simply modest — 17% above control — so the fixed template
+dominates the magnitude while the object-following part is the informative
+residue. During the approach, when the object is far from the fingers, it is
+visible by eye; at the grasp the two collapse onto the same pixels.
+
+### Attention sinks, in specific low-information cells
+
+| cell | attention | local pixel detail | variability |
+| --- | --- | --- | --- |
+| r10 c1 | 5.1× uniform | 11.3 (frame mean 25.8) | **0.10** |
+| r11 c4 | 5.2× uniform | 7.6 | 0.19 |
+| r11 c14 | 5.1× uniform | 8.7 | 0.20 |
+
+Five times their share of attention, on patches with a third of the frame's
+average detail, and the least variable cells in the whole map. High attention,
+nothing to look at, unchanging regardless of scene: the register-token
+signature. These are scratch space for global state, not statements about the
+scene, and they are what the p99 clip in §5 exists to demote.
+
+Not everything at an edge is a sink. The top-right corner cell (r0 c15) draws
+3.7× uniform with **above**-average detail (32.9) and the second-highest
+variability in the map (0.52) — it fails both sink predictions, and its
+neighbour r0 c14 draws 17× less. It is a single corner cell responding to
+content that genuinely changes: that corner holds cluttered background at the
+extreme edge of the fisheye, where distortion is worst. Distractor response or
+positional edge effect is unresolved.
+
+### How to read a map here
+
+The map is legible after clipping, and it does carry object information — but
+the object-following signal is ~17% on top of a template three to five times
+larger. §4 already showed mass is not importance. So a map is worth generating
+and worth looking at, and it is not evidence on its own.
+
+The measurement that would answer "where in the image matters" directly is the
+interventional saliency the review recommended and this version deferred:
+occlude a patch, re-run, measure the chunk delta — the view ablation,
+spatially resolved. The machinery is already here (shared noise, the delta
+metric); only the patch loop is missing.
+
+## 7. Open
 
 - Multi-camera genericity is verified only by unit tests against synthetic
   layouts. No real multi-view data exists yet to point it at.
-- Frame-edge activation is unexplained and could be a border artefact of the
-  letterbox crop rather than anything about the scene.
+- The top-right corner cell (§6): distractor response to background clutter,
+  or a positional edge effect of the fisheye? Unresolved, and distinct from
+  the bottom-edge sinks.
 - Whether `--denoise-step` should default to an early step.
+- Interventional (occlusion) saliency, to answer "where in the image matters"
+  by measurement rather than by attention.
 - One dataset, one object, one checkpoint.
