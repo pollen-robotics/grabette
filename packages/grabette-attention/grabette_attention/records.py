@@ -71,6 +71,28 @@ class ViewAblation:
 
 
 @dataclass(frozen=True)
+class OcclusionMap:
+    """Per-region causal effect of covering part of one camera's image.
+
+    grid: (rows, cols) float32, each cell the RMS change in the commanded
+        chunk's translation, in MILLIMETRES, when that block of the source
+        image was covered. Larger means the region carried more of the motion.
+        The grid spans the source image, so passing `CameraAttention.grid`'s
+        shape makes the two directly comparable cell for cell.
+    baseline_mm: RMS translation magnitude of the untouched chunk, so a cell
+        can be read against the size of the motion it perturbs.
+    fill: what covered blocks were painted with. Every choice is off
+        distribution, so comparisons BETWEEN cells are meaningful while an
+        absolute cell value is not.
+    """
+
+    camera: str
+    grid: np.ndarray
+    baseline_mm: float
+    fill: str
+
+
+@dataclass(frozen=True)
 class FrameAnalysis:
     """Everything computed for one frame. No plotting, no paths.
 
