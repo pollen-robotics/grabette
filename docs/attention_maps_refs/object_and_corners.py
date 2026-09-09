@@ -39,7 +39,7 @@ from grabette_attention.sources import DatasetSource
 REPO = "SteveNguyen/mustard_graspproj"
 ROOT = "/home/steve/.cache/huggingface/lerobot/local-converted/mustard_graspproj"
 CAM = "observation.images.cam0"
-DST = Path("/home/steve/attention_out")
+DST = Path("/home/steve/Project/Repo/GRABETTE/GRABETTE_RELEASE/attention_out")
 NPZ = DST / "attention_grids.npz"
 
 

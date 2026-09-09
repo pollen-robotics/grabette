@@ -43,7 +43,7 @@ ROOT = "/home/steve/.cache/huggingface/lerobot/local-converted/mustard_graspproj
 PARQUET = f"{ROOT}/data/chunk-000/file-000.parquet"
 TASK = "pick up the mustard bottle"
 CLOSURE = 10
-DST = Path("/home/steve/attention_out")
+DST = Path("/home/steve/Project/Repo/GRABETTE/GRABETTE_RELEASE/attention_out")
 NPZ = DST / "attention_grids.npz"
 
 EPISODES = (0, 2, 4, 6, 8, 13, 17, 21)

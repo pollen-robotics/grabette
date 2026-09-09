@@ -35,7 +35,7 @@ ROOT = "/home/steve/.cache/huggingface/lerobot/local-converted/mustard_graspproj
 PARQUET = f"{ROOT}/data/chunk-000/file-000.parquet"
 TASK = "pick up the mustard bottle"
 CLOSURE, DZ = 10, 2
-DST = Path("/home/steve/attention_out")
+DST = Path("/home/steve/Project/Repo/GRABETTE/GRABETTE_RELEASE/attention_out")
 
 # Fraction of the way from the start of the episode to the grasp.
 FRACTIONS = (0.0, 0.25, 0.5, 0.75, 1.0)

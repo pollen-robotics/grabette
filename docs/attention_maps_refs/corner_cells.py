@@ -16,7 +16,7 @@ from grabette_attention.sources import DatasetSource
 REPO = "SteveNguyen/mustard_graspproj"
 ROOT = "/home/steve/.cache/huggingface/lerobot/local-converted/mustard_graspproj"
 CAM = "observation.images.cam0"
-NPZ = Path("/home/steve/attention_out/attention_grids.npz")
+NPZ = Path("/home/steve/Project/Repo/GRABETTE/GRABETTE_RELEASE/attention_out/attention_grids.npz")
 WATCH = [(0, 15), (0, 14), (0, 0), (10, 1), (11, 4), (11, 14), (9, 11), (5, 7)]
 
 
