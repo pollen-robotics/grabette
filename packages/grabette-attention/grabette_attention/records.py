@@ -102,11 +102,12 @@ class PromptSensitivity:
 class OcclusionMap:
     """Per-region causal effect of covering part of one camera's image.
 
-    grid: (rows, cols) float32, each cell the RMS change in the commanded
-        chunk's translation, in MILLIMETRES, when that block of the source
-        image was covered. Larger means the region carried more of the motion.
-        The grid spans the source image, so passing `CameraAttention.grid`'s
-        shape makes the two directly comparable cell for cell.
+    grid: (rows, cols) float32, each cell the change in the commanded chunk's
+        translation, in MILLIMETRES, when that block of the source image was
+        covered — see `metric` for which change. Larger means the region
+        carried more of the motion. The grid spans the source image, so
+        passing `CameraAttention.grid`'s shape makes the two directly
+        comparable cell for cell.
     baseline_mm: RMS translation magnitude of the untouched chunk, so a cell
         can be read against the size of the motion it perturbs.
     fill: what covered blocks were painted with. Every choice is off
@@ -118,6 +119,11 @@ class OcclusionMap:
     grid: np.ndarray
     baseline_mm: float
     fill: str
+    # Which quantity the grid holds. "rms" is the RMS difference over chunk
+    # steps; "endpoint" is the distance between where the two trajectories
+    # END. They look identical as arrays and are not interchangeable -- only
+    # "endpoint" is comparable across action representations.
+    metric: str = "rms"
 
 
 @dataclass(frozen=True)

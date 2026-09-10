@@ -31,7 +31,11 @@ from dataclasses import replace
 
 import numpy as np
 
-from .metrics import translation_delta, translation_magnitude_mm
+from .metrics import (
+    endpoint_divergence_mm,
+    translation_delta,
+    translation_magnitude_mm,
+)
 from .records import FrameObservation, OcclusionMap
 
 _FILLS = ("mean", "grey", "black")
@@ -61,6 +65,8 @@ def occlusion_saliency(
     rows: int,
     cols: int,
     fill: str = "mean",
+    metric: str = "rms",
+    representation: str | None = None,
     noise=None,
 ) -> OcclusionMap:
     """Per-region causal effect on the commanded chunk, in millimetres.
@@ -77,6 +83,15 @@ def occlusion_saliency(
                        f"{tuple(obs.images)}")
     if rows < 1 or cols < 1:
         raise ValueError(f"occlusion grid must be at least 1x1, got {rows}x{cols}")
+    if metric not in ("rms", "endpoint"):
+        raise ValueError(f"unknown metric {metric!r}; expected 'rms' or 'endpoint'")
+    if metric == "endpoint" and representation is None:
+        # Never guessed: offsets and per-step deltas are the same shape and
+        # composing one as the other silently returns a wrong distance.
+        raise ValueError(
+            "metric='endpoint' needs representation='offsets' or "
+            "'per_step_deltas' -- it cannot be inferred from the chunk"
+        )
 
     image = obs.images[camera]
     height, width = image.shape[:2]
@@ -96,7 +111,13 @@ def occlusion_saliency(
             # must survive the sweep unchanged, and it is reused every block.
             occluded = replace(obs, images={**obs.images, camera: covered})
             result = adapter.run(occluded, noise, capture=False)
-            grid[r, c] = translation_delta(baseline.chunk, result.chunk).delta_mm
+            grid[r, c] = (
+                translation_delta(baseline.chunk, result.chunk).delta_mm
+                if metric == "rms"
+                else endpoint_divergence_mm(
+                    baseline.chunk, result.chunk, representation=representation
+                )
+            )
 
     # RMS translation magnitude of the untouched chunk, so a delta can be read
     # against the size of the motion it perturbs.
@@ -107,4 +128,5 @@ def occlusion_saliency(
         grid=grid.astype(np.float32),
         baseline_mm=baseline_mm,
         fill=fill,
+        metric=metric,
     )

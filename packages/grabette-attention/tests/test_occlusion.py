@@ -154,3 +154,37 @@ def test_grid_cells_tile_the_source_image_without_gaps():
     for image in covered:
         union |= (image != obs.images[CAM]).any(axis=2)
     assert union.all(), "some source pixels were never covered by any block"
+
+
+def test_the_metric_is_recorded_on_the_result():
+    # An RMS grid and an endpoint-divergence grid are indistinguishable as
+    # arrays, so the result has to say which it is.
+    result = occlusion_saliency(FakeAdapter(), observation(), camera=CAM,
+                                rows=2, cols=2)
+    assert result.metric == "rms"
+
+
+def test_the_endpoint_metric_refuses_to_guess_the_representation():
+    with pytest.raises(ValueError, match="cannot be inferred"):
+        occlusion_saliency(FakeAdapter(), observation(), camera=CAM,
+                           rows=2, cols=2, metric="endpoint")
+
+
+def test_an_unknown_metric_is_rejected():
+    with pytest.raises(ValueError, match="unknown metric"):
+        occlusion_saliency(FakeAdapter(), observation(), camera=CAM,
+                           rows=2, cols=2, metric="whatever")
+
+
+def test_the_endpoint_metric_measures_a_different_thing_from_rms():
+    # The fake's chunk is constant over steps, so as OFFSETS its endpoint
+    # equals any row while its RMS equals the same value -- but as PER_STEP
+    # DELTAS the endpoint accumulates over all 10 steps and is ~10x larger.
+    common = dict(camera=CAM, rows=4, cols=4, fill="black")
+    rms = occlusion_saliency(FakeAdapter(), observation(), **common)
+    endpoint = occlusion_saliency(
+        FakeAdapter(), observation(), metric="endpoint",
+        representation="per_step_deltas", **common,
+    )
+    assert endpoint.metric == "endpoint"
+    assert endpoint.grid[0, 0] > 5 * rms.grid[0, 0]
