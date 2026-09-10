@@ -134,4 +134,10 @@ class FrameAnalysis:
     cameras: dict[str, CameraAttention]
     language_mass: float
     ablations: dict[str, ViewAblation]
+    # RMS translation magnitude of the untouched chunk, in millimetres. Carried
+    # because an ablation delta is only interpretable against the motion it
+    # perturbs -- and because it is the ONLY way to compare across action
+    # representations: see metrics.translation_magnitude_mm. Deliberately has no
+    # default, so a caller cannot silently report a delta with no scale.
+    baseline_mm: float
     provenance: dict[str, str] = field(default_factory=dict)

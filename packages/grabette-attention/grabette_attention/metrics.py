@@ -21,6 +21,22 @@ from .records import ViewAblation
 _METRES_TO_MM = 1000.0
 
 
+def translation_magnitude_mm(chunk: np.ndarray, *, n_translation: int = 3) -> float:
+    """RMS translation magnitude of one chunk, in millimetres.
+
+    The scale a delta should be read against. It also makes deltas comparable
+    ACROSS ACTION REPRESENTATIONS, which a bare millimetre figure is not: a
+    chunk-relative checkpoint's chunk holds cumulative offsets from the current
+    pose (tens of mm), while a plain delta checkpoint's holds per-step motion
+    (a few mm), so the same intervention reads ~20-50x larger on the former
+    purely because of how its actions are parameterised. Dividing each model's
+    delta by its own magnitude asks both the same question: what fraction of
+    the commanded motion did this change?
+    """
+    translation = np.asarray(chunk[:, :n_translation], dtype=np.float64)
+    return float(np.sqrt(np.mean(np.sum(translation**2, axis=1)))) * _METRES_TO_MM
+
+
 def translation_delta(
     baseline: np.ndarray, ablated: np.ndarray, *, n_translation: int = 3
 ) -> ViewAblation:

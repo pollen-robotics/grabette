@@ -75,6 +75,7 @@ def analysis() -> FrameAnalysis:
                 delta_mm=8.4, per_axis_mm=(1.0, 2.0, 8.1)
             )
         },
+        baseline_mm=42.0,
         provenance={"checkpoint": "user/m"},
     )
 
@@ -168,7 +169,7 @@ def test_two_cameras_sharing_a_trailing_segment_both_get_distinct_entities(fake_
             left: CameraAttention(grid=np.zeros((12, 16), np.float32), mass=0.5),
             right: CameraAttention(grid=np.ones((12, 16), np.float32), mass=0.5),
         },
-        language_mass=0.0, ablations={},
+        language_mass=0.0, ablations={}, baseline_mm=42.0,
     )
     obs = FrameObservation(
         episode=3, frame=42,

@@ -7,7 +7,7 @@ test with a hand-computed answer, not by a comment.
 import numpy as np
 import pytest
 
-from grabette_attention.metrics import translation_delta
+from grabette_attention.metrics import translation_delta, translation_magnitude_mm
 
 
 def test_a_one_millimetre_shift_reads_as_one_millimetre():
@@ -72,3 +72,47 @@ def test_an_eight_dimensional_chunk_relative_action_works_too():
 def test_mismatched_shapes_are_rejected():
     with pytest.raises(ValueError, match="shape"):
         translation_delta(np.zeros((4, 11)), np.zeros((5, 11)))
+
+
+def test_the_magnitude_is_the_rms_of_the_translation_in_millimetres():
+    chunk = np.zeros((6, 8), np.float32)
+    chunk[:, 0] = 0.003
+    chunk[:, 1] = 0.004                       # 3-4-5, so 5 mm every step
+    assert translation_magnitude_mm(chunk) == pytest.approx(5.0)
+
+
+def test_the_magnitude_ignores_the_non_translation_channels():
+    # Rotation, strategy and closure live in the later channels and are on
+    # completely different scales; including them would make the figure
+    # meaningless as a spatial magnitude.
+    chunk = np.zeros((4, 11), np.float32)
+    chunk[:, 2] = 0.002
+    chunk[:, 3:] = 500.0
+    assert translation_magnitude_mm(chunk) == pytest.approx(2.0)
+
+
+def test_the_magnitude_is_what_makes_representations_comparable():
+    # The reason this helper exists. A chunk-relative checkpoint emits
+    # cumulative offsets; a delta checkpoint emits per-step motion of the same
+    # trajectory. Their raw millimetres differ by the chunk length, so a bare
+    # delta cannot be compared across the two -- but each divided by its own
+    # magnitude can.
+    steps = 50
+    per_step = np.zeros((steps, 8), np.float32)
+    per_step[:, 2] = 0.001                            # 1 mm per step
+    cumulative = per_step.copy()
+    cumulative[:, 2] = np.cumsum(per_step[:, 2])      # same motion, integrated
+
+    small = translation_magnitude_mm(per_step)
+    large = translation_magnitude_mm(cumulative)
+    assert small == pytest.approx(1.0)
+    assert large > 20 * small                          # ~29x for 50 steps
+
+    # An intervention that perturbs each representation by 10% of its own
+    # motion reads as the SAME fraction, though wildly different millimetres.
+    for chunk in (per_step, cumulative):
+        perturbed = chunk.copy()
+        perturbed[:, 2] *= 1.10
+        delta = translation_delta(chunk, perturbed).delta_mm
+        fraction = delta / translation_magnitude_mm(chunk)
+        assert fraction == pytest.approx(0.10, rel=1e-6)

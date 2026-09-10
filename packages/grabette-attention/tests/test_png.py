@@ -36,6 +36,7 @@ def analysis(cameras=("cam0", "cam1")) -> FrameAnalysis:
         },
         language_mass=0.2,
         ablations={c: ViewAblation(delta_mm=8.4, per_axis_mm=(1.0, 2.0, 8.1)) for c in cameras},
+        baseline_mm=42.0,
         provenance={"checkpoint": "user/model_best", "denoise_step": "last"},
     )
 

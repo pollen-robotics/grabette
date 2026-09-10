@@ -28,9 +28,7 @@ the real one.
 from dataclasses import replace
 from typing import Iterable
 
-import numpy as np
-
-from .metrics import translation_delta
+from .metrics import translation_delta, translation_magnitude_mm
 from .records import FrameObservation, PromptAblation, PromptSensitivity
 
 
@@ -65,8 +63,7 @@ def prompt_sensitivity(
             per_axis_mm=delta.per_axis_mm,
         ))
 
-    translation = np.asarray(baseline.chunk[:, :3], dtype=np.float64)
-    baseline_mm = float(np.sqrt(np.mean(np.sum(translation**2, axis=1)))) * 1000.0
+    baseline_mm = translation_magnitude_mm(baseline.chunk)
 
     return PromptSensitivity(
         baseline_prompt=obs.task,

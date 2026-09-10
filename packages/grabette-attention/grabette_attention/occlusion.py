@@ -31,7 +31,7 @@ from dataclasses import replace
 
 import numpy as np
 
-from .metrics import translation_delta
+from .metrics import translation_delta, translation_magnitude_mm
 from .records import FrameObservation, OcclusionMap
 
 _FILLS = ("mean", "grey", "black")
@@ -100,8 +100,7 @@ def occlusion_saliency(
 
     # RMS translation magnitude of the untouched chunk, so a delta can be read
     # against the size of the motion it perturbs.
-    translation = np.asarray(baseline.chunk[:, :3], dtype=np.float64)
-    baseline_mm = float(np.sqrt(np.mean(np.sum(translation**2, axis=1)))) * 1000.0
+    baseline_mm = translation_magnitude_mm(baseline.chunk)
 
     return OcclusionMap(
         camera=camera,

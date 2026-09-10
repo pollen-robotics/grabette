@@ -35,6 +35,7 @@ def test_frame_analysis_holds_one_entry_per_camera_and_is_immutable():
         cameras=cams,
         language_mass=0.2,
         ablations={"cam0": ViewAblation(delta_mm=8.4, per_axis_mm=(1.0, 2.0, 8.1))},
+        baseline_mm=42.0,
         provenance={"checkpoint": "x", "denoise_step": "last"},
     )
     assert set(analysis.cameras) == {"cam0", "cam1"}
@@ -51,6 +52,7 @@ def test_masses_over_the_prefix_sum_to_one():
     analysis = FrameAnalysis(
         episode=0, frame=0, cameras=cams, language_mass=0.20,
         ablations={}, provenance={},
+        baseline_mm=42.0,
     )
     total = sum(c.mass for c in analysis.cameras.values()) + analysis.language_mass
     assert total == pytest.approx(1.0)

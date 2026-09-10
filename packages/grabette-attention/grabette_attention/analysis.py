@@ -9,7 +9,7 @@ changed this" rather than "the sampler drew different noise".
 from typing import Iterable, Iterator, Sequence
 
 from .adapters.base import PolicyAdapter
-from .metrics import translation_delta
+from .metrics import translation_delta, translation_magnitude_mm
 from .records import FrameAnalysis, FrameObservation
 from .reduce import captured_steps, reduce_attention
 
@@ -79,6 +79,7 @@ def analyse_frame(
         cameras=cameras,
         language_mass=language_mass,
         ablations=ablations,
+        baseline_mm=translation_magnitude_mm(baseline.chunk),
         provenance=record,
     )
 
@@ -129,6 +130,7 @@ def analyse_frame_steps(
                 cameras=cameras,
                 language_mass=language_mass,
                 ablations=dict(ablations),
+                baseline_mm=translation_magnitude_mm(baseline.chunk),
                 provenance=record,
             )
         )
