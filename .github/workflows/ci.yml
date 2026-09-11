@@ -92,6 +92,32 @@ jobs:
         # depthai, gpiod) and so can never be installed here.
         run: uv run --package grabette --extra test --extra hf --extra vision pytest packages/grabette/tests -q
 
+      - name: Attention-diagnostics unit tests
+        # 170 tests: records, layout, token reduction, the ablation and
+        # occlusion metrics, prompt sensitivity, both front ends, and the CLI.
+        # All run against fake adapters — no checkpoint, no GPU. The one test
+        # that needs real weights carries the `gpu` marker and the package's
+        # own addopts (-m 'not gpu') deselects it.
+        #
+        # A hand-built venv rather than `--extra test`, on purpose. That extra
+        # declares torch and lerobot[pi] so the GPU test can load a real pi0.5
+        # by hand; in CI it would pull the CUDA torch wheel and transformers —
+        # several GB — for a test that is deselected anyway. These five
+        # packages are what the 170 actually need, verified by running them in
+        # exactly this environment:
+        #   torch  two test files import it at module scope for the
+        #          forward-hook stubs, and a collection error fails the whole
+        #          run, so it cannot simply be skipped.
+        #   cv2    the dump_obs BGR->RGB test is cv2-gated and would silently
+        #          skip without it.
+        #   lerobot is NOT needed: the adapter and CLI tests inject fakes.
+        run: |
+          uv venv .venv-attn --python 3.12
+          VIRTUAL_ENV=.venv-attn uv pip install --torch-backend=cpu \
+            torch pytest numpy matplotlib opencv-python-headless
+          VIRTUAL_ENV=.venv-attn uv pip install --no-deps ./packages/grabette-attention
+          .venv-attn/bin/python -m pytest packages/grabette-attention/tests -q
+
       - name: Postprocess unit tests
         # Trajectory math + SLAM-quality / recording checks + episode tags.
         # Pure Python (numpy/scipy/pandas/av), no Docker/SLAM. lerobot (torch)
@@ -133,3 +159,17 @@ jobs:
           PYTHONPATH=packages/grabette-postprocess .venv-lerobot/bin/python -m pytest \
             packages/grabette-postprocess/tests/test_lerobot_api.py \
             packages/grabette-postprocess/tests/test_dataset_build.py -v
+
+      - name: Chunk-relative processor tests
+        # Lives in this job rather than the fast one because two of its five
+        # test files import lerobot at module scope — they build the real
+        # processor pipeline and assert the registered step round-trips. The
+        # venv above already has lerobot, CPU torch and scipy, which is the
+        # whole dependency set.
+        #
+        # This package supplies the chunk-relative action transform that the
+        # pi0.5 checkpoints' preprocessors reference by registry name, so a
+        # regression here breaks checkpoint loading rather than just a metric.
+        run: |
+          PYTHONPATH=packages/grabette-chunkrel .venv-lerobot/bin/python -m pytest \
+            packages/grabette-chunkrel/tests -q
