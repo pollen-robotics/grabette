@@ -9,9 +9,21 @@ Patching a copy rather than the original on purpose: the existing sugar
 checkpoints were trained against "pick up the sugar cup", and rewriting that
 dataset in place would make their provenance a lie.
 
-Only meta/tasks.parquet changes. task_index values in the per-frame parquet
-stay valid because the index -> string mapping keeps its indices; just the
-strings move.
+TWO files carry the string, and only one of them is load-bearing:
+
+  meta/tasks.parquet        what training reads. dataset_reader.py does
+                            `item["task"] = self._meta.tasks.iloc[idx].name`,
+                            resolving the frame's task_index through this
+                            table. Patching this alone changes what the policy
+                            learns.
+  meta/episodes/*.parquet   a per-episode `tasks` column holding the literal
+                            string, 150 copies of it. NOT read during
+                            training. Patched anyway: leaving a dataset whose
+                            metadata contradicts itself is how a prompt ends
+                            up not describing its task in the first place.
+
+task_index values in the per-frame parquet stay valid either way — the
+index -> string mapping keeps its indices; only the strings move.
 
     python retask_dataset.py --dry-run          # inspect, change nothing
     python retask_dataset.py                     # patch and push
@@ -75,6 +87,14 @@ def main() -> None:
             print("  already correct, nothing to do")
             continue
 
+        episode_files = sorted((local / "meta" / "episodes").rglob("*.parquet"))
+        stale = 0
+        for ep_file in episode_files:
+            col = pq.read_table(ep_file).column("tasks").to_pylist()
+            stale += sum(1 for entry in col if args.task not in (entry or []))
+        print(f"  meta/episodes: {len(episode_files)} file(s), "
+              f"{stale} episode rows still carrying the old string")
+
         videos = list(local.rglob("*.mp4"))
         print(f"  snapshot at {local}")
         print(f"  {len(videos)} video files present "
@@ -101,7 +121,22 @@ def main() -> None:
             [[args.task] * len(table)],
         )
         pq.write_table(patched, staged / "meta" / "tasks.parquet")
-        print(f"  patched: {pq.read_table(staged / 'meta' / 'tasks.parquet').to_pydict()}")
+        print(f"  meta/tasks.parquet -> "
+              f"{pq.read_table(staged / 'meta' / 'tasks.parquet').to_pydict()}")
+
+        # The per-episode copies. Not read during training, but a dataset whose
+        # metadata disagrees with itself is a trap for the next reader.
+        for ep_file in sorted((staged / "meta" / "episodes").rglob("*.parquet")):
+            ep_table = pq.read_table(ep_file)
+            index = ep_table.column_names.index("tasks")
+            # The column is list<string>: one list per episode.
+            ep_patched = ep_table.set_column(
+                index, "tasks", [[[args.task]] * len(ep_table)]
+            )
+            pq.write_table(ep_patched, ep_file)
+            check = pq.read_table(ep_file).column("tasks").to_pylist()
+            assert all(entry == [args.task] for entry in check), ep_file
+            print(f"  {ep_file.relative_to(staged)} -> {len(check)} rows patched")
 
         api.create_repo(dst, repo_type="dataset", exist_ok=True, private=True)
         api.upload_folder(
