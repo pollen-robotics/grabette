@@ -32,6 +32,7 @@ Check the dry run before spending a GPU day on the result.
 """
 
 import argparse
+import json
 import shutil
 from pathlib import Path
 
@@ -148,6 +149,21 @@ def main() -> None:
                            f"(copy of {src}; only meta/tasks.parquet differs)",
         )
         print(f"  pushed {dst}")
+
+        # THE CODEBASE-VERSION TAG. upload_folder copies files, not refs, and
+        # lerobot resolves a dataset revision through get_safe_version(), which
+        # raises RevisionNotFoundError when the repo carries no version tag. An
+        # untagged copy therefore fails at LeRobotDatasetMetadata.__init__ —
+        # and in this huggingface_hub version that error cannot even construct
+        # itself (HfHubHTTPError.__init__ missing 'response'), so the traceback
+        # ends in an unrelated TypeError and says nothing about tags. A copy is
+        # not a usable dataset until this runs.
+        version = json.loads((staged / "meta" / "info.json").read_text())[
+            "codebase_version"
+        ]
+        api.create_tag(dst, tag=version, repo_type="dataset", exist_ok=True)
+        refs = api.list_repo_refs(dst, repo_type="dataset")
+        print(f"  tagged {version} — tags now {[t.name for t in refs.tags]}")
 
 
 if __name__ == "__main__":
