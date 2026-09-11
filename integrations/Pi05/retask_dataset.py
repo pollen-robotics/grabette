@@ -138,7 +138,10 @@ def main() -> None:
             assert all(entry == [args.task] for entry in check), ep_file
             print(f"  {ep_file.relative_to(staged)} -> {len(check)} rows patched")
 
-        api.create_repo(dst, repo_type="dataset", exist_ok=True, private=True)
+        # Public, matching the source datasets. `exist_ok` does NOT change the
+        # visibility of a repo that already exists, so a repo created private
+        # by an earlier run stays private — flip it in the Hub settings.
+        api.create_repo(dst, repo_type="dataset", exist_ok=True, private=False)
         api.upload_folder(
             folder_path=str(staged), repo_id=dst, repo_type="dataset",
             commit_message=f"Sugar-cube place task, prompt {args.task!r} "
