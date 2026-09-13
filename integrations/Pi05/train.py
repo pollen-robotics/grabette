@@ -2,7 +2,16 @@
 # requires-python = ">=3.12,<3.13"
 # dependencies = [
 #   "lerobot[pi,dataset] @ git+https://github.com/huggingface/lerobot@e40b58a8dfa9e7b86918c374791599d070518d11",
-#   "scipy", "sentencepiece", "num2words", "accelerate", "protobuf", "wandb",
+#   "scipy", "sentencepiece", "num2words", "accelerate", "protobuf",
+#   # PINNED. lerobot's wandb_utils.py calls `wandb.run.get_url()`, which wandb
+#   # REMOVED IN 0.29.0 in favour of `run.url`. Unpinned, uv resolves the
+#   # latest and the job dies with
+#   #   AttributeError: 'Run' object has no attribute 'get_url'
+#   # the moment --wandb.enable=true is passed -- i.e. only on the runs whose
+#   # loss curve you actually wanted to keep, after the GPU has booted.
+#   # Verified by installing each: 0.18.7 / 0.19.11 / 0.20.1 / 0.21.0 / 0.22.0
+#   # / 0.25.0 / 0.28.0 all have get_url; 0.29.0 and 0.30.0 do not.
+#   "wandb<0.29",
 #   "av",  # pyav video backend — HF-jobs images ship no FFmpeg shared libs,
 #          # so torchcodec cannot load there; pass --dataset.video_backend=pyav
 # ]
