@@ -7,9 +7,16 @@ state. The token is persisted with the standard ``huggingface_hub`` mechanism
 Config is read from the environment so the team can point it at their own HF
 OAuth app:
 
-    GRABETTE_RELAY_URL   URL of the grabette-fleet Space acting as OAuth relay.
-                         Defaults to the Pollen fleet Space — no config needed on Pi.
-                         Set to empty string to disable relay (e.g. for local dev).
+    GRABETTE_FLEET_ENV   Which fleet deployment to target: "prod" (default) or
+                         "test". Derives the relay + redirect_uri — see
+                         grabette.spaces. No config needed on a Pi.
+    GRABETTE_RELAY_URL   Explicit URL of the grabette-fleet Space acting as OAuth
+                         relay. Overrides GRABETTE_FLEET_ENV (e.g. a duplicated
+                         Space). Empty string selects DIRECT OAuth — redirect_uri
+                         points at this device instead of a Space (local dev).
+                         It only re-points OAuth: the relay client still starts,
+                         with no URL to call. Running standalone is
+                         GRABETTE_RELAY_ENABLED=false.
     GRABETTE_BASE_URL    Direct public URL of this grabette (overrides auto-detect).
                          Only needed when not using the relay (e.g. local dev).
                          (default without relay: http://localhost:8000)
@@ -40,6 +47,8 @@ import aiohttp
 from huggingface_hub import get_token, logout, whoami
 from huggingface_hub.errors import HfHubHTTPError
 
+from grabette import spaces
+
 # --- configuration ----------------------------------------------------------
 # The hostname is encoded into the OAuth state when using the relay, so the
 # relay knows which grabette to forward the callback to.
@@ -59,8 +68,10 @@ def _write_secret(path: Path, text: str) -> None:
 
 _HOSTNAME = socket.gethostname()
 
-_DEFAULT_RELAY_URL = "https://pollen-robotics-grabette-fleet.hf.space"
-_RELAY_URL = os.environ.get("GRABETTE_RELAY_URL", _DEFAULT_RELAY_URL).rstrip("/")
+# Same answer as Settings.relay_url, from the same place — the redirect_uri and
+# the relay the device polls MUST be the same Space, or login bounces on a device
+# that otherwise registers fine.
+_RELAY_URL = spaces.fleet_url()
 OAUTH_CALLBACK_PATH = "/api/hf-auth/oauth/callback"
 
 if _RELAY_URL:
