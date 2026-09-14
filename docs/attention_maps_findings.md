@@ -1,17 +1,26 @@
 # Attention maps and view ablation: first measurements
 
-What the tool in `packages/grabette-attention` actually found when pointed at
-`SteveNguyen/pick3_graspproj_chunkrel_pi05`, analysed on
-`SteveNguyen/mustard_graspproj`. Companion to
+What the tool in `packages/grabette-attention` actually found. Companion to
 `docs/attention_saliency_review.md`, which is the literature review and the
-argument for the tool's design; this file is the data.
+argument for the tool's design; this file is the data. Every script and CSV
+cited here is in `docs/attention_maps_refs/`.
 
-All runs on CPU, fp32, seed 0, `--denoise-step last` unless stated, 11 s per
-analysed frame (one baseline pass plus one ablation pass).
+Checkpoints analysed, all pi0.5 fine-tunes:
 
-**Standing caveat on the pairing:** the checkpoint is trained on three objects
-and is analysed here against a mustard-only dataset. Defensible — mustard is
-one of the three — but not an identical distribution.
+| checkpoint | actions | analysed on |
+| --- | --- | --- |
+| `pick3_graspproj_chunkrel_pi05` | 8-dim chunk-relative | `mustard_graspproj` |
+| `sugar_cup_chunkrel_pi05_step20000` | 8-dim chunk-relative | `sugar_cup_graspproj_chunkrel` |
+| `sugar_cup_grasproj_pi05` | 11-dim per-step deltas | same recording |
+| `sugarcube_in_mug_chunkrel_pi05_step20000` | 8-dim chunk-relative | same recording, retrained prompt |
+
+All runs on CPU, fp32, seed 0. About 11 s per analysed frame with ablation,
+5.5 s without; an occlusion sweep is 193 passes per frame, ~15 min.
+
+**Standing caveat on the first pairing:** `pick3` is trained on three objects
+and analysed against a mustard-only dataset. Defensible — mustard is one of
+the three — but not an identical distribution. The sugar work has no such
+gap: checkpoint and data are the same recording.
 
 ## 1. The action space and its frame
 
@@ -237,20 +246,252 @@ the object-following signal is ~17% on top of a template three to five times
 larger. §4 already showed mass is not importance. So a map is worth generating
 and worth looking at, and it is not evidence on its own.
 
-The measurement that would answer "where in the image matters" directly is the
-interventional saliency the review recommended and this version deferred:
-occlude a patch, re-run, measure the chunk delta — the view ablation,
-spatially resolved. The machinery is already here (shared noise, the delta
-metric); only the patch loop is missing.
+The measurement that answers "where in the image matters" directly is the
+interventional saliency the review recommended — occlude a patch, re-run,
+measure the chunk delta, i.e. the view ablation spatially resolved. It was
+deferred when this section was written and has since been built: see §7 for
+what it found, and §10 for the object-level reading that corrects the
+"attention ignores the object" wording above.
 
-## 7. Open
+## 7. Occlusion: where the motion comes from, and it is not where attention goes
 
-- Multi-camera genericity is verified only by unit tests against synthetic
-  layouts. No real multi-view data exists yet to point it at.
-- The top-right corner cell (§6): distractor response to background clutter,
-  or a positional edge effect of the fisheye? Unresolved, and distinct from
-  the bottom-edge sinks.
+Covering one 30×30-pixel block of the image and re-running gives a causal map
+on exactly the grid the attention map uses, so the two are comparable cell for
+cell (`docs/attention_maps_refs/occlusion_run.py`,
+`attn_vs_causal.py`). Sugar-cube task, episode 0, 12×16 grid, mean fill,
+193 forward passes per frame.
+
+| statistic | approach frame | grasp frame |
+| --- | --- | --- |
+| Pearson corr(attention, causal) | +0.197 | +0.040 |
+| Spearman | +0.387 | +0.181 |
+| top-5 cells in common | **0 / 5** | **0 / 5** |
+| top-10 in common | **0 / 10** | **0 / 10** |
+| top-20 in common (chance ≈ 2.1) | 3 / 20 | 2 / 20 |
+
+Not one cell shared in the top ten, at either phase. This is not one map being
+vague: both concentrate ~14% of their mass in five cells. They are equally
+structured and point elsewhere.
+
+**No single patch is critical either.** The largest effect any block has is
+3.4 mm at approach (5.6% of that frame's 61 mm RMS baseline) and 6.3 mm at the
+grasp (6.7% of 94 mm), while removing the whole camera moves the trajectory
+65–96 mm. The visual information is redundant, spread across many patches.
+
+## 8. The prompt is a lexical key, and it collided with a sibling task
+
+Language plus state carries roughly **0.7 of the prefix attention mass**, about
+twice the camera's, and had never been intervened on. Same method as the view
+ablation: substitute the prompt, re-run with the same noise, measure the change
+in commanded translation (`docs/attention_maps_refs/prompt_run.py`). 21 frames
+over 3 episodes, `sugar_cup_chunkrel_pi05_step20000`, mean baseline motion
+100.5 mm.
+
+| prompt substituted | mean | at grasp | worst phase |
+| --- | --- | --- | --- |
+| its own prompt (control) | **0.0** | 0.0 | 0.0 |
+| `"pick up the cup"` | **5.9** | 4.3 | 8.6 |
+| its own words, scrambled | 6.7 | 5.9 | 8.1 |
+| `"pick up the mustard bottle"` | 9.8 | 7.2 | 11.4 |
+| `"pick up the red can"` | 10.5 | 7.9 | 15.0 |
+| `"put the sugar cube in the mug"` | 14.8 | 9.7 | 17.3 |
+| `""` (empty) | 17.1 | 9.5 | 26.7 |
+| `"close the drawer"` | **34.8** | 13.5 | **62.0** |
+
+Three findings:
+
+- **The prompt is load-bearing**, at roughly a third of the camera's weight
+  (34.8 mm mean against whole-camera ablations of 80–155 mm at the same
+  phases).
+- **The conditioning is lexical, not semantic.** A correct description of the
+  actual task sat 2.5× further from the learned behaviour than a semantically
+  wrong string sharing vocabulary, and scrambling word order cost almost
+  nothing.
+- **The collision.** pick3's `"pick up the cup"` — its instruction for a paper
+  cup — perturbed this model *less than shuffling its own prompt into
+  nonsense*. Against pick3's other two strings it was 0.58× their mean: among
+  three siblings, that one sat distinctly closer to the sugar model's key.
+  Merging the datasets would have left a single-object pick and a two-stage
+  place indistinguishable by prompt.
+
+Language also matters least exactly where the camera matters most: every
+variant dips at the grasp and peaks mid-approach. The prompt selects *what* to
+do and is spent by contact; vision makes the contact.
+
+### The retrain closed it
+
+The model was retrained on `"put the sugar cube in the mug"` — which describes
+the real task and shares only "the" with any pick3 string — and the sweep
+repeated on `sugarcube_in_mug_chunkrel_pi05_step20000`
+(`docs/attention_maps_refs/prompt_run_retrained.py`):
+
+| prompt substituted | original | retrained |
+| --- | --- | --- |
+| `"pick up the cup"` | **5.9** | 15.2 |
+| `"pick up the mustard bottle"` | 9.8 | 15.7 |
+| `"pick up the red can"` | 10.5 | 18.4 |
+| **collision ÷ sibling mean** | **0.58×** | **0.89×** |
+
+"cup" is now indistinguishable from its siblings — the hazard is gone. And the
+lexical-keying claim survived a test it was not derived from: scrambling the
+NEW model's own words costs 7.9 mm, still less than any real alternative
+including its predecessor's prompt (12.2 mm).
+
+One change remains unexplained. Every delta rose about a third on the retrained
+model (unrelated 34.8 → 46.4 mm) at essentially identical baseline motion
+(100.5 → 100.7). Better grounding from a correct prompt is the flattering
+reading; the new prompt also being longer, seven words against five, is the
+deflationary one. Confounded; a length-matched nonsense prompt would separate
+them and has not been run.
+
+## 9. Delta vs chunk-relative: the representation changes attention, not dependence
+
+Same recording, same 20 000 steps, same prompt; only the action
+parameterisation differs (`docs/attention_maps_refs/delta_vs_chunkrel.py`,
+`endpoint_run.py`).
+
+**These cannot be compared in millimetres.** Read from the checkpoints' own
+processor configs: the delta model's `relative_actions` and `absolute_actions`
+steps are both `enabled: false`, so its chunk is raw per-step motion, mean
+magnitude 6.3 mm. The chunk-relative model emits offsets accumulated over 50
+steps, mean 100.5 mm. The same intervention reads ~20× larger on the latter for
+reasons that have nothing to do with the policy.
+
+Two normalisations were tried and **both were wrong**:
+
+- *Fraction of own commanded motion* — gave a 7× difference in local
+  sensitivity.
+- *Raw millimetres* — reversed the ranking, because the delta baseline is small.
+
+**Endpoint divergence embeds no such choice.** Compose each chunk into a
+trajectory (chaining the delta model's per-step rotations) and measure how far
+apart the endpoints land. Both models then command a trajectory of the same
+length, which is what makes the columns comparable:
+
+| frame | model | travel | worst block | median block |
+| --- | --- | --- | --- | --- |
+| approach | delta | 124.9 mm | **12.9 mm** | 1.43 mm |
+| approach | chunk-relative | 127.3 mm | 5.2 mm | 0.52 mm |
+| grasp | delta | 132.2 mm | 6.9 mm | 1.45 mm |
+| grasp | chunk-relative | 150.5 mm | **8.4 mm** | 0.68 mm |
+
+The real gap is **2.5×** on the worst block and 2.75× on the median, confined
+to the approach; at the grasp it vanishes and chunk-relative is slightly more
+sensitive. What carries the difference is the median rather than the peak: the
+delta model is uniformly more sensitive across the image, not dependent on one
+spot. Peak *location* is metric-dependent and is not claimed.
+
+Independent check on the composition: the delta model's approach trajectory
+travels 124.9 mm against 121.4 mm of forward travel the demonstration actually
+had left to the grasp — within 3%.
+
+**Vision dependence itself is indistinguishable** between the two (every phase
+within ±9%, both near 100% of own commanded motion), but that measure saturates
+there, so it is evidence of no *detectable* difference rather than none.
+
+**Attention, however, differs by 30%** — camera mass 0.453 for delta against
+0.349 for chunk-relative, at 0.99× the causal dependence. A third independent
+demonstration that mass is not importance, this time across two models rather
+than across space or frames.
+
+The depth→alignment→depth migration of §3 reproduces in both, so it is the
+task's geometry rather than an artefact of chunk-relative actions.
+
+## 10. The cube, localised — and an argmax mistake
+
+Colour could not find the sugar cube: four masks either claimed a third of the
+frame or latched onto a shadow. Two things fixed it
+(`docs/attention_maps_refs/zoom_frame.py`, `detect_cube.py`,
+`cube_vs_rest.py`). A grid-labelled zoom read by eye put the cube at
+`x 248–286, y 224–248` — cells r7c8, r7c9, r8c8, r8c9. Then **Grounding DINO
+for the box plus SAM2 for the mask**, run locally, reproduced exactly those
+four cells at 0.73 confidence and 4.7 px of centre error. The division of
+labour matters: SAM2 is promptable and cannot find an object from a
+description, so text→box has to come from elsewhere.
+
+Mean map value on the segmented object against every cell in neither object,
+approach frame:
+
+| map | model | cube / elsewhere | mug / elsewhere |
+| --- | --- | --- | --- |
+| attention | delta | **3.13×** | 0.51× |
+| attention | chunk-relative | **2.32×** | 0.77× |
+| causal, RMS | delta | **11.81×** | 2.03× |
+| causal, RMS | chunk-relative | 6.74× | 2.31× |
+| causal, endpoint | delta | 4.94× | 3.02× |
+| causal, endpoint | chunk-relative | 5.40× | 2.07× |
+
+Both models attend the cube at two to three times the average cell and
+under-attend the mug; the cube is also the dominant causal region, 5–12×. At
+the grasp everything flattens (cube 1.6–2.5×, mug comparable or higher),
+matching a decision about closing rather than locating.
+
+**This corrected an earlier conclusion in this document's own history.** A
+first reading held that neither model's attention was on the cube — judged by
+the **argmax**, and the register cells take attention's top slots, so the cube
+never enters a top-ten list. Among actual scene content it is the most attended
+region. Scoring a region by whether it wins the peak was the mistake.
+
+So §6's dissociation needs stating at the right level. Excluding the register
+border roughly doubles the delta model's attention-vs-causal correlation on
+approach (+0.176 → +0.354) and barely moves chunk-relative's (+0.197 → +0.207);
+at the grasp both stay near zero (`mask_registers.py`). **At the region level
+the two maps agree the cube matters; at the cell level across the whole map
+they still barely correlate.** An attention map is not a saliency map — but
+"attention ignores the object" is withdrawn.
+
+## 11. Claims this investigation retracted
+
+Reading these maps by eye produced repeated confident errors. Recorded because
+the failure mode is systematic, not careless: every wrong conclusion came from
+reading a spatial pattern and inferring a mechanism, and every correction came
+from an intervention or a control.
+
+| claimed | measurement said |
+| --- | --- |
+| Attention is structured around the object's base and the near table edge | That was the fixed gripper template, cosine 0.928 to every frame's map |
+| The attention map is not a localiser; the object draws 0.84× uniform | That probe measured one cell on the bottle's *cap* while the warm region sat on its *body*. §10 settled it: 2.3–3.1× |
+| Vertical camera dependence is phase-invariant | True only inside the swept window; at ~200 mm out depth dominates and the two cross over |
+| Depth is barely camera-dependent | An artefact of sampling only near-grasp frames. Normalised by distance remaining, it is flat at ~0.55 |
+| The attended "finger band" loses share through the task | The band was the bottom four rows while the hot region spans rows 6–9 — it measured where the line was drawn |
+| The smaller sugar object costs more vision | The object is a mug, and that run used the wrong checkpoint on the wrong task entirely |
+| A single patch matters 7× more to the delta model | A normalisation artefact; endpoint divergence gives 2.5×, approach only |
+| A smudged or taped lens would hurt the delta model badly | Wrong twice: single-block occlusion says nothing about many blocks, and a lens obstruction blocks the entrance pupil — dimming and defocusing the whole frame, not blacking out a region |
+
+## 12. Method limits
+
+- **Nothing here is validated against behaviour.** Every figure measures how
+  far the commanded output moves, never whether the policy fails more often.
+  The experiment that would settle it applies the same mask *in software* on
+  the policy's input during a closed loop and compares success rates — not
+  obstructing the optics, which produces global blur rather than the regional
+  occlusion measured here. Until that is run, every number is a proxy.
+- **The occlusion fill is off-distribution.** A covered block must be painted
+  with something and the policy has never seen a grey rectangle mid-scene.
+  Comparisons *between* cells are sound; an absolute cell value is not a
+  prediction about a genuinely empty region.
+- **Occlusion cost.** 193 forward passes per frame at 12×16, ~15 min on CPU.
+  Two frames of one episode per model; the disjointness and concentration
+  results rest on those.
+- **Single view.** Multi-camera support is implemented and unit-tested against
+  synthetic layouts, but no real multi-view data exists yet to exercise it.
+  Note that `sugar_cup_graspproj_chunkrel`'s episode metadata carries
+  `observation.images.right_cam1` columns while `info.json` lists only `cam0` —
+  a second view may be recoverable from the source recording.
+- **The gripper is still unsegmented.** Motion-based attempts failed twice
+  (image motion scales with proximity, so distant background looks as static as
+  the jaws) and Grounding DINO matched a green jug's handles. The jaws are
+  fixed in image space, so one hand-drawn polygon would serve every frame.
+- **Attention reduction choices.** Mean over heads, over action-token queries,
+  then over layers. Other reductions are defensible and were not compared.
+
+## 13. Open
+
+- Does any of this predict behaviour? (see §12 — the one falsifying test)
+- The top-right corner cell (§6): distractor response to background clutter, or
+  a positional edge effect of the fisheye? Distinct from the bottom-edge sinks.
 - Whether `--denoise-step` should default to an early step.
-- Interventional (occlusion) saliency, to answer "where in the image matters"
-  by measurement rather than by attention.
-- One dataset, one object, one checkpoint.
+- Whether the retrained model's 33% higher prompt sensitivity is grounding or
+  prompt length.
+- The finger-versus-cube question: consistent with the axis evidence at the
+  grasp (lateral and vertical dominant, depth at its minimum) and unproven.
