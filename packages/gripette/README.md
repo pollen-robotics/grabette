@@ -85,10 +85,10 @@ make check                                      # services should now report [OK
 
 `make install-rpi` is idempotent — re-running it is safe (and preserves any captured calibration offsets in `/etc/gripette/env`). Under the hood it:
 
-- installs `python3-libcamera`, `python3-picamera2`, `libcap-dev` via apt;
+- installs the apt system deps — camera, BLE, and the build headers `python-prctl` needs (the `install-rpi` recipe has the list);
 - runs `make enable-uart` to disable the serial console (`cmdline.txt`) and add `dtoverlay=miniuart-bt` to `config.txt` so the reliable PL011 (`ttyAMA0`) ends up on the GPIO header instead of the mini UART (clock-dependent, unreliable at 1Mbaud);
 - runs `make harden-rpi` for crash safety (persistent journal capped at 5 boots / 50MB, and `fsck.mode=force` so a hard shutdown self-heals on next boot — gripettes mounted on a robot get power-cut at random);
-- creates a `--system-site-packages` venv at the workspace root so apt's `picamera2` satisfies the dependency tree (otherwise `uv` tries to build `python-prctl` from PyPI);
+- creates a `--system-site-packages` venv at the workspace root so apt's `picamera2` satisfies the dependency tree (`python-prctl` and `pidng` still build from source — hence `python3-dev` and `libcap-dev`);
 - runs `uv sync --package gripette --extra rpi --no-install-package numpy` and verifies that `picamera2`, `serial`, and `rustypot` all import;
 - writes `GRIPPER_HAND` into `/etc/gripette/env`, preserving any existing `GRIPPER_MOTOR*_OFFSET` lines from a previous calibration.
 
@@ -99,7 +99,7 @@ make check                                      # services should now report [OK
 If `make install-rpi` fails (e.g. unusual OS), the equivalent manual steps are:
 
 1. **UART**: edit `/boot/firmware/config.txt` to include `dtoverlay=miniuart-bt` and `enable_uart=1`. Edit `/boot/firmware/cmdline.txt` to remove `console=serial0,115200` — keep the file as a single line. Reboot.
-2. **Deps**: `sudo apt install libcap-dev python3-libcamera python3-picamera2`.
+2. **Deps**: `sudo apt install libcap-dev python3-libcamera python3-picamera2 python3-dev python3-dbus python3-gi bluez`.
 3. **Venv**: from the workspace root, `uv venv --python /usr/bin/python3 --system-site-packages && uv sync --package gripette --extra rpi --no-install-package numpy`.
 4. **Hand config**: `sudo mkdir -p /etc/gripette && echo "GRIPPER_HAND=right" | sudo tee /etc/gripette/env` (or `=left`).
 
