@@ -206,9 +206,11 @@ Two more operational notes:
   calls — unpinned, enabling wandb is what *causes* the crash, on exactly the
   runs you wanted the curve for.
 
-  Note also that `hf jobs logs <id>` returns only a TAIL even while the job is
-  live — a 12 h run came back as 55 KB, enough for the last two evals and
-  nothing before them. wandb is the only place the full curve exists.
+  Note also that `hf jobs logs <id>` truncates to a tail once a job has been
+  finished for a while: a 12 h run fetched two days later came back as 55 KB
+  (the last two evals only), while the same-length run fetched the morning it
+  finished came back as 1.6 MB with all 50 evals. Pull the log promptly if you
+  want it, and treat wandb as the only durable record.
 
 Recipe rationale (matched to the verified `lerobot/pi05-libero` fine-tune):
 
