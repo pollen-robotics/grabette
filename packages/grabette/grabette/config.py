@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     # via depthai; "gemini305" is the Orbbec Gemini 305 via pyorbbecsdk2, kept as
     # a second source so the rig is not single-sourced on Luxonis. This selects
     # the model only — enable_oakd still controls whether it is powered at all.
-    depth_camera: Literal["oakd", "gemini305"] = "oakd"
+    depth_camera: Literal["oakd", "gemini305"] = "gemini305"
 
     # Gemini 305 IR exposure. 0 = leave the camera's auto-exposure alone.
     # AE favours low noise over short integration (~15.6 ms with gain 16 in a
@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     # workspace lighting, so it is opt-in per device.
     orbbec_ir_exposure_us: int = 0
     orbbec_ir_gain: int = 0
+
+    orbbec_rotate_180: bool = False
 
     # UI
     ui_enabled: bool = True
