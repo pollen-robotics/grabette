@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     orbbec_ir_exposure_us: int = 0
     orbbec_ir_gain: int = 0
 
-    orbbec_rotate_180: bool = False
+    orbbec_rotate_180: bool = True
 
     # UI
     ui_enabled: bool = True

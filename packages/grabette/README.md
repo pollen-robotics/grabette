@@ -16,8 +16,8 @@
 |---|---|
 | **Board** | Raspberry Pi 4 |
 | **Primary camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
-| **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
-| **Depth camera (alt.)** | Orbbec Gemini 305 — supported as a second source so the rig is not single-sourced. Passive stereo, no IMU; SLAM runs IMU-free. Opt in with `GRABETTE_DEPTH_CAMERA=gemini305` ([setup](#depth-camera-using-an-orbbec-gemini-305)). |
+| **Depth camera** | Orbbec Gemini 305 — the default. Provides the depth stream SLAM needs, which is **required** for trajectory recovery on Grabette. Passive stereo, no IMU; SLAM runs IMU-free. Mounted inverted, and the frames are un-rotated at capture ([setup](#depth-camera-using-an-orbbec-gemini-305)). Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
+| **Depth camera (alt.)** | Luxonis OAK-D SR — kept working as a second source so the rig is not single-sourced. Stereo RGB-D with an on-board BNO IMU (200Hz), which gravity-aligns the trajectory. Replaces the legacy BMI088. Select with `GRABETTE_DEPTH_CAMERA=oakd`, or `make install-rpi CAMERA=oakd`. |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
 | **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — cues the recording start, the stop, the episode being written, and failures |
@@ -140,12 +140,18 @@ requirements (`opencv-python`, `numpy>=2.1.0`) exist for the SDK's bundled
 examples and would shadow the system numpy that picamera2 links against. See the
 comment on the target in the Makefile.
 
-Two behavioural differences worth knowing before recording:
+Three behavioural differences worth knowing before recording:
 
 - **No IMU.** The 305 has none, so no `dcam_imu.json` is written and SLAM runs
   IMU-free. This is measured, not assumed: removing the IMU perturbs odometry no
   more than re-running the identical pipeline does. `metadata.json` records
   `"imu": null`, which means "known absent" rather than "not read".
+- **Mounted upside down.** The 305 sits inverted on the grip, so every frame is
+  rotated 180 deg at capture and the principal point is flipped with it — an
+  episode is therefore indistinguishable from an upright one, and
+  `metadata.json` records `"image_orientation": "rotate_180_in_capture"`. Set
+  `GRABETTE_ORBBEC_ROTATE_180=false` for a rig that carries it upright. The
+  URDF describes the corrected frame, so it must NOT also gain a 180 deg roll.
 - **Passive stereo, IR-cut, no projector.** It needs a lit, textured workspace
   and degrades first when either runs short. `GRABETTE_ORBBEC_IR_EXPOSURE_US`
   (with `GRABETTE_ORBBEC_IR_GAIN`) pins a shorter IR exposure to reduce motion
