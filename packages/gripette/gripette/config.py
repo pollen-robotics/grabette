@@ -75,9 +75,32 @@ class Settings(BaseSettings):
     # Motor position limits in ROBOT FRAME (radians; 0 = open, positive
     # = closing). Commands outside these are rejected.
     motor1_min: float = 0.0
-    motor1_max: float = math.radians(85)    # +1.4835 rad
+    # 93.5 deg is the MEASURED collision angle (rgripette-v2, moved by hand with
+    # the distal open). The previous 85 deg came from CAD and rejected the last
+    # ~8.5 deg of real travel — precisely the range a firm close needs, since a
+    # full close is meant to drive INTO the stop and let the torque cap stop it.
+    motor1_max: float = math.radians(93.5)  # +1.6319 rad
     motor2_min: float = 0.0
+    # Left at 116 deg deliberately. A torque-capped stall measured ~102 deg, but
+    # that is a lower bound on the real travel, not the travel itself; tightening
+    # to 102 could reject reachable commands. A loose bound is harmless here — it
+    # is a safety envelope, NOT the normaliser. The projection normalises on the
+    # measured travel instead (see grasp_projection.REACHABLE_DISTAL).
     motor2_max: float = math.radians(116)   # +2.0245 rad
+
+    # Hard ceiling on motor effort, fraction 0..1 of max torque. Enforced
+    # server-side on every command, so no client can reach 100%.
+    #
+    # This is what makes the raised motor1_max safe. The limits above are now the
+    # real collision angles rather than a conservative CAD margin, so a full close
+    # is MEANT to drive into the stop and be halted by torque. At 100% torque that
+    # same command would grind into collision. Previously an unset per-command
+    # limit meant "leave it alone", i.e. full torque on a fresh boot — the
+    # protection depended on every client remembering to pass a limit.
+    #
+    # 0.5 leaves ample grip force (field grasps worked at 0.25) while keeping a
+    # wide margin below stall.
+    torque_ceiling: float = 0.5
 
     # Logging
     log_level: str = "INFO"

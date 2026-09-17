@@ -104,10 +104,16 @@ class Daemon:
         await self.start()
 
     async def _poll_loop(self) -> None:
-        """Poll backend at ~50Hz and push samples into the ring buffer."""
+        """Poll backend at ~50Hz and push samples into the ring buffer.
+
+        get_state() does BLOCKING I2C reads on the RPi backend at idle, so run it
+        in a thread: a slow I2C read inline on the event loop stalls the whole
+        loop, and an event-loop stall >1s starves picamera2's buffer recycling →
+        "Dequeue timer expired" → camera frontend-timeout wedge.
+        """
         while True:
             try:
-                state = self.backend.get_state()
+                state = await asyncio.to_thread(self.backend.get_state)
                 self.sample_ring.push_state(state)
             except Exception:
                 logger.debug("Poll loop sample error", exc_info=True)

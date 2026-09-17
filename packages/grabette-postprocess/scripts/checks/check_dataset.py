@@ -3,9 +3,9 @@
 
 For each episode, checks the recordings produced by the current rig:
   - Arducam observation camera : raw_video.mp4 (+ frame_timestamps.json)
-  - OAK RGBD                   : oakd_left.mp4 / oakd_right.mp4 / oakd_depth/
-                                 (+ *_timestamps.json) and oakd_calib_offline.json
-  - OAK IMU                    : oakd_imu.json (accel + gyro + rotation)
+  - Depth camera RGBD          : dcam_left.mp4 / dcam_right.mp4 / dcam_depth.mkv
+                                 (+ *_timestamps.json) and dcam_calib_offline.json
+  - Depth camera IMU           : dcam_imu.json (absent on IMU-less cameras)
   - Gripper                    : angle_data.json (joint angles)
   - SLAM outputs (if present)  : camera_trajectory.csv (+ slam_metadata.json)
 
@@ -33,10 +33,12 @@ def main(dataset_dir, verbose):
     """Check dataset health: Arducam video, OAK RGBD/IMU, gripper angles, SLAM outputs."""
     dataset_dir = Path(dataset_dir).expanduser().absolute()
 
-    # An episode is any dir containing an OAK recording (oakd_imu.json is the anchor).
-    episodes = find_episodes(dataset_dir, anchor="oakd_imu.json")
+    # An episode is any dir containing a depth recording. Anchor on the SLAM
+    # input rather than the IMU: the Orbbec Gemini 305 has no IMU, so anchoring
+    # on dcam_imu.json makes every 305 episode invisible to this check.
+    episodes = find_episodes(dataset_dir, anchor="dcam_left.mp4")
     if not episodes:
-        print(f"No episodes (oakd_imu.json) found under {dataset_dir}")
+        print(f"No episodes (dcam_left.mp4 or legacy oakd_left.mp4) found under {dataset_dir}")
         return
 
     print(f"Checking {len(episodes)} episode(s) in {dataset_dir}\n")

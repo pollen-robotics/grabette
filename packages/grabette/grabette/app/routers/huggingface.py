@@ -5,10 +5,10 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
-from grabette.app.routers.sessions import get_session_manager
+from grabette.app.routers.tasks import get_task_manager
 from grabette.hf import HuggingFaceClient
 from grabette.jobs import JobStatus, get_job_manager
-from grabette.session import SessionManager
+from grabette.task import TaskManager
 
 router = APIRouter(prefix="/api/hf", tags=["huggingface"])
 
@@ -25,14 +25,6 @@ class AuthRequest(BaseModel):
 
 class UploadRequest(BaseModel):
     repo_id: str
-
-
-class PushAndProcessRequest(BaseModel):
-    task_ids: list[str]
-    target_repo: str  # e.g. "owner/my-dataset"
-    raw_repo: str     # e.g. "owner/my-dataset-raw"
-    task_description: str
-    private: bool = False
 
 
 @router.post("/auth")
@@ -57,17 +49,17 @@ async def upload_episode(
     episode_id: str,
     req: UploadRequest,
     hf: HuggingFaceClient = Depends(get_hf_client),
-    sm: SessionManager = Depends(get_session_manager),
+    tm: TaskManager = Depends(get_task_manager),
 ):
     if not hf.is_authenticated:
         raise HTTPException(status_code=401, detail="Not authenticated with HuggingFace")
 
     try:
-        sm.get_episode(episode_id)
+        tm.get_episode(episode_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Episode not found")
 
-    episode_dir = sm.episode_dir(episode_id)
+    episode_dir = tm.episode_dir(episode_id)
     jm = get_job_manager()
     job = jm.create_job(f"upload:{episode_id}")
 
@@ -121,55 +113,6 @@ def get_job(job_id: str):
         "result": job.result,
         "error": job.error,
     }
-
-
-@router.post("/push")
-async def push_and_process(
-    req: PushAndProcessRequest,
-    hf: HuggingFaceClient = Depends(get_hf_client),
-    sm: SessionManager = Depends(get_session_manager),
-):
-    """Upload all episodes from task_ids to raw_repo, trigger SLAM Space, poll, delete raw."""
-    if not hf.is_authenticated:
-        raise HTTPException(status_code=401, detail="Not authenticated with HuggingFace")
-
-    from grabette.slam import get_slam_orchestrator
-    slam = get_slam_orchestrator()
-    job_id = await slam.push_and_process(
-        task_ids=req.task_ids,
-        raw_repo=req.raw_repo,
-        target_repo=req.target_repo,
-        task_description=req.task_description,
-        hf_client=hf,
-        session_manager=sm,
-        private=req.private,
-    )
-    return {"job_id": job_id, "status": "started"}
-
-
-@router.post("/slam/{episode_id}")
-async def run_slam(
-    episode_id: str,
-    req: UploadRequest,
-    hf: HuggingFaceClient = Depends(get_hf_client),
-    sm: SessionManager = Depends(get_session_manager),
-):
-    """Upload an episode and trigger SLAM processing."""
-    if not hf.is_authenticated:
-        raise HTTPException(status_code=401, detail="Not authenticated with HuggingFace")
-
-    try:
-        sm.get_episode(episode_id)
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="Episode not found")
-
-    episode_dir = sm.episode_dir(episode_id)
-
-    from grabette.slam import get_slam_orchestrator
-    slam = get_slam_orchestrator()
-    job_id = await slam.run_slam(episode_id, episode_dir, req.repo_id, hf)
-
-    return {"job_id": job_id, "status": "started"}
 
 
 @router.websocket("/upload/{episode_id}/ws")

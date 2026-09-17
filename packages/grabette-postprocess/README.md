@@ -16,10 +16,10 @@ odometry, run in Docker.
 
 ```
 Episode directory (from Grabette)
-├── oakd_left.mp4 + oakd_depth.mkv     OAK-D stereo + depth
-├── oakd_*_timestamps.json             frame timestamps
-├── oakd_imu.json                      accel/gyro/rotation
-├── oakd_calib_offline.json            intrinsics + imu_to_cam
+├── dcam_left.mp4 + dcam_depth.mkv     OAK-D stereo + depth
+├── dcam_*_timestamps.json             frame timestamps
+├── dcam_imu.json                      accel/gyro/rotation
+├── dcam_calib_offline.json            intrinsics + imu_to_cam
 └── metadata.json
 
     │  convert_episode_to_oak.py → run_oak_slam.py
@@ -38,7 +38,9 @@ LeRobot v3 dataset/
 
 ## Setup
 
-Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
+Requires [uv](https://docs.astral.sh/uv/). The non-LeRobot conversion and SLAM
+tools support Python >= 3.11; dataset generation, publishing, and visualization
+require Python >= 3.12 because that is LeRobot 0.6's minimum.
 
 > Part of the uv **workspace**: a bare `uv sync` here would build the *entire
 > monorepo* environment. Always pass `--package` (root README → Development).
@@ -47,7 +49,14 @@ Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
 uv sync --package grabette-postprocess
 ```
 
-The OAK SLAM step requires Docker with a locally built image:
+The OAK SLAM step requires Docker. The image is published, so pull it:
+
+```bash
+docker pull pollenrobotics/oak-vslam
+```
+
+Pin `:2026-07-22` instead of `:latest` when a result has to stay comparable.
+To build it yourself (Dockerfile + `offline_vslam.cpp` are both in the repo):
 
 ```bash
 docker build -t pollenrobotics/oak-vslam docker/oak_vslam/
@@ -201,6 +210,42 @@ uv run lerobot-dataset-viz \
 `--episode-index` picks the episode inside the dataset. See
 `lerobot-dataset-viz --help` for `--mode local/distant` and other flags.
 
+### 6. Normalize a raw capture
+
+Raw captures recorded with a camera prefix (e.g. `observation.images.right_cam0`)
+and no state column do not fit the pipeline above. `normalize_raw` renames the
+camera feature everywhere it appears (info.json, video dir, episode parquet
+columns, stats.json), optionally strips the prefix from every feature name,
+and adds the gripper-only `observation.state` the training scripts expect:
+
+```bash
+uv run python -m grabette_postprocess.normalize_raw \
+    --src_root /path/to/raw --dst_root /path/to/normalized --repo_id <user>/<dataset> \
+    --camera right_cam0 --strip_prefix right_ --task "pick the sugar cube"
+```
+
+### 7. Publish gate
+
+Before pushing a dataset, `check_publish` (a library function, no CLI yet)
+verifies info.json, the task string (natural language, not a slug), the
+gripper channel naming and unit range, the grasp-projection sidecar, the
+stats file and its representation provenance, the dataset card (viewer link),
+the LeRobot tag, and the fps (`deep=True` decodes the videos):
+
+```python
+from grabette_postprocess.checks.publish import check_publish
+status = check_publish("<user>/<dataset>")   # Hub id or local path -> dict of findings
+```
+
+### 8. Relative action stats (optional chunk-relative mode)
+
+Chunk-relative training (`GRABETTE_CHUNK_RELATIVE=1`, see
+`docs/relative_actions_lerobot_native.md`) normalizes actions with statistics
+of the *relative* representation, not of the stored deltas.
+`write_relative_action_stats` computes them and stamps the stats file with a
+provenance marker; the training guard refuses a stats/representation mismatch.
+Deltas (the default) do not need this step.
+
 ## Project structure
 
 ```
@@ -212,7 +257,9 @@ grabette-postprocess/
 │   ├── oak_slam.py         # OAK-D RTAB-Map orchestration (delta integration + gravity align)
 │   ├── dataset.py          # LeRobot v3 dataset builder
 │   ├── episode_manager.py  # episode discovery / dropping
-│   └── checks/             # validation logic (recording, sync, trajectory)
+│   ├── normalize_raw.py    # rename camera / strip prefix / add gripper state on raw captures
+│   ├── chunk_relative_stats.py  # relative-action stats + provenance (chunk-relative mode)
+│   └── checks/             # validation logic (recording, sync, trajectory, publish gate)
 ├── docker/
 │   └── oak_vslam/       # RTAB-Map offline_vslam C++ + Dockerfile
 └── scripts/                           # local CLIs (mirror the post-processing pipeline)

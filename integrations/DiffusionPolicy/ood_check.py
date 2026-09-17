@@ -187,7 +187,7 @@ def main():
 
     policy = load_policy(args.checkpoint).to(args.device)
     policy.eval()
-    from lerobot.policies.factory import make_pre_post_processors
+    from lerobot.policies import make_pre_post_processors
     pre, _ = make_pre_post_processors(policy.config, args.checkpoint)
     extract = FeatureExtractor(policy, pre, args.device)
 

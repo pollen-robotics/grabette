@@ -82,41 +82,66 @@ class LedButton:
         self._led_request.set_value(self._led_pin, Value.INACTIVE)
 
     def led_blink(self, interval: float = 0.3) -> None:
-        self._blink_stop.clear()
-
-        def _blink() -> None:
+        def _blink(stop: threading.Event) -> None:
             state = Value.INACTIVE
-            while not self._blink_stop.is_set():
+            while not stop.is_set():
                 self._led_request.set_value(self._led_pin, state)
                 state = Value.ACTIVE if state == Value.INACTIVE else Value.INACTIVE
                 time.sleep(interval)
 
-        self._blink_thread = threading.Thread(target=_blink, daemon=True)
+        self._start_pattern(_blink)
+
+    def led_pulses(self, count: int = 3, on: float = 0.1, off: float = 0.1,
+                   gap: float = 1.0) -> None:
+        """Repeat a burst of `count` short pulses, then hold dark for `gap`.
+
+        Distinguishable at a glance from every other pattern (which are all
+        even-duty blinks): a burst-then-pause reads as "this device is faulty",
+        not as "this device is busy". Used for the hardware-error state, where
+        the LED is the only feedback an operator has while the grabette sits on
+        a bench with no screen.
+
+        The gap is slept in short slices so a state change (led_on/off/blink)
+        takes effect promptly instead of waiting out a full dark period.
+        """
+        def _pulse(stop: threading.Event) -> None:
+            while not stop.is_set():
+                for _ in range(max(1, count)):
+                    if stop.is_set():
+                        break
+                    self._led_request.set_value(self._led_pin, Value.ACTIVE)
+                    time.sleep(on)
+                    self._led_request.set_value(self._led_pin, Value.INACTIVE)
+                    time.sleep(off)
+                waited = 0.0
+                while waited < gap and not stop.is_set():
+                    time.sleep(min(0.05, gap - waited))
+                    waited += 0.05
+
+        self._start_pattern(_pulse)
+
+    def _start_pattern(self, target) -> None:
+        """Run target(stop_event) as THE blink thread, replacing any previous one.
+
+        Each thread gets its OWN stop Event, captured as an argument rather than
+        read off self: a pattern switch installs a fresh event, and a thread that
+        read the shared attribute would then poll the NEW (unset) one and never
+        exit — two threads would drive the same line and the pattern would be
+        neither. Joining the outgoing thread before starting the next one keeps
+        exactly one writer on the LED; the join is bounded so a wedged GPIO write
+        can't block the caller."""
+        prev, prev_stop = self._blink_thread, self._blink_stop
+        prev_stop.set()
+        if prev is not None and prev.is_alive():
+            prev.join(timeout=1.0)
+        stop = threading.Event()
+        self._blink_stop = stop
+        self._blink_thread = threading.Thread(target=target, args=(stop,), daemon=True)
         self._blink_thread.start()
 
     def is_pressed(self) -> bool:
         """Button is active-low: pressed = LOW = INACTIVE."""
         return self._button_request.get_value(self._button_pin) == Value.INACTIVE
-
-    def wait_for_press(self, debounce_ms: int = 50) -> None:
-        """Block until button is pressed and then released."""
-        self.wait_for_press_down()
-        self.wait_for_release(debounce_ms)
-
-    def wait_for_press_down(self) -> None:
-        """Block until button transitions from unpressed to pressed."""
-        # If already pressed, wait for release first
-        while self._button_request.get_value(self._button_pin) == Value.INACTIVE:
-            time.sleep(0.01)
-        # Wait for press
-        while self._button_request.get_value(self._button_pin) == Value.ACTIVE:
-            time.sleep(0.01)
-
-    def wait_for_release(self, debounce_ms: int = 50) -> None:
-        """Wait for button release with debounce delay."""
-        while self._button_request.get_value(self._button_pin) == Value.INACTIVE:
-            time.sleep(0.01)
-        time.sleep(debounce_ms / 1000)
 
     def cleanup(self) -> None:
         self._blink_stop.set()

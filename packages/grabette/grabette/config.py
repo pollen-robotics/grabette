@@ -74,11 +74,38 @@ class Settings(BaseSettings):
     # instantly instead of paying the cold-boot warmup each time.
     oakd_keepalive_s: float = 30.0
 
+    # Which depth camera `enable_oakd` brings up. "oakd" is the Luxonis OAK-D SR
+    # via depthai; "gemini305" is the Orbbec Gemini 305 via pyorbbecsdk2, kept as
+    # a second source so the rig is not single-sourced on Luxonis. This selects
+    # the model only — enable_oakd still controls whether it is powered at all.
+    depth_camera: Literal["oakd", "gemini305"] = "oakd"
+
+    # Gemini 305 IR exposure. 0 = leave the camera's auto-exposure alone.
+    # AE favours low noise over short integration (~15.6 ms with gain 16 in a
+    # dim room), which smears a moving rig. Pinning a shorter exposure trades
+    # depth coverage for less motion blur; whether that wins depends on the
+    # workspace lighting, so it is opt-in per device.
+    orbbec_ir_exposure_us: int = 0
+    orbbec_ir_gain: int = 0
+
     # UI
     ui_enabled: bool = True
 
     # Hardware button (Grove LED Button on GPIO22/23)
     button_enabled: bool = True
+
+    # Audible cue on the V2 HAT's TLV320AIC3104 codec: a beep at the instant a
+    # recording actually goes live (after the OAK-D warm-up), so the operator
+    # doesn't have to watch the LED — and a whole group beeps together at T0.
+    # Degrades silently when the codec isn't set up (see `make install-audio`).
+    sound_enabled: bool = True
+    # ALSA device. Empty = auto-detect the codec BY CARD NAME
+    # (plughw:CARD=aic3104) — never by index, since on a Pi 4 the vc4-hdmi
+    # cards shift the numbering. Set explicitly only to override.
+    sound_device: str = ""
+    # Amplitude of the generated tone, 0..1. The speaker's absolute loudness is
+    # set by the codec mixer in scripts/aic3104-init.sh; this only trims it.
+    sound_volume: float = 0.6
 
     # Logging
     log_level: str = "INFO"

@@ -96,6 +96,36 @@ MAX_PIN_ATTEMPTS = 5
 PIN_LOCKOUT_SECONDS = 30
 MAX_PIN_LOCKOUT_SECONDS = 3600
 
+# ---- Stale-bond deadlock recovery ----
+
+# A bond desynced (one peer lost its key) kills every reconnect in SMP before
+# any GATT work, looping connect→drop forever with no agent call. This service
+# is the only route onto a robot not yet on WiFi, so it must self-heal offline.
+# A real session always writes a command, so a link this short carrying no GATT
+# traffic isn't one; after DEADLOCK_STRIKES we drop our bond and let the central
+# re-pair (Just Works). See _check_bond_deadlock.
+DEADLOCK_MAX_CONN_SECONDS = 2.0
+DEADLOCK_STRIKES = 3
+
+# ---- Advertising interval ----
+
+# In units of 0.625 ms: 160 = 100 ms, 240 = 150 ms. This MUST be stated
+# explicitly. The MGMT "Add Advertising" command carries no interval, so the
+# kernel applies its own default of 0x0800 (1.28 s) — and at that rate a
+# central not only discovers the robot erratically, it cannot connect at all:
+# a connection is only ever opened in answer to an advertisement, so the
+# central's attempt times out and is cancelled locally
+# (le-connection-abort-by-local) without the robot ever seeing it. Measured on
+# grabette-simsim (Pi 4 / CYW4345): 1.28 s gave 4 advertisement reports per 45 s
+# and no usable connection, 100-150 ms gives ~19 and connects on the first try.
+ADV_MIN_INTERVAL = 160
+ADV_MAX_INTERVAL = 240
+
+# The kernel default above, which is all the add-adv fallback can influence —
+# it is settable only through debugfs. Formatted with the adapter index and
+# the bound ("min"/"max").
+ADV_INTERVAL_DEBUGFS = "/sys/kernel/debug/bluetooth/hci{index}/adv_{bound}_interval"
+
 
 # =====================================================================
 # BLE Agent — "Just Works" pairing (no user interaction on device side)
@@ -440,22 +470,57 @@ class Application(dbus.service.Object):
 # Network helpers
 # =====================================================================
 
-def _active_wifi_ssid() -> str:
-    """Name of the currently-connected WiFi network, or "" if none.
+def _nmcli_unescape(value: str) -> str:
+    """Undo nmcli's terse-mode escaping: ``\\:`` is ':' and ``\\\\`` is a backslash.
 
-    Reads the active connections (no scan, so it stays fast enough for the
-    periodic mainloop refresh): the active 802-11-wireless connection's NAME is
-    the SSID (NetworkManager names WiFi connections after the SSID by default).
+    One helper in place of the three hand-rolled variants this file had grown,
+    one of which (in _wifi_reset) only ever undid the ':' half — so a profile
+    name carrying a backslash was passed back to nmcli still escaped.
+    """
+    out = []
+    i = 0
+    while i < len(value):
+        if value[i] == "\\" and i + 1 < len(value):
+            out.append(value[i + 1])
+            i += 2
+        else:
+            out.append(value[i])
+            i += 1
+    return "".join(out)
+
+
+def _active_wifi_ssid() -> str:
+    """SSID of the currently-connected WiFi network, or "" if none.
+
+    Reads the *ssid property* of the active 802-11-wireless profile, not the
+    profile's name. The two only coincide when NetworkManager created the
+    profile itself; netplan renders its own as "netplan-<iface>-<ssid>", so
+    trusting the name put "netplan-wlan0-Home" on screen where "Home" belonged.
+
+    The profile is addressed by UUID rather than by name, so a name carrying
+    ':' or other nmcli-escaped characters cannot be mis-resolved. Neither call
+    scans, so this stays fast enough for the periodic mainloop refresh.
     """
     try:
-        result = subprocess.run(
-            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"],
+        active = subprocess.run(
+            ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show", "--active"],
             capture_output=True, text=True, timeout=5,
         )
-        for line in result.stdout.splitlines():
-            if line.endswith(":802-11-wireless"):
-                name = line[: -len(":802-11-wireless")]
-                return name.replace("\\:", ":")  # un-escape nmcli's ':'
+        for line in active.stdout.splitlines():
+            if not line.endswith(":802-11-wireless"):
+                continue
+            uuid = line[: -len(":802-11-wireless")]
+            detail = subprocess.run(
+                ["nmcli", "-t", "-f", "802-11-wireless.ssid",
+                 "connection", "show", uuid],
+                capture_output=True, text=True, timeout=5,
+            )
+            # "802-11-wireless.ssid:<ssid>" — the field name holds no ':', so
+            # the first separator is the field one and the rest is the SSID.
+            for detail_line in detail.stdout.splitlines():
+                _, sep, ssid = detail_line.partition(":")
+                if sep and ssid:
+                    return _nmcli_unescape(ssid)
     except Exception:
         pass
     return ""
@@ -536,7 +601,7 @@ def _wifi_scan() -> str:
         # -t output is "SSID:SIGNAL"; SIGNAL is the numeric last field, and
         # any ':' inside the SSID is backslash-escaped by nmcli.
         ssid, _, signal = line.rpartition(":")
-        ssid = ssid.replace("\\:", ":").replace("\\\\", "\\").strip()
+        ssid = _nmcli_unescape(ssid).strip()
         if not ssid or ssid in seen:  # skip hidden (empty) and duplicates
             continue
         seen.add(ssid)
@@ -557,6 +622,50 @@ def _wifi_scan() -> str:
     return json.dumps(out, ensure_ascii=False, separators=(",", ":"))
 
 
+# WPA-PSK passphrase length, from IEEE 802.11i: 8-63 characters, or exactly 64
+# for a raw hex PSK. nmcli rejects anything else at profile-creation time with
+# "802-11-wireless-security.psk: property is invalid", which says nothing about
+# what a user is meant to do, so the length is checked here instead.
+WPA_PSK_MIN_LEN = 8
+WPA_PSK_MAX_LEN = 63
+WPA_PSK_HEX_LEN = 64
+
+# The reply is delivered as a single BLE notification (see
+# WIFI_SCAN_MTU_BUDGET), so an untranslated nmcli message has to be trimmed
+# rather than silently truncated by the ATT layer.
+WIFI_ERROR_MAX_LEN = 150
+
+
+def _wifi_connect_error(raw: str, ssid: str) -> str:
+    """Translate an nmcli failure into a sentence that names the likely cause.
+
+    nmcli reports a rejected passphrase as "(7) Secrets were required, but not
+    provided": NetworkManager asks a secret agent for a corrected password and
+    a headless device has none. That reads as a fault in the provisioning tool
+    rather than as "the password is wrong", which is what it almost always is.
+
+    Unrecognised failures keep nmcli's own wording — it is better than a vague
+    guess, and the full text is in the service log either way.
+    """
+    low = raw.lower()
+    if "secrets were required" in low or "no secrets" in low:
+        return f'Wrong password for "{ssid}" — the network refused it.'
+    if "network could not be found" in low or "no network with ssid" in low:
+        return f'"{ssid}" was not found — check the name, and that it is in range.'
+    if "ip configuration could not be reserved" in low:
+        return f'Joined "{ssid}", but it handed out no address (DHCP failed).'
+    if "timeout expired" in low or "timed out" in low:
+        return f'Timed out joining "{ssid}" — it may be out of range.'
+    if "psk" in low and "invalid" in low:
+        return (f"That password is not a valid WiFi passphrase "
+                f"({WPA_PSK_MIN_LEN}-{WPA_PSK_MAX_LEN} characters).")
+    if not raw:
+        return f'Could not join "{ssid}" (no reason reported).'
+    if len(raw) > WIFI_ERROR_MAX_LEN:
+        return raw[: WIFI_ERROR_MAX_LEN - 1] + "…"
+    return raw
+
+
 def _wifi_connect(ssid: str, password: str) -> str:
     """Connect to a WiFi network using nmcli. Returns status message.
 
@@ -566,7 +675,18 @@ def _wifi_connect(ssid: str, password: str) -> str:
     ``key-mgmt``. We rescan first, and delete any incomplete profile a previous
     failed attempt left under the same name (a common cause of the key-mgmt
     error on retry), then connect fresh.
+
+    Failures come back through _wifi_connect_error, so the client shows the
+    cause rather than an nmcli status code.
     """
+    # Reject an impossible passphrase before touching the radio: this is the
+    # one failure we can name with certainty, and the round-trip through nmcli
+    # only turns it into a property-validation error.
+    if not (WPA_PSK_MIN_LEN <= len(password) <= WPA_PSK_MAX_LEN
+            or len(password) == WPA_PSK_HEX_LEN):
+        return (f"ERROR: A WiFi password is {WPA_PSK_MIN_LEN}-{WPA_PSK_MAX_LEN} "
+                f"characters; this one is {len(password)}.")
+
     # Active rescan so the AP is visible to NetworkManager. Timeouts are kept
     # tight so the whole flow stays under the client's 35s notification timeout.
     try:
@@ -606,7 +726,8 @@ def _wifi_connect(ssid: str, password: str) -> str:
             capture_output=True, text=True, timeout=15,
         )
         if add.returncode != 0:
-            return f"ERROR: {add.stderr.strip() or add.stdout.strip()}"
+            detail = add.stderr.strip() or add.stdout.strip()
+            return f"ERROR: {_wifi_connect_error(detail, ssid)}"
 
         up = subprocess.run(
             ["nmcli", "connection", "up", ssid],
@@ -617,13 +738,14 @@ def _wifi_connect(ssid: str, password: str) -> str:
         # Bring-up failed (wrong password, out of range…): remove the profile
         # so the next attempt starts clean.
         error = up.stderr.strip() or up.stdout.strip()
+        logger.warning("nmcli failed to join %r: %s", ssid, error)
         subprocess.run(
             ["nmcli", "connection", "delete", ssid],
             capture_output=True, text=True,
         )
-        return f"ERROR: {error}"
+        return f"ERROR: {_wifi_connect_error(error, ssid)}"
     except subprocess.TimeoutExpired:
-        return "ERROR: Connection timed out"
+        return f'ERROR: Timed out joining "{ssid}" — it may be out of range.'
     except Exception as e:
         return f"ERROR: {e}"
 
@@ -641,8 +763,7 @@ def _wifi_reset() -> str:
             if ":802-11-wireless" not in line:
                 continue
             conn_name = line.split(":802-11-wireless")[0]
-            # Unescape nmcli escaping
-            conn_name = conn_name.replace("\\:", ":")
+            conn_name = _nmcli_unescape(conn_name)
             if conn_name == "Hotspot":
                 continue
             subprocess.run(
@@ -705,6 +826,13 @@ class BluetoothWifiService:
         # ungraceful drops like an app crash) so the device stays reconnectable.
         self._hci_index = None
         self._connected_device_path = None
+        # Adapter proxy, kept so a stale bond can be purged via RemoveDevice.
+        self._adapter = None
+        # Stale-bond deadlock tracking (see _check_bond_deadlock).
+        self._conn_started_at = 0.0
+        self._saw_gatt_traffic = False
+        self._deadlock_strikes = 0
+        self._deadlock_peer = None
         # Serializes advertise attempts so a disconnect-triggered re-advertise
         # can't overlap an in-progress (retrying) attempt.
         self._adv_lock = threading.Lock()
@@ -720,6 +848,11 @@ class BluetoothWifiService:
         """Dispatch a BLE command and return response string."""
         command_str = value.decode("utf-8").strip()
         logger.info("Received command: %s", command_str)
+
+        # Proves the link is usable, so this is a real session and not a
+        # stale-bond flap. Racing the mainloop's reset is fail-safe: a lost
+        # update can only add a strike, never purge a healthy bond.
+        self._saw_gatt_traffic = True
 
         upper = command_str.upper()
 
@@ -882,6 +1015,7 @@ class BluetoothWifiService:
         if not adapter:
             raise RuntimeError("No Bluetooth adapter found")
 
+        self._adapter = adapter
         adapter_props = dbus.Interface(adapter, DBUS_PROP_IFACE)
         adapter_props.Set("org.bluez.Adapter1", "Powered", dbus.Boolean(True))
         # Adapter alias = advertised name (e.g. "Grabette (grabette-01)") so the
@@ -937,6 +1071,17 @@ class BluetoothWifiService:
             path_keyword="path",
         )
 
+        # A central BlueZ has never seen before has no Device1 object to change
+        # yet: it is announced here, already carrying Connected=true, and no
+        # PropertiesChanged follows. Without this the connect edge is missed for
+        # every first-time client — no log line, and the drop timings the
+        # deadlock detector reads stay at their initial values.
+        self.bus.add_signal_receiver(
+            self._on_interfaces_added,
+            dbus_interface=DBUS_OM_IFACE,
+            signal_name="InterfacesAdded",
+        )
+
         # Periodic network status refresh (every 10s)
         GLib.timeout_add_seconds(10, self.app.status_service.update_network_status)
 
@@ -946,32 +1091,133 @@ class BluetoothWifiService:
         self, interface, changed, invalidated, path=None
     ):
         """React to BlueZ Device1 connect/disconnect transitions."""
-        if interface != "org.bluez.Device1" or "Connected" not in changed:
+        if interface != "org.bluez.Device1":
+            return
+        # Service discovery IS ATT traffic, so reaching it proves the link got
+        # through SMP — which is exactly what a desynced bond never does.
+        # Without this, a healthy central that connects, discovers and leaves
+        # inside DEADLOCK_MAX_CONN_SECONDS scores strikes like a stale bond.
+        if changed.get("ServicesResolved"):
+            self._saw_gatt_traffic = True
+        if "Connected" not in changed:
             return
         if bool(changed["Connected"]):
-            self._connected_device_path = path
-            logger.info("BLE central connected: %s", path)
+            self._on_central_connected(path)
         else:
             logger.info("BLE central disconnected: %s", path)
             # Only act on the device we tracked, so a stale disconnect signal
             # can't clobber a client that just reconnected.
             if self._connected_device_path in (None, path):
                 self._connected_device_path = None
-                self._on_central_disconnected()
+                self._on_central_disconnected(path)
 
-    def _on_central_disconnected(self):
+    def _on_interfaces_added(self, path, interfaces):
+        """Catch a first-time central, announced here instead of via a change."""
+        props = interfaces.get("org.bluez.Device1")
+        if props and bool(props.get("Connected", False)):
+            self._on_central_connected(path)
+
+    def _on_central_connected(self, path):
+        """Record the connect edge. Idempotent: either signal may deliver it."""
+        self._connected_device_path = path
+        self._conn_started_at = time.monotonic()
+        self._saw_gatt_traffic = False
+        logger.info("BLE central connected: %s", path)
+
+    def _on_central_disconnected(self, path=None):
         """Reset auth and re-assert advertising after a central drops.
 
-        Bonds are intentionally LEFT in place: a central that bonds will
+        Bonds are normally LEFT in place: a central that bonds will
         auto-reconnect and re-encrypt with its stored key, so unilaterally
-        deleting our side here desyncs the pair (the central keeps requesting an
-        LTK we no longer have) and the link loops connect→AuthFailure→reconnect
-        every second. Persisting the bond lets reconnection just work.
+        deleting our side desyncs the pair (the central keeps requesting an LTK
+        we no longer have) and the link loops connect→AuthFailure→reconnect
+        every second. Persisting the bond lets reconnection just work. The
+        exception is an ALREADY desynced bond — see _check_bond_deadlock.
         """
         self.authenticated = False
+        self._check_bond_deadlock(path)
         # A connectable advertisement stops once a central connects, so it must
         # be re-added to stay reconnectable — including after ungraceful drops.
         self._start_advertising()
+
+    def _check_bond_deadlock(self, path):
+        """Purge our bond once a peer keeps dropping before any GATT traffic.
+
+        Runs on the mainloop thread, so it is serialized against itself.
+        Scoped to peers we are bonded with (see _peer_is_bonded): a key only
+        this side holds is the half we can fix, and a purge is meaningless
+        without one. When the stale key is the CENTRAL's instead, the link flaps
+        the same way but the fix has to happen there — by hand, as the setup
+        doc says.
+        """
+        held = time.monotonic() - self._conn_started_at
+        if self._saw_gatt_traffic or held > DEADLOCK_MAX_CONN_SECONDS:
+            self._deadlock_strikes = 0
+            self._deadlock_peer = None
+            return
+
+        # Only a bond we actually hold can desync into the deadlock, and only
+        # that is ours to purge. Without this, ordinary churn scores strikes:
+        # a probe or a closed chooser connects for a second and leaves, exactly
+        # like a stale bond from here.
+        if not self._peer_is_bonded(path):
+            self._deadlock_strikes = 0
+            self._deadlock_peer = None
+            return
+
+        # Strikes must come from ONE peer: a different central in between means
+        # the pattern isn't a single stuck bond.
+        if path != self._deadlock_peer:
+            self._deadlock_peer = path
+            self._deadlock_strikes = 0
+        self._deadlock_strikes += 1
+        logger.warning(
+            "BLE link dropped after %.2fs with no GATT traffic "
+            "(%d/%d) — suspecting a stale bond: %s",
+            held, self._deadlock_strikes, DEADLOCK_STRIKES, path,
+        )
+        if self._deadlock_strikes < DEADLOCK_STRIKES:
+            return
+
+        self._deadlock_strikes = 0
+        self._deadlock_peer = None
+        self._purge_bond(path)
+
+    def _peer_is_bonded(self, path):
+        """True when we still hold pairing keys for this peer.
+
+        Unknown counts as not bonded: failing to purge costs one manual unpair,
+        purging wrongly breaks a pairing that was working.
+        """
+        try:
+            props = dbus.Interface(
+                self.bus.get_object(BLUEZ_SERVICE_NAME, path), DBUS_PROP_IFACE
+            )
+            return bool(props.Get("org.bluez.Device1", "Bonded"))
+        except Exception as exc:
+            logger.warning("Could not read Bonded for %s: %s", path, exc)
+            return False
+
+    def _purge_bond(self, path):
+        """Drop our pairing keys for one peer so it can bond again from scratch."""
+        if self._adapter is None or not path:
+            return
+        try:
+            # Explicit ObjectPath: the signature is "o", and a bare str is
+            # only coerced once introspection has resolved.
+            dbus.Interface(self._adapter, "org.bluez.Adapter1").RemoveDevice(
+                dbus.ObjectPath(path)
+            )
+        except dbus.DBusException as exc:
+            # Already gone (BlueZ pruned it first) — nothing left to purge.
+            logger.warning("Could not purge bond for %s: %s", path, exc)
+            return
+        logger.warning(
+            "Purged our bond for %s to break the reconnect loop. If it "
+            "persists, the CENTRAL holds the stale key — forget this device "
+            "there (on Chrome, also in chrome://bluetooth-internals).",
+            path,
+        )
 
     def _start_advertising(self):
         """Kick off (re-)advertising on a daemon thread.
@@ -998,14 +1244,32 @@ class BluetoothWifiService:
 
         Runs on a daemon thread (see _start_advertising); the lock keeps a
         disconnect-triggered re-advertise from overlapping the initial one.
+
+        The interval is the part that must not be left to the kernel — see
+        ADV_MIN_INTERVAL for what a defaulted 1.28 s does to provisioning.
         """
         if not self._adv_lock.acquire(blocking=False):
             return  # an advertise attempt is already running
         try:
-            # Clear any prior/lingering instance, then add ours: -c connectable,
-            # -g general-discoverable, with the name in the scan response (-s)
-            # because the legacy MGMT path doesn't read the adapter alias.
+            # Clear any prior/lingering instance before adding ours.
             self._btmgmt("rm-adv", "1")
+            if self._add_adv_with_interval():
+                logger.info(
+                    "BLE advertisement registered via MGMT (interval %.0f-%.0fms)",
+                    ADV_MIN_INTERVAL * 0.625,
+                    ADV_MAX_INTERVAL * 0.625,
+                )
+                return
+            # Fall back to the interval-less command rather than go silent: a
+            # robot that advertises slowly is still provisionable, one that
+            # doesn't advertise has no route onto WiFi at all. The ext-params
+            # attempt can leave a half-built instance (params accepted, data
+            # rejected), so clear it again first.
+            logger.warning(
+                "Extended advertising params rejected; falling back to add-adv"
+            )
+            self._btmgmt("rm-adv", "1")
+            self._set_kernel_adv_interval()
             out = self._btmgmt(
                 "add-adv", "-c", "-g", "-s", self._advertised_scan_rsp_hex(), "1"
             )
@@ -1015,6 +1279,53 @@ class BluetoothWifiService:
                 logger.error("Failed to register advertisement via MGMT")
         finally:
             self._adv_lock.release()
+
+    def _add_adv_with_interval(self):
+        """Register instance 1 with an explicit interval. True if it took.
+
+        Splits the advertisement across the two MGMT commands that do accept an
+        interval (Add Extended Advertising Parameters / Data, BlueZ >= 5.65):
+        -c connectable, -g general-discoverable, -r/-x the interval bounds, and
+        the name in the scan response (-s) because this path doesn't read the
+        adapter alias. Despite the "extended" name the kernel still drives a
+        controller without HCI extended advertising through the LEGACY HCI
+        commands — verified on CYW4345, whose rejection of the genuinely
+        extended path is why bluetoothd is bypassed at all (see _mgmt_advertise).
+        """
+        out = self._btmgmt(
+            "add-ext-adv-params", "-c", "-g",
+            "-r", str(ADV_MIN_INTERVAL), "-x", str(ADV_MAX_INTERVAL), "1",
+        )
+        # This subcommand reports controller capabilities rather than a status
+        # line, so treat anything but an explicit failure as accepted.
+        if not out or "fail" in out.lower():
+            return False
+        out = self._btmgmt(
+            "add-ext-adv-data", "-s", self._advertised_scan_rsp_hex(), "1"
+        )
+        return bool(out and "Instance added" in out)
+
+    def _set_kernel_adv_interval(self):
+        """Retune the kernel's own advertising default. True if both writes took.
+
+        Only the add-adv fallback needs this: that command carries no interval,
+        so the kernel default is the one knob left. Write min before max — the
+        kernel rejects a min above the current max, and we only ever lower them
+        from the 1.28 s default.
+        """
+        for bound, value in (("min", ADV_MIN_INTERVAL), ("max", ADV_MAX_INTERVAL)):
+            path = ADV_INTERVAL_DEBUGFS.format(index=self._hci_index, bound=bound)
+            try:
+                with open(path, "w") as handle:
+                    handle.write(str(value))
+            except OSError as exc:
+                # debugfs isn't guaranteed mounted, and this runs on the
+                # mainloop thread: raising would stop re-advertising for good.
+                logger.warning(
+                    "Could not set kernel %s advertising interval: %s", bound, exc
+                )
+                return False
+        return True
 
     def _btmgmt(self, *args):
         """Run a btmgmt subcommand; return stdout (or None on timeout).

@@ -2,11 +2,13 @@
 
 Converts trajectory + capture data into LeRobot v3 format (Parquet + MP4).
 Two camera observations: cam0 (RPi fisheye, raw_video.mp4) and cam1 (OAK left,
-oakd_left.mp4), both selected nearest-by-timestamp against the trajectory.
+dcam_left.mp4), both selected nearest-by-timestamp against the trajectory.
 """
 
 import json
 from pathlib import Path
+
+from grabette_postprocess.episode_files import resolve
 
 import av
 import cv2
@@ -96,10 +98,10 @@ def _load_video_timestamps(episode_dir: Path, video_path: Path) -> np.ndarray:
 
 
 def _load_oak_left_timestamps(episode_dir: Path) -> np.ndarray | None:
-    """Per-frame host_ms timestamps (seconds) for oakd_left.mp4 — the same clock
+    """Per-frame host_ms timestamps (seconds) for dcam_left.mp4 — the same clock
     the SLAM stamps the trajectory with (convert.py feeds host_ms), so nearest-ts
     matching against the trajectory is exact. None when missing/empty."""
-    ts_path = episode_dir / "oakd_left_timestamps.json"
+    ts_path = resolve(episode_dir, "dcam_left_timestamps.json")
     if not ts_path.is_file():
         return None
     with open(ts_path) as f:
@@ -176,8 +178,8 @@ def build_dataset(
             metadata so downstream training can filter by tag (see
             _write_episode_tags). Episodes with no entry get an empty list.
     """
-    # Lazy import — lerobot is a heavy dependency
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.configs import RGBEncoderConfig
+    from lerobot.datasets import LeRobotDataset
 
     if fps is None:
         fps = 50.0
@@ -202,7 +204,8 @@ def build_dataset(
         root=root,
         robot_type="grabette",
         use_videos=True,
-        vcodec="h264",  # kept over the libsvtav1 default so the LeRobot web visualizer can play it
+        # h264 kept over the libsvtav1 default so the LeRobot web visualizer can play it
+        rgb_encoder=RGBEncoderConfig(vcodec="h264"),
         # Encode frames straight to MP4 as they're added, instead of writing every
         # frame to disk as PNG and re-reading + re-encoding at save_episode(). The
         # PNG round-trip is the main cost of the "building dataset" step on CPU.
@@ -220,7 +223,7 @@ def build_dataset(
         # Find trajectory file
         traj_path = find_trajectory_csv(ep_dir)
         if traj_path is None:
-            print(f"  Skipping: no trajectory CSV found")
+            print("  Skipping: no trajectory CSV found")
             continue
 
         # Trajectory timestamps in seconds, relative to recording start (t=0),
@@ -241,7 +244,7 @@ def build_dataset(
                                                 set(cam0_indices.tolist()))
 
         # --- cam1: OAK left video, same nearest-by-timestamp selection ---
-        oak_path = ep_dir / "oakd_left.mp4"
+        oak_path = resolve(ep_dir, "dcam_left.mp4")
         oak_ts = _load_oak_left_timestamps(ep_dir)
         print(f"  OAK left video: {len(oak_ts)} frames, {oak_ts[-1]:.2f}s")
         cam1_indices = _nearest_frame_indices(traj_ts, oak_ts)
@@ -344,7 +347,7 @@ def push_dataset(repo_id: str, root: Path, *, private: bool = False,
     directly. The HF Space keeps its own push_lerobot for the branch/PR-fallback
     flow, which this intentionally does not cover.
     """
-    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from lerobot.datasets import LeRobotDataset
 
     root = Path(root)
     log(f"Loading dataset {repo_id} from {root}...")

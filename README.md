@@ -1,5 +1,8 @@
 
 # GRABETTE
+
+[![Discord](https://img.shields.io/badge/Discord-Join_the_Community-7289DA?logo=discord&logoColor=white)](https://discord.gg/Y7FgMqHsub)
+
 <img align="left" width="20%" src="docs/images/grabette_logo_small.png">
 <br><br><br>
 Open-source toolkit for collecting robotic manipulation demonstrations and
@@ -10,8 +13,12 @@ gripper-mounted devices, recovers camera trajectories with SLAM, and exports
 [LeRobot](https://huggingface.co/docs/lerobot) datasets for policy learning.
 The data-collection pipeline is **robot-agnostic**.
 
-🔩 **Build the hardware:** [Bill of Materials](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml) · [CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)
-<br><br><br><br><br><br>
+🔩 **Build the hardware:** [Bill of Materials](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml) · [CAD — Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186) · Assembly guides: [Grabette](packages/grabette/assembly/) · [Gripette](packages/gripette/assembly/)
+<br><br><br>
+
+https://github.com/user-attachments/assets/6db9dd7b-1762-4004-8a76-ce76323499ba
+
+<br><br><br>
 ## Components
 
 ### `packages/` — robot-agnostic core
@@ -21,6 +28,7 @@ The data-collection pipeline is **robot-agnostic**.
 | [`grabette`](packages/grabette) | Hand held data-collection device | Raspberry Pi | HTTP/WebSocket, :8000 |
 | [`gripette`](packages/gripette) | Robot mounted Gripper motor | Raspberry Pi Zero 2W | gRPC, :50051 |
 | [`grabette-postprocess`](packages/grabette-postprocess) | Data postprocess + SLAM → LeRobot dataset generation | Workstation | CLI |
+| [`grabette-chunkrel`](packages/grabette-chunkrel) | Optional chunk-relative action representation (maths + LeRobot processor steps); per-step deltas stay the default | Workstation / GPU | Python library |
 | [`casquette (WIP)`](packages/casquette) | POV head-mounted device | Raspberry Pi Zero 2W | HTTP/WebSocket, :8001 |
 
 ### `integrations/` — integration example (OpenArm 7-DOF arm + Gripette)
@@ -96,10 +104,10 @@ backend). Follow the package's own README for the exact steps:
 [grabette](packages/grabette), [gripette](packages/gripette),
 [casquette](packages/casquette) *(WIP)*.
 
-**Note — `lerobot` / Python 3.12:** `grabette-postprocess` and the sim's
-`dataset` extra require Python ≥ 3.12 (gated by an env marker); the on-device
-services run fine on 3.11. The OpenArm sim also needs the system `liburdfdom`
-package for `placo`.
+**Note — `lerobot` / Python 3.12:** `grabette-postprocess`'s LeRobot commands,
+the real OpenArm driver, and the sim's `dataset`/`eval` extras require Python
+≥ 3.12 (gated by env markers so the device packages remain installable on
+3.11). The OpenArm sim also needs the system `liburdfdom` package for `placo`.
 
 ## License
 

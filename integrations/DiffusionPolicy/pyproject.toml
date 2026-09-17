@@ -6,20 +6,15 @@ description = "Diffusion Policy training & data-prep for Grabette demonstrations
 # Python 3.13 (worker crashes, import-time faults) while identical runs on 3.12
 # were stable. Pin to the validated interpreter; uv installs it automatically.
 requires-python = ">=3.12,<3.13"
-# Pin lerobot to the exact version you validate against (recipe validated on 0.5.x).
 dependencies = [
-    # Upper bound matters: the recipe (and our imports: policies.factory,
-    # datasets as a core dep, DiffusionConfig fields) is validated on the 0.5.x
-    # series. Newer series move `datasets` behind a lerobot[dataset] extra and
-    # shift APIs — a fresh unpinned resolve breaks on import.
-    "lerobot>=0.5.1,<0.6",
+    # [training] carries the dataset stack plus accelerate/wandb required by
+    # the documented lerobot-train and cloud-logging paths. [diffusion]
+    # carries diffusers, required at policy construction.
+    "lerobot[training,diffusion]==0.6.0",
     "scipy>=1.10",
     "matplotlib>=3.7",  # offline_eval.py overlay plots
     # numpy / torch / pyarrow come transitively with lerobot.
 ]
-
-[project.optional-dependencies]
-wandb = ["wandb"]  # only needed if you pass --wandb_project to train.py
 
 [tool.uv]
 # Scripts-only project: manage the dependency env, don't build/install this dir.

@@ -30,7 +30,8 @@ openarm_gripette/
 
 ## Install
 
-The package is part of the monorepo `uv` workspace:
+The package is part of the monorepo `uv` workspace. Running the real-hardware
+driver requires Python >= 3.12, LeRobot 0.6's minimum:
 
 ```bash
 cd /path/to/grabette
@@ -67,6 +68,37 @@ uv run python -m openarm_gripette.grpc_server_real \
 ```
 
 Client machines (running eval / teleop) connect to `arm_addr = <robot-ip>:50052` and to the gripette's own gRPC service (`packages/gripette`) for the gripper.
+
+### The contact guard: `--max_target_lead_mm`
+
+The server rejects any Cartesian delta that would put the interpolator **target**
+more than this far ahead of the **measured** pose *and* increase that gap. Three
+trips within eight commands escalates to `CONTACT confirmed — target relaxed to
+the measured pose`, which releases press force and effectively aborts whatever
+motion was in progress. Lead-*reducing* deltas (retreats) always pass, so the
+guard never distorts a trajectory — it only refuses to push harder.
+
+**It is a genuine compromise, and the default (80 mm) is the considered value:**
+it sits deliberately *above* normal full-speed tracking lag, so ordinary lag is
+not mistaken for contact.
+
+Running it tighter is tempting but backfires. At **40 mm** we saw repeated false
+contact during a *lift of a near-weightless object* — 25 trips in one episode,
+ending in `CONTACT confirmed` and a stalled lift. The arm was simply lagging, not
+blocked. The same run was also clamping on `--max_relative_target 3` (default
+**8**, in degrees per step), which limits how fast it can catch up and feeds the
+same loop.
+
+So if you see false contact during transport or lifting:
+
+1. Restore `--max_target_lead_mm 80` (the default).
+2. Restore `--max_relative_target 8` (the default).
+3. Only then consider stiffer tracking, `--kp_scale 1.5` with `--kd_scale ~1.2`
+   (the help suggests scaling kd by about the square root of the kp factor).
+
+Going much *above* 80 is the opposite failure: past the real tracking lag the
+guard stops distinguishing contact from lag, and press force is no longer bounded
+if the arm genuinely jams.
 
 ## Verification sequence (before any policy run)
 
@@ -257,6 +289,12 @@ import openarm_gripette  # registers OpenArm7Follower with draccus
 ```
 
 Alternatively, LeRobot's plugin auto-discovery (`register_third_party_plugins`) will find this package if it's installed under a distribution name starting with `lerobot_robot_`. We chose the plain `openarm_gripette` name for readable direct imports; if you need auto-discovery in a shared install, publish under `lerobot_robot_openarm_gripette` or add a shim distribution.
+
+Note: on lerobot 0.6.x the recording CLI requires the `core-scripts` extra
+(dataset + hardware + visualization dependencies). Install
+`lerobot[core-scripts,damiao]` on recording machines, plus any extra required
+by the chosen teleoperator. This driver package itself only needs
+`lerobot[damiao]`.
 
 ## Design notes
 

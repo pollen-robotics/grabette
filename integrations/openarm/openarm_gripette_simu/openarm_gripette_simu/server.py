@@ -22,7 +22,36 @@ from .simulation import Simulation
 from .kinematics import Kinematics, CONTROL_FRAME
 from .gripper_servicer import GripperServicer
 from .arm_servicer import ArmServicer
+
+
 from .proto import gripper_pb2_grpc, arm_pb2_grpc
+
+
+def _port_busy_msg(which: str, port: int) -> str:
+    """Refusal message for a port that is already served. Deliberately loud
+    about the REAL-ARM hazard: the sim arm port (50052) is the same default the
+    real arm server uses, so a silent share means a "sim" eval can drive the
+    real robot."""
+    return (
+        f"REFUSING TO START: {which} port {port} is already in use.\n"
+        f"Something else is already serving it — possibly the REAL robot server "
+        f"(the real arm also defaults to 50052). If a sim and the real server "
+        f"share a port, an eval you believe is running in simulation can command "
+        f"the REAL arm.\n"
+        f"Check with:  ss -tlnp | grep {port}\n"
+        f"Stop it, or start this sim on different ports."
+    )
+
+
+def _bind_or_refuse(server, addr: str, which: str, port: int) -> None:
+    """Bind, or refuse to start with an explanation. grpcio signals a failed
+    bind either by returning 0 (older) or by raising RuntimeError (current)."""
+    try:
+        bound = server.add_insecure_port(addr)
+    except RuntimeError:
+        bound = 0
+    if bound == 0:
+        raise SystemExit(_port_busy_msg(which, port))
 
 # Examples directory holds the training trajectory module. The viewer reset
 # shortcuts sample home/cube positions from the SAME distribution
@@ -270,14 +299,23 @@ class SimulationServer:
 
     def _start_grpc(self, gripper_port: int, arm_port: int):
         """Start the gRPC servers in background thread pools."""
-        self._gripper_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+        # SINGLE-INSTANCE GUARD (see grpc_server_real for the full rationale):
+        # gRPC enables SO_REUSEPORT by default, so a second server binds the same
+        # port silently. That is how a "sim" run can end up sharing a port with
+        # the REAL arm server (both default to 50052) — the eval then talks to
+        # whichever owns the connection, and a sim test can move the real robot.
+        # Disable it and check the bind result instead of ignoring it.
+        self._gripper_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4),
+                                           options=[("grpc.so_reuseport", 0)])
         gripper_pb2_grpc.add_GripperServiceServicer_to_server(
             GripperServicer(self._sim, self, self._lock, self._start_time),
             self._gripper_server,
         )
-        self._gripper_server.add_insecure_port(f"0.0.0.0:{gripper_port}")
+        _bind_or_refuse(self._gripper_server, f"0.0.0.0:{gripper_port}",
+                        "gripper", gripper_port)
 
-        self._arm_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4))
+        self._arm_server = grpc.server(futures.ThreadPoolExecutor(max_workers=4),
+                                       options=[("grpc.so_reuseport", 0)])
         # Keep a reference to the servicer so the keyboard reset shortcuts
         # can re-sync its internal Cartesian target after a manual arm reset.
         # Otherwise the next SendCartesianDelta adds the delta to a stale
@@ -290,7 +328,7 @@ class SimulationServer:
             self._arm_servicer,
             self._arm_server,
         )
-        self._arm_server.add_insecure_port(f"0.0.0.0:{arm_port}")
+        _bind_or_refuse(self._arm_server, f"0.0.0.0:{arm_port}", "arm", arm_port)
 
         self._gripper_server.start()
         self._arm_server.start()

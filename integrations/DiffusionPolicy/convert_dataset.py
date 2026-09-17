@@ -540,7 +540,7 @@ def main():
 
     # --- 3. Recompute stats ---
     logger.info("Recomputing stats...")
-    from lerobot.datasets.dataset_tools import recompute_stats
+    from lerobot.datasets import recompute_stats
 
     ds_updated = LeRobotDataset(work_repo_id, root=work_root)
     recompute_stats(ds_updated, skip_image_video=True)

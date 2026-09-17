@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+
+from grabette.hardware.episode_files import DCAM_IMU, resolve
 import logging
 from bisect import bisect_left
 from pathlib import Path
@@ -46,18 +48,23 @@ class ReplayEngine:
 
         Supports three data layouts:
         - imu_data.json   : legacy casquette format (ACCL/GYRO/ANGL streams)
-        - oakd_imu.json   : OAK-D format (interleaved kind/accel/gyro samples)
+        - dcam_imu.json   : depth-camera format (interleaved kind/accel/gyro samples)
         - angle_data.json : grabette angle sensor ({"cts", "value": [distal, proximal]})
         """
         path = Path(episode_dir)
 
         # Load duration from metadata
         meta_path = path / "metadata.json"
+        meta = {}
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
-            self._duration_ms = meta.get("duration_seconds", 0) * 1000
-        else:
-            self._duration_ms = 0
+            # Same tolerance as TaskManager._get_episode_info: an episode whose
+            # metadata was truncated by an interrupted write still has its video
+            # and IMU, so replay it at duration 0 rather than raising.
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, ValueError) as e:
+                logger.warning("Unreadable metadata for replay of %s: %s", path, e)
+        self._duration_ms = meta.get("duration_seconds", 0) * 1000
 
         self._imu_samples = []
         self._angle_samples = []
@@ -83,11 +90,12 @@ class ReplayEngine:
                 v = s["value"]
                 self._angle_samples.append({"t": s["cts"], "p": v[1], "d": v[0]})
 
-        # OAK-D format: oakd_imu.json with interleaved accel/gyro/rotation packets
+        # Depth-camera format: dcam_imu.json (legacy oakd_imu.json) with
+        # interleaved accel/gyro/rotation packets
         if not self._imu_samples:
-            oakd_imu_path = path / "oakd_imu.json"
-            if oakd_imu_path.exists():
-                with open(oakd_imu_path) as f:
+            dcam_imu_path = resolve(path, DCAM_IMU)
+            if dcam_imu_path.exists():
+                with open(dcam_imu_path) as f:
                     data = json.load(f)
                 samples = data.get("samples", [])
                 accels = [(s["host_ms"], s["value"]) for s in samples if s.get("kind") == "accel"]

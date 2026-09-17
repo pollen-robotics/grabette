@@ -14,7 +14,6 @@ Usage:
 
 import argparse
 import json
-import math
 import time
 import urllib.request
 

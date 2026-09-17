@@ -2,13 +2,35 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings
 
 
+def _stable_device_id() -> str:
+    """Return a stable per-device id, persisted across restarts.
+
+    Mirrors grabette's scheme but namespaced to casquette so the two daemons
+    on a shared host don't collide. The fleet identifies a device by this id.
+    """
+    path = Path.home() / ".cache" / "casquette" / "device_id"
+    if path.exists():
+        return path.read_text().strip()
+    did = f"casquette-{uuid.uuid4().hex[:8]}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(did)
+    return did
+
+
 class Settings(BaseSettings):
-    model_config = {"env_prefix": "CASQUETTE_", "env_file": ".env"}
+    # extra="ignore" so a stray/mis-prefixed .env key doesn't kill startup.
+    model_config = {
+        "env_prefix": "CASQUETTE_",
+        "env_file": ".env",
+        "extra": "ignore",
+    }
 
     # Server
     host: str = "0.0.0.0"
@@ -35,11 +57,34 @@ class Settings(BaseSettings):
     imu_hz: int = 200
     imu_i2c_bus: int = 1  # Pi Zero 2W: hw bus 1
 
-    # Device identification (for multi-device sync)
+    # Device identification. Empty device_id → resolved to a stable persisted
+    # id (~/.cache/casquette/device_id); empty device_name → hostname.
     device_id: str = ""
+    device_name: str = ""
+
+    # Fleet relay — cloud-orchestrated multi-device sync via the fleet Space.
+    # The device connects OUTBOUND to relay_url, authenticates with its local
+    # HF token, and polls for group start/stop commands. Empty token / disabled
+    # / unreachable → the device just runs solo (fleet is best-effort).
+    relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
+    relay_enabled: bool = True
 
     # Logging
     log_level: str = "INFO"
+
+    @field_validator("device_id", mode="before")
+    @classmethod
+    def _resolve_device_id(cls, v: str) -> str:
+        return v or _stable_device_id()
+
+    @field_validator("device_name", mode="before")
+    @classmethod
+    def _resolve_device_name(cls, v: str) -> str:
+        if v:
+            return v
+        import socket
+
+        return socket.gethostname()
 
 
 settings = Settings()

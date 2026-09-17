@@ -27,7 +27,6 @@ import logging
 import time
 from pathlib import Path
 
-import cv2
 import mujoco
 import numpy as np
 from PIL import Image
@@ -447,7 +446,7 @@ def main():
 
     if args.push and ds is not None:
         logger.info(f"Pushing to HuggingFace Hub as {args.repo_id}...")
-        ds.push_to_hub()
+        ds.push_to_hub(private=False)
         logger.info("Push complete.")
 
     if viewer:

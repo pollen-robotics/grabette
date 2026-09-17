@@ -18,11 +18,16 @@ class AngleSample(BaseModel):
 class CaptureStatus(BaseModel):
     is_capturing: bool = False
     is_starting: bool = False
-    session_id: str | None = None
+    episode_id: str | None = None  # id of the episode being / just captured
     duration_seconds: float = 0.0
     frame_count: int = 0
     imu_sample_count: int = 0
     angle_sample_count: int = 0
+    # Why a capture cannot start right now ("" = it can). Rides on the status the
+    # dashboard already polls, so a device tied up by an upload reads as busy
+    # instead of "Idle" — a device that looks free while it is not is how a
+    # recording gets started on top of one.
+    blocked_reason: str = ""
 
 
 class SensorState(BaseModel):

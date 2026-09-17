@@ -14,7 +14,8 @@ body→body transforms come from MuJoCo FK at q=0. Collision is enabled ONLY on 
 two soft tips. Writes grabette_grasp_v2.xml (old scene untouched until verified).
 """
 import xml.etree.ElementTree as ET
-import numpy as np, mujoco
+import numpy as np
+import mujoco
 from pathlib import Path
 
 HERE = Path(__file__).parent

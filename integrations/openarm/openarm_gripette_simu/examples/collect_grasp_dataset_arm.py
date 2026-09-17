@@ -36,7 +36,7 @@ from openarm_gripette_simu import Kinematics, Simulation
 from openarm_gripette_simu.kinematics import GRIPPER_FRAME
 
 # LeRobot dataset writer + axis-angle helper (same imports as Stage 0).
-from lerobot.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.datasets import LeRobotDataset
 from lerobot.utils.rotation import Rotation as LeRobotRotation
 
 logger = logging.getLogger(__name__)

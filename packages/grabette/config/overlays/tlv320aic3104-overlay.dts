@@ -1,0 +1,95 @@
+// SPDX-License-Identifier: GPL-2.0
+//
+// TLV320AIC3104 audio codec on the GRABETTE V2 HAT (speaker output).
+//
+// Ported from the microduck HAT overlay
+// (github.com/apirrone/microduck_runtime, rpi_setup/tlv320aic3104.dtbo) — the
+// SAME codec on the SAME HAT, there driven by a Pi Zero 2W, here by a Pi 4.
+// The overlay itself is board-independent and needs no Pi-4 change:
+//   • `compatible = "brcm,bcm2835"` is what every stock Pi overlay declares —
+//     the firmware accepts it on bcm2711 (Pi 4) too.
+//   • it binds by LABEL (&i2c1, &i2s), and both labels exist in the Pi 4 base
+//     devicetree at the same header pins (i2c1 = GPIO 2/3,
+//     i2s = GPIO 18/19/20/21).
+// What DID have to change for the Pi 4 lives outside this file: config.txt
+// (`dtparam=audio=off` — Pi 4 also registers vc4-hdmi cards, so the codec is
+// never a fixed card index) and the mixer-init unit. See ../../README.md.
+//
+// Build (done by `make install-audio`):
+//   dtc -@ -I dts -O dtb -o tlv320aic3104.dtbo tlv320aic3104-overlay.dts
+//   sudo cp tlv320aic3104.dtbo /boot/firmware/overlays/
+// Enable with `dtoverlay=tlv320aic3104` in config.txt.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+
+	// Pi-side I2S controller: it clocks the link (see bitclock/frame-master
+	// below), the codec is the follower.
+	fragment@0 {
+		target = <&i2s>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	// Codec control interface: I2C address 0x18 on i2c1 (GPIO 2/3).
+	fragment@1 {
+		target = <&i2c1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			aic3104: codec@18 {
+				#sound-dai-cells = <0>;
+				compatible = "ti,tlv320aic3x";
+				reg = <0x18>;
+				status = "okay";
+				clocks = <&aic3104_mclk>;
+				clock-names = "mclk";
+			};
+		};
+	};
+
+	// The HAT feeds the codec's MCLK from its own 12 MHz oscillator, so the
+	// rate is fixed, not derived from a Pi clock. With mclk-fs = 250 below
+	// (12 MHz / 250) this pins playback to 48 kHz — grabette renders its cue
+	// at exactly that rate (see grabette/hardware/sound.py).
+	fragment@2 {
+		target-path = "/";
+		__overlay__ {
+			aic3104_mclk: aic3104_mclk {
+				compatible = "fixed-clock";
+				#clock-cells = <0>;
+				clock-frequency = <12000000>;
+			};
+		};
+	};
+
+	fragment@3 {
+		target-path = "/";
+		__overlay__ {
+			sound {
+				compatible = "simple-audio-card";
+				// Card id — grabette addresses the card BY THIS NAME
+				// (plughw:CARD=aic3104), since the index moves around
+				// on a Pi 4.
+				simple-audio-card,name = "aic3104";
+				simple-audio-card,format = "i2s";
+				simple-audio-card,bitclock-master = <&cpu_dai>;
+				simple-audio-card,frame-master = <&cpu_dai>;
+				simple-audio-card,mclk-fs = <250>;
+
+				cpu_dai: simple-audio-card,cpu {
+					sound-dai = <&i2s>;
+				};
+
+				codec_dai: simple-audio-card,codec {
+					sound-dai = <&aic3104>;
+				};
+			};
+		};
+	};
+};

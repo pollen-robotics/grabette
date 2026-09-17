@@ -16,7 +16,9 @@ Usage:
 """
 
 import argparse
+import atexit
 import logging
+import math
 import threading
 import time
 
@@ -25,11 +27,11 @@ import grpc
 import numpy as np
 import torch
 
-from lerobot.policies.factory import make_pre_post_processors
+from lerobot.policies import make_pre_post_processors
 import json as _json
 from pathlib import Path as _Path
 
-from lerobot.policies.factory import get_policy_class
+from lerobot.policies import get_policy_class
 
 
 def _load_policy_any(checkpoint: str):
@@ -43,7 +45,7 @@ def _load_policy_any(checkpoint: str):
     float32 — their checkpoints are saved bf16, and the pi05 port's flow
     path has a bf16 dtype clash at inference.
     """
-    from lerobot.configs.policies import PreTrainedConfig
+    from lerobot.configs import PreTrainedConfig
 
     cfg = PreTrainedConfig.from_pretrained(checkpoint)
     if hasattr(cfg, "compile_model"):
@@ -57,6 +59,36 @@ from openarm_gripette_simu.rotation import (
     rotation_6d_to_matrix as rotation_6d_to_rotation_matrix_numpy,
     rotation_matrix_to_6d as rotation_matrix_to_rotation_6d_numpy,
 )
+from gripette.grasp_projection import GraspProjection, clamp_to_command_limits
+
+
+# --- Debug frame display (headless-safe) -------------------------------------
+# cv2.imshow needs a GUI-enabled OpenCV. The workspace often resolves to
+# opencv-python-headless (pulled by lerobot; same cv2 namespace), whose imshow
+# raises cv2.error. So --debug shows a live window when a GUI build is present,
+# and otherwise falls back to writing numbered frames to disk — either way it
+# never crashes the eval.
+_DEBUG_GUI = None       # None = untried, True = window works, False = headless
+_DEBUG_N = 0
+_DEBUG_DIR = _Path("eval_debug_frames")
+
+
+def debug_display(img_bgr):
+    """Show one eval frame in a window, or save it if OpenCV has no GUI. Warns once."""
+    global _DEBUG_GUI, _DEBUG_N
+    if _DEBUG_GUI is not False:
+        try:
+            cv2.imshow("Evaluation", img_bgr)
+            cv2.waitKey(1)
+            _DEBUG_GUI = True
+            return
+        except cv2.error:
+            _DEBUG_GUI = False
+            _DEBUG_DIR.mkdir(exist_ok=True)
+            print(f"[--debug] OpenCV has no GUI (headless build); saving frames "
+                  f"to {_DEBUG_DIR}/ instead of a live window.", flush=True)
+    cv2.imwrite(str(_DEBUG_DIR / f"frame_{_DEBUG_N:05d}.png"), img_bgr)
+    _DEBUG_N += 1
 
 
 def clamp_delta(delta_pos, delta_rot_6d, clamp_pos_m, clamp_rot_rad):
@@ -107,6 +139,287 @@ def apply_grip_gain(g1, g2, gain, ref):
     g1 = ref[0] + gain * (g1 - ref[0])
     g2 = ref[1] + gain * (g2 - ref[1])
     return float(np.clip(g1, -1.6, 1.6)), float(np.clip(g2, -1.6, 1.6))
+
+
+# Gripper joint limits in ROBOT FRAME, mirroring the AUTHORITY —
+# gripette.config.Settings.motor{1,2}_max. Use the same radians expression, not
+# the rounded values the docs quote (1.484 / 2.025): those are LARGER than the
+# real limits, so commands clamped to them are rejected by the service, and the
+# error message hides it by printing the limit rounded ("Motor 1 goal 1.484 rad
+# outside limits [0.000, 1.484]" — seen on the real gripper 2026-07-28).
+# A device may narrow these via GRIPPER_MOTOR*_MIN/MAX; the service remains the
+# authority and rejects anything out of range, so this is only a sanity bound.
+GRIPPER_LIMITS = ((0.0, math.radians(85)), (0.0, math.radians(116)))
+
+
+class GripAssist:
+    """Load-triggered grip assist for the UNDER-CLOSE failure.
+
+    The policy learned the DEMONSTRATED closing angles — which is where the
+    human's fingers sat while PRESSING the object. Replaying that angle on a
+    force-blind position servo can leave the fingers stopped just short,
+    touching nothing: "parked at angle θ in air" and "pressing the object at
+    angle θ" are indistinguishable to the policy, and the dataset gave it no
+    force channel to tell them apart (measured on the bench 2026-07-27).
+
+    So leave the policy fully in charge of WHEN to close and WHICH posture to
+    use — with a 2-DoF index against a fixed thumb the proximal/distal ratio
+    IS the grasp type (fingertip pinch ↔ power wrap), and a fixed target pose
+    would both override that choice and risk driving the index into the thumb.
+    Intervene ONLY in the one state where the policy demonstrably fails: it
+    has SETTLED into a closed pose that is NOT gripping. Then extend the
+    closure ALONG THE POLICY'S OWN POSTURE DIRECTION until the load reports
+    contact — object-adaptive, so there is no per-object gain to tune —
+    bounded by a max extra travel, the joint limits, and the servo torque cap.
+
+    Why load discriminates (bench-verified): while commanding a MODERATE goal
+    the empty gripper can reach, a free finger arrives and its load falls to
+    ~0, while a finger blocked by an object keeps a position error and its
+    load stays pinned near the cap. (Slamming an unreachable goal destroys the
+    signal: then BOTH cases stall at the cap. Hence "extend gradually", never
+    "drive to max".)
+
+    CRITICAL: load ALONE is a weak test, because there is no torque sensor —
+    "load" is a PWM/current proxy, so a MOVING finger reads a nonzero motion
+    load whether or not it touches anything (measured while stepping: up to
+    ~88; at rest with the jaws free: ~0-24).
+
+    So contact is detected as a STALL — commanded to advance, but not
+    advancing, while drawing effort:
+
+        lag = |commanded - measured|  >  assist_lag  AND  load >= threshold
+
+    Bench numbers backing that (rigid object, 25% cap, 0.02 rad steps): free
+    motion lag 0.002-0.004 rad with load 0-24; from first contact lag jumps to
+    0.014 and GROWS (0.022, 0.031, 0.041, 0.052) while load climbs 72 -> 250.
+    Lag is used rather than a raw velocity/ratio because it is rate-robust: a
+    blocked finger's lag grows by the commanded increment every tick no matter
+    how much time the servo had, whereas an absolute velocity threshold shifts
+    with the control-loop rate. The load term keeps the degenerate case honest:
+    a limp/disabled servo is also "not moving", but draws nothing, and must NOT
+    read as a grasp.
+
+    Readings are debounced (assist_confirm_ticks): one noisy tick must not
+    latch GRIPPED, which would leave exactly the under-grip this fixes.
+
+    Detecting contact is not the same as HOLDING: the stall fires at light
+    touch (measured on the bench: lag 0.0114, load 64, both barely over
+    threshold), and grip force only persists while commanding PAST the object.
+    So on contact we press a further `squeeze` before latching — pressing
+    0.04-0.08 rad past contact took load 72 -> 250 (the cap) on the bench, and
+    the torque cap bounds the force, so this is where a light touch becomes a
+    grip that survives a lift.
+
+    States: IDLE → ASSISTING → SQUEEZING → GRIPPED (offset latched; re-assists
+    if the load later drops = slip) or EXHAUSTED (no contact within max_extra →
+    assist released; re-arms only once the policy opens again, so it cannot
+    chatter). A policy command back toward open always releases the assist —
+    a deliberate release is honored.
+    """
+
+    def __init__(self, load_thresh, ref, min_close=0.15, stable_ticks=5,
+                 stable_eps=0.01, step=0.02, max_extra=0.4,
+                 dwell_ticks=2, confirm_ticks=2, lag=0.010, settle_eps=0.004,
+                 squeeze=0.05, limits=GRIPPER_LIMITS):
+        # --- tunables -----------------------------------------------------
+        self._thresh = float(load_thresh)          # load floor for "pushing"
+        self._ref = np.asarray(ref, dtype=float)   # open pose (--start_gripper)
+        self._min_close = float(min_close)         # displacement counting as closing
+        self._stable_ticks = int(stable_ticks)     # ticks the CMD must hold steady
+        self._stable_eps = float(stable_eps)       # per-tick cmd change = steady
+        self._step = float(step)                   # extra closure per increment
+        self._max_extra = float(max_extra)         # cap on total extra closure
+        self._dwell_ticks = int(dwell_ticks)       # settle ticks after an increment
+        self._confirm_ticks = int(confirm_ticks)   # debounce on contact / slip
+        self._lag = float(lag)                     # cmd-vs-measured = blocked
+        self._settle_eps = float(settle_eps)       # per-tick motion = settled
+        self._squeeze = float(squeeze)             # press past contact before latching
+        self._limits = limits
+        # --- state --------------------------------------------------------
+        self.state = "IDLE"
+        self.offset = 0.0          # extra closure along the policy's posture
+        self.trigger_step = None   # step at which the assist last engaged
+        self.n_gripped = 0         # contacts found (telemetry)
+        self.n_exhausted = 0       # top-ups that found nothing (telemetry)
+        self.lag = self.advance = float("nan")   # last measurements (logging)
+        self.why = "init"          # reason for the current state (logging)
+        self._squeeze_to = 0.0     # offset to reach while SQUEEZING
+        self._dwell = 0
+        self._confirm = 0
+        self._stable = 0
+        self._prev = None          # previous policy command (steadiness test)
+        self._meas = None          # previous measured position (settle test)
+        self._sent = None          # last pose we actually commanded
+        self._armed = True         # cleared after EXHAUSTED until re-open
+
+    def update(self, cmd, load, step=None, meas=None):
+        """One tick. cmd = the policy's (prox, distal) goal, load = the
+        gripper's (prox, distal) present_load, meas = its measured (prox,
+        distal) position (for the stall test; if omitted, falls back to a
+        load-only test). Returns the (prox, distal) to actually SEND."""
+        cmd = np.asarray(cmd, dtype=float)
+        peak = max(abs(float(x)) for x in load) if load is not None else 0.0
+        # STALL = the fingers have STOPPED MOVING, short of the pose we
+        # commanded, while the motor draws effort. All three terms are needed:
+        #   - SETTLED: a finger still travelling to a freshly-commanded pose
+        #     legitimately lags a lot and draws cap-level current. Without this
+        #     term the transit to the policy's own close reads as contact
+        #     (observed on the bench: lag 0.09, load 250, 3 ticks in, zero
+        #     top-up). Command-stable is NOT the same as fingers-settled.
+        #   - LAG: settled short of the commanded pose = something is in the way
+        #     (a finger that simply arrived has ~no lag).
+        #   - LOAD: rejects a limp/disabled servo, which is also settled+lagging
+        #     but pushing nothing.
+        meas_arr = None if meas is None else np.asarray(meas, dtype=float)
+        if meas_arr is not None and self._sent is not None and self._meas is not None:
+            lag = float(np.max(np.abs(np.asarray(self._sent, dtype=float) - meas_arr)))
+            advance = float(np.max(np.abs(meas_arr - self._meas)))
+            self.lag, self.advance = lag, advance
+            advance_str = f"{advance:.4f}"
+            stalled = (advance < self._settle_eps
+                       and lag > self._lag
+                       and peak >= self._thresh)
+        else:
+            self.lag = self.advance = float("nan")
+            advance_str = "n/a"
+            stalled = False if meas_arr is not None else peak >= self._thresh
+        if meas_arr is not None:
+            self._meas = meas_arr.copy()
+        d = cmd - self._ref
+        # CONVENTION-AGNOSTIC: "closing" = displaced from the open reference by
+        # this much in ANY direction, measured as a magnitude. Current models
+        # close POSITIVE, but legacy pre-flip datasets/models close NEGATIVE
+        # proximal (the PROXIMAL_CMD_SIGN=-1 server bridge covers the sim side
+        # only — it never reaches this client-side logic). Signed tests here
+        # would silently never fire for those, and hardcoded sign conventions
+        # in shared paths are this project's most recurrent bug class.
+        closing = float(np.linalg.norm(d)) >= self._min_close
+
+        # Track "the policy's close has settled" on the COMMAND (its intent),
+        # not the position — a blocked finger's position settles even while the
+        # policy is still driving deeper.
+        if self._prev is not None and float(np.max(np.abs(cmd - self._prev))) < self._stable_eps:
+            self._stable += 1
+        else:
+            self._stable = 0
+        self._prev = cmd.copy()
+
+        if not closing:
+            # Policy opened (or never closed): release everything, re-arm.
+            self.state, self.offset, self._armed = "IDLE", 0.0, True
+            self._confirm = self._dwell = 0
+            self.why = f"open (|cmd-ref| {float(np.linalg.norm(d)):.3f} < {self._min_close})"
+            self._sent = self._clamp(cmd)
+            return self._sent
+
+        if self.state == "IDLE":
+            if not self._armed:
+                self.why = "disarmed (waiting for the policy to open)"
+            elif self._stable < self._stable_ticks:
+                self.why = f"cmd still moving ({self._stable}/{self._stable_ticks} steady)"
+            if self._armed and self._stable >= self._stable_ticks:
+                if stalled:
+                    self.state = "GRIPPED"      # already gripping — hands off
+                    self.n_gripped += 1
+                    self.why = "already gripping at the policy's own command"
+                else:
+                    self.state = "ASSISTING"    # settled but empty — top up
+                    self.trigger_step = step
+                    self._dwell = self._confirm = 0
+                    self.why = "settled closed but not gripping — topping up"
+        elif self.state == "ASSISTING":
+            # Brief dwell after each increment so the fingers have a chance to
+            # move before we judge whether they are stuck (kept small: the stall
+            # test already tolerates motion, unlike a bare load threshold).
+            if self._dwell < self._dwell_ticks:
+                self._dwell += 1
+                self.why = f"dwell {self._dwell}/{self._dwell_ticks} after a step"
+            elif stalled:
+                self._confirm += 1
+                if self._confirm >= self._confirm_ticks:
+                    # Contact found — but that is only a TOUCH. Press on for
+                    # `squeeze` more to develop actual grip force before
+                    # latching (bounded by the torque cap and max_extra).
+                    self._squeeze_to = min(self.offset + self._squeeze,
+                                           self._max_extra)
+                    self.why = f"contact confirmed (lag {self.lag:.4f}, load {peak:.0f})"
+                    self.state = ("SQUEEZING" if self._squeeze_to > self.offset
+                                  else "GRIPPED")
+                    if self.state == "GRIPPED":
+                        self.n_gripped += 1
+                    self._confirm = 0
+            elif self.offset + self._step <= self._max_extra:
+                self._confirm = 0
+                self.offset += self._step
+                self._dwell = 0
+                self.why = (f"stepping to {self.offset:.3f} (settled={advance_str}, "
+                            f"lag {self.lag:.4f}, load {peak:.0f})"
+                            if self.lag == self.lag else f"stepping to {self.offset:.3f}")
+            else:
+                # Nothing within reach: release and wait for the policy to
+                # re-approach (it must open first, so this cannot chatter).
+                self.state, self.offset, self._armed = "EXHAUSTED", 0.0, False
+                self.n_exhausted += 1
+                self.why = f"no contact within max_extra {self._max_extra:.3f} — released"
+        elif self.state == "SQUEEZING":
+            # Press past contact to build grip force, then latch. No load check
+            # here: we are deliberately pushing into a known object, and the
+            # torque cap is what limits the force.
+            if self.offset + self._step <= self._squeeze_to:
+                self.offset += self._step
+                self.why = f"squeezing to {self._squeeze_to:.3f} (at {self.offset:.3f})"
+            else:
+                self.state = "GRIPPED"
+                self.n_gripped += 1
+                self._confirm = 0
+                self.why = f"latched at {self.offset:.3f} (load {peak:.0f})"
+        elif self.state == "GRIPPED":
+            # Slip = the fingers stopped PUSHING (load fell). Deliberately does
+            # NOT reuse the `stalled` test: that requires the fingers to be
+            # settled, but a gripped finger legitimately keeps creeping while
+            # the policy raises its own command or the object beds in. Treating
+            # that motion as slip made the assist re-close on a grasp already
+            # pushing at the cap, ratcheting the offset 0.18 -> 0.24 -> 0.30 on
+            # the real arm (2026-07-28) and tripping the arm's lead guard.
+            # Debounced so one noisy reading cannot restart a top-up.
+            if peak < self._thresh:
+                self._confirm += 1
+                self.why = f"grip lost? {self._confirm}/{self._confirm_ticks} (load {peak:.0f})"
+                if self._confirm >= self._confirm_ticks:
+                    self.state, self._dwell, self._confirm = "ASSISTING", 0, 0
+                    self.why = "slip — re-closing"
+            else:
+                self._confirm = 0
+                self.why = f"holding (load {peak:.0f}, lag {self.lag:.4f})"
+        elif self.state == "EXHAUSTED":
+            # Hold at the policy's own command until it opens (kept explicit so
+            # the diagnostic never goes stale while disarmed).
+            self.why = "disarmed after finding nothing — waiting for the policy to open"
+
+        out = self._clamp(cmd + self._direction(d) * self.offset)
+        self._sent = out            # lag next tick is measured against this
+        return out
+
+    def _direction(self, d):
+        """Unit vector along the policy's commanded closing posture, so extra
+        travel deepens the grasp it chose instead of imposing a pose."""
+        n = float(np.linalg.norm(d))
+        return d / n if n > 1e-6 else np.zeros_like(d)
+
+    # Stay a hair INSIDE the limit even so: the goal crosses the wire as
+    # float32, and a value exactly at the boundary can round up over it.
+    _LIMIT_MARGIN = 1e-4
+
+    def _clamp(self, v):
+        """Bound travel by MAGNITUDE, preserving sign — so this works for both
+        the current positive-closing convention and legacy negative-closing
+        models. (The gripette service is the real authority on limits and
+        rejects out-of-range goals itself; this only stops the assist from
+        driving past the mechanical range.)"""
+        return tuple(float(np.clip(v[i],
+                                   -(self._limits[i][1] - self._LIMIT_MARGIN),
+                                   self._limits[i][1] - self._LIMIT_MARGIN))
+                     for i in (0, 1))
 
 
 logger = logging.getLogger(__name__)
@@ -222,6 +535,92 @@ def parse_args():
                         "less squeeze (no force feedback). Try 1.3-1.6 if grasps slip. "
                         "Applied at send time, AFTER commit/latch logic (those thresholds "
                         "stay in model units).")
+    p.add_argument("--grip_torque_limit", type=float, default=0.0,
+                   help="Per-grasp GRIP FORCE CAP as a fraction 0..1 of the servo's max "
+                        "torque, applied to BOTH gripper DOFs. 0 (default) = unset = full "
+                        "torque = exactly today's behavior. The policy's per-DOF position "
+                        "targets are unchanged (they encode grasp SHAPE); the DOF driven "
+                        "into the object stalls at this cap, giving an object-size-"
+                        "independent, consistent grip force without a shape classifier. "
+                        "Force is now the cap, not Kp x position-overshoot — so --grip_gain "
+                        "only needs to push the closing target past contact. Real hardware "
+                        "only (no-op in sim). Try 0.2-0.4; watch motor{1,2}_load telemetry.")
+    p.add_argument("--grip_assist", type=float, default=None, metavar="LOAD_THRESH",
+                   help="Load-triggered GRIP ASSIST (sync cartesian mode; the recommended "
+                        "fix for the under-close failure — supersedes --latch_close/"
+                        "--commit_close/--grip_gain when set; pair with --grip_torque_limit). "
+                        "The policy replays the demonstrated closing ANGLE, which is where "
+                        "the human's fingers sat while PRESSING the object — on a force-blind "
+                        "position servo that can stop just short, touching nothing. This "
+                        "watches for the policy SETTLING into a closed pose with LOW load "
+                        "(= not gripping) and only then extends the closure ALONG THE "
+                        "POLICY'S OWN posture until the load reports contact, so the grasp "
+                        "TYPE (pinch vs power wrap) stays the policy's choice. LOAD_THRESH "
+                        "is the present_load above which we consider the fingers loaded — "
+                        "hardware units (STS3215 ~0-1000, so a few hundred) do NOT match "
+                        "sim units (MuJoCo actuator_force): measure both, never reuse a "
+                        "threshold across them.")
+    p.add_argument("--assist_min_close", type=float, default=0.15,
+                   help="--grip_assist: the policy command must exceed --start_gripper by "
+                        "this much (rad, either DOF) to count as 'closing' — below it the "
+                        "assist releases and re-arms (a deliberate open is always honored).")
+    p.add_argument("--assist_stable_ticks", type=int, default=5,
+                   help="--grip_assist: consecutive ticks the policy's gripper command must "
+                        "hold steady before the assist may engage. Guards against firing "
+                        "mid-approach; raise it if you see it trigger while still moving.")
+    p.add_argument("--assist_stable_eps", type=float, default=0.01,
+                   help="--grip_assist: per-tick command change (rad) below which the "
+                        "command counts as steady.")
+    p.add_argument("--assist_step", type=float, default=0.02,
+                   help="--grip_assist: extra closure added per tick (rad) while topping up. "
+                        "Smaller = gentler approach to contact.")
+    p.add_argument("--assist_lag", type=float, default=0.010,
+                   help="--grip_assist: STALL threshold (rad). Contact = the fingers lag the\n                        commanded pose by more than this WHILE drawing load (>= LOAD_THRESH).\n                        Measured on the real gripper at 25%% cap: free motion lags\n                        0.002-0.004 rad, first contact 0.014 and growing — so ~0.010 sits\n                        mid-gap. Rate-robust (a blocked finger's lag grows every tick),\n                        unlike an absolute velocity threshold.")
+    p.add_argument("--assist_log", type=str, default=None, metavar="FILE",
+                   help="--grip_assist: append a per-tick JSONL trace (model vs sent gripper "
+                        "command, observed position, load, assist state/offset/lag/advance and "
+                        "the reason for it) — the record needed to debug a grasp attempt "
+                        "offline. One file per session; episodes are delimited by the step "
+                        "counter restarting.")
+    p.add_argument("--assist_squeeze", type=float, default=0.05,
+                   help="--grip_assist: extra closure (rad) to press PAST contact before "
+                        "latching. Contact fires at a light touch, and grip force only "
+                        "persists while commanding past the object — measured on the bench, "
+                        "pressing 0.04-0.08 past contact took load 72 -> 250 (cap). The "
+                        "torque cap bounds the force. 0 = latch at first touch.")
+    p.add_argument("--assist_settle_eps", type=float, default=0.004,
+                   help="--grip_assist: per-tick measured movement (rad) below which the "
+                        "fingers count as SETTLED. Contact is only judged once settled — a "
+                        "finger still travelling to a new commanded pose lags a lot and "
+                        "draws cap current, which would otherwise read as contact.")
+    p.add_argument("--assist_dwell_ticks", type=int, default=2,
+                   help="--grip_assist: ticks to WAIT after each increment before trusting "
+                        "the load reading. These servos have no torque sensor — a MOVING "
+                        "finger reads a nonzero motion load whether or not it touches "
+                        "anything, so the reading is only meaningful once settled.")
+    p.add_argument("--assist_confirm_ticks", type=int, default=2,
+                   help="--grip_assist: consecutive settled readings needed to accept "
+                        "contact (and, once gripped, to accept a slip). Debounces the noisy "
+                        "load register — one spurious tick would otherwise latch a grasp "
+                        "that isn't there.")
+    p.add_argument("--assist_max_extra", type=float, default=0.4,
+                   help="--grip_assist: max total extra closure (rad) beyond the policy's "
+                        "command. Reaching it without contact = nothing in the jaws → the "
+                        "assist releases until the policy re-approaches.")
+    p.add_argument("--chunk_relative", choices=["auto", "on", "off"], default="auto",
+                   help="Policy trained with chunk-relative actions (each action is "
+                        "an offset from the chunk's reference pose, composed into "
+                        "its frame) rather than per-step deltas. 8D actions. "
+                        "'auto' reads the checkpoint's processor config, which is "
+                        "exact — the step is either registered there or it is not.")
+    p.add_argument("--grasp_projection", choices=["auto", "on", "off"], default="auto",
+                   help="Interpret the policy's last two action channels as "
+                        "(strategy, closure) from the grasp projection rather than "
+                        "raw joint angles, decoding them to angles before sending. "
+                        "'auto' inspects the checkpoint's saved normaliser ranges "
+                        "(projected channels are 0..1, raw angles reach ~1.6 rad) "
+                        "and logs what it decided. Override with on/off if a raw "
+                        "dataset happens to stay under 1 rad on both joints.")
     p.add_argument("--start_gripper", type=float, nargs=2, default=[0.0, 0.0],
                    metavar=("PROX", "DIST"),
                    help="Gripper opening commanded at each episode start. MUST match the "
@@ -250,6 +649,8 @@ def parse_args():
     args = p.parse_args()
     if args.checkpoint is None and args.policy_addr is None:
         p.error("either --checkpoint or --policy_addr is required")
+    if args.grip_assist is not None and args.async_exec:
+        p.error("--grip_assist is sync-mode only (not --async_exec)")
     return args
 
 
@@ -279,6 +680,9 @@ class CameraStream:
         self._pb2 = gripper_pb2
         self._lock = threading.Lock()
         self._latest = None
+        # Decoded present_load telemetry, kept separate from the policy state
+        # tuple (must NOT enter the observation — it would change obs dim).
+        self._latest_load = (0.0, 0.0)
         self._last_frame_wall = None  # local monotonic time of the last frame
         self._bad_frames = 0  # undecodable-payload counter (rate-limits the log)
         # Short history of recent frames (newest last) so consumers can build
@@ -320,6 +724,8 @@ class CameraStream:
                     )
                     with self._lock:
                         self._latest = (img_rgb, gripper, float(frame.timestamp_ms))
+                        self._latest_load = (float(frame.motor_state.motor1_load),
+                                             float(frame.motor_state.motor2_load))
                         self._last_frame_wall = time.monotonic()
                         self._history.append(self._latest)
                         if len(self._history) > 8:
@@ -356,6 +762,12 @@ class CameraStream:
         with self._lock:
             return self._latest
 
+    def get_load(self):
+        """Latest decoded gripper present_load (motor1, motor2). Telemetry
+        only — 0 in sim, real effort on hardware."""
+        with self._lock:
+            return self._latest_load
+
     def get_pair(self, timeout: float = 5.0):
         """Return (previous_frame, latest_frame) — the two most recent DISTINCT
         camera frames, each (img_rgb, gripper, ts_ms). The closest available
@@ -388,7 +800,7 @@ class ChunkExecutor:
     def __init__(self, arm_stub, arm_pb2, gripper_stub, gripper_pb2, fps,
                  clamp_pos_m=None, clamp_rot_rad=None,
                  start_pos=None, start_rot=None, latch_close=None,
-                 grip_gain=1.0, grip_ref=(0.0, 0.0)):
+                 grip_gain=1.0, grip_ref=(0.0, 0.0), grip_torque_limit=0.0):
         self._arm_stub = arm_stub
         self._arm_pb2 = arm_pb2
         self._gripper_stub = gripper_stub
@@ -417,6 +829,7 @@ class ChunkExecutor:
         self.latched_at_tick = None
         self._grip_gain = grip_gain
         self._grip_ref = grip_ref
+        self._grip_torque_limit = grip_torque_limit
         # Counters (int reads/writes are atomic under the GIL).
         self.sent_count = 0   # ticks consumed — the executor's clock
         self.underruns = 0    # ticks with no action available (inference late)
@@ -491,7 +904,11 @@ class ChunkExecutor:
                     # Gripper: fire-and-forget future — a blocking round trip
                     # to the Pi over WiFi would eat the 20 ms tick budget.
                     self._gripper_stub.SendMotorCommand.future(
-                        self._gripper_pb2.MotorCommand(motor1_goal=g1, motor2_goal=g2)
+                        self._gripper_pb2.MotorCommand(
+                            motor1_goal=g1, motor2_goal=g2,
+                            motor1_torque_limit=self._grip_torque_limit,
+                            motor2_torque_limit=self._grip_torque_limit,
+                        )
                     )
                 except Exception as e:  # noqa: BLE001 — surface, don't die silently
                     logger.warning(f"Executor send failed: {e}")
@@ -537,6 +954,126 @@ def compute_relative_state(arm_state, gripper_joints, start_pos, start_rot):
     return np.concatenate([rel_pos, rel_rot_6d, gripper_joints])
 
 
+def detect_grasp_projection(checkpoint):
+    """Was this checkpoint trained on (strategy, closure) instead of raw angles?
+
+    Returns True / False, or None when it cannot be determined.
+
+    Detected from the SAVED NORMALISER RANGES, not from channel names: the
+    checkpoint records only feature shapes, so the names are gone by this point
+    (`output_features = {"action": {"type": "ACTION", "shape": [11]}}`).
+
+    The discriminator is that both projected channels are normalised to [0, 1]
+    whereas raw angles are radians reaching ~1.6. Measured: the projected
+    checkpoint has action.max[-2:] = (0.813, 1.000); the raw mustard dataset has
+    (1.338, 1.448).
+
+    KNOWN FAILURE MODE, hence the override flag: a raw dataset in which NEITHER
+    gripper joint ever exceeded 1 rad (57 deg) in any frame would be misread as
+    projected. The decision is logged loudly so it can be caught at a glance.
+    """
+    if not checkpoint:
+        # Remote inference (--policy_addr with no --checkpoint): there is nothing
+        # local OR on the Hub to inspect, so auto-detection is impossible. The
+        # caller turns None into a hard error demanding --grasp_projection.
+        return None
+    stats_path = None
+    ckpt = _Path(checkpoint)
+    if ckpt.is_dir():
+        files = sorted(ckpt.glob("*normalizer*.safetensors"))
+        stats_path = str(files[0]) if files else None
+    else:
+        # A Hub id. Fetch JUST the normaliser file (a few KB) rather than giving
+        # up: returning None here used to mean "assume raw angles", which sends a
+        # closure of 1.0 as 1.0 RADIAN and silently reproduces the under-close —
+        # and evaluating a Hub checkpoint is the normal case after a cloud run.
+        try:
+            from huggingface_hub import list_repo_files, hf_hub_download
+
+            names = [f for f in list_repo_files(checkpoint)
+                     if "normalizer" in f and f.endswith(".safetensors")]
+            if names:
+                stats_path = hf_hub_download(checkpoint, sorted(names)[0])
+        except Exception as e:
+            logger.warning(f"Could not fetch normaliser stats from the Hub ({e})")
+    if stats_path is None:
+        return None
+    try:
+        from safetensors.torch import load_file
+
+        stats = load_file(stats_path)
+    except Exception as e:
+        logger.warning(f"Could not read normaliser stats ({e}); "
+                       "pass --grasp_projection on|off explicitly")
+        return None
+    amax = stats.get("action.max")
+    if amax is None or len(amax) < 2:
+        return None
+    last_two = [float(v) for v in amax.flatten()[-2:]]
+    projected = all(v <= 1.0 + 1e-3 for v in last_two)
+    logger.info(f"Grasp projection auto-detect: action.max[-2:] = "
+                f"{[round(v, 4) for v in last_two]} -> "
+                f"{'PROJECTED (strategy, closure)' if projected else 'RAW angles'}")
+    return projected
+
+
+def detect_chunk_relative(checkpoint):
+    """Was this checkpoint trained with chunk-relative actions?
+
+    Returns True / False, or None when it cannot be determined.
+
+    Unlike detect_grasp_projection() this is exact rather than heuristic: the
+    processor config records the registered step NAMES, so the answer is simply
+    whether our step is in the preprocessor pipeline.
+    """
+    if not checkpoint:
+        return None  # remote inference with no --checkpoint; caller hard-errors
+    cfg = None
+    ckpt = _Path(checkpoint)
+    if ckpt.is_dir():
+        f = ckpt / "policy_preprocessor.json"
+        cfg = f if f.is_file() else None
+        cfg = str(cfg) if cfg else None
+    else:
+        try:
+            from huggingface_hub import hf_hub_download
+
+            cfg = hf_hub_download(checkpoint, "policy_preprocessor.json")
+        except Exception as e:
+            logger.warning(f"Could not fetch the processor config from the Hub ({e})")
+    if cfg is None:
+        return None
+    try:
+        with open(cfg) as f:
+            steps = _json.load(f).get("steps", [])
+    except Exception as e:
+        logger.warning(f"Could not read the processor config ({e}); "
+                       "pass --chunk_relative on|off explicitly")
+        return None
+    names = [st.get("registry_name") or st.get("class") or "" for st in steps
+             if isinstance(st, dict)]
+    found = any("chunk_relative" in str(x) for x in names)
+    logger.info(f"Chunk-relative auto-detect: preprocessor steps = {names} -> "
+                f"{'CHUNK-RELATIVE' if found else 'per-step deltas'}")
+    return found
+
+
+def policy_action_queue(policy):
+    """The action deque select_action() actually drains, or None.
+
+    Two attributes exist and only one is live: pi05 defines BOTH `_action_queue`
+    (drained by select_action) and `_queues[ACTION]` (created in reset() and
+    never touched), while ACT/diffusion use `_queues` alone. Reading the dead one
+    reports "queue empty" on every tick, so anything keyed on the chunk boundary
+    fires continuously.
+    """
+    q = getattr(policy, "_action_queue", None)
+    if q is not None:
+        return q
+    q = getattr(policy, "_queues", None)
+    return q.get("action") if isinstance(q, dict) else None
+
+
 def build_observation(
     arm_stub,
     arm_pb2,
@@ -545,11 +1082,22 @@ def build_observation(
     start_pos,
     start_rot,
     joint_mode=False,
+    grasp_projection=None,
 ):
     """Build the full observation (camera image + state) for one step.
 
     Returns (camera_image, state, frame_ts_ms)."""
     camera_image, gripper_joints, frame_ts_ms = camera.get()
+
+    if grasp_projection is not None:
+        # The policy was TRAINED on (strategy, closure) proprioception, so the
+        # live gripper position has to be encoded the same way. Feeding raw
+        # angles here would silently put the state channel out of distribution —
+        # no error, just a worse policy.
+        _s, _c = grasp_projection.encode(float(gripper_joints[0]),
+                                         float(gripper_joints[1]))
+        gripper_joints = np.array(
+            [0.0 if math.isnan(_s) else _s, _c], dtype=np.float32)
 
     if joint_mode:
         # Joint-space state = [arm_q(7), proximal, distal], matching
@@ -597,13 +1145,21 @@ def run_episode(
     dump_dir=None,
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
+    grip_torque_limit=0.0,
     latch_close=None,
+    grip_assist=None,
+    assist_log=None,
+    grasp_projection=None,
+    chunk_relative=None,
     client=None,
     remote_k=None,
     remote_img_wh=None,
     remote_frames=2,
 ) -> dict:
     """Run a single evaluation episode. Returns dict with stats.
+
+    chunk_relative: if set, a ChunkRelativeDeltas converting the policy's chunk
+    offsets into the body-local deltas SendCartesianDelta expects.
 
     client: if set, a ficelle PolicyClient replaces local policy inference at
     CHUNK granularity (cartesian sync mode only) — see the remote branch in
@@ -667,6 +1223,7 @@ def run_episode(
             start_pos,
             start_rot,
             joint_mode=joint_mode,
+            grasp_projection=grasp_projection,
         )
         recv_ms = time.perf_counter() * 1000.0
         lat_min_offset = min(lat_min_offset, recv_ms - frame_ts_ms)
@@ -755,15 +1312,28 @@ def run_episode(
                 # them again overshoots (the "push through the object" failure).
                 # Discard them: k = staleness / measured loop period.
                 if client is None and skip_stale and loop_periods:
-                    q = getattr(policy, "_queues", None)
-                    q = q.get("action") if isinstance(q, dict) else None
+                    q = policy_action_queue(policy)
                     if q is not None and len(q) == 0:
                         period_ms = 1000.0 * float(np.median(loop_periods[-20:]))
                         k = int(np.clip(round(frame_staleness / max(period_ms, 1.0)),
                                         0, policy.config.n_action_steps - 1))
+                        if chunk_relative is not None and k:
+                            # The drops land inside the NEW chunk, so the
+                            # reference resets here rather than at the main
+                            # select_action below (whose queue is no longer
+                            # empty by then).
+                            chunk_relative.reset()
                         for _ in range(k):
                             with torch.no_grad():
-                                policy.select_action(batch)  # discard stale head
+                                a_drop = policy.select_action(batch)  # discard stale head
+                            if chunk_relative is not None:
+                                # Motion the arm has already made. Advance the
+                                # converter's cursor over it so the next command
+                                # is measured from the last SKIPPED action — feed
+                                # it nothing and the first delta replays the whole
+                                # dropped head.
+                                chunk_relative.step(
+                                    postprocessor(a_drop).squeeze(0).cpu().numpy())
                         if log_latency and k:
                             print(f"  skip_stale: dropped {k} chunk-head action(s) "
                                   f"(staleness {frame_staleness:.0f}ms / period {period_ms:.0f}ms)",
@@ -775,13 +1345,25 @@ def run_episode(
                     # equivalent of the local policy's own internal action
                     # queue (policy.select_action, below).
                     if not action_queue:
+                        # This path builds its own observation instead of going
+                        # through build_observation(), so the projection has to be
+                        # applied HERE too. Sending raw angles to a policy trained
+                        # on (strategy, closure) is silent — no error, just a state
+                        # channel out of distribution.
+                        def _state(g):
+                            if grasp_projection is None:
+                                return g
+                            s_, c_ = grasp_projection.encode(float(g[0]), float(g[1]))
+                            return [0.0 if math.isnan(s_) else s_, c_]
+
                         if remote_frames == 2:
                             (img_prev, grip_prev, _ts_prev), (img_now, grip_now, _ts_now) = camera.get_pair()
                             img_prev_r = cv2.resize(img_prev, remote_img_wh, interpolation=cv2.INTER_AREA)
                             img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
                             obs = {
                                 "observation.images.cam0": np.stack([img_prev_r, img_now_r]),
-                                "observation.state": np.stack([grip_prev, grip_now]).astype(np.float32),
+                                "observation.state": np.stack(
+                                    [_state(grip_prev), _state(grip_now)]).astype(np.float32),
                                 "task": task,
                             }
                         else:
@@ -791,18 +1373,32 @@ def run_episode(
                             img_now_r = cv2.resize(img_now, remote_img_wh, interpolation=cv2.INTER_AREA)
                             obs = {
                                 "observation.images.cam0": img_now_r,
-                                "observation.state": np.asarray(grip_now, dtype=np.float32),
+                                "observation.state": np.asarray(_state(grip_now), dtype=np.float32),
                                 "task": task,
                             }
                         reply = client.infer(obs)
                         action_queue.extend(list(reply["actions"][:remote_k]))
+                        if chunk_relative is not None:
+                            chunk_relative.reset()  # a fresh chunk, a fresh reference
                     a_np = action_queue.pop(0)
                 else:
+                    if chunk_relative is not None:
+                        q = policy_action_queue(policy)
+                        if q is not None and len(q) == 0:
+                            # About to replan: the next action opens a new chunk,
+                            # measured from a new reference pose.
+                            chunk_relative.reset()
                     with torch.no_grad():
                         a = policy.select_action(batch)
                     a = postprocessor(a)
                     a_np = a.squeeze(0).cpu().numpy()
-                dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
+                if chunk_relative is not None:
+                    # Offsets-from-reference -> body-local deltas. The chunk's
+                    # reference pose cancels in the difference, which is why the
+                    # arm never needs to be told what it was.
+                    dp, dr6, gripper_goal = chunk_relative.step(a_np)
+                else:
+                    dp, dr6, gripper_goal = a_np[:3], a_np[3:9], a_np[9:]
                 if clamp_pos_m is not None or clamp_rot_rad is not None:
                     dp, dr6, was = clamp_delta(dp, dr6, clamp_pos_m, clamp_rot_rad)
                     n_clamped += int(was)
@@ -866,17 +1462,68 @@ def run_episode(
             )
         gg1 = float(gripper_goal[0])
         gg2 = float(gripper_goal[1]) if len(gripper_goal) > 1 else 0.0
-        if latch_close is not None:
-            if grip_latch is None and max(gg1, gg2) > latch_close:
-                grip_latch = [gg1, gg2]
-                latched_at_step = step
-                print(f"CLOSE LATCHED at step {step}", flush=True)
-            if grip_latch is not None:
-                grip_latch = [max(grip_latch[0], gg1), max(grip_latch[1], gg2)]
-                gg1, gg2 = grip_latch
-        gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
+        if grasp_projection is not None:
+            # The policy's last two outputs are (strategy, closure), not angles.
+            # Decode to angles HERE, before latch/gain/assist, so everything
+            # downstream keeps operating on angles exactly as it always has.
+            #
+            # closure = 1 means "drive fully closed along this strategy" — the
+            # object stops the fingers at the torque cap. That is the whole point:
+            # the policy no longer has to predict an object-dependent angle.
+            _sc = (gg1, gg2)
+            gg1, gg2 = grasp_projection.decode(gg1, gg2)
+            gg1, gg2, _clamped = clamp_to_command_limits(gg1, gg2)
+            if step == 0 or _sc[1] >= 0.999:
+                print(f"proj step {step:3d} | s={_sc[0]:.3f} c={_sc[1]:.3f} -> "
+                      f"prox={math.degrees(gg1):.1f}° dist={math.degrees(gg2):.1f}°"
+                      f"{' CLAMPED' if _clamped else ''}", flush=True)
+        if grip_assist is not None:
+            # Minimal intervention: the assist only acts once the policy has
+            # settled closed WITHOUT load (see GripAssist). Outside that state
+            # the policy's gripper command passes through untouched, so the
+            # approach and any already-good grasp are never perturbed.
+            _load = camera.get_load()
+            _model_grip = (gg1, gg2)
+            gg1, gg2 = grip_assist.update((gg1, gg2), _load, step,
+                                          meas=tuple(state[-2:]))
+            if assist_log is not None:
+                # Structured per-tick trace: everything needed to reconstruct a
+                # grasp attempt offline (why it engaged or didn't, what it sent,
+                # what the fingers and the load actually did).
+                # Re-opened in append mode per tick ON PURPOSE: each line is
+                # flushed and closed immediately, so the trace survives the run
+                # being killed — which is how these runs usually end. The cost
+                # (tens of microseconds) is noise next to the loop's gRPC round
+                # trips, and this is opt-in debug output.
+                with open(assist_log, "a") as f:
+                    f.write(_json.dumps({
+                        "step": step, "t": time.perf_counter() - episode_start,
+                        "model_grip": [round(float(v), 4) for v in _model_grip],
+                        "sent_grip": [round(float(gg1), 4), round(float(gg2), 4)],
+                        "obs_grip": [round(float(v), 4) for v in state[-2:]],
+                        "load": [round(float(v), 1) for v in _load],
+                        "state": grip_assist.state,
+                        "offset": round(grip_assist.offset, 4),
+                        "lag": round(float(grip_assist.lag), 5),
+                        "advance": round(float(grip_assist.advance), 5),
+                        "why": grip_assist.why,
+                    }) + "\n")
+        else:
+            if latch_close is not None:
+                if grip_latch is None and max(gg1, gg2) > latch_close:
+                    grip_latch = [gg1, gg2]
+                    latched_at_step = step
+                    print(f"CLOSE LATCHED at step {step}", flush=True)
+                if grip_latch is not None:
+                    grip_latch = [max(grip_latch[0], gg1), max(grip_latch[1], gg2)]
+                    gg1, gg2 = grip_latch
+            gg1, gg2 = apply_grip_gain(gg1, gg2, grip_gain, grip_ref)
         gripper_stub.SendMotorCommand(
-            gripper_pb2.MotorCommand(motor1_goal=gg1, motor2_goal=gg2)
+            gripper_pb2.MotorCommand(
+                motor1_goal=gg1, motor2_goal=gg2,
+                motor1_torque_limit=grip_torque_limit,
+                motor2_torque_limit=grip_torque_limit,
+            )
         )
 
         if log_deltas and not joint_mode:
@@ -897,11 +1544,35 @@ def run_episode(
             # state[-2:] is always the observed gripper (2D-only, relative, and
             # joint-space states all end with [proximal, distal]).
             obs_g = state[-2:]
-            cmd_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
             obs_dist = obs_g[1] if len(obs_g) > 1 else 0.0
+            model_dist = gripper_goal[1] if len(gripper_goal) > 1 else 0.0
+            load1, load2 = camera.get_load()
+            # `cmd` is what was actually SENT (gg1,gg2 — post commit/latch/gain
+            # override); the model's raw goal follows in parens so an assist
+            # override is visible (cmd pinned while the model's own goal drifts).
+            assist_tag = ""
+            if grip_assist is not None:
+                assist_tag = (f" | {grip_assist.state}+{grip_assist.offset:.3f}"
+                              f" lag={grip_assist.lag:.4f} adv={grip_assist.advance:.4f}"
+                              f" [{grip_assist.why}]")
+            # With the projection active, state[-2:] and the model's own output are
+            # (strategy, closure), NOT angles — labelling them prox/dist made a
+            # firm 60 deg grasp read as "prox=+0.02", which is badly misleading.
+            # Print the pair under its real names and the angles it means.
+            if grasp_projection is not None:
+                _op, _od = grasp_projection.decode(float(obs_g[0]), float(obs_dist))
+                obs_txt = (f" | obs: s={obs_g[0]:+.4f} c={obs_dist:+.4f}"
+                           f" (= prox {math.degrees(_op):5.1f}° dist {math.degrees(_od):5.1f}°)")
+                model_txt = f" (model s={gripper_goal[0]:+.3f} c={model_dist:+.3f})"
+            else:
+                obs_txt = f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}"
+                model_txt = f" (model {gripper_goal[0]:+.3f}/{model_dist:+.3f})"
             print(
-                f"step {step:3d} | gripper cmd: prox={gripper_goal[0]:+.4f} dist={cmd_dist:+.4f}"
-                f" | obs: prox={obs_g[0]:+.4f} dist={obs_dist:+.4f}",
+                f"step {step:3d} | gripper cmd: prox={gg1:+.4f} dist={gg2:+.4f}"
+                f"{model_txt}"
+                f"{assist_tag}"
+                f"{obs_txt}"
+                f" | load: prox={load1:+.0f} dist={load2:+.0f}",
                 flush=True,
             )
 
@@ -919,8 +1590,7 @@ def run_episode(
                 (0, 255, 0),
                 2,
             )
-            cv2.imshow("Evaluation", cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR))
-            cv2.waitKey(1)
+            debug_display(cv2.cvtColor(img_display, cv2.COLOR_RGB2BGR))
 
         # --- Check success ---
         if step > 0 and step % success_check_freq == 0:
@@ -962,8 +1632,10 @@ def run_episode(
     if n_rejected > 0:
         print(
             f"WARNING: the arm server rejected {n_rejected} command(s) this "
-            f"episode (IK-jump watchdog) — the executed motion differs from "
-            f"what the policy commanded.",
+            f"episode — the executed motion differs from what the policy "
+            f"commanded. See the 'ARM REJECTED' lines above for the reason "
+            f"per command (IK-jump watchdog, contact/target-lead cap, ...); "
+            f"they are different faults with different fixes.",
             flush=True,
         )
     return {
@@ -999,6 +1671,7 @@ def run_episode_async(
     dump_dir=None,
     grip_gain=1.0,
     grip_ref=(0.0, 0.0),
+    grip_torque_limit=0.0,
 ) -> dict:
     """Async episode: ChunkExecutor streams actions at exactly `fps` (the demo
     clock) while this loop replans as fast as inference allows (~10 Hz), each
@@ -1038,7 +1711,8 @@ def run_episode_async(
                              start_pos=ep_start_pos.astype(np.float64),
                              start_rot=ep_start_rot.astype(np.float64),
                              latch_close=latch_close,
-                             grip_gain=grip_gain, grip_ref=grip_ref)
+                             grip_gain=grip_gain, grip_ref=grip_ref,
+                             grip_torque_limit=grip_torque_limit)
     episode_start = time.perf_counter()
     lat_min_offset = float("inf")
     stats = {"infer": [], "skip": [], "chunk": []}
@@ -1199,10 +1873,99 @@ def main():
     args = parse_args()
     logging.basicConfig(level=logging.INFO)
     device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        logger.warning("CUDA requested (--device cuda) but unavailable — falling back to CPU.")
+        device = torch.device("cpu")
 
     remote = args.policy_addr is not None
     if remote and args.async_exec:
         raise SystemExit("--policy_addr supports sync mode only (not --async_exec).")
+
+    # Grasp projection: does this policy emit (strategy, closure) or angles?
+    # Getting this wrong is silent in both directions — a closure of 1.0 sent
+    # as radians barely moves the gripper; an angle of 0.9 rad read as a
+    # closure decodes to a near-full close every step — so the decision is
+    # logged unconditionally.
+    projection = None
+    if args.grasp_projection == "on":
+        projection = GraspProjection()
+    elif args.grasp_projection == "auto":
+        detected = detect_grasp_projection(args.checkpoint)
+        if detected:
+            projection = GraspProjection()
+        elif detected is None:
+            # REFUSE rather than guess. Assuming raw is the silent failure:
+            # a projected policy's closure of 1.0 would be sent as 1.0 radian
+            # (57 deg proximal), i.e. a partial close — the exact under-close
+            # this projection exists to fix, with nothing in the log to say so.
+            raise SystemExit(
+                "Could not determine whether this policy was trained on the "
+                "grasp projection"
+                + (" (remote inference — there is no local checkpoint to "
+                   "inspect)" if not args.checkpoint
+                   else " (no readable normaliser stats)") + ".\n"
+                "Refusing to guess: assuming raw angles would silently send a "
+                "closure of 1.0 as 1.0 RADIAN and under-close every grasp.\n"
+                "Pass --grasp_projection on (projected dataset) or off (raw "
+                "joint angles) explicitly."
+            )
+    logger.info(
+        f"Gripper action space: "
+        f"{'(strategy, closure) -> decoded to angles' if projection else 'raw angles'}"
+    )
+
+    # Chunk-relative actions. Getting this wrong is as silent as the projection:
+    # 8D offsets read as 11D per-step deltas would slice the rotation out of the
+    # gripper channels and command centimetre steps every tick.
+    chunk_relative_on = None
+    if args.chunk_relative == "on":
+        chunk_relative_on = True
+    elif args.chunk_relative == "off":
+        chunk_relative_on = False
+    else:
+        chunk_relative_on = detect_chunk_relative(args.checkpoint)
+        if chunk_relative_on is None:
+            raise SystemExit(
+                "Could not determine whether this policy uses chunk-relative "
+                "actions"
+                + (" (remote inference — there is no local checkpoint to "
+                   "inspect)" if not args.checkpoint
+                   else " (no readable processor config)") + ".\n"
+                "Refusing to guess: the two representations have different action "
+                "widths and different meanings, and mixing them commands "
+                "nonsense.\n"
+                "Pass --chunk_relative on|off explicitly."
+            )
+    if chunk_relative_on and args.async_exec:
+        raise SystemExit(
+            "--chunk_relative needs sync mode (not --async_exec): the async "
+            "executor runs chunks on its own thread and drops head actions "
+            "there, so the converter's reference tracking is not wired through "
+            "it. Run without --async_exec."
+        )
+    chunk_relative = None
+    if chunk_relative_on:
+        try:
+            from grabette_chunkrel.chunk_relative import ChunkRelativeDeltas
+
+            # Importing the PROCESSOR module is what registers the steps: the
+            # @ProcessorStepRegistry.register decorators run at import time, and
+            # make_pre_post_processors() below resolves the checkpoint's step
+            # NAMES against that registry. The line above imports the maths only
+            # — the decorators are in chunk_relative_processor — so without this
+            # the checkpoint fails to load with a bare KeyError from lerobot.
+            import grabette_chunkrel.chunk_relative_processor  # noqa: F401
+        except ImportError as e:
+            raise SystemExit(
+                f"This checkpoint needs the grabette-chunkrel package ({e}).\n"
+                "Install it where the policy runs:\n"
+                "  uv pip install -e packages/grabette-chunkrel"
+            ) from e
+        chunk_relative = ChunkRelativeDeltas()
+    logger.info(
+        f"Motion action space: "
+        f"{'chunk-relative offsets -> body-local deltas' if chunk_relative else 'per-step deltas'}"
+    )
 
     policy = preprocessor = postprocessor = None
     client = remote_k = remote_img_wh = None
@@ -1219,8 +1982,17 @@ def main():
         try:
             from ficelle_client import open_client
         except ImportError as e:
+            # An iroh ticket needs the [iroh] extra, and the old hint omitted it
+            # — so following it produced a second failure one line later. The
+            # address form says which is needed, so say the right one.
+            iroh = args.policy_addr.startswith("endpoint") and ":" not in args.policy_addr
             raise SystemExit(
-                "--policy_addr requires the ficelle_client package (uv pip install ./ficelle/client)"
+                "--policy_addr requires the ficelle_client package:\n"
+                f"  uv pip install -e '<ficelle>/client{'[iroh]' if iroh else ''}'\n"
+                + ("The [iroh] extra is required: this --policy_addr is an iroh "
+                   "ticket, not a host:port." if iroh else
+                   "A host:port address needs only the base package; add [iroh] "
+                   "for an iroh ticket.")
             ) from e
         client_kw = {"jpeg_quality": args.jpeg_quality, "resize": args.resize}
         if args.policy_addr.startswith("endpoint") and ":" not in args.policy_addr:
@@ -1231,15 +2003,32 @@ def main():
         client = open_client(args.policy_addr, **client_kw)
         metadata = client.metadata
         state_spec = metadata.get("observations", {}).get("observation.state", {})
-        if (metadata.get("action_dim") != 11
+        # 11D = per-step cartesian deltas [dp(3), dr6d(6), gripper(2)].
+        #  8D = chunk-relative offsets [pos(3), rotvec(3), gripper(2)], which this
+        #       loop differences into deltas itself — so the width that is correct
+        #       here depends on --chunk_relative, exactly as for a local
+        #       checkpoint. Checking against the server's metadata is the only
+        #       cross-check available on this path: there is no local checkpoint.
+        want_dim = 8 if chunk_relative is not None else 11
+        if (metadata.get("action_dim") != want_dim
                 or list(state_spec.get("frame_shape", [])) != [2]
                 or metadata.get("n_obs_steps") not in (1, 2)):
+            served = metadata.get("action_dim")
+            hint = ""
+            if served == 8 and chunk_relative is None:
+                hint = ("\nThis server is chunk-relative (8D). Pass "
+                        "--chunk_relative on.")
+            elif served == 11 and chunk_relative is not None:
+                hint = ("\nThis server serves per-step deltas (11D), but "
+                        "--chunk_relative is on. Pass --chunk_relative off.")
             raise SystemExit(
                 f"--policy_addr server at {args.policy_addr} reports action_dim="
-                f"{metadata.get('action_dim')}, state frame_shape="
+                f"{served}, state frame_shape="
                 f"{state_spec.get('frame_shape')}, n_obs_steps={metadata.get('n_obs_steps')} "
-                "— this eval only supports 11D-cartesian/2D-gripper-state policies "
-                "with n_obs_steps 1 (Pi0/Pi0.5 single frame) or 2 (Diffusion pair)."
+                f"— expected action_dim={want_dim}.{hint}\n"
+                "This eval supports 11D-cartesian (or 8D chunk-relative) actions "
+                "with 2D gripper state, and n_obs_steps 1 (Pi0/Pi0.5 single "
+                "frame) or 2 (Diffusion pair)."
             )
         joint_mode = False
         use_relative_proprio = False
@@ -1274,12 +2063,50 @@ def main():
             policy.config.n_action_steps = args.n_action_steps
         policy.to(device)
         policy.eval()
-        preprocessor, postprocessor = make_pre_post_processors(policy.config, pretrained_path=args.checkpoint)
+        # The preprocessor's DeviceProcessorStep is restored from the checkpoint's
+        # saved processor config (device baked in as "cuda"), which overrides
+        # policy.config.device. Override it explicitly so observations land on the
+        # same device as the weights — otherwise --device cpu crashes with an
+        # input(cuda)/weight(cpu) mismatch. (The postprocessor already targets cpu.)
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy.config,
+            pretrained_path=args.checkpoint,
+            preprocessor_overrides={"device_processor": {"device": str(device)}},
+        )
+
+        if chunk_relative is not None:
+            # The checkpoint's postprocessor ends with the inverse step, which
+            # rebuilds absolute poses from a reference. Eval wants the offsets
+            # themselves — it differences them for SendCartesianDelta — and the
+            # step would refuse anyway, having no measured reference to use.
+            before = len(postprocessor.steps)
+            postprocessor.steps = [
+                st for st in postprocessor.steps
+                if "AbsoluteFromChunkRelative" not in type(st).__name__
+            ]
+            logger.info(f"Removed {before - len(postprocessor.steps)} inverse "
+                        "chunk-relative step(s) from the postprocessor "
+                        "(eval consumes the offsets directly)")
 
         # Auto-detect state/action mode from the policy's feature shapes.
         state_dim = policy.config.robot_state_feature.shape[0]
         action_dim = policy.config.action_feature.shape[0]
         joint_mode = action_dim == 9  # 9D = [arm_q(7), prox, dist]; 11D = Cartesian deltas
+        # Cross-check the representation against the checkpoint's own width, so a
+        # wrong --chunk_relative fails at load rather than on the arm.
+        if chunk_relative is not None and action_dim != 8:
+            raise SystemExit(
+                f"--chunk_relative expects 8D actions (pos3, rotvec3, gripper2) "
+                f"but this checkpoint emits {action_dim}D. Either the flag is "
+                "wrong or the checkpoint is not chunk-relative."
+            )
+        if chunk_relative is None and action_dim == 8:
+            raise SystemExit(
+                "This checkpoint emits 8D actions, which is the chunk-relative "
+                "width, but chunk-relative handling is off. Running it as "
+                "per-step deltas would read the rotation's last dim as a gripper "
+                "command. Pass --chunk_relative on."
+            )
         use_relative_proprio = (state_dim > 2) and not joint_mode
         logger.info(
             f"Policy: action_space={'joint' if joint_mode else 'cartesian'}, "
@@ -1305,6 +2132,42 @@ def main():
     camera = CameraStream(gripper_stub, gripper_pb2)
     camera.get()  # block until the first frame arrives
     logger.info("Camera stream up")
+
+    # ---- SAFETY: never leave the gripper clamped on exit ----------------
+    # The servo holds its last commanded goal, so a run that ends while the
+    # gripper is closed (normal end, Ctrl-C, or a crash) leaves it squeezing at
+    # the torque cap indefinitely. Observed on the real gripper 2026-07-28:
+    # found at prox 1.387 with load pinned at 250 long after a killed run —
+    # hard on the motor, and the NEXT episode then starts with the policy
+    # observing a CLOSED gripper, which is out of distribution (every demo
+    # starts open) and makes it predict lift/hold instead of approach/close.
+    # atexit covers normal return, KeyboardInterrupt and exceptions; a SIGKILL
+    # (kill -9) cannot be caught, so after one of those, reopen manually.
+    # Ordering matters: the reopen is an RPC, so it must happen BEFORE the
+    # channels are closed. Hence ONE idempotent teardown that reopens and then
+    # releases resources, called explicitly at the end of main() and registered
+    # with atexit for the abnormal paths.
+    def _teardown():
+        if getattr(_teardown, "done", False):
+            return
+        _teardown.done = True
+        try:
+            gripper_stub.SendMotorCommand(gripper_pb2.MotorCommand(
+                motor1_goal=float(args.start_gripper[0]),
+                motor2_goal=float(args.start_gripper[1]),
+                motor1_torque_limit=float(args.grip_torque_limit),
+                motor2_torque_limit=float(args.grip_torque_limit),
+            ))
+            print(f"gripper reopened to {tuple(args.start_gripper)} on exit", flush=True)
+        except Exception as e:  # noqa: BLE001 — best-effort teardown
+            print(f"WARNING: could not reopen the gripper on exit: {e}", flush=True)
+        for close in (camera.stop, arm_channel.close, gripper_channel.close):
+            try:
+                close()
+            except Exception:  # noqa: BLE001 — already going away
+                pass
+
+    atexit.register(_teardown)
 
     # ---- Evaluation loop ----
     results = []
@@ -1361,6 +2224,20 @@ def main():
                 f"cube at ({reset_resp.cube_x:.3f}, {reset_resp.cube_y:.3f}, {reset_resp.cube_z:.3f})"
             )
 
+        # Fresh assist state per EPISODE — it latches a grasp and tracks
+        # arm/disarm across ticks, so it must not leak between episodes.
+        assist = (GripAssist(
+            args.grip_assist, ref=tuple(args.start_gripper),
+            min_close=args.assist_min_close,
+            stable_ticks=args.assist_stable_ticks,
+            stable_eps=args.assist_stable_eps,
+            step=args.assist_step, max_extra=args.assist_max_extra,
+            dwell_ticks=args.assist_dwell_ticks,
+            confirm_ticks=args.assist_confirm_ticks,
+            lag=args.assist_lag, settle_eps=args.assist_settle_eps,
+            squeeze=args.assist_squeeze,
+        ) if args.grip_assist is not None else None)
+
         if args.async_exec:
             if joint_mode or use_relative_proprio:
                 raise SystemExit("--async_exec supports gripper-only (2D state) cartesian models only.")
@@ -1384,6 +2261,7 @@ def main():
                 commit_close=args.commit_close,
                 grip_gain=args.grip_gain,
                 grip_ref=tuple(args.start_gripper),
+                grip_torque_limit=args.grip_torque_limit,
                 log_deltas=args.log_deltas,
                 log_latency=args.log_latency,
                 dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1406,7 +2284,12 @@ def main():
             log_gripper=args.log_gripper,
             grip_gain=args.grip_gain,
             grip_ref=tuple(args.start_gripper),
+            grip_torque_limit=args.grip_torque_limit,
             latch_close=args.latch_close,
+            grip_assist=assist,
+            grasp_projection=projection,
+            chunk_relative=chunk_relative,
+            assist_log=args.assist_log,
             log_deltas=args.log_deltas,
             log_latency=args.log_latency,
             dump_dir=(f"{args.dump_obs}/ep{ep:03d}" if args.dump_obs else None),
@@ -1424,6 +2307,15 @@ def main():
             remote_img_wh=remote_img_wh,
             remote_frames=remote_frames,
         )
+        if assist is not None:
+            # Per-episode assist bookkeeping: did it engage, did it find
+            # contact, and how much extra closure the policy was short by
+            # (offset = the measured under-close, useful for A/B analysis).
+            print(f"GRIP ASSIST | final state {assist.state} | extra closure "
+                  f"{assist.offset:+.3f} rad | contacts {assist.n_gripped} | "
+                  f"empty top-ups {assist.n_exhausted} | first engaged at step "
+                  f"{assist.trigger_step}", flush=True)
+
         # On the REAL arm GetSuccessStatus is a stub (no object tracking), so
         # result["success"] is meaningless there: ask the operator instead and
         # append every episode to a JSONL so A/B sessions produce real numbers.
@@ -1470,11 +2362,11 @@ def main():
               f"({total_clamped} steps clamped across {num_total} eps)")
     print(f"{'=' * 60}")
 
-    if args.debug:
+    if args.debug and _DEBUG_GUI:
         cv2.destroyAllWindows()
-    camera.stop()
-    arm_channel.close()
-    gripper_channel.close()
+    # Reopens the gripper, then stops the camera and closes the channels (also
+    # registered with atexit, and idempotent, so abnormal exits are covered).
+    _teardown()
 
 
 if __name__ == "__main__":
