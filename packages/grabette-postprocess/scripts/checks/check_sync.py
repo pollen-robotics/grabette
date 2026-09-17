@@ -84,7 +84,7 @@ def main(episode_dir, max_frames, vio_health, plot):
         ("Arducam ↔ gripper", lambda: check_gripper(episode_dir, max_frames, flow=arducam_flow)),
     ]
     if vio_health:
-        print("Computing OAK-left optical flow (oakd_left.mp4)...")
+        print("Computing depth-camera left optical flow (dcam_left.mp4)...")
         checks.append(("OAK-left ↔ OAK-gyro", lambda: check_oak_imu(episode_dir, max_frames)))
 
     results = []

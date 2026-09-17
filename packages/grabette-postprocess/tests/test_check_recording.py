@@ -66,10 +66,26 @@ def test_check_imu_ok_but_no_rotation_warns(tmp_path):
     assert any("rotation" in w for w in st["warnings"])
 
 
-def test_check_imu_missing_file_errors(tmp_path):
+def test_check_imu_missing_file_is_not_an_error(tmp_path):
+    # The Orbbec Gemini 305 has no IMU, so an episode from it carries no
+    # oakd_imu.json. That must not be flagged: convert.py and offline_vslam both
+    # handle the absence, and Phase 0 measured IMU-free odometry as
+    # indistinguishable from re-running the pipeline. Reporting it as an error
+    # would mark every valid 305 recording as broken.
     st = _status()
     _check_imu(tmp_path, st)
-    assert any("missing oakd_imu.json" in e for e in st["errors"])
+    assert not st["errors"]
+    assert any("IMU-less" in i for i in st["info"])
+
+
+def test_check_imu_present_but_empty_still_errors(tmp_path):
+    # An OAK-D that wrote the file but captured nothing is still a real failure;
+    # relaxing the missing-file case must not relax this one.
+    _write(tmp_path / "oakd_imu.json", {"samples": []})
+    st = _status()
+    _check_imu(tmp_path, st)
+    assert any("accel" in e for e in st["errors"])
+    assert any("gyro" in e for e in st["errors"])
 
 
 # ── _check_calib ─────────────────────────────────────────────────────────
@@ -77,7 +93,7 @@ def test_check_imu_missing_file_errors(tmp_path):
 def test_check_calib_bad_intrinsics(tmp_path):
     _write(tmp_path / "oakd_calib_offline.json", {
         "width": 640, "height": 400, "fx": 0.0, "fy": 100.0,
-        "cx": 320, "cy": 200, "baseline": 0.05, "imu_to_cam": [],
+        "cx": 320, "cy": 200, "baseline": 0.05,
     })
     st = _status()
     _check_calib(tmp_path, st)
@@ -94,11 +110,77 @@ def test_check_calib_missing_key(tmp_path):
     assert any("missing keys" in e for e in st["errors"])
 
 
+def test_check_calib_without_imu_to_cam_is_valid(tmp_path):
+    # An IMU-less camera writes no imu_to_cam. offline_vslam probes for it with
+    # contains() and falls back to identity, so requiring it here would reject
+    # every Gemini 305 episode.
+    _write(tmp_path / "oakd_calib_offline.json", {
+        "width": 640, "height": 400, "fx": 311.4, "fy": 311.4,
+        "cx": 318.75, "cy": 196.25, "baseline": 0.018156,
+    })
+    st = _status()
+    _check_calib(tmp_path, st)
+    assert not st["errors"]
+
+
 # ── check_recording aggregate (empty dir → all required inputs missing) ──
 
 def test_check_recording_empty_dir_reports_missing(tmp_path):
     status = check_recording(tmp_path)
     errs = " ".join(status["errors"])
-    for expected in ("oakd_left.mp4", "oakd_imu.json",
-                     "angle_data.json", "oakd_calib_offline.json"):
+    # Messages name the CANONICAL files, so an operator is told what to produce
+    # now rather than the legacy name a fresh recording will never write.
+    for expected in ("dcam_left.mp4", "angle_data.json",
+                     "dcam_calib_offline.json"):
         assert expected in errs
+    # The IMU is deliberately NOT required — see
+    # test_check_imu_missing_file_is_not_an_error.
+    assert "dcam_imu.json" not in errs
+    assert "oakd_imu.json" not in errs
+
+
+# ── right-stream expectation derived from the recorded stats ─────────────
+# The Gemini 305 has no right stream, so "missing dcam_right.mp4" is a
+# legitimate absence there and a real signal on an OAK-D. The discriminator
+# is structural rather than a vendor list: oakd.py always writes
+# right_frames (0 if the stream failed), orbbec.py never writes it.
+
+def _episode(tmp_path, stats):
+    """Minimal episode carrying only metadata.json — every other file is
+    absent, which is fine: we assert on the dcam_right warning alone."""
+    _write(tmp_path / "metadata.json", {"dcam": stats})
+    return tmp_path
+
+
+def _right_warned(status):
+    return any("dcam_right" in w for w in status["warnings"])
+
+
+def test_right_not_expected_when_camera_reports_no_right_stream(tmp_path):
+    # Gemini 305: no right_frames key at all.
+    st = check_recording(_episode(tmp_path, {"left_frames": 315, "imu_samples": 0}))
+    assert not _right_warned(st)
+
+
+def test_right_expected_when_camera_reports_a_right_stream(tmp_path):
+    # OAK-D: right_frames present, file missing -> still a real warning.
+    st = check_recording(_episode(tmp_path, {"left_frames": 229, "right_frames": 229}))
+    assert _right_warned(st)
+
+
+def test_right_expected_when_right_stream_failed_to_capture(tmp_path):
+    # OAK-D whose right stream produced nothing: the key is still present,
+    # so the check must not go quiet exactly when something went wrong.
+    st = check_recording(_episode(tmp_path, {"left_frames": 229, "right_frames": 0}))
+    assert _right_warned(st)
+
+
+def test_right_expected_when_metadata_absent(tmp_path):
+    # Legacy episode with no metadata.json: preserve the old behaviour.
+    st = check_recording(tmp_path)
+    assert _right_warned(st)
+
+
+def test_explicit_require_right_false_still_overrides(tmp_path):
+    st = check_recording(_episode(tmp_path, {"right_frames": 229}), require_right=False)
+    assert not _right_warned(st)

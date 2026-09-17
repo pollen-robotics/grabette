@@ -23,18 +23,26 @@ locally visible, not a second source of truth.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+from grabette.hardware.episode_files import (DCAM_CALIB_OFFLINE, DCAM_DEPTH_DIR,
+                                             DCAM_DEPTH_TS, DCAM_DEPTH_VIDEO,
+                                             DCAM_IMU, DCAM_LEFT, DCAM_LEFT_TS,
+                                             resolve)
 
 # Files every episode must carry for the raw → LeRobot conversion to be possible.
 # Mirrors the required inputs of grabette_postprocess.checks.recording:
-#   SLAM     — oakd_left.mp4 + timestamps, depth + timestamps, imu, offline calib
+#   SLAM     — dcam_left.mp4 + timestamps, depth + timestamps, imu, offline calib
 #   Dataset  — angle_data.json (gripper), raw_video.mp4 (Arducam)
+# Named canonically; episodes recorded before the dcam_ rename carry the oakd_*
+# names and are found through resolve(), so both layouts pass this screen.
 REQUIRED_FILES = (
-    "oakd_left.mp4",
-    "oakd_left_timestamps.json",
-    "oakd_depth_timestamps.json",
-    "oakd_imu.json",
-    "oakd_calib_offline.json",
+    DCAM_LEFT,
+    DCAM_LEFT_TS,
+    DCAM_DEPTH_TS,
+    DCAM_IMU,
+    DCAM_CALIB_OFFLINE,
     "angle_data.json",
     "raw_video.mp4",
 )
@@ -42,7 +50,7 @@ REQUIRED_FILES = (
 # Depth ships either as a muxed file or as the PNG sequence it is built from
 # (stop_recording muxes the directory into the .mkv, so which one is present
 # depends on when the episode was recorded). Either satisfies the requirement.
-_DEPTH_ALTERNATIVES = ("oakd_depth.mkv", "oakd_depth")
+_DEPTH_ALTERNATIVES = (DCAM_DEPTH_VIDEO, DCAM_DEPTH_DIR)
 
 
 def _present(path: Path) -> bool:
@@ -54,14 +62,43 @@ def _present(path: Path) -> bool:
     return path.is_file() and path.stat().st_size > 0
 
 
+def _expects_imu(episode_dir: Path) -> bool:
+    """Whether the camera that recorded this episode has an IMU at all.
+
+    metadata.json carries `depth_camera.imu`: a model string on the OAK-D, and
+    an explicit null on the Gemini 305, which has none. A null therefore means
+    "known absent", and the missing IMU file is a property of the hardware
+    rather than a broken recording — flagging it would make every 305 episode
+    look incomplete.
+
+    Anything unreadable (no metadata, an older episode, a camera that did not
+    record the field) keeps the file required, which is the behaviour this
+    screen had before a second camera existed.
+    """
+    meta_path = episode_dir / "metadata.json"
+    if not meta_path.is_file():
+        return True
+    try:
+        meta = json.loads(meta_path.read_text())
+    except Exception:
+        return True
+    cam = meta.get("depth_camera")
+    if not isinstance(cam, dict) or "imu" not in cam:
+        return True
+    return cam["imu"] is not None
+
+
 def missing_files(episode_dir: Path) -> list[str]:
     """The required artifacts this episode lacks, in a stable order ([] = fine).
 
-    Names are returned as-is so they can be shown to an operator verbatim: the
-    string the Space reports is the string the device reports."""
+    Reported under the canonical dcam_ name so the device and the Space speak
+    one vocabulary; a legacy oakd_* episode still satisfies the requirement,
+    because resolve() accepts either spelling."""
     episode_dir = Path(episode_dir)
-    missing = [name for name in REQUIRED_FILES
-               if not _present(episode_dir / name)]
-    if not any(_present(episode_dir / alt) for alt in _DEPTH_ALTERNATIVES):
+    required = [name for name in REQUIRED_FILES
+                if name != DCAM_IMU or _expects_imu(episode_dir)]
+    missing = [name for name in required
+               if not _present(resolve(episode_dir, name))]
+    if not any(_present(resolve(episode_dir, alt)) for alt in _DEPTH_ALTERNATIVES):
         missing.append(_DEPTH_ALTERNATIVES[0])
     return sorted(missing)

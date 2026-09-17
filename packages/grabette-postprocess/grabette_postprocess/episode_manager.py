@@ -9,23 +9,33 @@ all call these helpers so the conventions live in exactly one place.
 
 from pathlib import Path
 
+from grabette_postprocess.episode_files import legacy_name
+
 # The trajectory CSV a processed episode carries: the SLAM output, or the older
 # mapping-based name. Resolved (in this order) by find_trajectory_csv().
 TRAJECTORY_CSV_NAMES = ("camera_trajectory.csv", "mapping_camera_trajectory.csv")
 
 
-def find_episodes(root: Path, *, anchor: str = "oakd_left.mp4") -> list[Path]:
+def find_episodes(root: Path, *, anchor: str = "dcam_left.mp4") -> list[Path]:
     """Raw-recording episode directories under `root`, identified by containing
-    `anchor` (default oakd_left.mp4, the SLAM input — pass e.g. "oakd_imu.json"
-    to anchor on the IMU instead).
+    `anchor` (default dcam_left.mp4, the SLAM input).
+
+    Both naming conventions are searched: episodes recorded before the `dcam_`
+    rename still hold `oakd_*` files, and plenty of those are on the Hub. Anchor
+    on the SLAM input rather than the IMU — a Gemini 305 episode has no IMU at
+    all, so an IMU anchor makes it invisible.
 
     Recursive. If `root` itself contains `anchor` (and nothing nested does), `root`
     is returned as a single episode. Sorted and de-duplicated.
     """
     root = Path(root).expanduser().absolute()
-    eps = sorted({p.parent for p in root.rglob(anchor)})
-    if not eps and (root / anchor).is_file():
-        eps = [root]
+    names = {anchor, legacy_name(anchor)}
+    eps = sorted({p.parent for n in names for p in root.rglob(n)})
+    if not eps:
+        for n in names:
+            if (root / n).is_file():
+                eps = [root]
+                break
     return eps
 
 

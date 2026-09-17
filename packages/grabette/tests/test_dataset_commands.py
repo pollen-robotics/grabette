@@ -488,10 +488,10 @@ def _make_episode(root, eid, *, complete=True):
     ep = root / eid
     ep.mkdir(parents=True)
     for name in REQUIRED_FILES:
-        if not complete and name == "oakd_calib_offline.json":
+        if not complete and name == "dcam_calib_offline.json":
             continue
         (ep / name).write_bytes(b"x")
-    (ep / "oakd_depth.mkv").write_bytes(b"x")
+    (ep / "dcam_depth.mkv").write_bytes(b"x")
     return ep
 
 
@@ -522,7 +522,7 @@ def test_an_episode_missing_its_calibration_is_never_uploaded(tmp_path, monkeypa
     # exists to prevent — but the naming happens in `incomplete`, which the fleet
     # renders per episode, not a second time in the message.
     assert res["incomplete"] == [
-        {"episode_id": "ep_bad", "role": "left", "missing": ["oakd_calib_offline.json"]}]
+        {"episode_id": "ep_bad", "role": "left", "missing": ["dcam_calib_offline.json"]}]
     assert res["message"] == "uploaded 1 episode(s); skipped 1 that cannot be converted"
 
 
@@ -537,7 +537,7 @@ def test_nothing_convertible_fails_immediately(tmp_path, monkeypatch):
     assert res["status"] == "error"
     assert hf.calls == []
     assert res["message"] == "none of this device's 1 episode(s) can be converted"
-    assert res["incomplete"][0]["missing"] == ["oakd_calib_offline.json"]
+    assert res["incomplete"][0]["missing"] == ["dcam_calib_offline.json"]
 
 
 def test_a_complete_batch_uploads_untouched(tmp_path, monkeypatch):

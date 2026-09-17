@@ -115,12 +115,26 @@ int main(int argc, char** argv) {
     rtabmap::StereoCameraModel model(
         "oak", fx, fy, cx, cy, baseline, localTransform, cv::Size(width, height));
 
-    auto& itc = calib["imu_to_cam"];
     // imu_to_cam from depthai: takes IMU body vectors to camera optical vectors.
-    rtabmap::Transform imuLocalTransform(
-        (double)itc[0][0], (double)itc[0][1], (double)itc[0][2], (double)itc[0][3] * 0.01,
-        (double)itc[1][0], (double)itc[1][1], (double)itc[1][2], (double)itc[1][3] * 0.01,
-        (double)itc[2][0], (double)itc[2][1], (double)itc[2][2], (double)itc[2][3] * 0.01);
+    //
+    // Cameras without an IMU (e.g. the Orbbec Gemini 305) emit no imu_to_cam.
+    // nlohmann's non-const operator[] would then INSERT a null and the casts
+    // below would abort the process with
+    //   type_error.302 "type must be number, but is null"
+    // so the key has to be probed rather than indexed. Identity is a safe
+    // fallback: with no IMU CSVs the buffers stay empty, the IMU block below
+    // never runs, and this transform is never read.
+    rtabmap::Transform imuLocalTransform = rtabmap::Transform::getIdentity();
+    if(calib.contains("imu_to_cam")) {
+        auto& itc = calib["imu_to_cam"];
+        imuLocalTransform = rtabmap::Transform(
+            (double)itc[0][0], (double)itc[0][1], (double)itc[0][2], (double)itc[0][3] * 0.01,
+            (double)itc[1][0], (double)itc[1][1], (double)itc[1][2], (double)itc[1][3] * 0.01,
+            (double)itc[2][0], (double)itc[2][1], (double)itc[2][2], (double)itc[2][3] * 0.01);
+    } else {
+        std::cout << "No imu_to_cam in calib_offline.json — IMU-less camera, "
+                     "using identity\n";
+    }
     // RTAB-Map's IMU.localTransform: ROS convention "pose of IMU IN base"
     // (Option A) = T_base←imu. Compose as:
     //   T_base←imu = T_base←optical * T_optical←imu

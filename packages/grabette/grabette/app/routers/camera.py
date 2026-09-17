@@ -48,7 +48,7 @@ async def camera_ws(ws: WebSocket):
 
 @router.get("/depth")
 def depth_snapshot(backend: Backend = Depends(get_backend)):
-    """Colorized OAK-D depth frame (turbo colormap, 0.2-3m)."""
+    """Colorized depth frame from the active depth camera (turbo, 0.2-3m)."""
     frame = backend.get_depth_jpeg()
     if frame is None:
         return Response(status_code=503, content="Depth not available")
@@ -57,7 +57,7 @@ def depth_snapshot(backend: Backend = Depends(get_backend)):
 
 @router.websocket("/depth_ws")
 async def depth_ws(ws: WebSocket):
-    """WebSocket stream of colorized OAK-D depth frames at ~15fps."""
+    """WebSocket stream of colorized depth frames at ~15fps."""
     await ws.accept()
     from grabette.app.main import get_daemon_instance
     try:
