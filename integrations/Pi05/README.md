@@ -169,6 +169,20 @@ default** (both learned by hitting them):
   refuses a stats/representation mismatch. Measured *not* better than deltas —
   see `docs/relative_actions_lerobot_native.md`. Deltas remain the default.
 
+  **On HF Jobs this also needs `--with`.** The processor lives in
+  `packages/grabette-chunkrel`, and `hf jobs uv run` uploads ONE script — so
+  without it the job dies at `_install_chunk_relative` with
+  `ModuleNotFoundError: No module named 'grabette_chunkrel'`, after the GPU has
+  booted. Add:
+
+  ```
+  --with "git+https://github.com/pollen-robotics/grabette@develop#subdirectory=packages/grabette-chunkrel"
+  ```
+
+  The package declares only numpy and scipy; torch and lerobot are
+  host-provided and already in the job. Local runs need none of this — the
+  workspace package is importable.
+
 Eval loss is a weak selection criterion (on pick3 a 20k checkpoint at 1.71×
 the minimum eval loss grasped 2/2); treat `_best` and `_step<N>` as two
 candidates for the gates below, not as a verdict.
@@ -186,8 +200,17 @@ Two more operational notes:
   $30 run whose training and eval losses are **unrecoverable** — so the recipe's
   own success criterion (eval loss descending, reference 0.755 → 0.447) could not
   be checked at all. Pass `--wandb.enable=true --wandb.project=<project>` with a
-  `WANDB_API_KEY` secret, or accept that the only evidence you will have is the
-  offline gates below.
+  `WANDB_API_KEY` secret (`-s WANDB_API_KEY`), or accept that the only evidence
+  you will have is the offline gates below. `train.py` pins `wandb<0.29`
+  because 0.29 removed `Run.get_url()`, which lerobot's `wandb_utils.py` still
+  calls — unpinned, enabling wandb is what *causes* the crash, on exactly the
+  runs you wanted the curve for.
+
+  Note also that `hf jobs logs <id>` truncates to a tail once a job has been
+  finished for a while: a 12 h run fetched two days later came back as 55 KB
+  (the last two evals only), while the same-length run fetched the morning it
+  finished came back as 1.6 MB with all 50 evals. Pull the log promptly if you
+  want it, and treat wandb as the only durable record.
 
 Recipe rationale (matched to the verified `lerobot/pi05-libero` fine-tune):
 
@@ -412,4 +435,5 @@ Deployment settings that matter (each traced to a measured failure):
 | `smoke_generation.py` | Observation-conditioning gate on YOUR fine-tune (step 3) |
 | `tests/test_checkpointing.py` | 37 tests for the eval-split selector, the best-checkpoint keeper, the eval-loss capture, and the push targets (`uv run pytest`). |
 | `probe_task_sensitivity.py` | Language-channel gate via the Ficelle server (step 4) |
+| `grabette-attn` (from `packages/grabette-attention`) | Offline attention maps per camera plus view-ablation deltas in mm. Answers "where is it looking" and "which camera does it rely on". The maps are hypotheses; the ablation numbers are the measurement. See `docs/attention_saliency_review.md`. |
 | `pi0fast/` | The Pi0-FAST attempt: tokenizer tooling + recipe + why it failed |
