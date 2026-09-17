@@ -639,6 +639,14 @@
         return /no longer in range|doesn't exist anymore/i.test(e.message || '');
     }
 
+    // Chrome's two wordings for "BlueZ no longer has this device object". A
+    // failed connect makes BlueZ evict the device, so the handle we hold is
+    // dead: only a fresh requestDevice() can replace it, and that needs a new
+    // user gesture. Retrying past this point just buries the real error.
+    function isDeadHandle(e) {
+        return /no longer in range|doesn't exist anymore/i.test(e.message || '');
+    }
+
     async function connectDevice() {
         const targetName = document.getElementById('deviceSelect').value;
         // Block a second click while the first is still connecting: opening the
@@ -673,7 +681,7 @@
             // GATT operations"), so the page abandoned a recoverable link while
             // still advertising attempts it never made.
             let cmdService;
-            const maxAttempts = 5;
+            const maxAttempts = 3;
             for (let attempt = 1; ; attempt++) {
                 try {
                     log('Connecting GATT (attempt ' + attempt + '/' + maxAttempts + ')...');
