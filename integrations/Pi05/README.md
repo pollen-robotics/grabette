@@ -139,6 +139,31 @@ hf jobs uv run --flavor a100-large --timeout 24h -s HF_TOKEN \
 # Nothing lands on the bare id — see "Checkpoint selection" below.
 ```
 
+#### More than one camera
+
+Nothing in the recipe changes. π0.5 reads its camera list from the dataset:
+`_preprocess_images` iterates `config.image_features`, which `make_policy`
+fills from dataset metadata, so a dataset with two video features trains on
+two views with the same flags (keep `--policy.empty_cameras=0` — that knob
+pads *missing* cameras, and there are none). Camera order follows
+`info.json`'s key order, which is also the prefix token order the attention
+tool reads back, so keep the existing camera first when adding one.
+
+What does change is cost. The prefix goes from 456 tokens (256 image + 200
+language) to 712, SigLIP runs once per view, and the dataloader decodes two
+video streams per sample. Budget **~1.5–1.8× the single-camera step time**:
+`--timeout 30h` rather than 24h for a 20k-step run on `a100-large`.
+
+[`add_camera.py`](add_camera.py) publishes a two-camera copy of an existing
+dataset by pulling a second view out of the raw capture, rather than
+re-running the conversion. It is specific to the sugar recording (the repo ids
+are in `DATASETS`) but the verification it does first is the general recipe:
+the two streams must be frame-synchronised, the episode cuts must match, and
+the new video must match the existing one's geometry **and GOP** — cam0 is
+all-intra, and a long-GOP second stream makes the two views cost wildly
+different amounts to sample by timestamp. Run `--dry-run` first; it is the
+only place those guarantees are checked.
+
 #### Checkpoint selection and what lands where
 
 `train.py` wraps lerobot's trainer with two behaviours that are **on by
@@ -435,5 +460,6 @@ Deployment settings that matter (each traced to a measured failure):
 | `smoke_generation.py` | Observation-conditioning gate on YOUR fine-tune (step 3) |
 | `tests/test_checkpointing.py` | 37 tests for the eval-split selector, the best-checkpoint keeper, the eval-loss capture, and the push targets (`uv run pytest`). |
 | `probe_task_sensitivity.py` | Language-channel gate via the Ficelle server (step 4) |
+| `add_camera.py` | Publishes a two-camera copy of a sugar dataset, restoring the second view the conversion dropped. Verifies sync, episode cuts, geometry and GOP before writing — see *More than one camera*. |
 | `grabette-attn` (from `packages/grabette-attention`) | Offline attention maps per camera plus view-ablation deltas in mm. Answers "where is it looking" and "which camera does it rely on". The maps are hypotheses; the ablation numbers are the measurement. See `docs/attention_saliency_review.md`. |
 | `pi0fast/` | The Pi0-FAST attempt: tokenizer tooling + recipe + why it failed |
