@@ -16,8 +16,8 @@
 |---|---|
 | **Board** | Raspberry Pi 4 |
 | **Primary camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
-| **OAK-D SR** | Stereo RGB-D camera with on-board BNO IMU (200Hz). Provides the depth + IMU stream for SLAM — **required** for trajectory recovery on Grabette. Replaces the legacy BMI088. Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
-| **Depth camera (alt.)** | Orbbec Gemini 305 — supported as a second source so the rig is not single-sourced. Passive stereo, no IMU; SLAM runs IMU-free. Opt in with `GRABETTE_DEPTH_CAMERA=gemini305` ([setup](#depth-camera-using-an-orbbec-gemini-305-make-install-orbbec-sdk)). |
+| **Depth camera** | Orbbec Gemini 305 — the default. Provides the depth stream SLAM needs, which is **required** for trajectory recovery on Grabette. Passive stereo, no IMU; SLAM runs IMU-free. Mounted inverted, and the frames are un-rotated at capture ([setup](#depth-camera-using-an-orbbec-gemini-305)). Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
+| **Depth camera (alt.)** | Luxonis OAK-D SR — kept working as a second source so the rig is not single-sourced. Stereo RGB-D with an on-board BNO IMU (200Hz), which gravity-aligns the trajectory. Replaces the legacy BMI088. Select with `GRABETTE_DEPTH_CAMERA=oakd`, or `make install-rpi CAMERA=oakd`. |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
 | **Speaker** | TLV320AIC3104 codec on the V2 HAT (I2S audio, control on `i2c-1` @ `0x18`, 12 MHz MCLK) — cues the recording start, the stop, the episode being written, and failures |
@@ -84,33 +84,43 @@ sudo reboot
 #### One-shot bringup
 A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
 ```bash
-make install-rpi HAND=right    # or HAND=left
+make install-rpi HAND=right                  # or HAND=left
+make install-rpi HAND=right CAMERA=oakd      # on a grabette that carries an OAK-D SR
 uv run python -m grabette
 ```
 
 > `HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/grabette/env` as `GRABETTE_HAND=<value>` and persists across reboots (sourced by `grabette.service`).
 
+> `CAMERA` is optional and defaults to `gemini305`. It selects which depth camera this device is set up for: only that camera's udev rule is installed, the Orbbec SDK is installed only when it is needed, and the choice is written as `GRABETTE_DEPTH_CAMERA=<value>`. A fresh Pi has no config for `install-rpi` to read, so the target writes the setting rather than consulting it — **re-running `install-rpi` on an OAK-D grabette without `CAMERA=oakd` will switch it to the Gemini.**
+
 `make install-rpi HAND=...` does the following — automating the steps that are easy to get subtly wrong by hand:
 - `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg python3-dbus python3-gi` (the dbus/gi packages are system deps for the BLE WiFi service).
-- Installs the OAK-D / Movidius USB udev rule (`/etc/udev/rules.d/80-movidius.rules`).
+- Installs the USB udev rule for `CAMERA` only — `/etc/udev/rules.d/99-obsensor-libusb.rules` for the Gemini 305, `/etc/udev/rules.d/80-movidius.rules` for the OAK-D.
 - Creates the venv with `uv venv --python /usr/bin/python3 --system-site-packages` — **both flags matter**:
   - `--python /usr/bin/python3` ensures uv uses the apt-managed Python (which owns `python3-libcamera`/`python3-picamera2`), not uv's own managed Python under `~/.local/share/uv/python/...`.
   - `--system-site-packages` makes the apt-installed `libcamera` and `numpy` visible to the venv.
 - Runs `uv sync --package grabette --extra rpi --extra ui --extra hf` and verifies all imports succeed.
-- Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
+- Runs `install-orbbec-sdk` when `CAMERA=gemini305` (`pyorbbecsdk2` is not in the `rpi` extra — see below).
+- Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` and `GRABETTE_DEPTH_CAMERA=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
 - Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
 - Runs `install-audio` (below) so the HAT speaker's overlay + mixer init are in place.
 
 Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
 
-### Depth camera: using an Orbbec Gemini 305 (`make install-orbbec-sdk`)
+### Depth camera: using an Orbbec Gemini 305
 
-The depth camera is pluggable. `oakd` (Luxonis OAK-D SR) is the default and needs
-no configuration; `gemini305` (Orbbec Gemini 305) is a second option so the rig
-is not single-sourced on one vendor. `make install-rpi` already installs the
-Orbbec udev rule, but the SDK and the setting are opt-in:
+The depth camera is pluggable: `gemini305` (Orbbec Gemini 305) and `oakd`
+(Luxonis OAK-D SR), so the rig is not single-sourced on one vendor.
+
+**On a fresh install there is nothing to do here.** `make install-rpi` defaults
+to `CAMERA=gemini305` and installs the udev rule, the SDK and the setting itself.
+
+The commands below are only for moving an **already-installed** device onto the
+Gemini, where re-running the full bringup — which wipes and rebuilds the venv —
+would be overkill:
 
 ```bash
+make install-udev-orbbec                                           # udev rule
 make install-orbbec-sdk                                            # pyorbbecsdk2
 sudo sh -c 'echo GRABETTE_DEPTH_CAMERA=gemini305 >> /etc/grabette/env'
 sudo systemctl restart grabette
@@ -130,12 +140,18 @@ requirements (`opencv-python`, `numpy>=2.1.0`) exist for the SDK's bundled
 examples and would shadow the system numpy that picamera2 links against. See the
 comment on the target in the Makefile.
 
-Two behavioural differences worth knowing before recording:
+Three behavioural differences worth knowing before recording:
 
 - **No IMU.** The 305 has none, so no `dcam_imu.json` is written and SLAM runs
   IMU-free. This is measured, not assumed: removing the IMU perturbs odometry no
   more than re-running the identical pipeline does. `metadata.json` records
   `"imu": null`, which means "known absent" rather than "not read".
+- **Mounted upside down.** The 305 sits inverted on the grip, so every frame is
+  rotated 180 deg at capture and the principal point is flipped with it — an
+  episode is therefore indistinguishable from an upright one, and
+  `metadata.json` records `"image_orientation": "rotate_180_in_capture"`. Set
+  `GRABETTE_ORBBEC_ROTATE_180=false` for a rig that carries it upright. The
+  URDF describes the corrected frame, so it must NOT also gain a 180 deg roll.
 - **Passive stereo, IR-cut, no projector.** It needs a lit, textured workspace
   and degrades first when either runs short. `GRABETTE_ORBBEC_IR_EXPOSURE_US`
   (with `GRABETTE_ORBBEC_IR_GAIN`) pins a shorter IR exposure to reduce motion
