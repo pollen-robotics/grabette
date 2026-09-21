@@ -12,6 +12,7 @@ from PIL import Image
 
 from grabette.config import settings
 from grabette.ui.api_client import GrabetteClient
+from grabette.ui.summary import recording_summary
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,35 @@ MODAL_CSS = """
     color: #f87171 !important;
 }
 """
+
+# Same widget, denser skin (see webauth._COMPACT_CSS). The home page shows the
+# account as a status line; the full card still lives on Settings.
+_HF_AUTH_IFRAME_COMPACT = (
+    '<iframe src="/api/hf-auth/widget?compact=1" scrolling="no"'
+    ' onload="var f=this;(function r(){'
+    'if(!document.contains(f))return;'
+    'try{f.style.height=f.contentDocument.body.scrollHeight+4+\'px\';}catch(e){}'
+    'setTimeout(r,400);})()"'
+    ' style="width:100%;border:none;min-height:56px;display:block;"></iframe>'
+)
+
+# Sized to sit beside the login line rather than dominate the page. Still a
+# plain link out: grabette-fleet is OAuth-gated and this dashboard is served
+# over plain HTTP, so its login cannot render in an iframe here.
+_FLEET_BUTTON_HTML = (
+    '<a href="{url}" target="_blank" rel="noopener" '
+    'style="display:flex;align-items:center;justify-content:center;gap:.5rem;'
+    'height:56px;padding:0 1rem;border-radius:9px;box-sizing:border-box;'
+    'text-align:center;text-decoration:none;color:#fff;font-weight:700;'
+    'background:linear-gradient(135deg,#10b981,#3b82f6);'
+    'box-shadow:0 4px 14px rgba(0,0,0,.22);">Open fleet dashboard ↗</a>'
+)
+
+_VIEWER_IFRAME_HTML = (
+    '<iframe id="urdf-viewer" src="/viewer" '
+    'style="width:100%;height:28vh;border:none;'
+    'border-radius:8px;background:#1a1a2e;"></iframe>'
+)
 
 _HF_AUTH_IFRAME = (
     '<iframe src="/api/hf-auth/widget" scrolling="no"'
@@ -391,6 +421,40 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         else:
             client.start_capture(task_id=session_id or None)
             return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update(), gr.update()
+
+    _TR_START = "● Start test recording"
+    _TR_STOP = "■ Stop test recording"
+
+    def on_toggle_test_recording():
+        """Start, or stop and report. Deliberately not session-aware: a first
+        test should need no task chosen and no session opened."""
+        state = client.get_state()
+        capturing = state.get("capture", {}).get("is_capturing", False) if state else False
+
+        if not capturing:
+            result = client.start_capture()
+            if result.get("error"):
+                return gr.update(), f"⛔ {result['error']}", gr.update(visible=False)
+            return (
+                gr.update(value=_TR_STOP, variant="stop"),
+                "● Recording — move the gripper around, then stop.",
+                gr.update(visible=False),
+            )
+
+        result = client.stop_capture()
+        episode_id = result.get("episode_id")
+        # Read the episode back: the stop response reports what the capture
+        # believes it wrote, this reports what is actually on disk.
+        episode = client.get_episode(episode_id) if episode_id else None
+        depth_on = bool((client.get_oakd_status() or {}).get("enabled"))
+        return (
+            gr.update(value=_TR_START, variant="primary"),
+            "○ Idle",
+            gr.update(
+                value=recording_summary(result, episode, depth_on),
+                visible=True,
+            ),
+        )
 
     def on_start_stop_session(current_task):
         cap_session = client.get_session_status()
@@ -871,28 +935,45 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 1 — Connection (landing): HF account + link out to the fleet
+    # Page 1 — Connection (landing): account + fleet, then camera + 3D model
     # ══════════════════════════════════════════════════════════════════
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
         gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
-        gr.Markdown("## HuggingFace Account")
-        gr.HTML(_HF_AUTH_IFRAME)
-        # Big, obvious way to reach the fleet. We can't embed grabette-fleet
-        # here — it's OAuth-gated and this dashboard is served over plain HTTP,
-        # so its login can't render in an iframe — so we link out in a new tab,
-        # where the HF session and OAuth work normally.
-        gr.HTML(
-            f'<a href="{settings.relay_url}" target="_blank" rel="noopener" '
-            'style="display:block;margin-top:1.2rem;padding:2.6rem 1.5rem;border-radius:16px;'
-            'text-align:center;text-decoration:none;color:#fff;'
-            'background:linear-gradient(135deg,#10b981,#3b82f6);'
-            'box-shadow:0 6px 22px rgba(0,0,0,.28);">'
-            '<div style="font-size:1.7rem;font-weight:800;">Open fleet dashboard ↗</div>'
-            '<div style="font-size:.95rem;opacity:.85;margin-top:.5rem;font-weight:500;">'
-            'Manage tasks, sessions and datasets on grabette-fleet</div></a>'
+
+        # ── Account | Fleet ───────────────────────────────────────────
+        # Both are one-off errands, not the point of the page, so they share a
+        # single row above the thing you actually came to look at.
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=3):
+                gr.HTML(_section_label("HuggingFace account"))
+                gr.HTML(_HF_AUTH_IFRAME_COMPACT)
+            with gr.Column(scale=2):
+                gr.HTML(_section_label("Fleet"))
+                gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
+
+        # ── Camera | 3D model ─────────────────────────────────────────
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1):
+                gr.HTML(_section_label("Camera"))
+                cn_camera_img = gr.Image(
+                    label=None, show_label=False, height="28vh", container=False,
+                )
+            with gr.Column(scale=1):
+                gr.HTML(_section_label("3D Model"))
+                gr.HTML(_VIEWER_IFRAME_HTML)
+
+        gr.Button(
+            "Make a test recording →",
+            link="/test-recording",
+            variant="primary",
+            size="lg",
         )
+
+        cn_camera_timer = gr.Timer(0.2)
+        cn_camera_timer.tick(fn=get_camera_frame, outputs=cn_camera_img)
+
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)
         batt_timer_cn = gr.Timer(60.0)
@@ -902,7 +983,55 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 2 — Episodes
+    # Page 2 — Test Recording
+    # ══════════════════════════════════════════════════════════════════
+
+    # The first recording a new owner makes, and the only place that answers
+    # "did it work?" without them having to read a file listing. No task, no
+    # session: the episode lands in Unassigned and can be moved or deleted from
+    # Episodes afterwards.
+    with demo.route("Test Recording") as test_demo:
+        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.HTML(_TITLE_HTML)
+
+        gr.Markdown(
+            "Record a few seconds to check the device end to end. "
+            "The episode is kept — delete it from **Episodes** if you don't want it."
+        )
+
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=2):
+                tr_btn = gr.Button(_TR_START, variant="primary", size="lg")
+            with gr.Column(scale=3):
+                tr_state = gr.Markdown("○ Idle")
+
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1):
+                gr.HTML(_section_label("Camera"))
+                tr_camera_img = gr.Image(
+                    label=None, show_label=False, height="34vh", container=False,
+                )
+            with gr.Column(scale=1):
+                gr.HTML(_section_label("3D Model"))
+                gr.HTML(_VIEWER_IFRAME_HTML)
+
+        tr_summary = gr.Markdown(visible=False)
+
+        tr_btn.click(fn=on_toggle_test_recording, outputs=[tr_btn, tr_state, tr_summary])
+
+        tr_camera_timer = gr.Timer(0.2)
+        tr_camera_timer.tick(fn=get_camera_frame, outputs=tr_camera_img)
+
+        batt_popup_tr = gr.HTML(visible=False)
+        batt_beep_tr = gr.Textbox(visible=False)
+        batt_timer_tr = gr.Timer(60.0)
+        batt_timer_tr.tick(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
+        batt_beep_tr.change(fn=None, inputs=batt_beep_tr, outputs=None, js=_BATTERY_BEEP_JS)
+        test_demo.load(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
+        test_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+    # ══════════════════════════════════════════════════════════════════
+    # Page 3 — Episodes
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Episodes") as episodes_demo:
@@ -1143,7 +1272,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # (Datasets page removed — dataset generation is done on the fleet.)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 3 — Live View
+    # Page 4 — Live View
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
@@ -1220,7 +1349,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         live_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 4 — Settings
+    # Page 5 — Settings
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Settings") as settings_demo:
@@ -1252,7 +1381,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 5 — Power Off
+    # Page 6 — Power Off
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("🔴 Power Off") as poweroff_demo:

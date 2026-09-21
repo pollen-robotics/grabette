@@ -203,6 +203,19 @@ class GrabetteClient:
 
     # -- Episodes --
 
+    def get_episode(self, episode_id: str) -> dict | None:
+        """One episode's recorded facts, or None if it cannot be read.
+
+        None and {} mean different things to the caller: None is "could not
+        ask", which is not evidence that anything is wrong with the episode.
+        """
+        try:
+            r = self._http.get(f"/api/episodes/{episode_id}")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     def delete_episode(self, episode_id: str) -> dict:
         try:
             r = self._http.delete(f"/api/episodes/{episode_id}")

@@ -42,8 +42,8 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
         return {"status": "success"}
 
     @router.get("/widget", response_class=HTMLResponse)
-    async def auth_widget() -> HTMLResponse:
-        return HTMLResponse(widget_page())
+    async def auth_widget(compact: bool = False) -> HTMLResponse:
+        return HTMLResponse(widget_page(compact=compact))
 
     @router.get("/oauth/configured")
     async def oauth_configured() -> dict[str, Any]:
@@ -93,8 +93,40 @@ def build_auth_router(auth: HFAuth) -> APIRouter:
     return router
 
 
-def widget_page() -> str:
-    """Standalone auth widget served at /api/hf-auth/widget for iframe embedding."""
+# Compact skin for the same card. CSS only, deliberately: the markup and the
+# script below are shared with the full widget, so the two can never drift in
+# what they actually do — only in how much room they take. Collapses to one
+# line when logged in, one row when logged out.
+_COMPACT_CSS = """
+body{padding:0;font-size:.82rem}
+.card{padding:.5rem .65rem;border-radius:9px}
+h2{display:none}
+/* :not(.hide) matters: both rules carry !important, so specificity decides,
+   and an id would otherwise outrank .hide and keep the form on screen once
+   logged in. */
+#hfLogin:not(.hide){display:flex!important;align-items:center;gap:.5rem;flex-wrap:wrap}
+#hfLogin{margin-top:0!important}
+button{padding:.35rem .7rem;font-size:.82rem}
+button.oauth{width:auto;margin:0;white-space:nowrap}
+#hfOr{margin:0!important;color:#94a3b8;font-size:.75rem}
+.row{margin:0;flex:1 1 150px}
+.row input{padding:.35rem;font-size:.78rem}
+/* Only the "get a token here" footnote goes — it is the one thing with nowhere
+   to sit in a single row, and the field's placeholder still says what belongs
+   in it. #hfOr stays: it is what tells you the two options are alternatives. */
+#hfLogin>p.muted:not(#hfOr){display:none}
+.err:empty{display:none}
+.err{min-height:0}
+"""
+
+
+def widget_page(compact: bool = False) -> str:
+    """Standalone auth widget served at /api/hf-auth/widget for iframe embedding.
+
+    compact=True serves the same card and script under a denser skin, for the
+    dashboard home page where the login is a status line rather than a section.
+    """
+    extra_css = _COMPACT_CSS if compact else ""
     return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <style>
@@ -114,6 +146,10 @@ button.logout{{background:#ef4444;color:#fff}}
 .who-row{{display:flex;align-items:center;justify-content:space-between;gap:.8rem;flex-wrap:wrap}}
 .muted{{color:#64748b;font-size:.78rem}}
 .err{{color:#dc2626;font-size:.78rem;min-height:1rem}}
+/* Visibility is a class so a skin can restyle `display` freely — an inline
+   display:none set from the script would outrank any stylesheet rule. */
+.hide{{display:none!important}}
+{extra_css}
 </style></head>
 <body>{LOGIN_CARD}</body></html>"""
 
@@ -138,8 +174,8 @@ LOGIN_CARD = """
 <div class="card"><h2>HuggingFace login</h2>
  <div id="hfStatus">Checking…</div>
  <div id="hfLogin" style="margin-top:.8rem">
-  <button class="oauth" id="hfOauth" style="display:none">One-click login (OAuth)</button>
-  <p id="hfOr" class="muted" style="display:none;text-align:center;margin:.5rem 0">or use a token:</p>
+  <button class="oauth hide" id="hfOauth">One-click login (OAuth)</button>
+  <p id="hfOr" class="muted hide" style="text-align:center;margin:.5rem 0">or use a token:</p>
   <div class="row"><input id="hfTok" placeholder="hf_..." autocomplete="off">
    <button class="primary" id="hfSave">Save</button></div>
   <div class="err" id="hfErr"></div>
@@ -151,13 +187,13 @@ async function hfRefresh(){
  const s=await(await fetch(`${HF}/status`)).json();
  if(s.is_logged_in){
   _$('hfStatus').innerHTML=`<div class="who-row"><span>Logged in as <b>${s.username||'user'}</b></span><button class="logout" onclick="hfLogout()">Logout</button></div>`;
-  _$('hfLogin').style.display='none';
+  _$('hfLogin').classList.add('hide');
  }else{
-  _$('hfStatus').textContent='Not logged in.';_$('hfLogin').style.display='block';
+  _$('hfStatus').textContent='Not logged in.';_$('hfLogin').classList.remove('hide');
   const c=await(await fetch(`${HF}/oauth/configured`)).json();
   const showOauth=c.configured;
-  _$('hfOauth').style.display=showOauth?'block':'none';
-  _$('hfOr').style.display=showOauth?'block':'none';
+  _$('hfOauth').classList.toggle('hide',!showOauth);
+  _$('hfOr').classList.toggle('hide',!showOauth);
  }
  if(window.grabetteAuthChanged)window.grabetteAuthChanged(s);
 }
