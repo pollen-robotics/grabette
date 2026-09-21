@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grabette Bluetooth Tool</title>
+    <title>Get started with Grabette</title>
     <style>
         /* Visual language mirrors the Grabette fleet dashboard: same gradient
            backdrop, same translucent cards, same numbered-step circles and the
@@ -23,6 +23,195 @@
         h1 { font-size: 1.3rem; margin: 0 0 .3rem; font-weight: 700; }
         .muted { color: #a0aec0; font-size: .82rem; }
         .intro { color: #c3cbe0; font-size: .88rem; line-height: 1.5; margin: 0 0 1.4rem; }
+
+        /* Hero: this page is a new owner's first screen, so the title and the
+           one-paragraph "what is this" lead, before any control. */
+        .hero { margin-bottom: 1.4rem; }
+        /* Overrides the global h1's .3rem: the pair below is a separate block,
+           not a subtitle, and needs the room to read as one. Single rule on
+           purpose — a second .hero h1 further down would silently win. */
+        .hero h1 { margin-bottom: 1.4rem; }
+        .lede { color: #c3cbe0; font-size: .92rem; line-height: 1.55; margin: 0 0 .7rem; }
+        /* Centred as a pair: the three lines are short, so left-anchoring them
+           under a full-width title left the block looking stranded. The title
+           stays where it is — it is the page's anchor, not part of the pair. */
+        .lede-row { display: flex; align-items: center; justify-content: center; gap: 1.1rem; }
+        .hero-logo { width: 68px; flex-shrink: 0; }
+        .lede b { color: #e2e8f0; }
+
+        /* Getting-started video. Fixed 16:9 box so the page does not reflow
+           when the file loads (or fails to). */
+        .video-frame {
+            position: relative;
+            aspect-ratio: 16 / 9;
+            border-radius: 14px;
+            overflow: hidden;
+            background: rgba(0,0,0,.35);
+            border: 1px solid rgba(255,255,255,.12);
+        }
+        .video-frame video,
+        .video-frame img { display: block; width: 100%; height: 100%; object-fit: contain; }
+        .video-frame video[hidden], .video-frame img[hidden] { display: none; }
+        /* Shown instead of the player when the mp4 is not deployed yet, so the
+           page degrades to an honest placeholder rather than a broken control. */
+        .video-missing {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: .5rem;
+            padding: 1rem;
+            text-align: center;
+            color: #8b98ad;
+            font-size: .85rem;
+            line-height: 1.45;
+        }
+        .video-missing[hidden] { display: none; }
+        .video-missing svg { color: #4a5568; }
+        .video-caption { color: #8b98ad; font-size: .78rem; line-height: 1.4; margin: .6rem 0 0; }
+
+        /* Divider between the two halves of the flow — the Bluetooth setup and
+           the hand-off to the dashboard — so the numbered cards read as one
+           task each rather than four unrelated forms. */
+        .section-head { margin: 1.8rem 0 .9rem; }
+        .section-head h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #e2e8f0;
+            margin: 0 0 .35rem;
+        }
+        .section-head p { color: #8b98ad; font-size: .82rem; line-height: 1.5; margin: 0; }
+        /* The two things people get wrong before they even reach the dashboard.
+           Boxed off from the intro above it: these are conditions to check, not
+           more description, and the border is what says so at a glance. */
+        .prereq {
+            margin: 1.1rem 0 0;
+            padding: .85rem 1rem;
+            border-radius: 12px;
+            /* Emerald, not the amber the warnings own: these are conditions to
+               meet, not something that went wrong. */
+            background: rgba(16,185,129,.07);
+            border: 1px solid rgba(16,185,129,.28);
+        }
+        .prereq .section-label { color: #6ee7b7; margin-bottom: .5rem; }
+        /* Same scale as the list below it — as a bare element it would inherit
+           the body's 14px and tower over the steps it introduces. */
+        .prereq-lead { color: #8b98ad; font-size: .82rem; line-height: 1.5; margin: 0 0 .55rem; }
+        .prereq-lead b { color: #c3cbe0; }
+        .facts { color: #8b98ad; font-size: .82rem; line-height: 1.5; margin: 0; padding-left: 1.05rem; }
+        /* Ordered lists hang their numbers in the padding; 1.05rem clips them. */
+        ol.facts { padding-left: 1.35rem; }
+        .facts li + li { margin-top: .3rem; }
+        .facts b { color: #c3cbe0; }
+        .facts a { color: #7dd3fc; }
+
+        /* Three tabs split the page into the three things a new owner does, in
+           order, so none of them has to scroll past the other two. The tab bar
+           is a segmented control, not a browser-tab strip: the fleet's gradient
+           marks the active one. */
+        .tabs {
+            display: flex;
+            gap: .25rem;
+            margin-bottom: 1.3rem;
+            padding: .3rem;
+            border-radius: 12px;
+            background: rgba(255,255,255,.05);
+            border: 1px solid rgba(255,255,255,.1);
+        }
+        .tab {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: .4rem;
+            width: auto;
+            margin: 0;
+            padding: .5rem .5rem;
+            border-radius: 9px;
+            background: none;
+            color: #8b98ad;
+            font-size: .85rem;
+            font-weight: 600;
+            transition: background .15s, color .15s;
+        }
+        .tab:hover { opacity: 1; color: #e2e8f0; background: rgba(255,255,255,.07); }
+        .tab[aria-selected="true"] {
+            background: linear-gradient(135deg, #10b981, #3b82f6);
+            color: #fff;
+        }
+        .tab[aria-selected="true"]:hover { background: linear-gradient(135deg, #10b981, #3b82f6); }
+        /* "There is something for you here" — the dashboard address has arrived
+           while the reader was still on the WiFi tab. */
+        .tab-dot {
+            width: .45rem;
+            height: .45rem;
+            flex-shrink: 0;
+            border-radius: 50%;
+            background: #34d399;
+            box-shadow: 0 0 0 3px rgba(52,211,153,.25);
+        }
+        .tab-dot[hidden] { display: none; }
+        .tab-warn { display: flex; flex-shrink: 0; color: #fcd34d; }
+        .tab-warn[hidden] { display: none; }
+        .tab[aria-selected="true"] .tab-dot { background: #fff; box-shadow: none; }
+        .tab[aria-selected="true"] .tab-warn { color: #fff; }
+        .panel[hidden] { display: none; }
+        .panel:focus { outline: none; }
+
+        /* Steps beside the animation rather than under it: it halves the gif's
+           width without shrinking the text, and the two read together. */
+        .power-row { display: flex; align-items: center; gap: 1.4rem; }
+        .power-row .video-frame { flex: 0 0 300px; min-width: 0; }
+        .power-row .power-steps { flex: 1; min-width: 0; }
+        .steps-note { color: #8b98ad; font-size: .82rem; line-height: 1.45; margin: .9rem 0 0; }
+
+        /* Numbered like the cards in the WiFi tab, so a step looks like a step
+           wherever it appears. A bare <ol> would inherit the body's 16px and
+           the browser's own margins. */
+        .steps { counter-reset: step; list-style: none; margin: 0; padding: 0; }
+        .steps li {
+            position: relative;
+            padding-left: 2rem;
+            color: #c3cbe0;
+            font-size: .88rem;
+            line-height: 1.45;
+        }
+        .steps li + li { margin-top: .7rem; }
+        .steps li::before {
+            counter-increment: step;
+            content: counter(step);
+            position: absolute;
+            left: 0;
+            top: -.08rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.4rem;
+            height: 1.4rem;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #10b981, #3b82f6);
+            color: #fff;
+            font-size: .74rem;
+            font-weight: 700;
+        }
+
+        /* Hand-off to the next tab, at the end of the panel it completes. Not
+           full-width: it is a continuation, not the panel's main action. */
+        .next-btn {
+            width: auto;
+            margin: 1.2rem 0 0 auto;
+            padding: .5rem 1.1rem;
+            font-size: .88rem;
+        }
+        .next-btn[hidden] { display: none; }
+
+        /* The dashboard tab is reachable before there is an address to show —
+           a dead tab is more confusing than one that says what it is waiting
+           for. */
+        .wait-note { color: #8b98ad; font-size: .84rem; line-height: 1.5; margin: 0; }
+        .wait-note b { color: #c3cbe0; }
 
         .card {
             background: rgba(255,255,255,.06);
@@ -350,15 +539,114 @@
         .log-details { margin-top: .4rem; }
         .log-details > summary { padding: .4rem 0; }
         /* Phone: reclaim the wide desktop padding. */
-        @media (max-width: 600px) { body { padding: 1rem; } }
+        @media (max-width: 600px) {
+            body { padding: 1rem; }
+            .lede-row { gap: .8rem; }
+            .hero-logo { width: 52px; }
+            .power-row { flex-direction: column; align-items: stretch; gap: 1rem; }
+            .power-row .video-frame { flex: none; }
+            .tabs { gap: .15rem; padding: .25rem; }
+            .tab { padding: .5rem .3rem; font-size: .78rem; gap: .3rem; }
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Grabette BT Tool <span class="muted">— WiFi provisioning</span></h1>
-        <p class="intro">Provision any Grabette, Gripette or Casquette over Bluetooth Low Energy:
-         connect to the device, authenticate with its PIN, then hand it the WiFi credentials it
-         should join.</p>
+        <div class="hero">
+            <h1>Get started with Grabette <span class="muted">— first run</span></h1>
+            <div class="lede-row">
+                <!-- The artwork is white fills with black outlines, so it reads
+                     as-is on the dark backdrop — no inversion filter needed.
+                     Decorative: the h1 above already names the product. -->
+                <img class="hero-logo" src="images/grabette_logo_small.png" alt="">
+                <p class="lede">A handheld gripper that <b>records</b> what you do,<br> 
+                    to create datasets ready for <b>model-training</b>, <br>
+                    to apply directly to any <b>robotic arm</b> with Gripette. </p>
+            </div>
+        </div>
+
+        <!-- Three tabs, in the order a new owner does them. Each panel is a
+             tabpanel in the WAI-ARIA sense: one visible at a time, arrow keys
+             move between the tabs, and the selected one is mirrored into the
+             URL fragment so a tab can be linked to directly. -->
+        <div class="tabs" role="tablist" aria-label="Getting started">
+            <button class="tab" id="tab-video" role="tab" aria-selected="true"
+                    aria-controls="panel-video" onclick="selectTab('video')">
+                #1 Walkthrough
+            </button>
+            <button class="tab" id="tab-power" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="panel-power" onclick="selectTab('power')">
+                #2 Power on
+            </button>
+            <button class="tab" id="tab-wifi" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="panel-wifi" onclick="selectTab('wifi')">
+                #3 WiFi setup
+                <span class="tab-warn" id="wifiTabWarn" hidden role="img"
+                      aria-label="this browser cannot run the tool"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
+            </button>
+            <button class="tab" id="tab-dash" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="panel-dash" onclick="selectTab('dashboard')">
+                #4 Dashboard
+                <span class="tab-dot" id="dashDot" hidden aria-label="ready"></span>
+            </button>
+        </div>
+
+        <!-- Tab 1 — the walkthrough. Local mp4 under docs/media/, staged by
+             .github/workflows/pages.yml alongside this file. The placeholder
+             below takes over if it is not there yet. -->
+        <div class="panel" id="panel-video" role="tabpanel" aria-labelledby="tab-video" tabindex="0">
+        <div class="video-frame">
+            <video id="introVideo" controls preload="metadata" playsinline
+                   poster="media/getting-started.jpg">
+                <source id="introVideoSrc" src="media/getting-started.mp4" type="video/mp4">
+            </video>
+            <div class="video-missing" id="videoMissing" hidden>
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>
+                <div>Video coming soon.<br>The next two tabs have the written steps.</div>
+            </div>
+        </div>
+        <p class="video-caption">First steps to get started with your new Grabette </p>
+
+            <button class="btn-primary next-btn" onclick="selectTab('power')">Next →</button>
+        </div>
+
+        <!-- Tab 2 — powering the device on. Carried by the gif: the button is
+             easier to point at than to describe. -->
+        <div class="panel" id="panel-power" role="tabpanel" aria-labelledby="tab-power" tabindex="0">
+        <div class="section-head">
+            <h2>Power on your Grabette</h2>
+        </div>
+        <div class="power-row">
+            <div class="power-steps">
+                <ol class="steps">
+                    <li>Press once</li>
+                    <li>Press a second time and hold</li>
+                    <li>Release when the blue light appears</li>
+                </ol>
+                <p class="steps-note"><i>Give the device a moment to start up before going to the next step.</i></p>
+            </div>
+            <div class="video-frame">
+                <!-- lazy: this panel is hidden on arrival and the gif is heavy;
+                     no reason for it to compete with the first tab. -->
+                <img id="powerGif" src="images/turn_on.gif" loading="lazy"
+                     alt="Powering on a Grabette">
+                <div class="video-missing" id="powerMissing" hidden>
+                    <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+                    <div>Animation coming soon.</div>
+                </div>
+            </div>
+        </div>
+            <button class="btn-primary next-btn" onclick="selectTab('wifi')">Start the setup →</button>
+        </div>
+
+        <!-- Tab 3 — the Bluetooth WiFi provisioning tool, unchanged: three
+             cards revealed in turn, plus the diagnostics panel that only makes
+             sense while a device is connected. -->
+        <div class="panel" id="panel-wifi" role="tabpanel" aria-labelledby="tab-wifi" tabindex="0" hidden>
+        <div class="section-head">
+            <h2>Connect your Grabette to WiFi</h2>
+            <p> You only need to have your <b>Bluetooth on</b> and to be next to your Grabette.</p>
+        </div>
 
         <!-- The browser requirement is the single most common reason this page
              does nothing, so it leads rather than sitting inside the intro. The
@@ -366,14 +654,17 @@
         <div class="browser-note" id="browserNote">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             <div id="browserNoteText">
-                <b>Chrome or Edge required.</b> This tool relies on Web Bluetooth, which
-                Firefox and Safari do not implement — there is no workaround on those browsers.
-                If Connect finds nothing on Chrome, enable this flag:
+                <b>Chrome or Edge only</b> — The Web Bluetooth Tool only works on those browsers. <br> 
+                <details><summary>No Grabette found on Chrome?</summary>  
+                1. Enable this flag:
                 <button type="button" class="copy-url" id="copyFlag" onclick="copyFlagUrl()"
                         title="Copy to clipboard">
                     <code id="flagUrl"></code>
                     <span class="copy-hint" id="copyFlagHint">Copy</span>
                 </button>
+                <br> 
+                2. Check that the bluetooth is on on both side 
+                </details>
             </div>
         </div>
 
@@ -392,8 +683,7 @@
                 <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
                     <span id="btnConnectLabel">Search for nearby devices</span>
                 </button>
-                <p class="step-hint" id="connectHint">Your browser will list the devices of
-                 this type within Bluetooth range — pick yours from it to pair and connect.</p>
+                <p class="step-hint" id="connectHint">Pick yours from the browser's list.</p>
             </div>
 
             <div id="connectedBox" hidden>
@@ -416,9 +706,7 @@
         <div class="card step-card" id="card-auth" hidden>
             <div class="step"><span class="step-num">2</span> Authenticate</div>
             <input type="text" id="pinInput" placeholder="PIN (default: 00000)" value="00000">
-            <p class="step-hint">The PIN both unlocks the WiFi commands and encrypts the
-             password on its way to the device. It is consumed by each WiFi write, so
-             re-authenticate before sending credentials again.</p>
+            <p class="step-hint">Also encrypts the password. Used up by each WiFi command.<br> <i>Need to re-authenticate before making a new command. </i></p>
             <button class="btn-primary" id="btnPin" onclick="sendPin()" disabled>
                 Authenticate
             </button>
@@ -449,22 +737,9 @@
             </button>
             <div class="lock-note" id="wifiLocked" hidden>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                <span>The device consumed the PIN on the last WiFi command.
-                 <b>Authenticate again</b> in step 2 to re-enable these controls.</span>
+                <span>PIN used up. <b>Authenticate again</b> to retry.</span>
             </div>
             <div class="step-msg" id="msgWifi"></div>
-        </div>
-
-        <!-- Revealed once the device reports a routable address of its own, which
-             is as close to "the dashboard is up" as this page can get: it is
-             served over HTTPS, so it cannot probe a plain-http address. -->
-        <div class="card step-card" id="card-dash" hidden>
-            <div class="step"><span class="step-num">4</span> Open the device dashboard</div>
-            <a class="dash-link" id="dashLink" target="_blank" rel="noopener">
-                <span id="dashUrl"></span>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-            </a>
-            <div class="dash-note" id="dashNote"></div>
         </div>
 
         <!-- Not a step: ping and network status are usable at any point once
@@ -480,12 +755,62 @@
             <div class="step-msg" id="msgStatus"></div>
         </div>
 
-        <!-- Full protocol trace. Collapsed: each step reports its own outcome
-             above, so the raw command echo is for debugging only. -->
-        <details class="log-details">
-            <summary>Show detailed log</summary>
-            <div id="log"></div>
-        </details>
+            <!-- Full protocol trace of the BLE exchange. Collapsed: each step
+                 reports its own outcome above, so the raw command echo is for
+                 debugging only. -->
+            <details class="log-details">
+                <summary>Show detailed log</summary>
+                <div id="log"></div>
+            </details>
+
+            <!-- Appears with the address itself: the reader is on this tab when
+                 the device finally reports one, so the hand-off has to come to
+                 them rather than wait on the other tab. -->
+            <button class="btn-primary next-btn" id="btnToDash" hidden
+                    onclick="selectTab('dashboard')">Open the dashboard →</button>
+        </div>
+
+        <!-- Tab 3 — the hand-off. The address only exists once the device has
+             joined a network and reported it; this page is served over HTTPS so
+             it can never probe a plain-http address, only offer it. Reachable
+             before then, because a tab that says what it is waiting for beats
+             one that is dead. -->
+        <div class="panel" id="panel-dash" role="tabpanel" aria-labelledby="tab-dash" tabindex="0" hidden>
+            <div class="section-head">
+                <h2>Open your Grabette dashboard</h2>
+                <p class="prereq-lead">Allows you to get an overview of Grabette’s <b>sensors</b> and <b>data</b> and <b>log in</b> to HuggingFace there.<br>
+                <i>Bookmark it, you will not need this page again.<br></i></p>
+
+
+                    
+            </div>
+
+            <div class="prereq">
+                <div class="section-label">In the dashboard</div>
+                <p class="prereq-lead"><i>Make sure you're on the <b>same network</b> as Grabette.</i></p>
+
+                <ol class="facts">
+                    <li><b>Log in</b> to your HuggingFace account : by one-click OAuth or with a token</li>
+                    <li>Take a look at the view of both <b>cameras</b> and the <b>gripper joint data</b></li>
+                    <li>Make a <b>test recording</b> to check everything is working fine.</li>
+                    <li>Access the <b>Grabette Fleet</b> space.</li>
+                </ol>
+            </div>
+
+            <div class="card" id="dashWait">
+                <p class="wait-note">Finish <b>WiFi setup</b> — the link appears once the Grabette
+                 reports its address.</p>
+            </div>
+
+            <div class="card step-card" id="card-dash" hidden>
+                <a class="dash-link" id="dashLink" target="_blank" rel="noopener">
+                    <span id="dashUrl"></span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                </a>
+                <div class="dash-note" id="dashNote"></div>
+            </div>
+        </div>
+
     </div>
 
 <script>
@@ -510,6 +835,66 @@
     let commandChar = null;
     let responseChar = null;
     let networkStatusChar = null;
+
+    // Tabs. Roving tabindex + arrow keys, per the WAI-ARIA tabs pattern: only
+    // the selected tab is in the tab order, the arrows move between them.
+    const TABS = ['video', 'power', 'wifi', 'dashboard'];
+    const TAB_ID = { video: 'tab-video', power: 'tab-power', wifi: 'tab-wifi', dashboard: 'tab-dash' };
+    const PANEL_ID = { video: 'panel-video', power: 'panel-power', wifi: 'panel-wifi', dashboard: 'panel-dash' };
+    let currentTab = 'video';
+
+    function selectTab(name, moveFocus) {
+        if (!TABS.includes(name)) name = 'video';
+        currentTab = name;
+        for (const t of TABS) {
+            const tab = document.getElementById(TAB_ID[t]);
+            const on = t === name;
+            tab.setAttribute('aria-selected', on ? 'true' : 'false');
+            tab.tabIndex = on ? 0 : -1;
+            document.getElementById(PANEL_ID[t]).hidden = !on;
+        }
+        // Deep-linkable, but assigning location.hash would scroll the fragment
+        // into view — on a tall panel that lands the reader mid-page.
+        history.replaceState(null, '', '#' + name);
+        if (moveFocus) document.getElementById(TAB_ID[name]).focus();
+    }
+
+    document.querySelector('.tabs').addEventListener('keydown', (e) => {
+        const i = TABS.indexOf(currentTab);
+        let next = null;
+        if (e.key === 'ArrowRight') next = TABS[(i + 1) % TABS.length];
+        else if (e.key === 'ArrowLeft') next = TABS[(i - 1 + TABS.length) % TABS.length];
+        else if (e.key === 'Home') next = TABS[0];
+        else if (e.key === 'End') next = TABS[TABS.length - 1];
+        if (!next) return;
+        e.preventDefault();
+        selectTab(next, true);
+    });
+
+    selectTab(location.hash.slice(1) || 'video');
+
+    // The dashboard tab's two states. The green dot and the hand-off button are
+    // how the reader learns the address arrived while they were on the WiFi tab;
+    // switching tabs under them would hide the WiFi step's own result.
+    function setDashReady(on) {
+        document.getElementById('card-dash').hidden = !on;
+        document.getElementById('dashWait').hidden = on;
+        document.getElementById('dashDot').hidden = !on;
+        document.getElementById('btnToDash').hidden = !on;
+    }
+
+    // The mp4 and the gif are deployed separately from this file; until they
+    // land, a 404 is the only signal we get. On a <video> the error fires on the
+    // <source>, not the element, so it is listened for there; an <img> reports
+    // its own.
+    document.getElementById('introVideoSrc').addEventListener('error', () => {
+        document.getElementById('introVideo').hidden = true;
+        document.getElementById('videoMissing').hidden = false;
+    });
+    document.getElementById('powerGif').addEventListener('error', () => {
+        document.getElementById('powerGif').hidden = true;
+        document.getElementById('powerMissing').hidden = false;
+    });
 
     const logEl = document.getElementById('log');
 
@@ -552,13 +937,13 @@
         [/secrets were required|no secrets/i,
          'Wrong password for "%s" — the network refused it.'],
         [/network could not be found|no network with ssid/i,
-         '"%s" was not found — check the name, and that the device is in range of it.'],
+         '"%s" not found — check the name, and that the device is in range.'],
         [/ip configuration could not be reserved/i,
-         'Joined "%s", but it handed out no address (DHCP failed). The password was accepted.'],
+         'Joined "%s" but got no address (DHCP failed). The password was accepted.'],
         [/timeout expired|timed out/i,
          'Timed out joining "%s" — it may be out of range.'],
         [/psk[\s\S]*invalid|invalid[\s\S]*psk/i,
-         'That password is not a valid WiFi passphrase (' + PSK_MIN_LEN + '-' + PSK_MAX_LEN + ' characters).'],
+         'Not a valid WiFi passphrase (' + PSK_MIN_LEN + '-' + PSK_MAX_LEN + ' characters).'],
     ];
 
     // The raw reply always reaches the log; only the step line is rewritten.
@@ -596,9 +981,9 @@
             b.title = on ? WIFI_BTN_TITLES[id]
                          : 'Authenticate again in step 2 — the device consumed the PIN';
         }
-        // Only worth explaining once step 3 is on screen, i.e. after a first
-        // successful PIN; before that the card is hidden anyway.
-        document.getElementById('wifiLocked').hidden = on;
+        // The callout is raised by noteAuthConsumed, and only when re-entering
+        // the PIN is actually the next thing to do.
+        document.getElementById('wifiLocked').hidden = true;
     }
 
     // The button does not just connect: it opens the browser's chooser after a
@@ -623,7 +1008,7 @@
         if (!connected) reveal('card-wifi', false);
         // Always hidden on a state change: the address belongs to whichever
         // device was on the other end, and is stale the moment that changes.
-        reveal('card-dash', false);
+        setDashReady(false);
 
         document.getElementById('btnPin').disabled = !connected;
         document.getElementById('btnPing').disabled = !connected;
@@ -780,7 +1165,7 @@
         stepMsg('msgStatus', 'Pinging…');
         const resp = await sendCommand('PING');
         if (resp === null) { stepMsg('msgStatus', 'No response from the device', 'err'); return; }
-        stepMsg('msgStatus', resp === 'PONG' ? 'Device answered — link is alive' : resp,
+        stepMsg('msgStatus', resp === 'PONG' ? 'Device answered' : resp,
                 resp === 'PONG' ? 'ok' : 'err');
     }
 
@@ -796,7 +1181,7 @@
         setAuthed(!failed);
         if (!failed) reveal('card-wifi', true);
         stepMsg('msgAuth',
-                failed ? replyText(resp) : 'Authenticated — you can now configure WiFi',
+                failed ? replyText(resp) : 'Authenticated',
                 failed ? 'err' : 'ok');
     }
 
@@ -876,10 +1261,10 @@
         if ((password.length < PSK_MIN_LEN || password.length > PSK_MAX_LEN)
             && password.length !== PSK_HEX_LEN) {
             stepMsg('msgWifi', 'A WiFi password is ' + PSK_MIN_LEN + '-' + PSK_MAX_LEN
-                    + ' characters; this one is ' + password.length + '.', 'err');
+                    + ' characters — this one is ' + password.length + '.', 'err');
             return;
         }
-        if (!pin) { stepMsg('msgWifi', 'Enter the PIN in step 2 — it encrypts the password', 'err'); return; }
+        if (!pin) { stepMsg('msgWifi', 'Enter the PIN in step 2', 'err'); return; }
 
         stepMsg('msgWifi', 'Sending credentials for "' + ssid + '"…');
         log('Sending WiFi credentials for "' + ssid + '"…', 'log-cmd');
@@ -902,16 +1287,23 @@
         log(resp, failed ? 'log-err' : 'log-ok');
         stepMsg('msgWifi', failed ? wifiErrorText(resp, ssid) : replyText(resp),
                 failed ? 'err' : 'ok');
-        noteAuthConsumed();
+        noteAuthConsumed(failed);
         if (!failed) awaitDashboard();
     }
 
-    // WIFI_CONNECT_ENC and WIFI_RESET both clear the robot's authenticated flag,
-    // so the next WiFi write needs a fresh PIN. Say so where the PIN lives
-    // rather than letting the user hit "Not authenticated" on the retry.
-    function noteAuthConsumed() {
+    // WIFI_CONNECT_ENC and WIFI_RESET both clear the robot's authenticated flag
+    // BEFORE they run, so the PIN is spent whether the command worked or not.
+    //
+    // Only say so when the user still has something to do here. After a
+    // successful connect they are on their way to the dashboard, and an amber
+    // "authenticate again" on a step that just succeeded reads as a failure —
+    // the greyed-out buttons still carry the reason in their tooltip. After a
+    // failure the retry is real, and needs a fresh PIN to go through.
+    function noteAuthConsumed(retryLikely) {
         setAuthed(false);
-        stepMsg('msgAuth', 'PIN used up — authenticate again before the next WiFi command');
+        if (!retryLikely) return;
+        document.getElementById('wifiLocked').hidden = false;
+        stepMsg('msgAuth', 'PIN used up — authenticate again to retry');
     }
 
     // Destructive and irreversible from here: nmcli deletes the profiles, so the
@@ -921,7 +1313,7 @@
     // the dialog wraps to its own width, and manual breaks land mid-sentence.
     const RESET_CONFIRM = [
         'Forget all saved WiFi networks?',
-        'Every WiFi profile stored on the device will be deleted, not just the one it is using. Their passwords are deleted with them, and the device will not rejoin any of these networks on its own.',
+        'Every WiFi profile on the device is deleted, passwords included — not just the one in use. It will not rejoin any of them on its own.',
         'The Hotspot profile is kept, so the device stays reachable.',
     ].join('\n\n');
 
@@ -931,7 +1323,7 @@
         const resp = await sendCommand('WIFI_RESET');
         if (resp === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
         stepMsg('msgWifi', replyText(resp), resp.startsWith('ERROR') ? 'err' : 'ok');
-        noteAuthConsumed();
+        noteAuthConsumed(resp.startsWith('ERROR'));
     }
 
     async function scanWifi() {
@@ -963,7 +1355,7 @@
             details.hidden = true;
             return;
         }
-        stepMsg('msgWifi', ssids.length + ' network(s) found — pick one below', 'ok');
+        stepMsg('msgWifi', ssids.length + ' network(s) found', 'ok');
         log(ssids.length + ' network(s) found', 'log-ok');
 
         // Render each SSID as a button that fills the SSID field, then collapses
@@ -1025,7 +1417,7 @@
     function offerDashboard(status) {
         const ifaces = [...status.matchAll(/\[(\w+)\]\s+(\d{1,3}(?:\.\d{1,3}){3})/g)];
         const port = DASHBOARD_PORTS[connectedType];
-        if (!ifaces.length || !port) { reveal('card-dash', false); return false; }
+        if (!ifaces.length || !port) { setDashReady(false); return false; }
 
         // Prefer wlan0 — that is the interface the credentials just configured.
         const pick = ifaces.find(m => m[1] === 'wlan0') || ifaces[0];
@@ -1050,25 +1442,21 @@
         // address either. So the address is offered, never asserted.
         const checks = [];
         if (hotspot) {
-            checks.push('The device is in <b>hotspot mode</b> — it did not join a WiFi network, '
-                        + 'so this address is only reachable from a machine joined to its hotspot.');
+            checks.push('Device in <b>hotspot mode</b> — join its hotspot to reach this.');
         } else {
-            checks.push(ssid
-                ? 'This machine must be on <b>' + escapeHtml(ssid) + '</b>, the network the device joined.'
-                : 'This machine must be on the same network as the device.');
-            checks.push('The dashboard service must be running on the device — it is a separate '
-                        + 'service from the Bluetooth one you are talking to now.');
+            checks.push(ssid ? 'Be on <b>' + escapeHtml(ssid) + '</b>.'
+                             : 'Be on the same network as the device.');
+            checks.push('The dashboard service must be running.');
         }
-        checks.push('The dashboard is served over plain HTTP, so your browser may warn before opening it.');
+        checks.push('Plain HTTP — your browser may warn.');
         if (connectedHost) {
-            checks.push('If the address changes later, try <b>http://' + escapeHtml(connectedHost)
-                        + '.local:' + port + '</b> (needs mDNS, unsupported on some phones and networks).');
+            checks.push('Address changed? Try <b>http://' + escapeHtml(connectedHost)
+                        + '.local:' + port + '</b> (mDNS).');
         }
 
         document.getElementById('dashNote').innerHTML =
-            'This is the address the device reported. This page cannot test it — for the link to work:'
-            + '<ul><li>' + checks.join('</li><li>') + '</li></ul>';
-        reveal('card-dash', true);
+            "If it doesn't open:<ul><li>" + checks.join('</li><li>') + '</li></ul>';
+        setDashReady(true);
         return !hotspot;
     }
 
@@ -1110,22 +1498,25 @@
         const localUrl = 'http://localhost' + (location.port ? ':' + location.port : '');
         browserNote.classList.add('fatal');
         browserNoteText.innerHTML =
-            "<b>Bluetooth doesn't work on this address.</b> Open the tool at " +
+            "<b>Bluetooth doesn't work on this address.</b> Use " +
             '<a href="https://pollen-robotics.github.io/grabette/">pollen-robotics.github.io/grabette/</a>' +
-            ' instead. (Testing a local copy? Serve it from <code>' + localUrl +
-            '</code> and it will work.)';
+            ' — or, for a local copy, <code>' + localUrl + '</code>.';
         document.getElementById('btnConnect').disabled = true;
+        document.getElementById('wifiTabWarn').hidden = false;
     } else if (!navigator.bluetooth) {
         browserNote.classList.add('fatal');
         browserNoteText.innerHTML =
-            '<b>This browser cannot run the tool.</b> Web Bluetooth is not available here, ' +
-            'so no device can be reached. Open this page in Chrome or Edge.';
+            '<b>This browser cannot run the tool.</b> No Web Bluetooth here — ' +
+            'open this page in Chrome or Edge.';
         document.getElementById('btnConnect').disabled = true;
+        // The note is inside the WiFi panel, which the reader may never open —
+        // mark the tab so a dead-end tool is not discovered three minutes in.
+        document.getElementById('wifiTabWarn').hidden = false;
     }
 
     async function readNetworkStatus() {
         if (!networkStatusChar) {
-            stepMsg('msgStatus', 'Network status is not available on this device', 'err');
+            stepMsg('msgStatus', 'Network status unavailable on this device', 'err');
             log('Network status characteristic not available', 'log-err');
             return;
         }
