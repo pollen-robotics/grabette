@@ -10,6 +10,7 @@ from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
 from grabette.capture_scheduler import get_capture_scheduler
 from grabette.fleet_sync import notify_group_stop, request_group_start
+from grabette.hardware.episode_files import DCAM_LEFT, resolve
 from grabette.task import TaskManager, episode_id_for
 
 router = APIRouter(tags=["tasks"])
@@ -288,6 +289,19 @@ def stream_video(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
     video_path = tm.episode_dir(episode_id) / "raw_video.mp4"
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
+    return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.get("/api/episodes/{episode_id}/dcam-video")
+def stream_dcam_video(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+    """The depth camera's own image stream (dcam_left.mp4), not the depth map.
+
+    Through resolve() so an episode recorded before the oakd_ -> dcam_ rename
+    still plays.
+    """
+    video_path = resolve(tm.episode_dir(episode_id), DCAM_LEFT)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Depth-camera video not found")
     return FileResponse(video_path, media_type="video/mp4")
 
 

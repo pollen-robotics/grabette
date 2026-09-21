@@ -73,6 +73,30 @@ _FLEET_BUTTON_HTML = (
     'box-shadow:0 4px 14px rgba(0,0,0,.22);">Open fleet dashboard ↗</a>'
 )
 
+# Step 1's illustration. Served from grabette/ui/assets (mounted at /assets by
+# app.main); the onerror keeps the step readable on a device where the file was
+# never added.
+_START_RECORDING_GIF_HTML = (
+    '<img src="/assets/start-recording.gif" alt="Starting a recording"'
+    ' style="width:100%;border-radius:8px;display:block;"'
+    ' onerror="this.style.display=\'none\';'
+    'this.nextElementSibling.style.display=\'flex\';">'
+    '<div style="display:none;align-items:center;justify-content:center;'
+    'height:150px;border-radius:8px;border:1px dashed #cbd5e1;color:#94a3b8;'
+    'font-size:.85rem;">Animation coming soon</div>'
+)
+
+
+def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
+    """Player slaved to the replay clock. stream="dcam" plays the depth
+    camera's own image stream rather than the head camera."""
+    return (
+        f'<iframe src="/api/replay/video?episode_id={episode_id}&stream={stream}" '
+        'style="width:100%;height:240px;border:none;'
+        'border-radius:8px;background:#000;"></iframe>'
+    )
+
+
 _VIEWER_IFRAME_HTML = (
     '<iframe id="urdf-viewer" src="/viewer" '
     'style="width:100%;height:28vh;border:none;'
@@ -422,38 +446,111 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             client.start_capture(task_id=session_id or None)
             return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update(), gr.update()
 
-    _TR_START = "● Start test recording"
-    _TR_STOP = "■ Stop test recording"
+    # ── Test Recording page ───────────────────────────────────────────
+    #
+    # Start and stop are separate buttons, not a toggle: they are steps 1 and 3
+    # of a written procedure, and a control whose label changes under you is a
+    # poor fit for a numbered list.
 
-    def on_toggle_test_recording():
-        """Start, or stop and report. Deliberately not session-aware: a first
-        test should need no task chosen and no session opened."""
-        state = client.get_state()
-        capturing = state.get("capture", {}).get("is_capturing", False) if state else False
+    def _tr_idle(episode_id):
+        """Button states with nothing recording. An episode in hand keeps
+        steps 4 and 5 live; without one they are inert."""
+        has_ep = bool(episode_id)
+        return (
+            gr.update(interactive=True),    # start
+            gr.update(interactive=False),   # stop
+            gr.update(interactive=has_ep),  # check
+            gr.update(interactive=has_ep),  # delete
+        )
 
-        if not capturing:
-            result = client.start_capture()
-            if result.get("error"):
-                return gr.update(), f"⛔ {result['error']}", gr.update(visible=False)
+    def on_test_start(episode_id):
+        result = client.start_capture()
+        if result.get("error"):
             return (
-                gr.update(value=_TR_STOP, variant="stop"),
-                "● Recording — move the gripper around, then stop.",
-                gr.update(visible=False),
+                *_tr_idle(episode_id),
+                f"⛔ {result['error']}",
+                gr.update(),
+                episode_id,  # the failed start changes nothing about step 4/5
             )
+        # A new recording supersedes the one steps 4 and 5 were pointing at.
+        return (
+            gr.update(interactive=False),
+            gr.update(interactive=True),
+            gr.update(interactive=False),
+            gr.update(interactive=False),
+            "● Recording — now go to step 2.",
+            gr.update(visible=False),
+            None,
+        )
 
+    def on_test_stop():
         result = client.stop_capture()
+        if result.get("error"):
+            return (*_tr_idle(None), f"⛔ {result['error']}", gr.update(), None)
         episode_id = result.get("episode_id")
         # Read the episode back: the stop response reports what the capture
         # believes it wrote, this reports what is actually on disk.
         episode = client.get_episode(episode_id) if episode_id else None
         depth_on = bool((client.get_oakd_status() or {}).get("enabled"))
         return (
-            gr.update(value=_TR_START, variant="primary"),
+            *_tr_idle(episode_id),
             "○ Idle",
             gr.update(
                 value=recording_summary(result, episode, depth_on),
                 visible=True,
             ),
+            episode_id,
+        )
+
+    def on_test_check(episode_id):
+        """Replay the episode: the daemon feeds its recorded samples back into
+        the same live state the charts read, so the angle chart moves with the
+        video rather than showing the sensors' current values."""
+        if not episode_id:
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+        result = client.replay_start(episode_id)
+        if "error" in result:
+            return (
+                gr.update(visible=False), gr.update(), gr.update(),
+                gr.update(), f"⛔ {result['error']}",
+            )
+        return (
+            gr.update(visible=True),
+            gr.update(value=_replay_video_iframe(episode_id, "raw")),
+            gr.update(value=_replay_video_iframe(episode_id, "dcam")),
+            gr.update(active=True),
+            f"Replaying `{episode_id}`",
+        )
+
+    def on_test_replay_stop():
+        client.replay_stop()
+        return gr.update(visible=False), gr.update(active=False), "Replay stopped"
+
+    def poll_test_replay():
+        """Tear the panel down when the episode runs out, so a finished replay
+        does not sit there holding the charts on its last frame."""
+        st = client.replay_status()
+        if not st.get("active"):
+            return gr.update(visible=False), gr.update(active=False), "Replay ended"
+        t, dur = st.get("time_ms", 0), st.get("duration_ms", 0)
+        return gr.update(), gr.update(), f"{t / 1000:.1f}s / {dur / 1000:.1f}s"
+
+    def on_test_delete(episode_id):
+        if not episode_id:
+            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), None
+        # Stop first: deleting the files under a running replay leaves the
+        # daemon reading a directory that is no longer there.
+        client.replay_stop()
+        result = client.delete_episode(episode_id)
+        msg = (f"⛔ {result['error']}" if result.get("error")
+               else f"Deleted `{episode_id}`.")
+        return (
+            gr.update(interactive=False),   # check
+            gr.update(interactive=False),   # delete
+            gr.update(visible=False),       # replay panel
+            gr.update(active=False),        # replay timer
+            msg,
+            None,
         )
 
     def on_start_stop_session(current_task):
@@ -995,32 +1092,104 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         gr.HTML(_TITLE_HTML)
 
         gr.Markdown(
-            "Record a few seconds to check the device end to end. "
-            "The episode is kept — delete it from **Episodes** if you don't want it."
+            "Five steps to check a new device end to end. "
+            "The episode is deleted again at step 5, so nothing is left behind."
         )
 
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=2):
-                tr_btn = gr.Button(_TR_START, variant="primary", size="lg")
-            with gr.Column(scale=3):
-                tr_state = gr.Markdown("○ Idle")
+        # The episode step 3 produced, and steps 4 and 5 act on. None until
+        # something has been recorded, and None again once it is deleted.
+        tr_episode = gr.State(None)
 
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Camera"))
-                tr_camera_img = gr.Image(
-                    label=None, show_label=False, height="34vh", container=False,
-                )
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("3D Model"))
-                gr.HTML(_VIEWER_IFRAME_HTML)
+        # ── 1 — Start ─────────────────────────────────────────────────
+        with gr.Group():
+            gr.Markdown("### 1 · Start recording")
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=1):
+                    gr.HTML(_START_RECORDING_GIF_HTML)
+                with gr.Column(scale=1):
+                    tr_start_btn = gr.Button(
+                        "● Start recording", variant="primary", size="lg",
+                    )
+                    tr_state = gr.Markdown("○ Idle")
 
-        tr_summary = gr.Markdown(visible=False)
+        # ── 2 — Grab ──────────────────────────────────────────────────
+        with gr.Group():
+            gr.Markdown(
+                "### 2 · Grab an object\n"
+                "Pick something up and put it down again, moving the gripper "
+                "around as you would when collecting data. A few seconds is plenty."
+            )
 
-        tr_btn.click(fn=on_toggle_test_recording, outputs=[tr_btn, tr_state, tr_summary])
+        # ── 3 — Stop ──────────────────────────────────────────────────
+        with gr.Group():
+            gr.Markdown("### 3 · Stop recording")
+            tr_stop_btn = gr.Button(
+                "■ Stop recording", variant="stop", size="lg", interactive=False,
+            )
+            tr_summary = gr.Markdown(visible=False)
 
-        tr_camera_timer = gr.Timer(0.2)
-        tr_camera_timer.tick(fn=get_camera_frame, outputs=tr_camera_img)
+        # ── 4 — Check ─────────────────────────────────────────────────
+        with gr.Group():
+            gr.Markdown(
+                "### 4 · Check the episode\n"
+                "Plays back what was recorded — not what the sensors read now."
+            )
+            tr_check_btn = gr.Button("Show the recorded data", interactive=False)
+            tr_replay_msg = gr.Markdown("")
+            with gr.Group(visible=False) as tr_replay_panel:
+                with gr.Row(equal_height=True):
+                    with gr.Column(scale=1):
+                        gr.HTML(_section_label("RGB camera"))
+                        tr_raw_video = gr.HTML(value="")
+                    with gr.Column(scale=1):
+                        gr.HTML(_section_label("Depth camera (RGB)"))
+                        tr_dcam_video = gr.HTML(value="")
+                gr.HTML(_section_label("Angle sensors"))
+                gr.HTML(_ANGLE_IFRAME_HTML)
+                tr_replay_stop_btn = gr.Button("Stop replay", size="sm")
+            tr_replay_timer = gr.Timer(0.5, active=False)
+
+        # ── 5 — Delete ────────────────────────────────────────────────
+        with gr.Group():
+            gr.Markdown(
+                "### 5 · Delete this episode\n"
+                "A test recording is not training data. Keep it only if you "
+                "meant to — it is filed under *Unassigned* in **Episodes**."
+            )
+            tr_delete_btn = gr.Button(
+                "Delete this episode", variant="stop", interactive=False,
+            )
+            tr_delete_msg = gr.Markdown("")
+
+        # ── Wire events ───────────────────────────────────────────────
+        _tr_buttons = [tr_start_btn, tr_stop_btn, tr_check_btn, tr_delete_btn]
+
+        tr_start_btn.click(
+            fn=on_test_start, inputs=tr_episode,
+            outputs=[*_tr_buttons, tr_state, tr_summary, tr_episode],
+        )
+        tr_stop_btn.click(
+            fn=on_test_stop,
+            outputs=[*_tr_buttons, tr_state, tr_summary, tr_episode],
+        )
+        tr_check_btn.click(
+            fn=on_test_check, inputs=tr_episode,
+            outputs=[tr_replay_panel, tr_raw_video, tr_dcam_video,
+                     tr_replay_timer, tr_replay_msg],
+        )
+        tr_replay_stop_btn.click(
+            fn=on_test_replay_stop,
+            outputs=[tr_replay_panel, tr_replay_timer, tr_replay_msg],
+        )
+        tr_replay_timer.tick(
+            fn=poll_test_replay,
+            outputs=[tr_replay_panel, tr_replay_timer, tr_replay_msg],
+        )
+        tr_delete_btn.click(
+            fn=on_test_delete, inputs=tr_episode,
+            outputs=[tr_check_btn, tr_delete_btn, tr_replay_panel,
+                     tr_replay_timer, tr_delete_msg, tr_episode],
+        )
 
         batt_popup_tr = gr.HTML(visible=False)
         batt_beep_tr = gr.Textbox(visible=False)

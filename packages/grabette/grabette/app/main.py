@@ -1255,6 +1255,13 @@ def create_app() -> FastAPI:
         app.mount("/urdf", StaticFiles(directory=str(_urdf_dir)), name="urdf")
         logger.info("URDF assets mounted at /urdf from %s", _urdf_dir)
 
+    # Images the dashboard pages reference directly (step illustrations). Must
+    # be mounted before Gradio takes "/", like every other route here.
+    _assets_dir = Path(__file__).resolve().parent.parent / "ui" / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
+        logger.info("UI assets mounted at /assets from %s", _assets_dir)
+
     # Auth router (OAuth PKCE + manual token) — must be registered before Gradio
     from grabette.auth import get_hf_auth
     from grabette.webauth import build_auth_router

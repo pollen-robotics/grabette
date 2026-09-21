@@ -83,7 +83,11 @@ video{max-width:100%;max-height:100%;object-fit:contain}
   var v=document.getElementById('v');
   var msg=document.getElementById('msg');
   if(!eid){msg.textContent='No episode';return;}
-  v.src='/api/episodes/'+encodeURIComponent(eid)+'/video';
+  // stream=dcam plays the depth camera's own image stream instead of the head
+  // camera. Same replay clock drives both, so two players stay in step.
+  var path=params.get('stream')==='dcam'?'/dcam-video':'/video';
+  v.src='/api/episodes/'+encodeURIComponent(eid)+path;
+  v.onerror=function(){msg.style.display='';msg.textContent='Not recorded';};
   v.load();
   var wasPlaying=false, synced=false;
 
