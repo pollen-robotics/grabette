@@ -73,11 +73,11 @@ _FLEET_BUTTON_HTML = (
     'box-shadow:0 4px 14px rgba(0,0,0,.22);">Open fleet dashboard ↗</a>'
 )
 
-# Step 1's illustration. Served from grabette/ui/assets (mounted at /assets by
-# app.main); the onerror keeps the step readable on a device where the file was
-# never added.
+# Step 1's illustration. Served from grabette/ui/assets, mounted at /ui-assets
+# by app.main — not /assets, which is Gradio's own bundle. The onerror keeps the
+# step readable on a device where the file was never added.
 _START_RECORDING_GIF_HTML = (
-    '<img src="/assets/start-recording.gif" alt="Starting a recording"'
+    '<img src="/ui-assets/start-recording.gif" alt="Starting a recording"'
     ' style="width:100%;border-radius:8px;display:block;"'
     ' onerror="this.style.display=\'none\';'
     'this.nextElementSibling.style.display=\'flex\';">'

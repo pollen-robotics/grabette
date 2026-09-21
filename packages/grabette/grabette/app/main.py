@@ -1257,10 +1257,14 @@ def create_app() -> FastAPI:
 
     # Images the dashboard pages reference directly (step illustrations). Must
     # be mounted before Gradio takes "/", like every other route here.
+    #
+    # NOT at /assets: Gradio's page shell references its own frontend bundle as
+    # ./assets/index-*.js, so mounting there shadows it — the dashboard's
+    # JavaScript 404s and every page hangs on a loading spinner forever.
     _assets_dir = Path(__file__).resolve().parent.parent / "ui" / "assets"
     if _assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="assets")
-        logger.info("UI assets mounted at /assets from %s", _assets_dir)
+        app.mount("/ui-assets", StaticFiles(directory=str(_assets_dir)), name="ui-assets")
+        logger.info("UI assets mounted at /ui-assets from %s", _assets_dir)
 
     # Auth router (OAuth PKCE + manual token) — must be registered before Gradio
     from grabette.auth import get_hf_auth
