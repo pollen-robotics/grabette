@@ -48,6 +48,11 @@ MODAL_CSS = """
     margin-left: auto !important;
     color: #f87171 !important;
 }
+/* Live dot on the Test Recording status pill (see _tr_pill). */
+@keyframes grabette-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.25; }
+}
 """
 
 # Same widget, denser skin (see webauth._COMPACT_CSS). The home page shows the
@@ -73,18 +78,70 @@ _FLEET_BUTTON_HTML = (
     'box-shadow:0 4px 14px rgba(0,0,0,.22);">Open fleet dashboard ↗</a>'
 )
 
-# Step 1's illustration. Served from grabette/ui/assets, mounted at /ui-assets
-# by app.main — not /assets, which is Gradio's own bundle. The onerror keeps the
-# step readable on a device where the file was never added.
-_START_RECORDING_GIF_HTML = (
-    '<img src="/ui-assets/start-recording.gif" alt="Starting a recording"'
-    ' style="width:100%;border-radius:8px;display:block;"'
-    ' onerror="this.style.display=\'none\';'
-    'this.nextElementSibling.style.display=\'flex\';">'
-    '<div style="display:none;align-items:center;justify-content:center;'
-    'height:150px;border-radius:8px;border:1px dashed #cbd5e1;color:#94a3b8;'
-    'font-size:.85rem;">Animation coming soon</div>'
-)
+# Test Recording shows the grabette's own button being pressed instead of
+# offering start/stop buttons of its own: the physical button is how a recording
+# is made in the field, and this is the page whose job is to teach that.
+# Served from grabette/ui/assets, mounted at /ui-assets (NOT /assets, which is
+# Gradio's own bundle); onerror keeps the step readable without the file.
+def _button_gif(filename: str, caption: str) -> str:
+    return (
+        '<figure style="margin:0;">'
+        f'<img src="/ui-assets/{filename}" alt="{html.escape(caption)}"'
+        ' style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;'
+        'border-radius:10px;background:#0f172a;"'
+        ' onerror="this.style.display=\'none\';'
+        'this.nextElementSibling.style.display=\'flex\';">'
+        '<div style="display:none;align-items:center;justify-content:center;'
+        'aspect-ratio:4/3;border-radius:10px;color:#94a3b8;font-size:.85rem;'
+        'border:1px dashed var(--border-color-primary,#cbd5e1);">'
+        'Animation coming soon</div>'
+        '<figcaption style="margin-top:.55rem;text-align:center;font-size:.9rem;'
+        'font-weight:600;color:var(--body-text-color);">'
+        f'{html.escape(caption)}</figcaption></figure>'
+    )
+
+
+def _step_header(number: int, title: str, hint: str = "") -> str:
+    """A numbered step's heading — one line, no gradio Markdown heading.
+
+    gr.Markdown("### 1 · …") inside a Group renders with the margins of a
+    document heading, which is what made the steps tall enough to scroll.
+    """
+    sub = (
+        '<div style="font-size:.88rem;opacity:.75;margin-top:.15rem;">'
+        f'{html.escape(hint)}</div>' if hint else ""
+    )
+    return (
+        '<div style="display:flex;gap:.7rem;align-items:baseline;">'
+        '<span style="flex:none;width:1.6rem;height:1.6rem;border-radius:50%;'
+        'display:inline-flex;align-items:center;justify-content:center;'
+        'font-size:.82rem;font-weight:700;color:#fff;background:#3b82f6;">'
+        f'{number}</span><div><div style="font-weight:700;font-size:1.02rem;">'
+        f'{html.escape(title)}</div>{sub}</div></div>'
+    )
+
+
+# The one live control on the page: what the device is doing right now, polled
+# rather than set by a click, because the press happens on the grabette.
+_TR_PILL_STYLES = {
+    "idle": ("#94a3b8", ""),
+    "recording": ("#ef4444", "animation:grabette-pulse 1.2s ease-in-out infinite;"),
+    "waiting": ("#f59e0b", "animation:grabette-pulse 1.2s ease-in-out infinite;"),
+    "done": ("#10b981", ""),
+    "blocked": ("#ef4444", ""),
+}
+
+
+def _tr_pill(kind: str, text: str) -> str:
+    color, anim = _TR_PILL_STYLES.get(kind, _TR_PILL_STYLES["idle"])
+    return (
+        '<div style="display:inline-flex;align-items:center;gap:.55rem;'
+        'padding:.45rem .9rem;border-radius:999px;font-size:.9rem;'
+        f'background:{color}1a;border:1px solid {color}55;color:{color};">'
+        f'<span style="width:.55rem;height:.55rem;border-radius:50%;'
+        f'background:{color};{anim}"></span>'
+        f'<span style="font-weight:600;">{html.escape(text)}</span></div>'
+    )
 
 
 def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
@@ -448,64 +505,96 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Test Recording page ───────────────────────────────────────────
     #
-    # Start and stop are separate buttons, not a toggle: they are steps 1 and 3
-    # of a written procedure, and a control whose label changes under you is a
-    # poor fit for a numbered list.
+    # The recording is started and stopped on the grabette's own button, so this
+    # page never commands a capture: it POLLS the device and reacts. `episode_id`
+    # has to be remembered while the capture still reports it — CaptureStatus
+    # drops it the moment the recording ends.
+    _TR_FLOW0 = {"capturing": False, "episode_id": None, "settling": 0}
 
-    def _tr_idle(episode_id):
-        """Button states with nothing recording. An episode in hand keeps
-        steps 4 and 5 live; without one they are inert."""
-        has_ep = bool(episode_id)
-        return (
-            gr.update(interactive=True),    # start
-            gr.update(interactive=False),   # stop
-            gr.update(interactive=has_ep),  # check
-            gr.update(interactive=has_ep),  # delete
-        )
+    # stop_capture writes metadata.json from a deferred callback, so the episode
+    # is briefly on disk with nothing readable in it. Re-read for a few ticks
+    # before believing "metadata is missing".
+    _TR_SETTLE_TICKS = 8
 
-    def on_test_start(episode_id):
-        result = client.start_capture()
-        if result.get("error"):
+    def _tr_verdict(episode_id):
+        """The verdict card for a finished recording, or None while it settles."""
+        episode = client.get_episode(episode_id)
+        if episode is None or not episode.get("metadata_ok", True):
+            return None
+        return recording_summary(episode, client.check_episode(episode_id))
+
+    def poll_test_recording(flow):
+        """One tick: mirror the device's capture state onto the page.
+
+        Outputs: status pill, verdict card, check button, delete button, flow.
+        """
+        flow = dict(flow or _TR_FLOW0)
+        cap = (client.get_state() or {}).get("capture", {})
+        capturing = bool(cap.get("is_capturing"))
+        blocked = cap.get("blocked_reason") or ""
+
+        if capturing:
+            # A new recording supersedes whatever steps 2 and 3 were pointing at.
+            flow.update(capturing=True, settling=0,
+                        episode_id=cap.get("episode_id") or flow["episode_id"])
             return (
-                *_tr_idle(episode_id),
-                f"⛔ {result['error']}",
-                gr.update(),
-                episode_id,  # the failed start changes nothing about step 4/5
+                _tr_pill("recording",
+                         f"Recording — {float(cap.get('duration_seconds') or 0):.0f}s"),
+                gr.update(visible=False),
+                gr.update(interactive=False),
+                gr.update(interactive=False),
+                flow,
             )
-        # A new recording supersedes the one steps 4 and 5 were pointing at.
-        return (
-            gr.update(interactive=False),
-            gr.update(interactive=True),
-            gr.update(interactive=False),
-            gr.update(interactive=False),
-            "● Recording — now go to step 2.",
-            gr.update(visible=False),
-            None,
-        )
 
-    def on_test_stop():
-        result = client.stop_capture()
-        if result.get("error"):
-            return (*_tr_idle(None), f"⛔ {result['error']}", gr.update(), None)
-        episode_id = result.get("episode_id")
-        # Read the episode back: the stop response reports what the capture
-        # believes it wrote, this reports what is actually on disk.
-        episode = client.get_episode(episode_id) if episode_id else None
-        depth_on = bool((client.get_oakd_status() or {}).get("enabled"))
-        return (
-            *_tr_idle(episode_id),
-            "○ Idle",
-            gr.update(
-                value=recording_summary(result, episode, depth_on),
-                visible=True,
-            ),
-            episode_id,
-        )
+        if flow["capturing"] or flow["settling"]:
+            # The recording just ended (or is still being written out).
+            flow["capturing"] = False
+            verdict = _tr_verdict(flow["episode_id"]) if flow["episode_id"] else None
+            # No episode id at all means the capture never reported one — there
+            # is nothing on disk to wait for, so don't spend the settle window.
+            if (verdict is None and flow["episode_id"]
+                    and flow["settling"] < _TR_SETTLE_TICKS):
+                flow["settling"] += 1
+                return (_tr_pill("waiting", "Saving the episode…"),
+                        gr.update(visible=False), gr.update(interactive=False),
+                        gr.update(interactive=False), flow)
+            flow["settling"] = 0
+            if verdict is None:
+                # Out of patience: report what the episode actually says now,
+                # missing metadata included — that IS the finding.
+                verdict = recording_summary(
+                    client.get_episode(flow["episode_id"]),
+                    client.check_episode(flow["episode_id"]),
+                )
+            has_ep = bool(flow["episode_id"])
+            return (
+                _tr_pill("done", "Recorded — check it below"),
+                gr.update(value=verdict, visible=True),
+                gr.update(interactive=has_ep),
+                gr.update(interactive=has_ep),
+                flow,
+            )
 
-    def on_test_check(episode_id):
+        # Idle. Only the pill moves from here on: the verdict and the two
+        # buttons keep whatever the tick that finished the recording set.
+        if blocked:
+            # Not capturing is not the same as ready: a device held back by an
+            # upload or a hardware fault would read "waiting for the button"
+            # here, and the press it invites is the one that fails.
+            pill = _tr_pill("blocked", f"Cannot record — {blocked}")
+        elif cap.get("is_starting"):
+            pill = _tr_pill("waiting", "Starting…")
+        elif flow["episode_id"]:
+            pill = _tr_pill("done", "Recorded — check it below")
+        else:
+            pill = _tr_pill("idle", "Waiting for the button")
+        return pill, gr.update(), gr.update(), gr.update(), flow
+
+    def on_test_check(flow):
         """Replay the episode: the daemon feeds its recorded samples back into
         the same live state the charts read, so the angle chart moves with the
         video rather than showing the sensors' current values."""
+        episode_id = (flow or {}).get("episode_id")
         if not episode_id:
             return gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
         result = client.replay_start(episode_id)
@@ -535,23 +624,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         t, dur = st.get("time_ms", 0), st.get("duration_ms", 0)
         return gr.update(), gr.update(), f"{t / 1000:.1f}s / {dur / 1000:.1f}s"
 
-    def on_test_delete(episode_id):
+    def on_test_delete(flow):
+        flow = dict(flow or _TR_FLOW0)
+        episode_id = flow.get("episode_id")
         if not episode_id:
-            return gr.update(), gr.update(), gr.update(), gr.update(), gr.update(), None
+            return (gr.update(), gr.update(), gr.update(),
+                    gr.update(), gr.update(), gr.update(), flow)
         # Stop first: deleting the files under a running replay leaves the
         # daemon reading a directory that is no longer there.
         client.replay_stop()
         result = client.delete_episode(episode_id)
         msg = (f"⛔ {result['error']}" if result.get("error")
                else f"Deleted `{episode_id}`.")
+        flow.update(episode_id=None, settling=0)
         return (
             gr.update(interactive=False),   # check
             gr.update(interactive=False),   # delete
             gr.update(visible=False),       # replay panel
             gr.update(active=False),        # replay timer
             msg,
-            None,
+            gr.update(visible=False),       # verdict — it describes what is gone
+            flow,
         )
+
 
     def on_start_stop_session(current_task):
         cap_session = client.get_session_status()
@@ -1092,49 +1187,39 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         gr.HTML(_TITLE_HTML)
 
         gr.Markdown(
-            "Five steps to check a new device end to end. "
-            "The episode is deleted again at step 5, so nothing is left behind."
+            "Three steps to check a new device end to end. Nothing here starts "
+            "the recording — the button on the grabette does. The episode is "
+            "deleted again at step 3, so nothing is left behind."
         )
 
-        # The episode step 3 produced, and steps 4 and 5 act on. None until
-        # something has been recorded, and None again once it is deleted.
-        tr_episode = gr.State(None)
+        # Everything the page remembers between ticks — see poll_test_recording.
+        tr_flow = gr.State(dict(_TR_FLOW0))
 
-        # ── 1 — Start ─────────────────────────────────────────────────
+        # ── 1 — Record ────────────────────────────────────────────────
         with gr.Group():
-            gr.Markdown("### 1 · Start recording")
+            gr.HTML(_step_header(
+                1, "Record a few seconds",
+                "Press the button, pick an object up and put it down, press again.",
+            ))
             with gr.Row(equal_height=True):
                 with gr.Column(scale=1):
-                    gr.HTML(_START_RECORDING_GIF_HTML)
+                    gr.HTML(_button_gif("start-recording.gif", "Press to start"))
                 with gr.Column(scale=1):
-                    tr_start_btn = gr.Button(
-                        "● Start recording", variant="primary", size="lg",
-                    )
-                    tr_state = gr.Markdown("○ Idle")
+                    gr.HTML(_button_gif("stop-recording.gif", "Press again to stop"))
+            tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
+            # 1 Hz against the daemon's cached state — the page has no other way
+            # to learn about a press that happened on the device.
+            tr_poll_timer = gr.Timer(1.0)
 
-        # ── 2 — Grab ──────────────────────────────────────────────────
+        # ── 2 — Check ─────────────────────────────────────────────────
         with gr.Group():
-            gr.Markdown(
-                "### 2 · Grab an object\n"
-                "Pick something up and put it down again, moving the gripper "
-                "around as you would when collecting data. A few seconds is plenty."
-            )
-
-        # ── 3 — Stop ──────────────────────────────────────────────────
-        with gr.Group():
-            gr.Markdown("### 3 · Stop recording")
-            tr_stop_btn = gr.Button(
-                "■ Stop recording", variant="stop", size="lg", interactive=False,
-            )
-            tr_summary = gr.Markdown(visible=False)
-
-        # ── 4 — Check ─────────────────────────────────────────────────
-        with gr.Group():
-            gr.Markdown(
-                "### 4 · Check the episode\n"
-                "Plays back what was recorded — not what the sensors read now."
-            )
-            tr_check_btn = gr.Button("Show the recorded data", interactive=False)
+            gr.HTML(_step_header(
+                2, "Check what was recorded",
+                "Plays back the episode — not what the sensors read now.",
+            ))
+            tr_summary = gr.HTML(visible=False)
+            tr_check_btn = gr.Button("Show the recorded data", size="sm",
+                                     interactive=False)
             tr_replay_msg = gr.Markdown("")
             with gr.Group(visible=False) as tr_replay_panel:
                 with gr.Row(equal_height=True):
@@ -1142,38 +1227,31 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         gr.HTML(_section_label("RGB camera"))
                         tr_raw_video = gr.HTML(value="")
                     with gr.Column(scale=1):
-                        gr.HTML(_section_label("Depth camera (RGB)"))
+                        gr.HTML(_section_label("Depth camera (RGB-D)"))
                         tr_dcam_video = gr.HTML(value="")
                 gr.HTML(_section_label("Angle sensors"))
                 gr.HTML(_ANGLE_IFRAME_HTML)
                 tr_replay_stop_btn = gr.Button("Stop replay", size="sm")
             tr_replay_timer = gr.Timer(0.5, active=False)
 
-        # ── 5 — Delete ────────────────────────────────────────────────
+        # ── 3 — Delete ────────────────────────────────────────────────
         with gr.Group():
-            gr.Markdown(
-                "### 5 · Delete this episode\n"
+            gr.HTML(_step_header(
+                3, "Delete it",
                 "A test recording is not training data. Keep it only if you "
-                "meant to — it is filed under *Unassigned* in **Episodes**."
-            )
-            tr_delete_btn = gr.Button(
-                "Delete this episode", variant="stop", interactive=False,
-            )
+                "meant to — it is filed under Unassigned in Episodes.",
+            ))
+            tr_delete_btn = gr.Button("Delete this episode", variant="stop",
+                                      size="sm", interactive=False)
             tr_delete_msg = gr.Markdown("")
 
         # ── Wire events ───────────────────────────────────────────────
-        _tr_buttons = [tr_start_btn, tr_stop_btn, tr_check_btn, tr_delete_btn]
-
-        tr_start_btn.click(
-            fn=on_test_start, inputs=tr_episode,
-            outputs=[*_tr_buttons, tr_state, tr_summary, tr_episode],
-        )
-        tr_stop_btn.click(
-            fn=on_test_stop,
-            outputs=[*_tr_buttons, tr_state, tr_summary, tr_episode],
+        tr_poll_timer.tick(
+            fn=poll_test_recording, inputs=tr_flow,
+            outputs=[tr_state, tr_summary, tr_check_btn, tr_delete_btn, tr_flow],
         )
         tr_check_btn.click(
-            fn=on_test_check, inputs=tr_episode,
+            fn=on_test_check, inputs=tr_flow,
             outputs=[tr_replay_panel, tr_raw_video, tr_dcam_video,
                      tr_replay_timer, tr_replay_msg],
         )
@@ -1186,9 +1264,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[tr_replay_panel, tr_replay_timer, tr_replay_msg],
         )
         tr_delete_btn.click(
-            fn=on_test_delete, inputs=tr_episode,
+            fn=on_test_delete, inputs=tr_flow,
             outputs=[tr_check_btn, tr_delete_btn, tr_replay_panel,
-                     tr_replay_timer, tr_delete_msg, tr_episode],
+                     tr_replay_timer, tr_delete_msg, tr_summary, tr_flow],
         )
 
         batt_popup_tr = gr.HTML(visible=False)

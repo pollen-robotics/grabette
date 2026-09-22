@@ -293,9 +293,10 @@ def test_the_fault_clears_once_the_calibration_reads(monkeypatch, tmp_path):
     assert b.hardware_error == ""
 
 
-def test_a_plain_missing_oakd_is_not_a_fault(monkeypatch):
-    # A bench setup with no OAK-D attached keeps working as before: only an
-    # unusable CALIBRATION is treated as a fault.
+def test_a_depth_camera_that_will_not_start_is_a_fault(monkeypatch):
+    # A camera that never comes up is the calibration incident with a different
+    # first symptom: the recording goes ahead, writes no dcam_* stream at all,
+    # and is rejected after the upload. It used to be logged and walked past.
     from grabette.hardware import oakd as oakd_mod
 
     def _boom(sync):
@@ -306,6 +307,18 @@ def test_a_plain_missing_oakd_is_not_a_fault(monkeypatch):
     b = rpi.RpiBackend()
 
     b._init_oakd()
+
+    assert "no device found" in b.hardware_error
+    assert "RGB-D" in b.hardware_error
+    with pytest.raises(RuntimeError):
+        b.raise_if_capture_blocked()
+
+
+def test_a_deliberately_cameraless_setup_never_reaches_the_fault(monkeypatch):
+    # enable_oakd=False is how a bench rig says "no depth camera on purpose".
+    # start() must not bring the camera up, so nothing latches a fault.
+    from grabette.backend import rpi
+    b = rpi.RpiBackend(enable_oakd=False)
 
     assert b.hardware_error == ""
 

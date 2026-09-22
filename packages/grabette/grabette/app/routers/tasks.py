@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
 from grabette.capture_scheduler import get_capture_scheduler
+from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.hardware.episode_files import DCAM_LEFT, resolve
 from grabette.task import TaskManager, episode_id_for
@@ -256,6 +257,26 @@ def get_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
         return tm.get_episode(episode_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Episode not found")
+
+
+@router.get("/api/episodes/{episode_id}/check")
+def check_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+    """Which required artifacts this episode lacks ([] = it can be converted).
+
+    The same screen the upload applies per episode, exposed so the dashboard can
+    answer "did the recording actually capture everything?" — the counters in
+    EpisodeInfo cover the RGB camera and the encoders, and say nothing at all
+    about whether the depth camera wrote a single file.
+
+    Its own route rather than a field on EpisodeInfo: that model is built once
+    per episode of every task on each /api/tasks call, and this costs a stat()
+    per required file.
+    """
+    ep_dir = tm.episode_dir(episode_id)
+    if not ep_dir.exists():
+        raise HTTPException(status_code=404, detail="Episode not found")
+    lacks = missing_files(ep_dir)
+    return {"episode_id": episode_id, "missing": lacks, "complete": not lacks}
 
 
 @router.get("/api/episodes/{episode_id}/download")

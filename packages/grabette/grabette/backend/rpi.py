@@ -166,14 +166,16 @@ class RpiBackend(Backend):
         absent on an OAK-D-only device; importing oakd is free either way, since
         that module only pulls depthai inside its own functions.
 
-        A missing/unusable OAK-D offline calibration is singled out from every
-        other init failure: the device is reachable, so it looks healthy, yet
-        every episode it records is unconvertible (the SLAM Space rejects them
-        with "missing dcam_calib_offline.json"). That one is latched as a
-        hardware error, which refuses capture and blinks the error pattern.
-        Other failures keep the historical behaviour (log + carry on without the
-        camera) so a deliberately camera-less bench setup still works. The
-        Gemini has no equivalent fault: it derives its calibration on the host.
+        ANY failure here latches a hardware error, which refuses capture and
+        blinks the error pattern. A camera that will not start and one whose
+        offline calibration is unusable differ only in wording: either way every
+        episode this grabette records is unconvertible, and the difference the
+        operator cares about is the message, not whether the recording is
+        allowed. An init failure used to be logged and walked past, which is how
+        a whole session came out with no RGB-D data in it and was rejected on
+        the SLAM Space long after the takes could have been redone. A
+        deliberately camera-less bench setup sets `enable_oakd=False` and never
+        reaches this method.
         """
         from grabette.hardware.oakd import OakdCalibrationError, OakdCapture
         try:
@@ -198,11 +200,19 @@ class RpiBackend(Backend):
             ))
             logger.error("OAK-D calibration unusable — recording disabled: %s", e)
         except Exception as e:
-            logger.warning(
-                "Depth camera (%s) not available, continuing without it: %s",
-                self._depth_camera, e,
-            )
+            # Not a calibration fault, but just as fatal for the episode: with
+            # no depth camera there are no dcam_* streams at all, so the
+            # recording carries no RGB-D data and the conversion drops it. This
+            # used to only log and let the capture go ahead — the episode looked
+            # fine on the device and was rejected after the upload.
             self._oakd = None
+            self._set_hw_error(_HW_OAKD, (
+                f"the depth camera ({self._depth_camera}) did not start "
+                f"({_exc_text(e)}) — episodes would carry no RGB-D data and "
+                "could never be converted. Check its cable, then power-cycle."
+            ))
+            logger.error("Depth camera (%s) unusable — recording disabled: %s",
+                         self._depth_camera, e)
 
     def _init_speaker(self) -> None:
         """Resolve the HAT codec + pre-render the capture-start beep. Purely

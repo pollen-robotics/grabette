@@ -233,6 +233,18 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def check_episode(self, episode_id: str) -> dict | None:
+        """Which required artifacts an episode lacks, or None if it cannot be
+        asked. The only thing that tells the dashboard whether the depth camera
+        wrote anything — the episode's counters cover the RGB camera and the
+        encoders only."""
+        try:
+            r = self._http.get(f"/api/episodes/{episode_id}/check")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     def delete_episode(self, episode_id: str) -> dict:
         try:
             r = self._http.delete(f"/api/episodes/{episode_id}")
