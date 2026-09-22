@@ -53,6 +53,18 @@ MODAL_CSS = """
     0%, 100% { opacity: 1; }
     50% { opacity: 0.25; }
 }
+/* Test Recording is a procedure to read, not a dashboard to scan: a column
+   narrow enough for the eye to fall down it, centred, with the steps as
+   rounded cards. Full width put the two button animations metres apart. */
+#tr-page {
+    max-width: 640px !important;
+    margin: 0 auto !important;
+}
+#tr-page .grabette-step {
+    border-radius: 18px !important;
+    padding: 1.15rem 1.3rem !important;
+    overflow: hidden !important;
+}
 """
 
 # Same widget, denser skin (see webauth._COMPACT_CSS). The home page shows the
@@ -85,17 +97,18 @@ _FLEET_BUTTON_HTML = (
 # Gradio's own bundle); onerror keeps the step readable without the file.
 def _button_gif(filename: str, caption: str) -> str:
     return (
-        '<figure style="margin:0;">'
+        '<figure style="margin:0 auto;max-width:170px;">'
         f'<img src="/ui-assets/{filename}" alt="{html.escape(caption)}"'
-        ' style="width:100%;aspect-ratio:4/3;object-fit:cover;display:block;'
-        'border-radius:10px;background:#0f172a;"'
+        ' style="width:100%;aspect-ratio:1;object-fit:cover;display:block;'
+        'border-radius:14px;background:#0f172a;"'
         ' onerror="this.style.display=\'none\';'
         'this.nextElementSibling.style.display=\'flex\';">'
         '<div style="display:none;align-items:center;justify-content:center;'
-        'aspect-ratio:4/3;border-radius:10px;color:#94a3b8;font-size:.85rem;'
+        'aspect-ratio:1;border-radius:14px;color:#94a3b8;font-size:.78rem;'
+        'text-align:center;padding:.5rem;'
         'border:1px dashed var(--border-color-primary,#cbd5e1);">'
         'Animation coming soon</div>'
-        '<figcaption style="margin-top:.55rem;text-align:center;font-size:.9rem;'
+        '<figcaption style="margin-top:.5rem;text-align:center;font-size:.85rem;'
         'font-weight:600;color:var(--body-text-color);">'
         f'{html.escape(caption)}</figcaption></figure>'
     )
@@ -526,7 +539,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def poll_test_recording(flow):
         """One tick: mirror the device's capture state onto the page.
 
-        Outputs: status pill, verdict card, check button, delete button, flow.
+        Outputs: status pill, verdict card, the three episode buttons (check,
+        download, delete) and the flow dict.
         """
         flow = dict(flow or _TR_FLOW0)
         cap = (client.get_state() or {}).get("capture", {})
@@ -541,8 +555,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 _tr_pill("recording",
                          f"Recording — {float(cap.get('duration_seconds') or 0):.0f}s"),
                 gr.update(visible=False),
-                gr.update(interactive=False),
-                gr.update(interactive=False),
+                *([gr.update(interactive=False)] * 3),
                 flow,
             )
 
@@ -556,8 +569,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     and flow["settling"] < _TR_SETTLE_TICKS):
                 flow["settling"] += 1
                 return (_tr_pill("waiting", "Saving the episode…"),
-                        gr.update(visible=False), gr.update(interactive=False),
-                        gr.update(interactive=False), flow)
+                        gr.update(visible=False),
+                        *([gr.update(interactive=False)] * 3), flow)
             flow["settling"] = 0
             if verdict is None:
                 # Out of patience: report what the episode actually says now,
@@ -570,8 +583,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return (
                 _tr_pill("done", "Recorded — check it below"),
                 gr.update(value=verdict, visible=True),
-                gr.update(interactive=has_ep),
-                gr.update(interactive=has_ep),
+                *([gr.update(interactive=has_ep)] * 3),
                 flow,
             )
 
@@ -588,7 +600,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
             pill = _tr_pill("idle", "Waiting for the button")
-        return pill, gr.update(), gr.update(), gr.update(), flow
+        return pill, *([gr.update()] * 4), flow
 
     def on_test_check(flow):
         """Replay the episode: the daemon feeds its recorded samples back into
@@ -624,12 +636,24 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         t, dur = st.get("time_ms", 0), st.get("duration_ms", 0)
         return gr.update(), gr.update(), f"{t / 1000:.1f}s / {dur / 1000:.1f}s"
 
+    def on_test_download(flow):
+        """The whole episode directory as one archive, so the files can be
+        opened off the device. Same endpoint as the Episodes page — nothing
+        about a test recording makes it a different kind of download."""
+        episode_id = (flow or {}).get("episode_id")
+        if not episode_id:
+            return gr.update(), gr.update()
+        path = client.download_episodes([episode_id])
+        if path is None:
+            return gr.update(), "⛔ Could not build the archive."
+        return (gr.update(value=path, visible=True),
+                f"`{episode_id}` — every file the recording wrote.")
+
     def on_test_delete(flow):
         flow = dict(flow or _TR_FLOW0)
         episode_id = flow.get("episode_id")
         if not episode_id:
-            return (gr.update(), gr.update(), gr.update(),
-                    gr.update(), gr.update(), gr.update(), flow)
+            return (*([gr.update()] * 8), flow)
         # Stop first: deleting the files under a running replay leaves the
         # daemon reading a directory that is no longer there.
         client.replay_stop()
@@ -639,11 +663,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         flow.update(episode_id=None, settling=0)
         return (
             gr.update(interactive=False),   # check
+            gr.update(interactive=False),   # download
             gr.update(interactive=False),   # delete
             gr.update(visible=False),       # replay panel
             gr.update(active=False),        # replay timer
             msg,
             gr.update(visible=False),       # verdict — it describes what is gone
+            gr.update(value=None, visible=False),  # archive of a gone episode
             flow,
         )
 
@@ -1186,69 +1212,84 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
-        gr.Markdown(
-            "Three steps to check a new device end to end. Nothing here starts "
-            "the recording — the button on the grabette does. The episode is "
-            "deleted again at step 3, so nothing is left behind."
-        )
-
         # Everything the page remembers between ticks — see poll_test_recording.
         tr_flow = gr.State(dict(_TR_FLOW0))
 
-        # ── 1 — Record ────────────────────────────────────────────────
-        with gr.Group():
-            gr.HTML(_step_header(
-                1, "Record a few seconds",
-                "Press the button, pick an object up and put it down, press again.",
-            ))
-            with gr.Row(equal_height=True):
-                with gr.Column(scale=1):
-                    gr.HTML(_button_gif("start-recording.gif", "Press to start"))
-                with gr.Column(scale=1):
-                    gr.HTML(_button_gif("stop-recording.gif", "Press again to stop"))
-            tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
-            # 1 Hz against the daemon's cached state — the page has no other way
-            # to learn about a press that happened on the device.
-            tr_poll_timer = gr.Timer(1.0)
+        with gr.Column(elem_id="tr-page"):
+            gr.Markdown(
+                "Three steps to check a new device end to end. Nothing here "
+                "starts the recording — the button on the grabette does."
+            )
 
-        # ── 2 — Check ─────────────────────────────────────────────────
-        with gr.Group():
-            gr.HTML(_step_header(
-                2, "Check what was recorded",
-                "Plays back the episode — not what the sensors read now.",
-            ))
-            tr_summary = gr.HTML(visible=False)
-            tr_check_btn = gr.Button("Show the recorded data", size="sm",
-                                     interactive=False)
-            tr_replay_msg = gr.Markdown("")
-            with gr.Group(visible=False) as tr_replay_panel:
+            # ── 1 — Record ────────────────────────────────────────────
+            with gr.Group(elem_classes="grabette-step"):
+                gr.HTML(_step_header(
+                    1, "Record a few seconds",
+                    "Press the button, pick an object up and put it down, "
+                    "press again.",
+                ))
                 with gr.Row(equal_height=True):
                     with gr.Column(scale=1):
-                        gr.HTML(_section_label("RGB camera"))
-                        tr_raw_video = gr.HTML(value="")
+                        gr.HTML(_button_gif("start-recording.gif",
+                                            "Press to start"))
                     with gr.Column(scale=1):
-                        gr.HTML(_section_label("Depth camera (RGB-D)"))
-                        tr_dcam_video = gr.HTML(value="")
-                gr.HTML(_section_label("Angle sensors"))
-                gr.HTML(_ANGLE_IFRAME_HTML)
-                tr_replay_stop_btn = gr.Button("Stop replay", size="sm")
-            tr_replay_timer = gr.Timer(0.5, active=False)
+                        gr.HTML(_button_gif("stop-recording.gif",
+                                            "Press again to stop"))
+                tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
+                # 1 Hz against the daemon's cached state — the page has no other
+                # way to learn about a press that happened on the device.
+                tr_poll_timer = gr.Timer(1.0)
 
-        # ── 3 — Delete ────────────────────────────────────────────────
-        with gr.Group():
-            gr.HTML(_step_header(
-                3, "Delete it",
-                "A test recording is not training data. Keep it only if you "
-                "meant to — it is filed under Unassigned in Episodes.",
-            ))
-            tr_delete_btn = gr.Button("Delete this episode", variant="stop",
-                                      size="sm", interactive=False)
-            tr_delete_msg = gr.Markdown("")
+            # ── 2 — Check ─────────────────────────────────────────────
+            with gr.Group(elem_classes="grabette-step"):
+                gr.HTML(_step_header(
+                    2, "Check what was recorded",
+                    "Plays back the episode — not what the sensors read now.",
+                ))
+                tr_summary = gr.HTML(visible=False)
+                with gr.Row():
+                    tr_check_btn = gr.Button("Show the recorded data",
+                                             size="sm", interactive=False)
+                    tr_download_btn = gr.Button("Download (.tar.gz)",
+                                                size="sm", interactive=False)
+                tr_replay_msg = gr.Markdown("")
+                # Hidden until asked for: an empty file drop is a hole in the
+                # card on the nine states out of ten where nothing was built.
+                tr_download_file = gr.File(label="Episode archive",
+                                           visible=False, height=90)
+                with gr.Group(visible=False) as tr_replay_panel:
+                    with gr.Row(equal_height=True):
+                        with gr.Column(scale=1):
+                            gr.HTML(_section_label("RGB camera"))
+                            tr_raw_video = gr.HTML(value="")
+                        with gr.Column(scale=1):
+                            gr.HTML(_section_label("Depth camera (RGB-D)"))
+                            tr_dcam_video = gr.HTML(value="")
+                    gr.HTML(_section_label("Angle sensors"))
+                    gr.HTML(_ANGLE_IFRAME_HTML)
+                    tr_replay_stop_btn = gr.Button("Stop replay", size="sm")
+                tr_replay_timer = gr.Timer(0.5, active=False)
+
+            # ── 3 — Delete ────────────────────────────────────────────
+            with gr.Group(elem_classes="grabette-step"):
+                gr.HTML(_step_header(
+                    3, "Delete it",
+                    "A test recording is not training data. Keep it only if "
+                    "you meant to — it is filed under Unassigned in Episodes.",
+                ))
+                tr_delete_btn = gr.Button("Delete this episode", variant="stop",
+                                          size="sm", interactive=False)
+                tr_delete_msg = gr.Markdown("")
 
         # ── Wire events ───────────────────────────────────────────────
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
-            outputs=[tr_state, tr_summary, tr_check_btn, tr_delete_btn, tr_flow],
+            outputs=[tr_state, tr_summary, tr_check_btn, tr_download_btn,
+                     tr_delete_btn, tr_flow],
+        )
+        tr_download_btn.click(
+            fn=on_test_download, inputs=tr_flow,
+            outputs=[tr_download_file, tr_replay_msg],
         )
         tr_check_btn.click(
             fn=on_test_check, inputs=tr_flow,
@@ -1265,8 +1306,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         tr_delete_btn.click(
             fn=on_test_delete, inputs=tr_flow,
-            outputs=[tr_check_btn, tr_delete_btn, tr_replay_panel,
-                     tr_replay_timer, tr_delete_msg, tr_summary, tr_flow],
+            outputs=[tr_check_btn, tr_download_btn, tr_delete_btn,
+                     tr_replay_panel, tr_replay_timer, tr_delete_msg,
+                     tr_summary, tr_download_file, tr_flow],
         )
 
         batt_popup_tr = gr.HTML(visible=False)
