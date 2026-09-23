@@ -49,6 +49,83 @@ MODAL_CSS = """
     margin-left: auto !important;
     color: #f87171 !important;
 }
+/* Overview: the call to action is one button, so it is sized to its label and
+   centred rather than stretched across the page. */
+#ov-page .ov-cta {
+    justify-content: center !important;
+}
+/* gr.Button(link=...) renders an <a>, not a <button> — both are named here so
+   the rule survives whichever gradio picks. */
+#ov-page .ov-cta button,
+#ov-page .ov-cta a {
+    width: auto !important;
+    flex: 0 0 auto !important;
+}
+/* The camera toggle is a segmented control, not two loose radio dots: the
+   native inputs are hidden and each label becomes half of one pill, centred
+   under the preview it belongs to. :has() is what lights the chosen half. */
+#ov-page .ov-toggle {
+    display: flex !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    margin: .75rem 0 0 !important;
+    border: none !important;
+    background: none !important;
+}
+#ov-page .ov-toggle label {
+    margin: 0 !important;
+    padding: .35rem 1.1rem !important;
+    border: 1px solid var(--border-color-primary) !important;
+    background: var(--background-fill-primary) !important;
+    color: var(--body-text-color-subdued) !important;
+    font-size: var(--button-small-text-size) !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+    box-shadow: none !important;
+}
+#ov-page .ov-toggle label:first-child {
+    border-radius: 999px 0 0 999px !important;
+}
+#ov-page .ov-toggle label:last-child {
+    border-radius: 0 999px 999px 0 !important;
+    border-left: none !important;
+}
+#ov-page .ov-toggle label input {
+    display: none !important;
+}
+#ov-page .ov-toggle label:has(input:checked) {
+    background: var(--button-primary-background-fill) !important;
+    border-color: var(--button-primary-background-fill) !important;
+    color: var(--button-primary-text-color) !important;
+}
+/* gradio pads an HTML block but not an Image, which started the cards and the
+   viewer 10px below the camera and threw the whole row off its baseline. */
+#ov-page .ov-tiles .html-container {
+    padding: 0 !important;
+}
+/* The button under a tile sits on the same line as the toggle under the
+   camera — same top margin, centred the same way. */
+#ov-page .ov-tile-btn {
+    margin-top: .75rem !important;
+    justify-content: center !important;
+}
+#ov-page .ov-tile-btn button,
+#ov-page .ov-tile-btn a {
+    width: auto !important;
+    flex: 0 0 auto !important;
+}
+#ov-page .ov-note p {
+    font-size: .8rem !important;
+    text-align: center !important;
+    margin: .35rem 0 0 !important;
+}
+@media (max-width: 560px) {
+    /* A phone shows one column, so a full-width button is the easy target. */
+    #ov-page .ov-cta button,
+    #ov-page .ov-cta a {
+        width: 100% !important;
+    }
+}
 /* Live dot on the Test Recording status pill (see _tr_pill). */
 @keyframes grabette-pulse {
     0%, 100% { opacity: 1; }
@@ -123,14 +200,43 @@ _HF_AUTH_IFRAME_COMPACT = (
 # Sized to sit beside the login line rather than dominate the page. Still a
 # plain link out: grabette-fleet is OAuth-gated and this dashboard is served
 # over plain HTTP, so its login cannot render in an iframe here.
-_FLEET_BUTTON_HTML = (
-    '<a href="{url}" target="_blank" rel="noopener" '
-    'style="display:flex;align-items:center;justify-content:center;gap:.5rem;'
+# The two errands at the bottom of the Overview are one shape in two colours:
+# same height, same weight, same radius, so neither looks like the important
+# one. Both are plain links out — grabette-fleet is OAuth-gated and this
+# dashboard is served over plain HTTP, so its login cannot render in an iframe
+# here, and the HF login card lives on Settings.
+_ERRAND_BUTTON = (
+    'display:flex;align-items:center;justify-content:center;gap:.5rem;'
     'height:56px;padding:0 1rem;border-radius:9px;box-sizing:border-box;'
     'text-align:center;text-decoration:none;color:#fff;font-weight:700;'
-    'background:linear-gradient(135deg,#10b981,#3b82f6);'
-    'box-shadow:0 4px 14px rgba(0,0,0,.22);">Open fleet dashboard ↗</a>'
+    'box-shadow:0 4px 14px rgba(0,0,0,.22);'
 )
+
+_FLEET_BUTTON_HTML = (
+    '<a href="{url}" target="_blank" rel="noopener" '
+    f'style="{_ERRAND_BUTTON}'
+    'background:linear-gradient(135deg,#10b981,#3b82f6);">'
+    'Open fleet dashboard ↗</a>'
+)
+
+
+def _hf_button_html(status: dict | None) -> str:
+    """The account button: who is logged in, or an invitation to log in.
+
+    It links to Settings rather than starting the OAuth dance itself — the
+    login card there handles one-click OAuth, a pasted token and logout, and
+    duplicating any of that here would be a second thing to keep right.
+    """
+    status = status or {}
+    if status.get("is_logged_in"):
+        user = html.escape(str(status.get("username") or "account"))
+        label, gradient = f"🤗 {user}", "linear-gradient(135deg,#6366f1,#8b5cf6)"
+    else:
+        label = "Connect HuggingFace account →"
+        gradient = "linear-gradient(135deg,#f59e0b,#ef4444)"
+    return (f'<a href="/settings" style="{_ERRAND_BUTTON}background:{gradient};">'
+            f'{label}</a>')
+
 
 # Test Recording shows the grabette's own button being pressed instead of
 # offering start/stop buttons of its own: the physical button is how a recording
@@ -247,6 +353,28 @@ _VIEWER_IFRAME_HTML = (
     'border-radius:8px;background:#1a1a2e;"></iframe>'
 )
 
+# The Overview's two previews stand side by side, so the viewer is pinned to
+# the same height as the camera image rather than to the viewport.
+# 200px is the camera preview's height too: pinning every tile of the first row
+# to it is what puts them on one baseline and their buttons on the next.
+_OV_TILE_H = 200
+
+_OV_VIEWER_IFRAME = (
+    '<iframe id="urdf-viewer" src="/viewer" '
+    f'style="width:100%;height:{_OV_TILE_H}px;border:none;'
+    'border-radius:8px;background:#1a1a2e;"></iframe>'
+)
+
+# Row separator — a hairline in the theme's own border colour, not the dark
+# slate <hr> the Live View uses, which is invisible on the light dashboard.
+_OV_RULE = (
+    '<div style="height:1px;background:var(--border-color-primary);'
+    'margin:1.4rem 0 1.1rem;"></div>'
+)
+
+_OV_RGB = "RGB"
+_OV_DEPTH = "Depth"
+
 _HF_AUTH_IFRAME = (
     '<iframe src="/api/hf-auth/widget" scrolling="no"'
     ' onload="var f=this;(function r(){'
@@ -286,6 +414,85 @@ _WIFI_SETTINGS_HTML = (
 # complete system sans-serif stack. The Markdown <h1> inherited the theme's
 # webfont (--font), which renders inconsistently — and falls back to serif — when
 # it loads partially or fails (e.g. the robot runs offline).
+# ── Overview cards ───────────────────────────────────────────────────
+#
+# Pure builders (no network) so the rules — what a missing reading looks like,
+# when the battery turns red — can be unit-tested. Everything is expressed in
+# theme variables: the same card has to read on the light dashboard and in dark
+# mode, which the hardcoded slate cards of the Live View bar do not.
+_OV_CARD = (
+    "display:flex;flex-direction:column;justify-content:space-evenly;"
+    "box-sizing:border-box;"
+    f"height:{_OV_TILE_H}px;"
+    "background:var(--background-fill-secondary);"
+    "border:1px solid var(--border-color-primary);"
+    "border-radius:14px;padding:.85rem 1rem;overflow:hidden;"
+)
+
+
+def _ov_row(label: str, value: str, color: str = "") -> str:
+    """One label/value line inside an overview card."""
+    tint = f"color:{color};" if color else "color:var(--body-text-color);"
+    return (
+        '<div>'
+        '<div style="font-size:.68rem;text-transform:uppercase;'
+        'letter-spacing:.09em;color:var(--body-text-color-subdued);">'
+        f'{html.escape(label)}</div>'
+        f'<div style="font-size:.95rem;font-weight:600;{tint}'
+        'word-break:break-all;">'
+        f'{value}</div></div>'
+    )
+
+
+def _ov_battery(info: dict) -> tuple[str, str]:
+    """Battery reading and the colour that says how worried to be."""
+    if "battery_pct" not in info:
+        return "—", ""
+    pct = info["battery_pct"]
+    charging = info.get("battery_charging")
+    if charging or pct > 40:
+        color = "#22c55e"
+    elif pct > _BATTERY_WARN_PCT:
+        color = "#f97316"
+    else:
+        color = "#ef4444"
+    return (f"⚡ {pct} %" if charging else f"{pct} %"), color
+
+
+def _ov_device_card(info: dict | None, wifi: dict | None) -> str:
+    """Hostname, address and network — who this device is on the network."""
+    info, wifi = info or {}, wifi or {}
+    ip = wifi.get("ip") or info.get("ip") or "—"
+    ssid = wifi.get("ssid") or "—"
+    return (
+        f'<div style="{_OV_CARD}">'
+        + _ov_row("Hostname", html.escape(str(info.get("hostname") or "—")))
+        + _ov_row("IP address", html.escape(str(ip)))
+        + _ov_row("Network", html.escape(str(ssid)))
+        + "</div>"
+    )
+
+
+def _ov_health_card(info: dict | None) -> str:
+    """Battery, temperature and the storage a recording can still land in."""
+    info = info or {}
+    batt, color = _ov_battery(info)
+    temp = f"{info['cpu_temp_c']} °C" if "cpu_temp_c" in info else "—"
+    if "disk_free_gb" in info:
+        total = info.get("disk_total_gb")
+        storage = (f"{info['disk_free_gb']} GB free"
+                   + (f" of {total} GB" if total else ""))
+    else:
+        storage = "—"
+    return (
+        f'<div style="{_OV_CARD}">'
+        + _ov_row("Battery", batt, color)
+        + _ov_row("Temperature", temp)
+        + _ov_row("Storage", storage)
+        + "</div>"
+    )
+
+
 _TITLE_HTML = (
     "<h1 style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
     "Roboto,Helvetica,Arial,sans-serif;font-weight:700;"
@@ -1228,44 +1435,117 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 1 — Connection (landing): account + fleet, then camera + 3D model
+    # Page 1 — Overview (landing)
     # ══════════════════════════════════════════════════════════════════
+    #
+    # What the device is doing and who it is, in one screen: what it sees, how
+    # it is posed, where it is on the network, how it is holding up. The one
+    # action worth taking from here — make a test recording — sits alone under
+    # that row; the two errands (account, fleet) go last.
+
+    def refresh_overview():
+        """The two info cards and the account button. One call to each endpoint."""
+        info = client.get_system_info()
+        wifi = client.wifi_status() if info is not None else None
+        return (_ov_device_card(info, wifi), _ov_health_card(info),
+                _hf_button_html(client.hf_status()))
+
+    def ov_frame(mode):
+        """Whichever camera the toggle is showing."""
+        return get_depth_frame() if mode == _OV_DEPTH else get_camera_frame()
+
+    def on_ov_mode(mode):
+        """Switching to depth turns the depth camera on if it is off.
+
+        Without this the toggle would show a permanently black panel on a
+        device whose depth camera is disabled, which reads as a broken camera
+        rather than a switched-off one. Switching back leaves it running:
+        turning someone's camera off behind their back is the worse surprise.
+        """
+        if mode != _OV_DEPTH:
+            return mode, ""
+        status = client.get_oakd_status() or {}
+        name = status.get("label") or "Depth camera"
+        if not status.get("supported"):
+            return mode, f"*{name} is not available on this device.*"
+        if status.get("enabled"):
+            return mode, ""
+        result = client.set_oakd(True)
+        if "error" in result:
+            return mode, f"⛔ {result['error']}"
+        return mode, f"*Starting {name}…*"
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
-        # ── Account | Fleet ───────────────────────────────────────────
-        # Both are one-off errands, not the point of the page, so they share a
-        # single row above the thing you actually came to look at.
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=3):
-                gr.HTML(_section_label("HuggingFace account"))
-                gr.HTML(_HF_AUTH_IFRAME_COMPACT)
-            with gr.Column(scale=2):
-                gr.HTML(_section_label("Fleet"))
-                gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
+        with gr.Column(elem_id="ov-page"):
 
-        # ── Camera | 3D model ─────────────────────────────────────────
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Camera"))
-                cn_camera_img = gr.Image(
-                    label=None, show_label=False, height="28vh", container=False,
+            # ── Camera | 3D model | Device | Health ───────────────────
+            # min_width is what makes this responsive: four columns on a
+            # laptop, two on a tablet, one on a phone, decided by gradio from
+            # the width each column says it needs.
+            with gr.Row(equal_height=False, elem_classes="ov-tiles"):
+                with gr.Column(scale=1, min_width=230):
+                    gr.HTML(_section_label("Camera"))
+                    ov_camera_img = gr.Image(
+                        label=None, show_label=False, height=_OV_TILE_H,
+                        container=False,
+                    )
+                    # The tile's control, on the tile's own centre line.
+                    ov_cam_mode = gr.Radio(
+                        [_OV_RGB, _OV_DEPTH], value=_OV_RGB,
+                        show_label=False, container=False,
+                        elem_classes="ov-toggle",
+                    )
+                    ov_cam_msg = gr.Markdown("", elem_classes="ov-note")
+                with gr.Column(scale=1, min_width=230):
+                    gr.HTML(_section_label("3D model"))
+                    gr.HTML(_OV_VIEWER_IFRAME)
+                with gr.Column(scale=1, min_width=230):
+                    gr.HTML(_section_label("Device"))
+                    ov_device_card = gr.HTML(_ov_device_card(None, None))
+                    with gr.Row(elem_classes="ov-tile-btn"):
+                        gr.Button("Change network", link="/settings", size="sm")
+                with gr.Column(scale=1, min_width=230):
+                    gr.HTML(_section_label("Health"))
+                    ov_health_card = gr.HTML(_ov_health_card(None))
+
+            gr.HTML(_OV_RULE)
+
+            # ── The one thing to do from here ─────────────────────────
+            with gr.Row(elem_classes="ov-cta"):
+                gr.Button(
+                    "Make a test recording →",
+                    link="/test-recording",
+                    variant="primary",
+                    size="lg",
                 )
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("3D Model"))
-                gr.HTML(_VIEWER_IFRAME_HTML)
 
-        gr.Button(
-            "Make a test recording →",
-            link="/test-recording",
-            variant="primary",
-            size="lg",
-        )
+            gr.HTML(_OV_RULE)
+
+            # ── Account | Fleet Space ─────────────────────────────────
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=1, min_width=260):
+                    gr.HTML(_section_label("HuggingFace account"))
+                    ov_hf_button = gr.HTML(_hf_button_html(None))
+                with gr.Column(scale=1, min_width=260):
+                    gr.HTML(_section_label("Fleet Space"))
+                    gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
+
+        ov_mode_state = gr.State(_OV_RGB)
+        ov_cam_mode.change(fn=on_ov_mode, inputs=ov_cam_mode,
+                           outputs=[ov_mode_state, ov_cam_msg])
 
         cn_camera_timer = gr.Timer(0.2)
-        cn_camera_timer.tick(fn=get_camera_frame, outputs=cn_camera_img)
+        cn_camera_timer.tick(fn=ov_frame, inputs=ov_mode_state,
+                             outputs=ov_camera_img)
+
+        ov_info_timer = gr.Timer(10.0)
+        ov_info_timer.tick(fn=refresh_overview,
+                           outputs=[ov_device_card, ov_health_card, ov_hf_button])
+        demo.load(fn=refresh_overview,
+                  outputs=[ov_device_card, ov_health_card, ov_hf_button])
 
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)
@@ -1284,7 +1564,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # session: the episode lands in Unassigned and can be moved or deleted from
     # Episodes afterwards.
     with demo.route("Test Recording") as test_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         # Everything the page remembers between ticks — see poll_test_recording.
@@ -1316,7 +1596,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Group(elem_classes="grabette-step"):
                 gr.HTML(_step_header(
                     2, "Check what was recorded",
-                    "Plays back the episode — not what the sensors read now.",
+                    "Plays back the episode or download it, to see the different files.",
                 ))
                 # Emptied rather than hidden: a visible=False -> True update on
                 # this component never reaches the browser, while the value
@@ -1400,7 +1680,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Episodes") as episodes_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
         episode_status_bar = gr.HTML("")
 
@@ -1641,7 +1921,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         # ── System bar (full width) ────────────────────────────────────
@@ -1718,7 +1998,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("Settings") as settings_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         with gr.Row(equal_height=False):
@@ -1750,7 +2030,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
 
     with demo.route("🔴 Power Off") as poweroff_demo:
-        gr.Navbar(main_page_name="Connection", elem_id="grabette-nav")
+        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         gr.HTML(_TITLE_HTML)
 
         gr.HTML(
