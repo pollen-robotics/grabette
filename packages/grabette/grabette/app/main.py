@@ -1276,7 +1276,7 @@ def create_app() -> FastAPI:
     if settings.ui_enabled:
         try:
             import gradio as gr
-            from grabette.ui.app import create_ui
+            from grabette.ui.app import MODAL_CSS, create_ui
 
             demo = create_ui()
             # `allowed_paths` whitelists directories from which Gradio's
@@ -1286,8 +1286,14 @@ def create_app() -> FastAPI:
             # exists on disk but Gradio refuses to hand it out, and the UI
             # never surfaces a download link. Default allowed paths cover
             # only Gradio's own cache and the OS temp dir.
+            # `css=` is not optional here: mount_gradio_app overwrites
+            # blocks.css with its own argument, so the stylesheet passed to
+            # gr.Blocks(css=...) is silently dropped when the UI is mounted
+            # rather than launched (gradio 6.17, routes.py: blocks.css = css
+            # or ""). Every custom rule — the Test Recording layout, the
+            # auth modal — disappears without this.
             app = gr.mount_gradio_app(
-                app, demo, path="/",
+                app, demo, path="/", css=MODAL_CSS,
                 allowed_paths=[str(settings.data_dir / ".downloads")],
             )
             logger.info("Gradio UI mounted at /")

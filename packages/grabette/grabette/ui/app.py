@@ -6,6 +6,7 @@ import html
 import io
 import logging
 import math
+from urllib.parse import quote
 
 import gradio as gr
 from PIL import Image
@@ -57,13 +58,43 @@ MODAL_CSS = """
    narrow enough for the eye to fall down it, centred, with the steps as
    rounded cards. Full width put the two button animations metres apart. */
 #tr-page {
-    max-width: 640px !important;
+    max-width: 560px !important;
+    width: 100% !important;
     margin: 0 auto !important;
 }
 #tr-page .grabette-step {
     border-radius: 18px !important;
     padding: 1.15rem 1.3rem !important;
     overflow: hidden !important;
+}
+/* Buttons the width of their label, left-aligned, instead of stretching to the
+   card edge — a full-width button reads as the step itself. */
+#tr-page button {
+    width: auto !important;
+    min-width: 0 !important;
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+}
+/* The secondary button next to it still has to look clickable on the grey
+   card, where gradio's default is nearly the card's own colour. */
+#tr-page button.secondary {
+    border: 1px solid var(--button-primary-background-fill, #3b82f6) !important;
+    color: var(--button-primary-background-fill, #3b82f6) !important;
+    font-weight: 600 !important;
+}
+#tr-page .grabette-step .row {
+    justify-content: flex-start !important;
+}
+/* Phone: a label-width button is a thumb target too small, so give it the
+   card back. */
+@media (max-width: 560px) {
+    #tr-page .grabette-step {
+        padding: 1rem .9rem !important;
+    }
+    #tr-page button,
+    #tr-page a[download] {
+        width: 100% !important;
+    }
 }
 """
 
@@ -97,7 +128,7 @@ _FLEET_BUTTON_HTML = (
 # Gradio's own bundle); onerror keeps the step readable without the file.
 def _button_gif(filename: str, caption: str) -> str:
     return (
-        '<figure style="margin:0 auto;max-width:170px;">'
+        '<figure style="margin:0 auto;width:100%;">'
         f'<img src="/ui-assets/{filename}" alt="{html.escape(caption)}"'
         ' style="width:100%;aspect-ratio:1;object-fit:cover;display:block;'
         'border-radius:14px;background:#0f172a;"'
@@ -112,6 +143,25 @@ def _button_gif(filename: str, caption: str) -> str:
         'font-weight:600;color:var(--body-text-color);">'
         f'{html.escape(caption)}</figcaption></figure>'
     )
+
+
+# Step 2's download is a plain link to the API's own archive route: the click
+# lands straight in the browser's downloads. Going through a gradio File meant
+# copying the whole archive onto the device's disk first, then a second click
+# on a box that was empty until then.
+_DL_BASE = ('display:inline-flex;align-items:center;justify-content:center;'
+            'padding:.42rem .9rem;border-radius:8px;font-size:.875rem;'
+            'font-weight:600;text-decoration:none;box-sizing:border-box;')
+
+
+def _download_link_html(episode_id: str | None) -> str:
+    if not episode_id:
+        return (f'<span style="{_DL_BASE}border:1px solid var(--border-color-primary,#cbd5e1);'
+                'color:var(--body-text-color-subdued,#94a3b8);opacity:.6;">'
+                'Download (.tar.gz)</span>')
+    return (f'<a href="/api/episodes/{quote(episode_id)}/download" download '
+            f'style="{_DL_BASE}border:1px solid #3b82f6;color:#3b82f6;">'
+            'Download (.tar.gz)</a>')
 
 
 def _step_header(number: int, title: str, hint: str = "") -> str:
@@ -536,10 +586,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return None
         return recording_summary(episode, client.check_episode(episode_id))
 
+    def _tr_controls(episode_id):
+        """The three step controls, in the order the poll outputs them.
+
+        Check and delete are gradio buttons that grey out; the download is a
+        link, so it is swapped for a dead-looking span instead.
+        """
+        return (gr.update(interactive=bool(episode_id)),
+                gr.update(value=_download_link_html(episode_id)),
+                gr.update(interactive=bool(episode_id)))
+
     def poll_test_recording(flow):
         """One tick: mirror the device's capture state onto the page.
 
-        Outputs: status pill, verdict card, the three episode buttons (check,
+        Outputs: status pill, verdict card, the three episode controls (check,
         download, delete) and the flow dict.
         """
         flow = dict(flow or _TR_FLOW0)
@@ -554,8 +614,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return (
                 _tr_pill("recording",
                          f"Recording — {float(cap.get('duration_seconds') or 0):.0f}s"),
-                gr.update(visible=False),
-                *([gr.update(interactive=False)] * 3),
+                gr.update(value=""),
+                *_tr_controls(None),
                 flow,
             )
 
@@ -569,8 +629,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     and flow["settling"] < _TR_SETTLE_TICKS):
                 flow["settling"] += 1
                 return (_tr_pill("waiting", "Saving the episode…"),
-                        gr.update(visible=False),
-                        *([gr.update(interactive=False)] * 3), flow)
+                        gr.update(value=""),
+                        *_tr_controls(None), flow)
             flow["settling"] = 0
             if verdict is None:
                 # Out of patience: report what the episode actually says now,
@@ -579,11 +639,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     client.get_episode(flow["episode_id"]),
                     client.check_episode(flow["episode_id"]),
                 )
-            has_ep = bool(flow["episode_id"])
             return (
                 _tr_pill("done", "Recorded — check it below"),
-                gr.update(value=verdict, visible=True),
-                *([gr.update(interactive=has_ep)] * 3),
+                gr.update(value=verdict),
+                *_tr_controls(flow["episode_id"]),
                 flow,
             )
 
@@ -628,32 +687,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(visible=False), gr.update(active=False), "Replay stopped"
 
     def poll_test_replay():
-        """Tear the panel down when the episode runs out, so a finished replay
-        does not sit there holding the charts on its last frame."""
+        """Follow the replay clock, and hand the sensors back at the end.
+
+        The engine stays active once it reaches the last sample (playing goes
+        false, time stops at duration), which leaves every live reading on the
+        device pinned to replay data until something stops it. Stop it here.
+        The panel stays up so the replay can be played again.
+        """
         st = client.replay_status()
         if not st.get("active"):
-            return gr.update(visible=False), gr.update(active=False), "Replay ended"
+            return gr.update(), gr.update(active=False), "Replay ended"
         t, dur = st.get("time_ms", 0), st.get("duration_ms", 0)
+        if dur and t >= dur and not st.get("playing"):
+            client.replay_stop()
+            return gr.update(), gr.update(active=False), "Replay ended — ↻ to play it again"
         return gr.update(), gr.update(), f"{t / 1000:.1f}s / {dur / 1000:.1f}s"
-
-    def on_test_download(flow):
-        """The whole episode directory as one archive, so the files can be
-        opened off the device. Same endpoint as the Episodes page — nothing
-        about a test recording makes it a different kind of download."""
-        episode_id = (flow or {}).get("episode_id")
-        if not episode_id:
-            return gr.update(), gr.update()
-        path = client.download_episodes([episode_id])
-        if path is None:
-            return gr.update(), "⛔ Could not build the archive."
-        return (gr.update(value=path, visible=True),
-                f"`{episode_id}` — every file the recording wrote.")
 
     def on_test_delete(flow):
         flow = dict(flow or _TR_FLOW0)
         episode_id = flow.get("episode_id")
         if not episode_id:
-            return (*([gr.update()] * 8), flow)
+            return (*([gr.update()] * 7), flow)
         # Stop first: deleting the files under a running replay leaves the
         # daemon reading a directory that is no longer there.
         client.replay_stop()
@@ -662,14 +716,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                else f"Deleted `{episode_id}`.")
         flow.update(episode_id=None, settling=0)
         return (
-            gr.update(interactive=False),   # check
-            gr.update(interactive=False),   # download
-            gr.update(interactive=False),   # delete
+            *_tr_controls(None),            # check, download, delete
             gr.update(visible=False),       # replay panel
             gr.update(active=False),        # replay timer
             msg,
-            gr.update(visible=False),       # verdict — it describes what is gone
-            gr.update(value=None, visible=False),  # archive of a gone episode
+            gr.update(value=""),            # verdict — it describes what is gone
             flow,
         )
 
@@ -1228,11 +1279,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     "Press the button, pick an object up and put it down, "
                     "press again.",
                 ))
+                # min_width low enough to keep the two animations side by
+                # side in the narrow card, high enough that a phone wraps
+                # them onto two rows instead of shrinking them to thumbnails.
                 with gr.Row(equal_height=True):
-                    with gr.Column(scale=1):
+                    with gr.Column(scale=1, min_width=200):
                         gr.HTML(_button_gif("start-recording.gif",
                                             "Press to start"))
-                    with gr.Column(scale=1):
+                    with gr.Column(scale=1, min_width=200):
                         gr.HTML(_button_gif("stop-recording.gif",
                                             "Press again to stop"))
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
@@ -1246,17 +1300,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     2, "Check what was recorded",
                     "Plays back the episode — not what the sensors read now.",
                 ))
-                tr_summary = gr.HTML(visible=False)
+                # Emptied rather than hidden: a visible=False -> True update on
+                # this component never reaches the browser, while the value
+                # update in the very same tick does. An empty HTML block takes
+                # no room, so there is nothing to hide.
+                tr_summary = gr.HTML("")
                 with gr.Row():
                     tr_check_btn = gr.Button("Show the recorded data",
-                                             size="sm", interactive=False)
-                    tr_download_btn = gr.Button("Download (.tar.gz)",
-                                                size="sm", interactive=False)
+                                             size="sm", variant="primary",
+                                             interactive=False)
+                    tr_download_link = gr.HTML(_download_link_html(None))
                 tr_replay_msg = gr.Markdown("")
-                # Hidden until asked for: an empty file drop is a hole in the
-                # card on the nine states out of ten where nothing was built.
-                tr_download_file = gr.File(label="Episode archive",
-                                           visible=False, height=90)
                 with gr.Group(visible=False) as tr_replay_panel:
                     with gr.Row(equal_height=True):
                         with gr.Column(scale=1):
@@ -1267,7 +1321,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             tr_dcam_video = gr.HTML(value="")
                     gr.HTML(_section_label("Angle sensors"))
                     gr.HTML(_ANGLE_IFRAME_HTML)
-                    tr_replay_stop_btn = gr.Button("Stop replay", size="sm")
+                    with gr.Row():
+                        tr_replay_again_btn = gr.Button("↻ Replay again",
+                                                        size="sm",
+                                                        variant="primary")
+                        tr_replay_stop_btn = gr.Button("Stop replay", size="sm")
                 tr_replay_timer = gr.Timer(0.5, active=False)
 
             # ── 3 — Delete ────────────────────────────────────────────
@@ -1284,18 +1342,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # ── Wire events ───────────────────────────────────────────────
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
-            outputs=[tr_state, tr_summary, tr_check_btn, tr_download_btn,
+            outputs=[tr_state, tr_summary, tr_check_btn, tr_download_link,
                      tr_delete_btn, tr_flow],
         )
-        tr_download_btn.click(
-            fn=on_test_download, inputs=tr_flow,
-            outputs=[tr_download_file, tr_replay_msg],
-        )
-        tr_check_btn.click(
-            fn=on_test_check, inputs=tr_flow,
-            outputs=[tr_replay_panel, tr_raw_video, tr_dcam_video,
-                     tr_replay_timer, tr_replay_msg],
-        )
+        # Same handler for both: a restart is a replay started over from zero,
+        # and the players follow whatever the clock says.
+        for _btn in (tr_check_btn, tr_replay_again_btn):
+            _btn.click(
+                fn=on_test_check, inputs=tr_flow,
+                outputs=[tr_replay_panel, tr_raw_video, tr_dcam_video,
+                         tr_replay_timer, tr_replay_msg],
+            )
         tr_replay_stop_btn.click(
             fn=on_test_replay_stop,
             outputs=[tr_replay_panel, tr_replay_timer, tr_replay_msg],
@@ -1306,9 +1363,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         tr_delete_btn.click(
             fn=on_test_delete, inputs=tr_flow,
-            outputs=[tr_check_btn, tr_download_btn, tr_delete_btn,
+            outputs=[tr_check_btn, tr_download_link, tr_delete_btn,
                      tr_replay_panel, tr_replay_timer, tr_delete_msg,
-                     tr_summary, tr_download_file, tr_flow],
+                     tr_summary, tr_flow],
         )
 
         batt_popup_tr = gr.HTML(visible=False)

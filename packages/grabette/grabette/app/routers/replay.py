@@ -89,23 +89,42 @@ video{max-width:100%;max-height:100%;object-fit:contain}
   v.src='/api/episodes/'+encodeURIComponent(eid)+path;
   v.onerror=function(){msg.style.display='';msg.textContent='Not recorded';};
   v.load();
-  var wasPlaying=false, synced=false;
+  var synced=false;
+
+  // The two streams come out of different writers: the head camera muxes at
+  // the frame rate it measured, the depth camera at its nominal one, so a
+  // depth mp4 is typically SHORTER than the recording it came from and runs
+  // ahead of the replay clock. So map the clock onto each file's own
+  // timeline — same fraction of the episode, same fraction of the video —
+  // rather than assuming a second of replay is a second of video.
+  function scale(st){
+    var d=v.duration;
+    return (isFinite(d)&&d>0&&st.duration_ms>0) ? d/(st.duration_ms/1000) : 1;
+  }
 
   setInterval(function(){
     fetch('/api/replay/status').then(function(r){return r.ok?r.json():null;})
     .then(function(st){
       if(!st)return;
-      if(!st.active){msg.textContent='Replay ended';v.pause();return;}
+      if(!st.active){
+        msg.style.display='';msg.textContent='Replay ended';
+        v.pause();synced=false;return;
+      }
       msg.style.display='none';
-      var target=st.time_ms/1000;
-      // Sync on seek or large drift
-      if(Math.abs(v.currentTime-target)>0.5||!synced){
+      var k=scale(st);
+      var target=st.time_ms/1000*k;
+      var drift=v.currentTime-target;
+      if(!synced||Math.abs(drift)>0.4){
         v.currentTime=target;
+        v.playbackRate=k;
         synced=true;
+      }else{
+        // Nudge rather than seek: a jump every tick is visible, a few percent
+        // of speed is not.
+        v.playbackRate=Math.max(0.25,Math.min(4,k*(1-drift*0.5)));
       }
       if(st.playing&&v.paused){v.play().catch(function(){});}
       if(!st.playing&&!v.paused){v.pause();}
-      wasPlaying=st.playing;
     }).catch(function(){});
   },200);
 })();
