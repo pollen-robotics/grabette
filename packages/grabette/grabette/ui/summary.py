@@ -97,7 +97,6 @@ def recording_summary(episode: dict | None, check: dict | None) -> str:
     duration = float(episode.get("duration_seconds") or 0.0)
     frames = int(episode.get("frame_count") or 0)
     angles = int(episode.get("angle_sample_count") or 0)
-    imu = int(episode.get("imu_sample_count") or 0)
     metadata_ok = bool(episode.get("metadata_ok", True))
     has_video = bool(episode.get("has_video", True))
 
@@ -132,7 +131,6 @@ def recording_summary(episode: dict | None, check: dict | None) -> str:
         _chip(depth_state, "RGB-D",
               {"ok": "recorded", "bad": "missing"}.get(depth_state, "not checked")),
         _chip("bad" if angles == 0 else "ok", "Angles", f"{angles}"),
-        _chip("ok" if imu else "unknown", "IMU", f"{imu}"),
     ])
 
     color = _BAD if faults else _OK

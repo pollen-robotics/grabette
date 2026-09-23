@@ -85,6 +85,11 @@ MODAL_CSS = """
 #tr-page .grabette-step .row {
     justify-content: flex-start !important;
 }
+/* The download link is a gr.HTML standing next to a gr.Button; the html
+   container's own padding is what set it 10px lower than the button. */
+#tr-page .tr-dl .html-container {
+    padding: 0 !important;
+}
 /* Phone: a label-width button is a thumb target too small, so give it the
    card back. */
 @media (max-width: 560px) {
@@ -149,18 +154,34 @@ def _button_gif(filename: str, caption: str) -> str:
 # lands straight in the browser's downloads. Going through a gradio File meant
 # copying the whole archive onto the device's disk first, then a second click
 # on a box that was empty until then.
-_DL_BASE = ('display:inline-flex;align-items:center;justify-content:center;'
-            'padding:.42rem .9rem;border-radius:8px;font-size:.875rem;'
-            'font-weight:600;text-decoration:none;box-sizing:border-box;')
+#
+# Dressed in gradio's own button variables rather than fixed sizes, so it comes
+# out the same height, font and radius as the button it stands next to —
+# including inside a Group, which squares the corners and drops the border.
+_DL_BASE = (
+    'display:inline-flex;align-items:center;justify-content:center;'
+    'box-sizing:border-box;text-decoration:none;'
+    # One pixel off the vertical padding pays for the border, so the link ends
+    # up exactly as tall as the button beside it.
+    'padding:calc(var(--spacing-sm) - 1px) calc(1.5 * var(--spacing-sm) - 1px);'
+    'font-size:var(--button-small-text-size);'
+    'font-weight:var(--button-small-text-weight);'
+    'line-height:var(--line-md);'
+    'border-radius:var(--button-small-radius);'
+    # Gradio's own secondary fill is the same grey as the card it sits on, so
+    # the link is drawn on the page background with a border instead.
+    'background:var(--background-fill-primary);'
+    'border:1px solid var(--border-color-primary);'
+)
 
 
 def _download_link_html(episode_id: str | None) -> str:
     if not episode_id:
-        return (f'<span style="{_DL_BASE}border:1px solid var(--border-color-primary,#cbd5e1);'
-                'color:var(--body-text-color-subdued,#94a3b8);opacity:.6;">'
+        return (f'<span style="{_DL_BASE}'
+                'color:var(--body-text-color-subdued);opacity:.6;">'
                 'Download (.tar.gz)</span>')
     return (f'<a href="/api/episodes/{quote(episode_id)}/download" download '
-            f'style="{_DL_BASE}border:1px solid #3b82f6;color:#3b82f6;">'
+            f'style="{_DL_BASE}color:var(--body-text-color);">'
             'Download (.tar.gz)</a>')
 
 
@@ -1309,7 +1330,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     tr_check_btn = gr.Button("Show the recorded data",
                                              size="sm", variant="primary",
                                              interactive=False)
-                    tr_download_link = gr.HTML(_download_link_html(None))
+                    tr_download_link = gr.HTML(_download_link_html(None),
+                                              elem_classes="tr-dl")
                 tr_replay_msg = gr.Markdown("")
                 with gr.Group(visible=False) as tr_replay_panel:
                     with gr.Row(equal_height=True):
