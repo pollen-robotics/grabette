@@ -85,6 +85,12 @@ MODAL_CSS = """
 #tr-page .grabette-step .row {
     justify-content: flex-start !important;
 }
+/* Only the action row is centred: its two controls must sit on one line even
+   when one of them wraps. Rows of figures stay top-aligned, so the animations
+   line up whatever their captions do. */
+#tr-page .tr-actions {
+    align-items: center !important;
+}
 /* The download link is a gr.HTML standing next to a gr.Button; the html
    container's own padding is what set it 10px lower than the button. */
 #tr-page .tr-dl .html-container {
@@ -160,29 +166,26 @@ def _button_gif(filename: str, caption: str) -> str:
 # including inside a Group, which squares the corners and drops the border.
 _DL_BASE = (
     'display:inline-flex;align-items:center;justify-content:center;'
-    'box-sizing:border-box;text-decoration:none;'
-    # One pixel off the vertical padding pays for the border, so the link ends
-    # up exactly as tall as the button beside it.
-    'padding:calc(var(--spacing-sm) - 1px) calc(1.5 * var(--spacing-sm) - 1px);'
+    'box-sizing:border-box;text-decoration:none;border:none;'
+    'padding:var(--button-small-padding);'
     'font-size:var(--button-small-text-size);'
     'font-weight:var(--button-small-text-weight);'
     'line-height:var(--line-md);'
     'border-radius:var(--button-small-radius);'
-    # Gradio's own secondary fill is the same grey as the card it sits on, so
-    # the link is drawn on the page background with a border instead.
-    'background:var(--background-fill-primary);'
-    'border:1px solid var(--border-color-primary);'
+    # The same fill as the button it stands beside, so the two read as a pair
+    # in both states; gradio dims a disabled button to 0.5 opacity, and the
+    # greyed-out link copies that rather than inventing its own look.
+    'background:var(--button-primary-background-fill);'
+    'color:var(--button-primary-text-color);'
 )
 
 
 def _download_link_html(episode_id: str | None) -> str:
     if not episode_id:
-        return (f'<span style="{_DL_BASE}'
-                'color:var(--body-text-color-subdued);opacity:.6;">'
+        return (f'<span style="{_DL_BASE}opacity:.5;cursor:not-allowed;">'
                 'Download (.tar.gz)</span>')
     return (f'<a href="/api/episodes/{quote(episode_id)}/download" download '
-            f'style="{_DL_BASE}color:var(--body-text-color);">'
-            'Download (.tar.gz)</a>')
+            f'style="{_DL_BASE}">Download (.tar.gz)</a>')
 
 
 def _step_header(number: int, title: str, hint: str = "") -> str:
@@ -671,7 +674,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # buttons keep whatever the tick that finished the recording set.
         if blocked:
             # Not capturing is not the same as ready: a device held back by an
-            # upload or a hardware fault would read "waiting for the button"
+            # upload or a hardware fault would read "waiting for the recording"
             # here, and the press it invites is the one that fails.
             pill = _tr_pill("blocked", f"Cannot record — {blocked}")
         elif cap.get("is_starting"):
@@ -679,7 +682,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         elif flow["episode_id"]:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
-            pill = _tr_pill("idle", "Waiting for the button")
+            pill = _tr_pill("idle", "Waiting for the recording")
         return pill, *([gr.update()] * 4), flow
 
     def on_test_check(flow):
@@ -1288,17 +1291,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         tr_flow = gr.State(dict(_TR_FLOW0))
 
         with gr.Column(elem_id="tr-page"):
-            gr.Markdown(
-                "Three steps to check a new device end to end. Nothing here "
-                "starts the recording — the button on the grabette does."
-            )
-
             # ── 1 — Record ────────────────────────────────────────────
             with gr.Group(elem_classes="grabette-step"):
                 gr.HTML(_step_header(
                     1, "Record a few seconds",
-                    "Press the button, pick an object up and put it down, "
-                    "press again.",
+                    "Press the button, pick an object up, and press again to stop.",
                 ))
                 # min_width low enough to keep the two animations side by
                 # side in the narrow card, high enough that a phone wraps
@@ -1306,7 +1303,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 with gr.Row(equal_height=True):
                     with gr.Column(scale=1, min_width=200):
                         gr.HTML(_button_gif("start-recording.gif",
-                                            "Press to start"))
+                                            "Press to start and wait\n for the LED to stop blinking"))
                     with gr.Column(scale=1, min_width=200):
                         gr.HTML(_button_gif("stop-recording.gif",
                                             "Press again to stop"))
@@ -1326,7 +1323,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # update in the very same tick does. An empty HTML block takes
                 # no room, so there is nothing to hide.
                 tr_summary = gr.HTML("")
-                with gr.Row():
+                with gr.Row(elem_classes="tr-actions"):
                     tr_check_btn = gr.Button("Show the recorded data",
                                              size="sm", variant="primary",
                                              interactive=False)
