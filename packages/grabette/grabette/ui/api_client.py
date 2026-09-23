@@ -365,19 +365,6 @@ class GrabetteClient:
 
     # -- WiFi --
 
-    def hf_status(self) -> dict:
-        """Whether a HuggingFace token is stored, and whose it is.
-
-        Same shape as the login widget reads, so the Overview can name the
-        account without embedding the widget itself.
-        """
-        try:
-            r = self._http.get("/api/hf-auth/status", timeout=5.0)
-            r.raise_for_status()
-            return r.json()
-        except Exception:
-            return {"is_logged_in": False, "username": None}
-
     def wifi_status(self) -> dict:
         try:
             r = self._http.get("/api/wifi/status", timeout=3.0)

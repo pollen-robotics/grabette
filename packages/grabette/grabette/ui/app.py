@@ -100,7 +100,8 @@ MODAL_CSS = """
 }
 /* gradio pads an HTML block but not an Image, which started the cards and the
    viewer 10px below the camera and threw the whole row off its baseline. */
-#ov-page .ov-tiles .html-container {
+#ov-page .ov-tiles .html-container,
+#ov-page .ov-errands .html-container {
     padding: 0 !important;
 }
 /* The button under a tile sits on the same line as the toggle under the
@@ -220,22 +221,18 @@ _FLEET_BUTTON_HTML = (
 )
 
 
-def _hf_button_html(status: dict | None) -> str:
-    """The account button: who is logged in, or an invitation to log in.
-
-    It links to Settings rather than starting the OAuth dance itself — the
-    login card there handles one-click OAuth, a pasted token and logout, and
-    duplicating any of that here would be a second thing to keep right.
-    """
-    status = status or {}
-    if status.get("is_logged_in"):
-        user = html.escape(str(status.get("username") or "account"))
-        label, gradient = f"🤗 {user}", "linear-gradient(135deg,#6366f1,#8b5cf6)"
-    else:
-        label = "Connect HuggingFace account →"
-        gradient = "linear-gradient(135deg,#f59e0b,#ef4444)"
-    return (f'<a href="/settings" style="{_ERRAND_BUTTON}background:{gradient};">'
-            f'{label}</a>')
+# The account slab on the Overview: the login widget under its button skin, so
+# the OAuth round trip, the token fallback and logout all happen right there
+# rather than sending someone to Settings. The onload loop keeps the iframe as
+# tall as its content, which grows when the token field is unfolded.
+_HF_AUTH_BUTTON_IFRAME = (
+    '<iframe src="/api/hf-auth/widget?variant=button" scrolling="no"'
+    ' onload="var f=this;(function r(){'
+    'if(!document.contains(f))return;'
+    'try{f.style.height=f.contentDocument.body.scrollHeight+2+\'px\';}catch(e){}'
+    'setTimeout(r,400);})()"'
+    ' style="width:100%;border:none;min-height:56px;display:block;"></iframe>'
+)
 
 
 # Test Recording shows the grabette's own button being pressed instead of
@@ -1444,11 +1441,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # that row; the two errands (account, fleet) go last.
 
     def refresh_overview():
-        """The two info cards and the account button. One call to each endpoint."""
+        """The two info cards. One tick, one call to each endpoint."""
         info = client.get_system_info()
         wifi = client.wifi_status() if info is not None else None
-        return (_ov_device_card(info, wifi), _ov_health_card(info),
-                _hf_button_html(client.hf_status()))
+        return _ov_device_card(info, wifi), _ov_health_card(info)
 
     def ov_frame(mode):
         """Whichever camera the toggle is showing."""
@@ -1525,10 +1521,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             gr.HTML(_OV_RULE)
 
             # ── Account | Fleet Space ─────────────────────────────────
-            with gr.Row(equal_height=True):
+            with gr.Row(equal_height=False, elem_classes="ov-errands"):
                 with gr.Column(scale=1, min_width=260):
                     gr.HTML(_section_label("HuggingFace account"))
-                    ov_hf_button = gr.HTML(_hf_button_html(None))
+                    gr.HTML(_HF_AUTH_BUTTON_IFRAME)
                 with gr.Column(scale=1, min_width=260):
                     gr.HTML(_section_label("Fleet Space"))
                     gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
@@ -1543,9 +1539,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         ov_info_timer = gr.Timer(10.0)
         ov_info_timer.tick(fn=refresh_overview,
-                           outputs=[ov_device_card, ov_health_card, ov_hf_button])
-        demo.load(fn=refresh_overview,
-                  outputs=[ov_device_card, ov_health_card, ov_hf_button])
+                           outputs=[ov_device_card, ov_health_card])
+        demo.load(fn=refresh_overview, outputs=[ov_device_card, ov_health_card])
 
         batt_popup_cn = gr.HTML(visible=False)
         batt_beep_cn = gr.Textbox(visible=False)

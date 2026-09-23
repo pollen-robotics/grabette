@@ -63,30 +63,27 @@ def test_health_card_survives_missing_readings():
     assert out.count("—") == 3
 
 
-# ── the account button ───────────────────────────────────────────────
+# ── the account slab ─────────────────────────────────────────────────
 
-from grabette.ui.app import _hf_button_html
-
-
-def test_hf_button_names_the_account():
-    out = _hf_button_html({"is_logged_in": True, "username": "pollen-robotics"})
-    assert "pollen-robotics" in out
-    assert 'href="/settings"' in out
+from grabette.webauth import widget_page
 
 
-def test_hf_button_invites_a_login_when_logged_out():
-    out = _hf_button_html({"is_logged_in": False, "username": None})
-    assert "Connect" in out
+def test_button_variant_is_one_slab():
+    out = widget_page(variant="button")
+    # The card chrome goes, the OAuth button becomes the whole widget, and the
+    # token field folds away behind a disclosure.
+    assert "button.oauth{width:100%" in out
+    assert "or use a token" in out
 
 
-def test_hf_button_survives_no_answer():
-    # hf_status() falls back to a logged-out dict, but None must not crash it.
-    assert "Connect" in _hf_button_html(None)
+def test_button_variant_keeps_the_one_login_implementation():
+    # Same card and script as Settings — only the skin differs.
+    from grabette.webauth import LOGIN_CARD
+
+    assert LOGIN_CARD in widget_page(variant="button")
+    assert LOGIN_CARD in widget_page()
 
 
-def test_account_and_fleet_buttons_share_one_shape():
-    from grabette.ui.app import _ERRAND_BUTTON, _FLEET_BUTTON_HTML
-
-    # The two sit side by side; only their colour may differ.
-    assert _ERRAND_BUTTON in _FLEET_BUTTON_HTML
-    assert _ERRAND_BUTTON in _hf_button_html(None)
+def test_other_skins_are_untouched():
+    assert "button.oauth{width:100%" not in widget_page()
+    assert "button.oauth{width:100%" not in widget_page(compact=True)
