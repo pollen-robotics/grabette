@@ -263,7 +263,7 @@ _FLEET_BUTTON_HTML = (
     '<a href="{url}" target="_blank" rel="noopener" '
     f'style="{_ERRAND_BUTTON}'
     'background:linear-gradient(135deg,#10b981,#3b82f6);">'
-    'Open fleet dashboard ↗</a>'
+    'Record data and create dataset ↗</a>'
 )
 
 
@@ -722,6 +722,17 @@ def _ep_header_html(description: str = "", api_down: bool = False) -> str:
         return ""
     return ('<div style="font-size:.88rem;opacity:.75;">'
             f'{html.escape(description)}</div>')
+
+
+def _ov_group_title(title: str, hint: str) -> str:
+    """Heading over a whole Overview row, a step above the tiles' own labels."""
+    return (
+        '<div style="margin:0 0 .6rem;">'
+        '<div style="font-size:1.1rem;font-weight:700;'
+        f'color:var(--body-text-color);">{html.escape(title)}</div>'
+        '<div style="font-size:.85rem;opacity:.7;">'
+        f'{html.escape(hint)}</div></div>'
+    )
 
 
 def _section_label(text: str) -> str:
@@ -1508,6 +1519,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # min_width is what makes this responsive: four columns on a
             # laptop, two on a tablet, one on a phone, decided by gradio from
             # the width each column says it needs.
+            gr.HTML(_ov_group_title(
+                "Grabette status",
+                "What your Grabette sees and how it is doing right now.",
+            ))
             with gr.Row(equal_height=False, elem_classes="ov-tiles"):
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Cameras"))
@@ -1536,7 +1551,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             gr.HTML(_OV_RULE)
 
-            # ── The one thing to do from here ─────────────────────────
+            # ── Recording and the episodes it produces ────────────────
+            gr.HTML(_ov_group_title(
+                "Grabette data",
+                "Check the recording works, then browse what is on the device.",
+            ))
             with gr.Row(elem_classes="ov-cta"):
                 gr.Button(
                     "Make a test recording →",
@@ -1544,10 +1563,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     variant="primary",
                     size="lg",
                 )
+                gr.Button(
+                    "See recorded episodes →",
+                    link="/episodes",
+                    variant="primary",
+                    size="lg",
+                )
 
             gr.HTML(_OV_RULE)
 
             # ── Account | Fleet Space ─────────────────────────────────
+            gr.HTML(_ov_group_title(
+                "Account & fleet",
+                "Sign in to Hugging Face, and open the Fleet Space to start recording organized data and creating datasets.",
+            ))
             with gr.Row(equal_height=False, elem_classes="ov-errands"):
                 with gr.Column(scale=1, min_width=260):
                     gr.HTML(_section_label("HuggingFace account"))
