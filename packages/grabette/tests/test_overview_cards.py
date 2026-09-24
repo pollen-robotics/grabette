@@ -4,6 +4,7 @@ Pure builders, so the judgements they encode — what a missing reading shows,
 when the battery turns red — are pinned here rather than read off a screenshot.
 """
 
+from grabette.config import settings
 from grabette.ui.app import _ov_device_card, _ov_health_card
 
 INFO = {
@@ -36,6 +37,11 @@ def test_wifi_ip_wins_over_the_system_one():
     out = _ov_device_card({**INFO, "ip": "10.0.0.1"}, WIFI)
     assert "192.168.1.42" in out
     assert "10.0.0.1" not in out
+
+
+def test_device_card_shows_the_configured_side(monkeypatch):
+    monkeypatch.setattr(settings, "hand", "left")
+    assert "Left" in _ov_device_card(INFO, WIFI)
 
 
 def test_health_card_shows_readings():

@@ -256,6 +256,16 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def delete_all_episodes(self) -> dict:
+        try:
+            r = self._http.delete("/api/episodes")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
     def download_episodes(self, episode_ids: list[str]) -> str | None:
         try:
             filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"

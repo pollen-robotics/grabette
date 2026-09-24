@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,7 @@ from pydantic import BaseModel
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
 from grabette.capture_scheduler import get_capture_scheduler
+from grabette.config import settings
 from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.hardware.episode_files import DCAM_LEFT, resolve
@@ -324,6 +326,22 @@ def stream_dcam_video(episode_id: str, tm: TaskManager = Depends(get_task_manage
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Depth-camera video not found")
     return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.delete("/api/episodes")
+def delete_all_episodes(
+    backend: Backend = Depends(get_backend),
+    tm: TaskManager = Depends(get_task_manager),
+):
+    if backend.is_capturing or get_capture_scheduler().is_scheduled():
+        raise HTTPException(status_code=409, detail="A recording is in progress")
+    try:
+        count = tm.delete_all_episodes()
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    # Archives built for the dashboard's Download button are copies of episodes.
+    shutil.rmtree(settings.data_dir / ".downloads", ignore_errors=True)
+    return {"deleted": count}
 
 
 @router.delete("/api/episodes/{episode_id}")

@@ -561,3 +561,34 @@ def test_report_unassigned_caps_the_payload_but_not_the_count(tmp_path, left_han
     assert report["total"] == n
     assert len(report["episodes"]) == UNASSIGNED_REPORT_LIMIT
     assert report["episodes"][-1]["episode_id"] == f"ep_{n - 1:04d}"
+
+
+# ── delete_all_episodes ───────────────────────────────────────────────
+
+def _record(tm, task_id, episode_id):
+    tm.create_episode(task_id, episode_id=episode_id)
+    tm.register_episode(episode_id)
+
+
+def test_delete_all_episodes_wipes_everything(tmp_path):
+    tm = TaskManager(data_dir=tmp_path)
+    recorded = tm.create_task("recorded")
+    empty = tm.create_task("empty")
+    _record(tm, recorded, "ep_a")
+    _record(tm, UNASSIGNED_ID, "ep_b")
+    (tm.episodes_dir / "orphan").mkdir()
+
+    assert tm.delete_all_episodes() == 3
+    assert list(tm.episodes_dir.iterdir()) == []
+    ids = {t.id for t in tm.list_tasks()}
+    # A task that held episodes goes with them; one never recorded into stays.
+    assert ids == {UNASSIGNED_ID, empty}
+    assert all(not t.episodes for t in tm.list_tasks())
+
+
+def test_delete_all_episodes_refuses_mid_capture(tmp_path):
+    tm = TaskManager(data_dir=tmp_path)
+    tm.create_episode(UNASSIGNED_ID, episode_id="ep_live")
+    with pytest.raises(RuntimeError):
+        tm.delete_all_episodes()
+    assert (tm.episodes_dir / "ep_live").exists()

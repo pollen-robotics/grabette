@@ -21,7 +21,7 @@ NO_DEPTH = {"missing": ["dcam_depth.mkv", "dcam_left.mp4"], "complete": False}
 
 def test_healthy_recording_passes():
     out = recording_summary(GOOD, COMPLETE)
-    assert "✓ Recording looks good" in out
+    assert "✓ Recording data is complete" in out
     assert "2026-09-21T14-32-05" in out
     assert "12.4s" in out
     assert "372" in out
@@ -76,7 +76,7 @@ def test_missing_video_file_is_a_fault():
 
 def test_too_short_warns_but_still_passes():
     out = recording_summary({**GOOD, "duration_seconds": 0.4}, COMPLETE)
-    assert "✓ Recording looks good" in out
+    assert "✓ Recording data is complete" in out
     assert "0.4s" in out
     assert "⚠" in out
 
@@ -84,7 +84,7 @@ def test_too_short_warns_but_still_passes():
 def test_unchecked_episode_is_not_held_against_it():
     """None means 'could not check', which is not evidence of a bad episode."""
     out = recording_summary(GOOD, None)
-    assert "✓ Recording looks good" in out
+    assert "✓ Recording data is complete" in out
     assert "not checked" in out
 
 

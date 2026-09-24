@@ -42,12 +42,57 @@ MODAL_CSS = """
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
     border: 1px solid #374151 !important;
 }
-/* "Power Off" is the last navbar entry — push it to the far right and tint it
-   red so it reads as separate from the normal pages. Best-effort: relies on the
-   navbar being a flex row (gradio 6.x); the 🔴 label is the guaranteed cue. */
-#grabette-nav a:last-child {
-    margin-left: auto !important;
-    color: #f87171 !important;
+/* Title bar: GRABETTE on the left, the power-off button on the right. */
+.gb-titlebar {
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: nowrap !important;
+    gap: 1rem !important;
+}
+/* Black rather than red, so the ⛔ stands out on it. */
+.gb-titlebar .gb-power {
+    background: #000 !important;
+    border-color: #000 !important;
+    color: #fff !important;
+    font-size: 1.15rem !important;
+    padding: .7rem 1.4rem !important;
+}
+.gb-titlebar .gb-power:hover {
+    background: #333 !important;
+}
+.gb-titlebar > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+/* Episodes: a table that reads as a table, and buttons the size of their labels instead of four stretched bars. */
+/* The task menu is sized to a task name on a laptop, full width on a phone. */
+#ep-page .ep-task-menu {
+    width: 100% !important;
+    max-width: 420px !important;
+    margin: 0 auto 0 0 !important;
+    align-self: flex-start !important;
+}
+#ep-page .ep-actions {
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: .5rem !important;
+}
+#ep-page .ep-actions button {
+    width: auto !important;
+    flex: 0 0 auto !important;
+}
+@media (max-width: 560px) {
+    #ep-page .ep-actions button {
+        width: 100% !important;
+    }
+}
+/* Network: one errand, read top to bottom in a column rather than a form
+   stretched across a laptop screen. */
+#nw-page {
+    max-width: 640px !important;
+    width: 100% !important;
+    margin: 0 auto !important;
 }
 /* Overview: the call to action is one button, so it is sized to its label and
    centred rather than stretched across the page. */
@@ -60,6 +105,13 @@ MODAL_CSS = """
 #ov-page .ov-cta a {
     width: auto !important;
     flex: 0 0 auto !important;
+    background: #1a1a2e !important;
+    border-color: #1a1a2e !important;
+    color: #fff !important;
+}
+#ov-page .ov-cta button:hover,
+#ov-page .ov-cta a:hover {
+    background: #2a2a4a !important;
 }
 /* The camera toggle is a segmented control, not two loose radio dots: the
    native inputs are hidden and each label becomes half of one pill, centred
@@ -187,20 +239,6 @@ MODAL_CSS = """
 }
 """
 
-# Same widget, denser skin (see webauth._COMPACT_CSS). The home page shows the
-# account as a status line; the full card still lives on Settings.
-_HF_AUTH_IFRAME_COMPACT = (
-    '<iframe src="/api/hf-auth/widget?compact=1" scrolling="no"'
-    ' onload="var f=this;(function r(){'
-    'if(!document.contains(f))return;'
-    'try{f.style.height=f.contentDocument.body.scrollHeight+4+\'px\';}catch(e){}'
-    'setTimeout(r,400);})()"'
-    ' style="width:100%;border:none;min-height:56px;display:block;"></iframe>'
-)
-
-# Sized to sit beside the login line rather than dominate the page. Still a
-# plain link out: grabette-fleet is OAuth-gated and this dashboard is served
-# over plain HTTP, so its login cannot render in an iframe here.
 # The two errands at the bottom of the Overview are one shape in two colours:
 # same height, same weight, same radius, so neither looks like the important
 # one. Both are plain links out — grabette-fleet is OAuth-gated and this
@@ -357,7 +395,7 @@ _VIEWER_IFRAME_HTML = (
 _OV_TILE_H = 200
 
 _OV_VIEWER_IFRAME = (
-    '<iframe id="urdf-viewer" src="/viewer" '
+    '<iframe id="urdf-viewer" src="/viewer?yaw=180" '
     f'style="width:100%;height:{_OV_TILE_H}px;border:none;'
     'border-radius:8px;background:#1a1a2e;"></iframe>'
 )
@@ -371,16 +409,6 @@ _OV_RULE = (
 
 _OV_RGB = "RGB"
 _OV_DEPTH = "Depth"
-
-_HF_AUTH_IFRAME = (
-    '<iframe src="/api/hf-auth/widget" scrolling="no"'
-    ' onload="var f=this;(function r(){'
-    'if(!document.contains(f))return;'
-    'try{f.style.height=f.contentDocument.body.scrollHeight+10+\'px\';}catch(e){}'
-    'setTimeout(r,400);})()"'
-    ' style="width:100%;border:none;min-height:160px;"></iframe>'
-)
-
 
 _GYRO_IFRAME_HTML = (
     '<iframe src="/charts/gyro" '
@@ -464,6 +492,7 @@ def _ov_device_card(info: dict | None, wifi: dict | None) -> str:
     return (
         f'<div style="{_OV_CARD}">'
         + _ov_row("Hostname", html.escape(str(info.get("hostname") or "—")))
+        + _ov_row("Side", settings.hand.capitalize())
         + _ov_row("IP address", html.escape(str(ip)))
         + _ov_row("Network", html.escape(str(ssid)))
         + "</div>"
@@ -585,6 +614,56 @@ _BATTERY_BEEP_JS = (
     "(v) => { if (v && window.__grabetteBatteryBeep) "
     "{ window.__grabetteBatteryBeep(String(v).split('|')[0]); } }"
 )
+
+
+# Live View is off: five pages of dashboard for a device whose job is to record
+# with its own button was four more than anyone opened. The page is kept whole —
+# its handlers, its timers, its charts — behind this one flag, so bringing it
+# back is flipping False to True.
+_LIVE_VIEW_ENABLED = False
+
+
+# ── Episode status ───────────────────────────────────────────────────
+#
+# Read off the listing the task API already returns (counters, has_video,
+# metadata_ok), so a table of fifty episodes costs no extra call. What it
+# cannot see from there is which files are on disk — that is the Check button,
+# which asks the check endpoint for the selected episode and shows the same
+# verdict card as Test Recording.
+_EP_MIN_SECONDS = 2.0
+
+
+def _episode_status(ep: dict) -> str:
+    """One cell: the worst thing this episode's own counters admit to."""
+    if not ep.get("metadata_ok", True):
+        return "✗ metadata"
+    if not ep.get("has_video", True) or not ep.get("frame_count"):
+        return "✗ camera"
+    if not ep.get("angle_sample_count"):
+        return "✗ angles"
+    if float(ep.get("duration_seconds") or 0) < _EP_MIN_SECONDS:
+        return "⚠ very short"
+    return "✓ ok"
+
+
+def _ep_header_html(description: str = "", api_down: bool = False) -> str:
+    """The note above the table: what the task is for, or that the API is down.
+
+    The task's name and episode count are already in the menu above it.
+    """
+    if api_down:
+        return (
+            '<div style="border-radius:12px;padding:.85rem 1rem;'
+            'background:var(--background-fill-secondary);'
+            'border-left:4px solid #ef4444;">'
+            '<strong>Could not reach the grabette API.</strong> '
+            '<span style="opacity:.8;">The list below is empty because the '
+            'call failed, not because nothing is recorded.</span></div>'
+        )
+    if not description:
+        return ""
+    return ('<div style="font-size:.88rem;opacity:.75;">'
+            f'{html.escape(description)}</div>')
 
 
 def _section_label(text: str) -> str:
@@ -761,39 +840,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Capture (Datasets page) ───────────────────────────────────────
 
-    def get_capture_status():
-        state = client.get_state()
-        if state is None:
-            return "○ Idle"
-        cap = state.get("capture", {})
-        if cap.get("is_capturing", False):
-            parts = [
-                f"● RECORDING  {cap.get('episode_id', '')}",
-                f"Duration: {cap.get('duration_seconds', 0):.1f}s",
-                f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
-            ]
-            if cap.get("angle_sample_count", 0):
-                parts[-1] += f"  |  Angle: {cap['angle_sample_count']}"
-            return "\n".join(parts)
-        # Not capturing is not the same as free. A device tied up by an upload
-        # (or held back by a hardware fault) used to read "○ Idle" here, which is
-        # precisely the reading that gets a recording started on top of one.
-        blocked = cap.get("blocked_reason") or ""
-        if blocked:
-            return f"⛔ Cannot record — {blocked}"
-        return "○ Idle"
-
-    def on_toggle_capture(session_id):
-        state = client.get_state()
-        capturing = state.get("capture", {}).get("is_capturing", False) if state else False
-        if capturing:
-            client.stop_capture()
-            rows, move_dd, _task_header, desc, *_ = _refresh_episode_table(session_id)
-            return gr.update(value="Start Capture", variant="primary"), rows, move_dd, desc
-        else:
-            client.start_capture(task_id=session_id or None)
-            return gr.update(value="Stop Capture", variant="stop"), gr.update(), gr.update(), gr.update()
-
     # ── Test Recording page ───────────────────────────────────────────
     #
     # The recording is started and stopped on the grabette's own button, so this
@@ -953,27 +999,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
 
 
-    def on_start_stop_session(current_task):
-        cap_session = client.get_session_status()
-        if cap_session.get("active"):
-            client.stop_session()
-            _, _, _, _, cap_title, _ = _refresh_episode_table(current_task)
-            return (
-                gr.update(value="▶ Start Session", variant="secondary"),
-                gr.update(value=cap_title),
-                gr.update(value=""),
-            )
-        else:
-            result = client.start_session(task_id=current_task or None)
-            if "error" in result:
-                return gr.update(), gr.skip(), gr.skip()
-            task_name = result.get("task_name", "")
-            return (
-                gr.update(value="■ Stop Session", variant="stop"),
-                gr.update(value=f"### Capture a new episode for *{task_name}*"),
-                gr.update(value=_session_banner_html(task_name, 0)),
-            )
-
     def _oakd_button_update():
         """Compute the depth-camera toggle's appearance + data row visibility.
 
@@ -1030,79 +1055,42 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def _get_sessions():
         return client.list_tasks()
 
-    def _task_choices(sessions):
-        return [(s["name"], s["id"]) for s in sessions]
+    def _task_menu_choices(sessions):
+        """(label, id) for the task dropdown, each carrying its episode count."""
+        def label(s):
+            n = len(s.get("episodes") or [])
+            return f"{s['name']} - {n} episode{'' if n == 1 else 's'}"
+        return [(label(s), s["id"]) for s in sessions]
 
     def _refresh_episode_table(session_id, sessions=None):
+        """(rows, header html) for one task."""
         if sessions is None:
             sessions = _get_sessions()
         rows = []
-        task_name = ""
         task_description = ""
         # The device always has Unassigned, so an empty list means the API call
         # failed — never that there is nothing to show. Saying so beats a blank
         # page that looks exactly like "no episodes recorded yet".
         api_down = not sessions
-        for s in sessions:
-            if s["id"] == session_id:
-                task_name = s.get("name", "")
-                task_description = s.get("description", "")
-                for ep in s.get("episodes", []):
+        for task in sessions:
+            if task["id"] == session_id:
+                task_description = task.get("description", "")
+                for ep in task.get("episodes", []):
                     rows.append([
                         False,
                         ep["episode_id"],
                         f"{ep['duration_seconds']:.1f}s",
                         ep["frame_count"],
-                        ep["imu_sample_count"],
                         ep.get("angle_sample_count", 0),
+                        _episode_status(ep),
                     ])
                 break
         rows.reverse()
-        move_choices = _task_choices(sessions)
-        move_dd = gr.update(
-            choices=move_choices,
-            value=move_choices[0][1] if move_choices else None,
-        )
-        task_header = f"## Task: {task_name}" if task_name else ""
-        cap_title = "### Capture" if not task_name else f"### Capture a new episode for *{task_name}*"
-        count = len(rows)
-        count_str = f"{count} episode" + ("s" if count != 1 else "")
-        ep_title = f"## Episodes for *{task_name}*" if task_name else "## Episodes"
-        desc_parts = []
-        if api_down:
-            desc_parts.append(
-                "⚠️ **Could not reach the grabette API** — the task list below is "
-                "empty because the call failed, not because there is nothing "
-                "recorded. Check the daemon log for the error."
-            )
-        if task_description:
-            desc_parts.append(f"**Task description:** {task_description}")
-        if not api_down:
-            desc_parts.append(f"*{count_str} recorded*")
-        desc = "\n\n".join(desc_parts)
-        return rows, move_dd, task_header, desc, cap_title, ep_title
-
-    def _session_banner_html(task_name: str, count: int = 0) -> str:
-        ep_str = f"{count} episode{'s' if count != 1 else ''}"
-        return (
-            '<div style="padding:0.85rem 1.2rem;background:#1c1710;border-radius:10px;'
-            'border:1px solid #f97316;display:flex;align-items:center;gap:0.9rem;">'
-            '<span style="font-size:1.6rem;line-height:1;filter:brightness(0) invert(1);">🔒</span>'
-            '<div>'
-            '<div style="font-weight:700;color:#fb923c;font-size:0.95rem;">Active session</div>'
-            '<div style="color:#e2e8f0;font-size:0.88rem;margin-top:2px;">'
-            f'All recordings are saved to: <strong style="color:#fff;">{task_name}</strong>'
-            '</div>'
-            '<div style="color:#e2e8f0;font-size:0.88rem;margin-top:3px;">'
-            f'Session: <strong style="color:#fb923c;">{ep_str} recorded</strong>'
-            '</div>'
-            '</div>'
-            '</div>'
-        )
+        return rows, _ep_header_html(task_description, api_down)
 
     def refresh_tasks(stored_id: str = ""):
         sessions = _get_sessions()
-        choices = _task_choices(sessions)
+        choices = _task_menu_choices(sessions)
         valid_ids = {c[1] for c in choices}
         # Pick which task to land on at (re)load time:
         #   1. during a capture session, always the session's task;
@@ -1117,18 +1105,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             value = stored_id
         else:
             value = choices[0][1] if choices else None
-        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(value, sessions)
-        return gr.update(choices=choices, value=value), task_header, cap_title, desc, ep_title, rows, move_dd
+        rows, header = _refresh_episode_table(value, sessions)
+        return gr.update(choices=choices, value=value), header, rows
 
     def on_task_select(session_id):
-        cap_session = client.get_session_status()
-        session_active = cap_session.get("active", False)
-        if not session_active and session_id:
+        # Selecting a task also points the device at it, so a recording started
+        # from the grabette's own button lands where the dashboard is looking.
+        if session_id:
             client.set_active_task(session_id)
-        rows, move_dd, task_header, desc, cap_title, ep_title = _refresh_episode_table(session_id)
-        if session_active:
-            return task_header, gr.skip(), desc, ep_title, rows, move_dd
-        return task_header, cap_title, desc, ep_title, rows, move_dd
+        rows, header = _refresh_episode_table(session_id)
+        return header, rows
 
     def _get_selected_ids(table_data) -> list[str]:
         if table_data is None:
@@ -1144,53 +1130,61 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Episode actions ───────────────────────────────────────────────
 
     def on_download_episodes(table_data):
+        """Build the archive and reveal the drop it lands in."""
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return None
-        return client.download_episodes(episode_ids)
+            return gr.update(), "Tick the episodes to download"
+        path = client.download_episodes(episode_ids)
+        if path is None:
+            return gr.update(), "⛔ Could not build the archive."
+        return (gr.update(value=path, visible=True),
+                f"{len(episode_ids)} episode(s) ready to download")
 
     def on_delete_episode(table_data, session_id):
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return "No episode selected", gr.update(), gr.update(), gr.update()
+            return "No episode selected", gr.update(), gr.update()
         errors = []
         for eid in episode_ids:
             result = client.delete_episode(eid)
             if "error" in result:
                 errors.append(f"{eid}: {result['error']}")
-        rows, move_dd, _th, desc, *_ = _refresh_episode_table(session_id)
+        rows, header = _refresh_episode_table(session_id)
         # Force the interactive dataframe to re-render: after the user ticks
         # rows it holds "dirty" client-side state that a bare list won't
         # overwrite, so the deleted rows (and their checkboxes) would linger.
         table_upd = gr.update(value=rows)
         if errors:
-            return "Errors: " + "; ".join(errors), table_upd, move_dd, desc
-        return f"Deleted {len(episode_ids)} episode(s)", table_upd, move_dd, desc
+            return "Errors: " + "; ".join(errors), table_upd, header
+        return f"Deleted {len(episode_ids)} episode(s)", table_upd, header
 
-    def on_move_episodes(table_data, target_session_id, current_session_id):
-        episode_ids = _get_selected_ids(table_data)
-        if not episode_ids:
-            return "No episode selected", gr.update(), gr.update(), gr.update()
-        if not target_session_id:
-            return "No target task", gr.update(), gr.update(), gr.update()
-        result = client.move_episodes(episode_ids, target_session_id)
-        if "error" in result:
-            return f"Error: {result['error']}", gr.update(), gr.update(), gr.update()
-        rows, move_dd, _th, desc, *_ = _refresh_episode_table(current_session_id)
-        msg = f"Moved {len(result.get('moved', episode_ids))} episode(s)"
-        if result.get("skipped"):
-            msg += f" ({len(result['skipped'])} not found here)"
-        # An episode recorded with another grabette only gets refiled HERE. Unless
-        # the peer is refiled too, the two devices end up reporting the same
-        # episode under different tasks, which the fleet flags as a split.
-        shared = result.get("shared") or []
-        if shared:
-            peers = ", ".join(sorted({p for s in shared for p in s["peers"]}))
-            msg += (f" — warning: {len(shared)} of them were recorded with {peers};"
-                    " refile them there too, or the pair ends up split across tasks")
-        # gr.update(value=...) forces the interactive dataframe to drop its
-        # dirty checkbox state so the moved rows actually disappear.
-        return msg, gr.update(value=rows), move_dd, desc
+    def on_delete_all(confirmed, stored_id):
+        """Wipe every episode on the device, once the browser has confirmed."""
+        if not confirmed:
+            return (gr.update(),) * 6
+        # Stop first: deleting the files under a running replay leaves the
+        # daemon reading from a directory that is gone.
+        client.replay_stop()
+        result = client.delete_all_episodes()
+        task_upd, header, rows = refresh_tasks(stored_id)
+        msg = (f"⛔ {result['error']}" if "error" in result
+               else f"Deleted all data ({result.get('deleted', 0)} episode(s))")
+        return (msg, task_upd, header, gr.update(value=rows),
+                gr.update(visible=False), gr.update(active=False))
+
+    def on_check_episode(table_data):
+        """Full verdict for one selected episode — the file check included.
+
+        The table's own Status column only knows what the listing says; this is
+        what asks the device which files are actually on disk.
+        """
+        episode_id = (_get_selected_ids(table_data) or [None])[0]
+        if not episode_id:
+            return gr.update(value=""), "Tick an episode to check it"
+        verdict = recording_summary(
+            client.get_episode(episode_id), client.check_episode(episode_id),
+        )
+        return gr.update(value=verdict), f"Checked {episode_id}"
 
     # ── SLAM ──────────────────────────────────────────────────────────
 
@@ -1358,36 +1352,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Episodes status strip (battery + camera connections) ─────────
 
-    def get_episode_status_bar():
-        """(status_bar_html, battery_popup, beep_signal) from ONE system-info read.
-
-        The battery warning piggybacks on this 3 s poll rather than a dedicated
-        timer, so a single get_system_info() feeds both the strip and the popup
-        (no redundant I2C read).
-        """
-        info = client.get_system_info()
-        bar = _status_bar_html(
-            info,
-            client.get_oakd_status(),
-            client.get_camera_status(),
-        )
-        popup_update, beep_signal = _battery_popup_html(info)
-        return bar, popup_update, beep_signal
-
-    # ── WiFi network info (Settings page) ────────────────────────────
-
-    def get_wifi_network_info():
-        status = client.wifi_status()
-        info = client.get_system_info() or {}
-        hostname = info.get("hostname", "—")
-        ssid = status.get("ssid") or "—"
-        ip = status.get("ip") or info.get("ip") or "—"
-        return (
-            f"**Hostname:** {hostname}  \n"
-            f"**Current network:** {ssid}  \n"
-            f"**IP address:** {ip}"
-        )
-
     # ── Power off ─────────────────────────────────────────────────────
 
     def _poweroff_notice(text: str, color: str = "#f97316") -> str:
@@ -1396,21 +1360,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             f"background:#1e293b;border-left:4px solid {color};border-radius:8px;"
             f"color:#e2e8f0;font-size:0.92rem;'>{text}</div>"
         )
-
-    def load_poweroff_page():
-        """Arm the button when idle; disable + warn while a recording is active."""
-        cap = (client.get_state() or {}).get("capture", {})
-        if cap.get("is_capturing") or cap.get("is_starting"):
-            return (
-                gr.update(
-                    value=_poweroff_notice(
-                        "A recording is in progress — stop the capture before powering off."
-                    ),
-                    visible=True,
-                ),
-                gr.update(interactive=False, variant="secondary"),
-            )
-        return gr.update(value="", visible=False), gr.update(interactive=True, variant="stop")
 
     def on_poweroff():
         result = client.shutdown()
@@ -1422,13 +1371,33 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (
             gr.update(
                 value=_poweroff_notice(
-                    "Device is shutting down. This page will stop responding shortly — "
-                    "wait ~20 s, then it is safe to unplug.",
+                    "Device is shutting down, it can take ~30 s. This page will stop responding shortly."
                     "#22c55e",
                 ),
                 visible=True,
             ),
             gr.update(interactive=False, variant="secondary"),
+        )
+
+    def on_title_poweroff(confirmed):
+        if not confirmed:
+            return gr.update(), gr.update()
+        return on_poweroff()
+
+    def _title_bar():
+        """The GRABETTE title with a power-off button beside it, on every page."""
+        with gr.Row(elem_classes="gb-titlebar"):
+            gr.HTML(_TITLE_HTML)
+            btn = gr.Button(
+                "⛔ Power off", size="lg", scale=0, elem_classes="gb-power"
+            )
+        notice = gr.HTML(value="", visible=False)
+        confirmed = gr.Checkbox(value=False, visible=False)
+        btn.click(
+            fn=on_title_poweroff,
+            inputs=[confirmed],
+            outputs=[notice, btn],
+            js="() => confirm('Power off the grabette?')",
         )
 
     # ══════════════════════════════════════════════════════════════════
@@ -1473,7 +1442,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        _title_bar()
 
         with gr.Column(elem_id="ov-page"):
 
@@ -1483,7 +1452,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # the width each column says it needs.
             with gr.Row(equal_height=False, elem_classes="ov-tiles"):
                 with gr.Column(scale=1, min_width=230):
-                    gr.HTML(_section_label("Camera"))
+                    gr.HTML(_section_label("Cameras"))
                     ov_camera_img = gr.Image(
                         label=None, show_label=False, height=_OV_TILE_H,
                         container=False,
@@ -1502,7 +1471,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     gr.HTML(_section_label("Device"))
                     ov_device_card = gr.HTML(_ov_device_card(None, None))
                     with gr.Row(elem_classes="ov-tile-btn"):
-                        gr.Button("Change network", link="/settings", size="sm")
+                        gr.Button("Change network", link="/network", size="sm")
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Health"))
                     ov_health_card = gr.HTML(_ov_health_card(None))
@@ -1560,7 +1529,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # Episodes afterwards.
     with demo.route("Test Recording") as test_demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        _title_bar()
 
         # Everything the page remembers between ticks — see poll_test_recording.
         tr_flow = gr.State(dict(_TR_FLOW0))
@@ -1673,78 +1642,64 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ══════════════════════════════════════════════════════════════════
     # Page 3 — Episodes
     # ══════════════════════════════════════════════════════════════════
+    #
+    # A reading page: pick a task, see what it holds, act on a selection.
+    # Recording is not started here — the grabette's own button does that, and
+    # the capture/session controls that used to sit on top only offered a
+    # second, contradictory way in.
 
     with demo.route("Episodes") as episodes_demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
-        episode_status_bar = gr.HTML("")
+        _title_bar()
 
-        # ── Main layout ───────────────────────────────────────────────
-        with gr.Row():
-
-            # ── LEFT: Tasks ──────────────────────────────────────────
-            with gr.Column(scale=1, min_width=200, elem_id="tasks-col"):
-                gr.Markdown("## Tasks")
-                task_list = gr.Radio(choices=[], label=None, container=False)
+        with gr.Column(elem_id="ep-page"):
+            with gr.Column():
+                # Tasks are created and edited on the fleet, not on the device;
+                # here you only choose which one to look at.
+                task_list = gr.Dropdown(choices=[], show_label=False,
+                                        container=False, interactive=True,
+                                        elem_classes="ep-task-menu")
                 # Remembers, per browser, which task was selected so a page
-                # refresh stays on it instead of snapping back to the first
-                # task. Independent of the (server-side) capture session.
+                # refresh stays on it instead of snapping back to the first.
                 selected_task_state = gr.BrowserState(
                     "", storage_key="grabette_selected_task",
                 )
-                # Tasks are created/edited on the fleet (grabette-fleet), not on
-                # the device — here we only pick a task to view its episodes.
 
-            # ── RIGHT: Episodes ──────────────────────────────────────
-            with gr.Column(scale=3):
-
-                # Capture (always at top so the primary action is prominent)
-                session_banner = gr.HTML("")
-                capture_title = gr.Markdown("### Capture")
-                with gr.Row():
-                    capture_box = gr.Textbox(
-                        label="Status", lines=2, interactive=False, scale=3,
-                    )
-                    with gr.Column(scale=1, min_width=150):
-                        session_btn = gr.Button("▶ Start Session", variant="secondary")
-                        toggle_btn = gr.Button("Start Capture", variant="primary")
-
-                task_header_md = gr.Markdown("", visible=False)
-
-                gr.HTML("<div style='margin-top:2rem;'></div>")
-                episodes_title = gr.Markdown("## Episodes")
-                task_desc_md = gr.Markdown("")
+                episodes_header = gr.HTML("")
 
                 episodes_table = gr.Dataframe(
-                    headers=["✓", "Episode ID", "Duration", "Frames", "IMU", "Angle"],
-                    datatype=["bool", "str", "str", "number", "number", "number"],
+                    headers=["✓", "Episode", "Duration", "Frames", "Angles",
+                             "Status"],
+                    datatype=["bool", "str", "str", "number", "number", "str"],
                     interactive=True,
                     static_columns=[1, 2, 3, 4, 5],
                     col_count=(6, "fixed"),
                     show_search="filter",
+                    elem_classes="ep-table",
                 )
-                with gr.Row():
-                    replay_btn = gr.Button("▶ Replay", size="md", scale=1)
-                    with gr.Accordion("Download", open=False):
-                        dl_btn = gr.Button("Download selected", size="sm")
-                        dl_file = gr.File(label="Download")
-                    with gr.Accordion("Move to Task", open=False):
-                        move_target_dd = gr.Dropdown(label="Move to task", interactive=True)
-                        move_btn = gr.Button("Move", size="sm")
-                    with gr.Accordion("Delete", open=False):
-                        del_episode_btn = gr.Button("Delete selected", variant="stop", size="sm")
 
-                episode_msg = gr.Textbox(show_label=False, interactive=False, max_lines=1)
+                with gr.Row(elem_classes="ep-actions"):
+                    replay_btn = gr.Button("▶ Replay", size="sm",
+                                           variant="primary")
+                    check_btn = gr.Button("Check", size="sm")
+                    dl_btn = gr.Button("Download", size="sm")
+                    del_episode_btn = gr.Button("Delete", size="sm",
+                                                variant="stop")
+
+                # Markdown, not a Textbox: an empty message should leave no
+                # trace, and an empty Textbox is a box.
+                episode_msg = gr.Markdown("")
+                # The full verdict for one episode — empty until Check is used.
+                episode_check = gr.HTML("")
+                # Hidden until an archive exists: an empty file drop is a hole
+                # in the page on every state but one.
+                dl_file = gr.File(label="Episode archive", visible=False,
+                                  height=90)
 
                 # Replay panel (hidden until replay starts)
                 with gr.Group(visible=False) as replay_panel:
-                    gr.Markdown("#### Replay")
+                    gr.HTML(_section_label("Replay"))
                     replay_video = gr.HTML(value="")
-                    gr.HTML(
-                        '<iframe src="/charts/imu" '
-                        'style="width:100%;height:300px;border:none;'
-                        'border-radius:8px;background:transparent;"></iframe>'
-                    )
                     gr.HTML(
                         '<iframe src="/charts/angle" '
                         'style="width:100%;height:180px;border:none;'
@@ -1758,40 +1713,43 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         value="0.0s / 0.0s", show_label=False,
                         interactive=False, max_lines=1,
                     )
-                    with gr.Row():
+                    with gr.Row(elem_classes="ep-actions"):
                         replay_pause_btn = gr.Button("Pause", size="sm")
-                        replay_stop_btn = gr.Button("Stop Replay", variant="stop", size="sm")
+                        replay_stop_btn = gr.Button("Stop replay",
+                                                    variant="stop", size="sm")
                 replay_timer = gr.Timer(0.5, active=False)
+
+                # Set apart at the foot of the page: the one action here that
+                # cannot be taken back.
+                gr.HTML(_OV_RULE)
+                with gr.Row(elem_classes="ep-actions"):
+                    del_all_btn = gr.Button("🗑 Delete all Grabette data",
+                                            variant="stop", size="lg")
+                del_all_confirmed = gr.Checkbox(value=False, visible=False)
 
         # ── Wire events ───────────────────────────────────────────────
 
         task_list.change(
             fn=on_task_select, inputs=task_list,
-            outputs=[task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd],
+            outputs=[episodes_header, episodes_table],
         )
         # Persist the current selection in the browser so a refresh keeps it.
         task_list.change(fn=lambda v: v, inputs=task_list, outputs=selected_task_state)
 
-        session_btn.click(
-            fn=on_start_stop_session,
-            inputs=[task_list],
-            outputs=[session_btn, capture_title, session_banner],
-        )
-
-        toggle_btn.click(
-            fn=on_toggle_capture,
-            inputs=[task_list],
-            outputs=[toggle_btn, episodes_table, move_target_dd, task_desc_md],
-        )
-
-        dl_btn.click(fn=on_download_episodes, inputs=episodes_table, outputs=dl_file)
+        dl_btn.click(fn=on_download_episodes, inputs=episodes_table,
+                     outputs=[dl_file, episode_msg])
+        check_btn.click(fn=on_check_episode, inputs=episodes_table,
+                        outputs=[episode_check, episode_msg])
         del_episode_btn.click(
             fn=on_delete_episode, inputs=[episodes_table, task_list],
-            outputs=[episode_msg, episodes_table, move_target_dd, task_desc_md],
+            outputs=[episode_msg, episodes_table, episodes_header],
         )
-        move_btn.click(
-            fn=on_move_episodes, inputs=[episodes_table, move_target_dd, task_list],
-            outputs=[episode_msg, episodes_table, move_target_dd, task_desc_md],
+        del_all_btn.click(
+            fn=on_delete_all, inputs=[del_all_confirmed, selected_task_state],
+            outputs=[episode_msg, task_list, episodes_header, episodes_table,
+                     replay_panel, replay_timer],
+            js="(_, task) => [confirm('Delete ALL episodes on this Grabette? "
+               "This cannot be undone.'), task]",
         )
 
         replay_btn.click(
@@ -1810,104 +1768,27 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                      replay_timer, replay_panel, replay_video],
         )
 
-        _capture_state = {"was_active": False}
-
-        def get_capture_status_and_active_task(current_task):
-            state = client.get_state()
-            cap_session = client.get_session_status()
-            cap = (state or {}).get("capture", {})
-            is_recording = cap.get("is_capturing", False)
-            is_starting = cap.get("is_starting", False)
-
-            # Detect recording stop to refresh episode table
-            currently_active = is_recording or is_starting
-            just_stopped = _capture_state["was_active"] and not currently_active
-            _capture_state["was_active"] = currently_active
-            if just_stopped and current_task:
-                rows, move_dd_upd, _task_header, desc, *_ = _refresh_episode_table(current_task)
-                table_update = rows
-                move_dd_update = move_dd_upd
-                desc_update = desc
-            else:
-                table_update = gr.skip()
-                move_dd_update = gr.skip()
-                desc_update = gr.skip()
-
-            # Build status text and toggle button state
-            if is_starting:
-                status = "◌ Initializing depth camera…"
-                toggle_btn_update = gr.update(interactive=False, value="Start Capture", variant="primary")
-            elif is_recording:
-                parts = [
-                    f"● RECORDING  {cap.get('episode_id', '')}",
-                    f"Duration: {cap.get('duration_seconds', 0):.1f}s",
-                    f"Frames: {cap.get('frame_count', 0)}  |  IMU: {cap.get('imu_sample_count', 0)}",
-                ]
-                if cap.get("angle_sample_count", 0):
-                    parts[-1] += f"  |  Angle: {cap['angle_sample_count']}"
-                status = "\n".join(parts)
-                toggle_btn_update = gr.update(interactive=True, value="Stop Capture", variant="stop")
-            else:
-                status = "○ Idle"
-                toggle_btn_update = gr.update(interactive=True, value="Start Capture", variant="primary")
-
-            # Session button + capture title + banner sync
-            if cap_session.get("active"):
-                task_name = cap_session.get("task_name", "")
-                # The count already excludes any in-progress capture — episodes
-                # are registered only once recording stops.
-                display_count = cap_session.get("count", 0)
-                sess_btn = gr.update(value="■ Stop Session", variant="stop")
-                cap_title = gr.update(value=f"### Capture a new episode for *{task_name}*")
-                banner = gr.update(value=_session_banner_html(task_name, display_count))
-                task_update = gr.skip()
-            else:
-                active = client.get_active_task()
-                sess_btn = gr.update(value="▶ Start Session", variant="secondary")
-                cap_title = gr.skip()
-                banner = gr.update(value="")
-                # The active task can change out-of-band — e.g. a fleet-driven
-                # (physical-button) recording creates a task locally via
-                # get_or_create_task. Pointing the dropdown at it WITHOUT also
-                # refreshing its choices makes Gradio raise "Value ... not in
-                # the list of choices" every tick until reload. So when the
-                # active task changed, refresh the choices in the same update
-                # (and never set a value that isn't among them).
-                if active and active != current_task:
-                    choices = _task_choices(_get_sessions())
-                    if any(cid == active for _n, cid in choices):
-                        task_update = gr.update(choices=choices, value=active)
-                    else:
-                        task_update = gr.skip()
-                else:
-                    task_update = gr.skip()
-
-            return status, task_update, sess_btn, cap_title, banner, toggle_btn_update, table_update, move_dd_update, desc_update
-
-        capture_timer = gr.Timer(0.5)
-        capture_timer.tick(
-            fn=get_capture_status_and_active_task,
-            inputs=[task_list],
-            outputs=[capture_box, task_list, session_btn, capture_title, session_banner, toggle_btn,
-                     episodes_table, move_target_dd, task_desc_md],
+        # The table refreshes on a slow beat rather than every half second:
+        # nothing on this page starts a recording, so the only changes to catch
+        # are the ones the grabette's button makes on its own.
+        episodes_timer = gr.Timer(10.0)
+        episodes_timer.tick(
+            fn=on_task_select, inputs=task_list,
+            outputs=[episodes_header, episodes_table],
         )
 
         batt_popup_ep = gr.HTML(visible=False)
         batt_beep_ep = gr.Textbox(visible=False)
+        batt_timer_ep = gr.Timer(60.0)
+        batt_timer_ep.tick(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
-        demo.load(fn=None, js=_BATTERY_INIT_JS)
+        episodes_demo.load(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
+        episodes_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
-        # Battery warning rides on the status-bar poll (one system-info read
-        # feeds both the strip and the popup) — no dedicated battery timer.
-        status_bar_outputs = [episode_status_bar, batt_popup_ep, batt_beep_ep]
-        status_bar_timer = gr.Timer(3.0)
-        status_bar_timer.tick(fn=get_episode_status_bar, outputs=status_bar_outputs)
-
-        episodes_demo.load(fn=refresh_tasks, inputs=[selected_task_state], outputs=[task_list, task_header_md, capture_title, task_desc_md, episodes_title, episodes_table, move_target_dd])
-        # One load fills the strip AND the battery popup/beep — get_episode_status_bar
-        # now returns all three from a single system-info read, so no separate
-        # check_battery_warning load is needed here.
-        episodes_demo.load(fn=get_episode_status_bar, outputs=status_bar_outputs)
+        episodes_demo.load(
+            fn=refresh_tasks, inputs=[selected_task_state],
+            outputs=[task_list, episodes_header, episodes_table],
+        )
 
     # (Datasets page removed — dataset generation is done on the fleet.)
 
@@ -1915,101 +1796,108 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # Page 4 — Live View
     # ══════════════════════════════════════════════════════════════════
 
-    with demo.route("Live View") as live_demo:
-        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+    if _LIVE_VIEW_ENABLED:
+        with demo.route("Live View") as live_demo:
+            gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
+            _title_bar()
 
-        # ── System bar (full width) ────────────────────────────────────
-        dv_system_bar = gr.HTML()
+            # ── System bar (full width) ────────────────────────────────────
+            dv_system_bar = gr.HTML()
 
-        gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
+            gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
 
-        # ── Camera | Angle sensors | 3D viewer ─────────────────────────
-        with gr.Row(equal_height=True):
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Camera"))
-                camera_img = gr.Image(
-                    label=None, show_label=False, height="28vh", container=False,
-                )
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Angle Sensors"))
-                angle_box = gr.Markdown("*—*")
-                gr.HTML(value=_ANGLE_IFRAME_HTML)
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("3D Model"))
-                gr.HTML(
-                    '<iframe id="urdf-viewer" src="/viewer" '
-                    'style="width:100%;height:28vh;border:none;'
-                    'border-radius:8px;background:#1a1a2e;"></iframe>'
-                )
+            # ── Camera | Angle sensors | 3D viewer ─────────────────────────
+            with gr.Row(equal_height=True):
+                with gr.Column(scale=1):
+                    gr.HTML(_section_label("Camera"))
+                    camera_img = gr.Image(
+                        label=None, show_label=False, height="28vh", container=False,
+                    )
+                with gr.Column(scale=1):
+                    gr.HTML(_section_label("Angle Sensors"))
+                    angle_box = gr.Markdown("*—*")
+                    gr.HTML(value=_ANGLE_IFRAME_HTML)
+                with gr.Column(scale=1):
+                    gr.HTML(_section_label("3D Model"))
+                    gr.HTML(
+                        '<iframe id="urdf-viewer" src="/viewer" '
+                        'style="width:100%;height:28vh;border:none;'
+                        'border-radius:8px;background:#1a1a2e;"></iframe>'
+                    )
 
-        gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
+            gr.HTML("<hr style='margin:0.75rem 0;border:none;border-top:1px solid #1e293b;'>")
 
-        # ── OAK-D data: Depth | IMU (gyro) | Accelerometer ─────────────
-        # The whole row is hidden until the OAK-D is enabled (its depth, IMU
-        # and accelerometer streams only exist while the camera is running).
-        # The toggle button stays outside the row so it's always reachable.
-        oakd_btn = gr.Button("Depth camera: OFF  — click to enable", size="sm")
-        with gr.Row(visible=False, equal_height=True) as oak_row:
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Depth (OAK-D)"))
-                depth_img = gr.Image(
-                    label=None, show_label=False, height="28vh", container=False,
-                )
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Gyroscope"))
-                gyro_box = gr.Markdown("*—*")
-                gr.HTML(value=_GYRO_IFRAME_HTML)
-            with gr.Column(scale=1):
-                gr.HTML(_section_label("Accelerometer"))
-                accel_box = gr.Markdown("*—*")
-                gr.HTML(value=_ACCEL_IFRAME_HTML)
+            # ── OAK-D data: Depth | IMU (gyro) | Accelerometer ─────────────
+            # The whole row is hidden until the OAK-D is enabled (its depth, IMU
+            # and accelerometer streams only exist while the camera is running).
+            # The toggle button stays outside the row so it's always reachable.
+            oakd_btn = gr.Button("Depth camera: OFF  — click to enable", size="sm")
+            with gr.Row(visible=False, equal_height=True) as oak_row:
+                with gr.Column(scale=1):
+                    gr.HTML(_section_label("Depth (OAK-D)"))
+                    depth_img = gr.Image(
+                        label=None, show_label=False, height="28vh", container=False,
+                    )
+                with gr.Column(scale=1):
+                    gr.HTML(_section_label("Gyroscope"))
+                    gyro_box = gr.Markdown("*—*")
+                    gr.HTML(value=_GYRO_IFRAME_HTML)
+                with gr.Column(scale=1):
+                    gr.HTML(_section_label("Accelerometer"))
+                    accel_box = gr.Markdown("*—*")
+                    gr.HTML(value=_ACCEL_IFRAME_HTML)
 
-        camera_timer = gr.Timer(0.2)
-        camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
+            camera_timer = gr.Timer(0.2)
+            camera_timer.tick(fn=get_camera_frame, outputs=camera_img)
 
-        depth_timer = gr.Timer(0.2)
-        depth_timer.tick(fn=get_depth_frame, outputs=depth_img)
+            depth_timer = gr.Timer(0.2)
+            depth_timer.tick(fn=get_depth_frame, outputs=depth_img)
 
-        sensor_timer = gr.Timer(0.5)
-        sensor_timer.tick(fn=get_sensor_state, outputs=[gyro_box, accel_box, angle_box])
+            sensor_timer = gr.Timer(0.5)
+            sensor_timer.tick(fn=get_sensor_state, outputs=[gyro_box, accel_box, angle_box])
 
-        oakd_timer = gr.Timer(3.0)
-        oakd_timer.tick(fn=poll_oakd, outputs=[oakd_btn, oak_row])
-        oakd_btn.click(fn=on_toggle_oakd, outputs=[oakd_btn, oak_row])
-        live_demo.load(fn=poll_oakd, outputs=[oakd_btn, oak_row])
+            oakd_timer = gr.Timer(3.0)
+            oakd_timer.tick(fn=poll_oakd, outputs=[oakd_btn, oak_row])
+            oakd_btn.click(fn=on_toggle_oakd, outputs=[oakd_btn, oak_row])
+            live_demo.load(fn=poll_oakd, outputs=[oakd_btn, oak_row])
 
-        batt_popup_lv = gr.HTML(visible=False)
-        batt_beep_lv = gr.Textbox(visible=False)
+            batt_popup_lv = gr.HTML(visible=False)
+            batt_beep_lv = gr.Textbox(visible=False)
 
-        dv_system_timer = gr.Timer(10)
-        dv_system_timer.tick(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
-        batt_beep_lv.change(fn=None, inputs=batt_beep_lv, outputs=None, js=_BATTERY_BEEP_JS)
-        live_demo.load(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
-        live_demo.load(fn=None, js=_BATTERY_INIT_JS)
+            dv_system_timer = gr.Timer(10)
+            dv_system_timer.tick(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
+            batt_beep_lv.change(fn=None, inputs=batt_beep_lv, outputs=None, js=_BATTERY_BEEP_JS)
+            live_demo.load(fn=get_system_bar, outputs=[dv_system_bar, batt_popup_lv, batt_beep_lv])
+            live_demo.load(fn=None, js=_BATTERY_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
-    # Page 5 — Settings
+    # Page 5 — Network
     # ══════════════════════════════════════════════════════════════════
+    #
+    # One errand: put the device on another WiFi. The card above the form is
+    # the same one the Overview shows, so "which network am I on" reads the
+    # same wherever it is asked. The HuggingFace login used to share this page;
+    # it is now the account slab on the Overview, which runs the whole flow.
 
-    with demo.route("Settings") as settings_demo:
+    def refresh_network_card():
+        info = client.get_system_info()
+        wifi = client.wifi_status() if info is not None else None
+        return _ov_device_card(info, wifi)
+
+    with demo.route("Network") as settings_demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
+        _title_bar()
 
-        with gr.Row(equal_height=False):
+        with gr.Column(elem_id="nw-page"):
+            gr.HTML(_section_label("Device"))
+            nw_device_card = gr.HTML(_ov_device_card(None, None))
+            gr.HTML(_OV_RULE)
+            gr.HTML(_section_label("Change WiFi network"))
+            gr.HTML(_WIFI_SETTINGS_HTML)
 
-            # ── HuggingFace Account ───────────────────────────────────
-            with gr.Column(scale=1):
-                gr.Markdown("## HuggingFace Account")
-                gr.HTML(_HF_AUTH_IFRAME)
-
-            # ── WiFi ─────────────────────────────────────────────────
-            with gr.Column(scale=1):
-                gr.Markdown("## WiFi")
-                wifi_network_info = gr.Markdown("*Loading…*")
-                gr.HTML(_WIFI_SETTINGS_HTML)
-
-        settings_demo.load(fn=get_wifi_network_info, outputs=wifi_network_info)
+        nw_timer = gr.Timer(10.0)
+        nw_timer.tick(fn=refresh_network_card, outputs=nw_device_card)
+        settings_demo.load(fn=refresh_network_card, outputs=nw_device_card)
 
         batt_popup_st = gr.HTML(visible=False)
         batt_beep_st = gr.Textbox(visible=False)
@@ -2019,29 +1907,5 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
         settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
         settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
-
-    # ══════════════════════════════════════════════════════════════════
-    # Page 6 — Power Off
-    # ══════════════════════════════════════════════════════════════════
-
-    with demo.route("🔴 Power Off") as poweroff_demo:
-        gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
-        gr.HTML(_TITLE_HTML)
-
-        gr.HTML(
-            "<div style='max-width:520px;margin-top:1rem;padding:1.5rem;"
-            "background:#1c1310;border:1px solid #991b1b;border-radius:12px;'>"
-            "<h2 style='margin:0 0 0.5rem;color:#f87171;'>Power off the device</h2>"
-            "<p style='color:#e2e8f0;margin:0;font-size:0.95rem;'>"
-            "This performs a clean shutdown of the Raspberry Pi. Once it has halted "
-            "you can safely disconnect power.</p></div>"
-        )
-
-        poweroff_msg = gr.HTML(value="", visible=False)
-        with gr.Row():
-            poweroff_btn = gr.Button("Power off now", variant="stop", scale=0)
-
-        poweroff_btn.click(fn=on_poweroff, outputs=[poweroff_msg, poweroff_btn])
-        poweroff_demo.load(fn=load_poweroff_page, outputs=[poweroff_msg, poweroff_btn])
 
     return demo

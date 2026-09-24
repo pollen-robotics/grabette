@@ -134,7 +134,7 @@ def recording_summary(episode: dict | None, check: dict | None) -> str:
     ])
 
     color = _BAD if faults else _OK
-    head = "Something is wrong" if faults else "Recording looks good"
+    head = "Something is wrong" if faults else "Recording data is complete"
     body = [
         '<div style="opacity:.7;font-size:.82rem;margin:.15rem 0 .7rem;">'
         f"<code>{html.escape(episode_id)}</code> · {duration:.1f}s</div>",

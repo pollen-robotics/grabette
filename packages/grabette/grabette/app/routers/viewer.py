@@ -246,8 +246,9 @@ async function buildRobot(urdf) {
     if (!baseGroup) return;
     anchor.matrix.identity();
     anchor.updateMatrixWorld(true);                       // base world with anchor = I
-    anchor.matrix.copy(baseGroup.matrixWorld).invert();   // cancel it out
-    anchor.updateMatrixWorld(true);                       // base now sits at origin
+    anchor.matrix.copy(anchor.matrixWorld).invert()       // base relative to anchor,
+      .multiply(baseGroup.matrixWorld).invert();          // so a parent yaw survives
+    anchor.updateMatrixWorld(true);                       // base now sits at anchor origin
   }
   reanchor();
 
@@ -263,15 +264,20 @@ let rebaseModel = null;
   try {
     const urdf  = await parseURDF('__URDF_PATH__');
     const robot = await buildRobot(urdf);
-    scene.add(robot.root);
+    // ?yaw=<deg> turns the model about y, e.g. 180 to face the grabette.
+    const yaw = new THREE.Group();
+    yaw.rotation.y = THREE.MathUtils.degToRad(
+      Number(new URLSearchParams(location.search).get('yaw')) || 0);
+    yaw.add(robot.root);
+    scene.add(yaw);
     jointPivots = robot.pivots;
     rebaseModel = robot.reanchor;
 
     // Mark the gripper_base frame (now at the world origin) with an axis triad.
-    scene.add(new THREE.AxesHelper(0.03));
+    yaw.add(new THREE.AxesHelper(0.03));
 
     // Fit camera to model
-    const box    = new THREE.Box3().setFromObject(robot.root);
+    const box    = new THREE.Box3().setFromObject(yaw);
     const center = box.getCenter(new THREE.Vector3());
     controls.target.copy(center);
     controls.update();
