@@ -73,6 +73,14 @@ MODAL_CSS = """
     margin: 0 auto 0 0 !important;
     align-self: flex-start !important;
 }
+#ep-page .ep-wipe {
+    background: #000 !important;
+    border-color: #000 !important;
+    color: #fff !important;
+}
+#ep-page .ep-wipe:hover {
+    background: #333 !important;
+}
 #ep-page .ep-actions {
     justify-content: flex-start !important;
     align-items: center !important;
@@ -610,6 +618,56 @@ _BATTERY_INIT_JS = """
 # fires reliably. The signal carries "<pct>|<nonce>"; the nonce changes every
 # poll so `change` keeps firing while the battery stays low (throttled to one
 # chime per 60 s inside __grabetteBatteryBeep).
+# Episodes table: pressing in the ✓ cell toggles the row, dragging on sets the
+# rows crossed. Gradio 6 rows are div.body-cell, and its own cell drag runs on
+# mousedown, hence the capture-phase listeners.
+_EP_DRAG_SELECT_JS = """
+() => {
+  if (window.__grabetteDragSelect) { return; }
+  window.__grabetteDragSelect = true;
+  var target = null, synthetic = false;
+  function cell(el) {
+    return el && el.closest && el.closest('.ep-table .body-cell[data-row]');
+  }
+  function box(row) {
+    return document.querySelector('.ep-table .body-cell[data-row="' + row
+      + '"][data-col="0"] input[type=checkbox]');
+  }
+  function set(cb) {
+    if (!cb || cb.checked === target) { return; }
+    synthetic = true;
+    cb.click();
+    synthetic = false;
+  }
+  document.addEventListener('mousedown', function (e) {
+    var c = cell(e.target);
+    if (e.button !== 0 || !c || c.dataset.col !== '0') { return; }
+    var cb = box(c.dataset.row);
+    if (!cb) { return; }
+    e.preventDefault();
+    e.stopPropagation();
+    target = !cb.checked;
+    set(cb);
+    document.body.style.userSelect = 'none';
+  }, true);
+  document.addEventListener('click', function (e) {
+    var c = cell(e.target);
+    if (synthetic || !c || c.dataset.col !== '0') { return; }
+    e.preventDefault();
+    e.stopPropagation();
+  }, true);
+  document.addEventListener('mouseover', function (e) {
+    if (target === null) { return; }
+    var c = cell(e.target);
+    if (c) { set(box(c.dataset.row)); }
+  });
+  document.addEventListener('mouseup', function () {
+    target = null;
+    document.body.style.userSelect = '';
+  });
+}
+"""
+
 _BATTERY_BEEP_JS = (
     "(v) => { if (v && window.__grabetteBatteryBeep) "
     "{ window.__grabetteBatteryBeep(String(v).split('|')[0]); } }"
@@ -1724,7 +1782,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.HTML(_OV_RULE)
                 with gr.Row(elem_classes="ep-actions"):
                     del_all_btn = gr.Button("🗑 Delete all Grabette data",
-                                            variant="stop", size="lg")
+                                            size="lg", elem_classes="ep-wipe")
                 del_all_confirmed = gr.Checkbox(value=False, visible=False)
 
         # ── Wire events ───────────────────────────────────────────────
@@ -1784,6 +1842,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
         episodes_demo.load(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
         episodes_demo.load(fn=None, js=_BATTERY_INIT_JS)
+        episodes_demo.load(fn=None, js=_EP_DRAG_SELECT_JS)
 
         episodes_demo.load(
             fn=refresh_tasks, inputs=[selected_task_state],
