@@ -60,6 +60,10 @@ MODAL_CSS = """
 .gb-titlebar .gb-power:hover {
     background: #333 !important;
 }
+/* Once the grabette is powering off, losing the connection is expected. */
+html.gb-off .toast-wrap {
+    display: none !important;
+}
 .gb-titlebar > * {
     flex: 0 0 auto !important;
     width: auto !important;
@@ -665,6 +669,24 @@ _EP_DRAG_SELECT_JS = """
     target = null;
     document.body.style.userSelect = '';
   });
+}
+"""
+
+# After a successful power-off, hide Gradio's "Connection to the server was
+# lost" toast and say the grabette is off once the server actually goes away.
+_POWEROFF_DONE_JS = """
+() => {
+    if (!document.querySelector('.gb-poweroff-ok')) return;
+    document.documentElement.classList.add('gb-off');
+    const done = () => {
+        document.querySelectorAll('.gb-poweroff-ok').forEach(el => {
+            el.textContent = '✓ Your Grabette has been shut down. You can close this page.';
+        });
+    };
+    const poll = setInterval(() => {
+        fetch(window.location.href, {method: 'HEAD', cache: 'no-store'})
+            .catch(() => { clearInterval(poll); done(); });
+    }, 2000);
 }
 """
 
@@ -1423,9 +1445,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Power off ─────────────────────────────────────────────────────
 
-    def _poweroff_notice(text: str, color: str = "#f97316") -> str:
+    def _poweroff_notice(text: str, color: str = "#f97316", cls: str = "") -> str:
         return (
-            f"<div style='max-width:520px;margin-top:0.75rem;padding:0.85rem 1.1rem;"
+            f"<div class='{cls}' style='max-width:520px;margin-top:0.75rem;padding:0.85rem 1.1rem;"
             f"background:#1e293b;border-left:4px solid {color};border-radius:8px;"
             f"color:#e2e8f0;font-size:0.92rem;'>{text}</div>"
         )
@@ -1440,8 +1462,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (
             gr.update(
                 value=_poweroff_notice(
-                    "Device is shutting down, it can take ~30 s. This page will stop responding shortly."
+                    "Your Grabette is shutting down, it can take ~30 s.",
                     "#22c55e",
+                    "gb-poweroff-ok",
                 ),
                 visible=True,
             ),
@@ -1467,7 +1490,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             inputs=[confirmed],
             outputs=[notice, btn],
             js="() => confirm('Power off the grabette?')",
-        )
+        ).then(fn=None, js=_POWEROFF_DONE_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 1 — Overview (landing)
