@@ -1276,7 +1276,7 @@ def create_app() -> FastAPI:
     if settings.ui_enabled:
         try:
             import gradio as gr
-            from grabette.ui.app import MODAL_CSS, create_ui
+            from grabette.ui.app import MODAL_CSS, NAV_HEAD, create_ui
 
             demo = create_ui()
             # `allowed_paths` whitelists directories from which Gradio's
@@ -1293,7 +1293,7 @@ def create_app() -> FastAPI:
             # or ""). Every custom rule — the Test Recording layout, the
             # auth modal — disappears without this.
             app = gr.mount_gradio_app(
-                app, demo, path="/", css=MODAL_CSS,
+                app, demo, path="/", css=MODAL_CSS, head=NAV_HEAD, footer_links=[],
                 allowed_paths=[str(settings.data_dir / ".downloads")],
             )
             logger.info("Gradio UI mounted at /")

@@ -184,11 +184,28 @@ html.gb-off .toast-wrap {
     text-align: center !important;
     margin: .35rem 0 0 !important;
 }
+#ov-page .ov-rule-bottom {
+    display: none !important;
+}
 @media (max-width: 560px) {
     /* A phone shows one column, so a full-width button is the easy target. */
     #ov-page .ov-cta button,
     #ov-page .ov-cta a {
         width: 100% !important;
+    }
+    /* On a phone the errands come before the status tiles. */
+    #ov-page #ov-data {
+        order: -2;
+    }
+    #ov-page #ov-account {
+        order: -1;
+    }
+
+    #ov-page .ov-rule-top {
+        display: none !important;
+    }
+    #ov-page .ov-rule-bottom {
+        display: block !important;
     }
 }
 /* Live dot on the Test Recording status pill (see _tr_pill). */
@@ -251,6 +268,25 @@ html.gb-off .toast-wrap {
 }
 """
 
+# The navbar sits outside .gradio-container, where MODAL_CSS (scoped to it by
+# gradio) cannot reach, so its rules go in the page <head> instead.
+NAV_HEAD = """<style>
+@media (max-width: 560px) {
+    /* Four tabs on one line on a phone. */
+    nav:has(> a[data-sveltekit-reload]) {
+        flex-wrap: nowrap !important;
+        justify-content: center !important;
+        gap: .1rem !important;
+        padding: 0 .25rem !important;
+    }
+    nav > a[data-sveltekit-reload] {
+        font-size: .8rem !important;
+        padding: .25rem .4rem !important;
+        white-space: nowrap !important;
+    }
+}
+</style>"""
+
 # The two errands at the bottom of the Overview are one shape in two colours:
 # same height, same weight, same radius, so neither looks like the important
 # one. Both are plain links out — grabette-fleet is OAuth-gated and this
@@ -283,6 +319,22 @@ _HF_AUTH_BUTTON_IFRAME = (
     'setTimeout(r,400);})()"'
     ' style="width:100%;border:none;min-height:56px;display:block;"></iframe>'
 )
+
+# The same slab at the end of Test Recording, but only while signed out: the
+# loop also hides its wrapper once the widget shows an account.
+def _hf_login_only_html(label: str) -> str:
+    return (
+        '<div class="tr-hf" style="margin-bottom:1rem;">' + label
+        + '<iframe src="/api/hf-auth/widget?variant=button" scrolling="no"'
+        ' onload="var f=this;(function r(){'
+        'if(!document.contains(f))return;'
+        'try{var d=f.contentDocument;'
+        'f.closest(\'.tr-hf\').style.display=d.querySelector(\'.who-row\')?\'none\':\'\';'
+        'f.style.height=d.body.scrollHeight+2+\'px\';}catch(e){}'
+        'setTimeout(r,400);})()"'
+        ' style="width:100%;border:none;min-height:56px;display:block;"></iframe>'
+        '</div>'
+    )
 
 
 # Test Recording shows the grabette's own button being pressed instead of
@@ -518,8 +570,8 @@ def _ov_health_card(info: dict | None) -> str:
     temp = f"{info['cpu_temp_c']} °C" if "cpu_temp_c" in info else "—"
     if "disk_free_gb" in info:
         total = info.get("disk_total_gb")
-        storage = (f"{info['disk_free_gb']} GB free"
-                   + (f" of {total} GB" if total else ""))
+        storage = (f"{total - info['disk_free_gb']:.1f} / {total} GB used"
+                   if total else f"{info['disk_free_gb']} GB free")
     else:
         storage = "—"
     return (
@@ -1532,7 +1584,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return mode, f"⛔ {result['error']}"
         return mode, f"*Starting {name}…*"
 
-    with gr.Blocks(title="Grabette", css=MODAL_CSS) as demo:
+    with gr.Blocks(title="Grabette", css=MODAL_CSS, head=NAV_HEAD) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         _title_bar()
 
@@ -1572,41 +1624,44 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     gr.HTML(_section_label("Health"))
                     ov_health_card = gr.HTML(_ov_health_card(None))
 
-            gr.HTML(_OV_RULE)
-
             # ── Recording and the episodes it produces ────────────────
-            gr.HTML(_ov_group_title(
-                "Grabette data",
-                "Check the recording works, then browse what is on the device.",
-            ))
-            with gr.Row(elem_classes="ov-cta"):
-                gr.Button(
-                    "Make a test recording →",
-                    link="/test-recording",
-                    variant="primary",
-                    size="lg",
-                )
-                gr.Button(
-                    "See recorded episodes →",
-                    link="/episodes",
-                    variant="primary",
-                    size="lg",
-                )
-
-            gr.HTML(_OV_RULE)
+            # On a phone: Grabette data, then Account & fleet, then status
+            # (see #ov-data / #ov-account in the CSS).
+            with gr.Column(elem_id="ov-data"):
+                gr.HTML(_OV_RULE, elem_classes="ov-rule-top")
+                gr.HTML(_ov_group_title(
+                    "Grabette data",
+                    "Check the recording works, then browse what is on the device.",
+                ))
+                with gr.Row(elem_classes="ov-cta"):
+                    gr.Button(
+                        "Make a test recording →",
+                        link="/test-recording",
+                        variant="primary",
+                        size="lg",
+                    )
+                    gr.Button(
+                        "See recorded episodes →",
+                        link="/episodes",
+                        variant="primary",
+                        size="lg",
+                    )
 
             # ── Account | Fleet Space ─────────────────────────────────
-            gr.HTML(_ov_group_title(
-                "Account & fleet",
-                "Sign in to Hugging Face, and open the Fleet Space to start recording organized data and creating datasets.",
-            ))
-            with gr.Row(equal_height=False, elem_classes="ov-errands"):
-                with gr.Column(scale=1, min_width=260):
-                    gr.HTML(_section_label("HuggingFace account"))
-                    gr.HTML(_HF_AUTH_BUTTON_IFRAME)
-                with gr.Column(scale=1, min_width=260):
-                    gr.HTML(_section_label("Fleet Space"))
-                    gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
+            with gr.Column(elem_id="ov-account"):
+                gr.HTML(_OV_RULE)
+                gr.HTML(_ov_group_title(
+                    "Account & fleet",
+                    "Sign in to Hugging Face, and open the Fleet Space to start recording organized data and creating datasets.",
+                ))
+                with gr.Row(equal_height=False, elem_classes="ov-errands"):
+                    with gr.Column(scale=1, min_width=260):
+                        gr.HTML(_section_label("HuggingFace account"))
+                        gr.HTML(_HF_AUTH_BUTTON_IFRAME)
+                    with gr.Column(scale=1, min_width=260):
+                        gr.HTML(_section_label("Fleet Space"))
+                        gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
+                gr.HTML(_OV_RULE, elem_classes="ov-rule-bottom")
 
         ov_mode_state = gr.State(_OV_RGB)
         ov_cam_mode.change(fn=on_ov_mode, inputs=ov_cam_mode,
@@ -1711,6 +1766,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 tr_delete_btn = gr.Button("Delete this episode", variant="stop",
                                           size="sm", interactive=False)
                 tr_delete_msg = gr.Markdown("")
+
+            # ── 4 — Real data ─────────────────────────────────────────
+            with gr.Group(elem_classes="grabette-step"):
+                gr.HTML(_step_header(
+                    4, "Record real data",
+                    "Open the Fleet Space to record organized data and "
+                    "create datasets.",
+                ))
+                # One block, so hiding the login leaves no empty slot behind.
+                gr.HTML(_hf_login_only_html(
+                            _section_label("First, sign in to Hugging Face"))
+                        + _section_label("Fleet Space")
+                        + _FLEET_BUTTON_HTML.format(url=settings.relay_url))
 
         # ── Wire events ───────────────────────────────────────────────
         tr_poll_timer.tick(
