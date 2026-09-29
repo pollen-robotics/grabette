@@ -1249,7 +1249,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         else:
             value = choices[0][1] if choices else None
         rows, header = _refresh_episode_table(value, sessions)
-        return gr.update(choices=choices, value=value), header, rows
+        n_tasks = sum(1 for s in sessions if s["id"] != "unassigned")
+        return (_section_label(f"Tasks ({n_tasks})"),
+                gr.update(choices=choices, value=value), header, rows)
 
     def on_task_select(session_id):
         # Selecting a task also points the device at it, so a recording started
@@ -1304,15 +1306,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def on_delete_all(confirmed, stored_id):
         """Wipe every episode on the device, once the browser has confirmed."""
         if not confirmed:
-            return (gr.update(),) * 6
+            return (gr.update(),) * 7
         # Stop first: deleting the files under a running replay leaves the
         # daemon reading from a directory that is gone.
         client.replay_stop()
         result = client.delete_all_episodes()
-        task_upd, header, rows = refresh_tasks(stored_id)
+        title, task_upd, header, rows = refresh_tasks(stored_id)
         msg = (f"⛔ {result['error']}" if "error" in result
                else f"Deleted all data ({result.get('deleted', 0)} episode(s))")
-        return (msg, task_upd, header, gr.update(value=rows),
+        return (msg, title, task_upd, header, gr.update(value=rows),
                 gr.update(visible=False), gr.update(active=False))
 
     def on_check_episode(table_data):
@@ -1834,6 +1836,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             with gr.Column():
                 # Tasks are created and edited on the fleet, not on the device;
                 # here you only choose which one to look at.
+                tasks_title = gr.HTML(_section_label("Tasks"))
                 task_list = gr.Dropdown(choices=[], show_label=False,
                                         container=False, interactive=True,
                                         elem_classes="ep-task-menu")
@@ -1924,7 +1927,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         )
         del_all_btn.click(
             fn=on_delete_all, inputs=[del_all_confirmed, selected_task_state],
-            outputs=[episode_msg, task_list, episodes_header, episodes_table,
+            outputs=[episode_msg, tasks_title, task_list, episodes_header, episodes_table,
                      replay_panel, replay_timer],
             js="(_, task) => [confirm('Delete ALL episodes on this Grabette? "
                "This cannot be undone.'), task]",
@@ -1966,7 +1969,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         episodes_demo.load(
             fn=refresh_tasks, inputs=[selected_task_state],
-            outputs=[task_list, episodes_header, episodes_table],
+            outputs=[tasks_title, task_list, episodes_header, episodes_table],
         )
 
     # (Datasets page removed — dataset generation is done on the fleet.)
