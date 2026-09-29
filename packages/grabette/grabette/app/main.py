@@ -651,6 +651,17 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         hf_logout()
         return {"status": "ok"}
 
+    if ctype == "shutdown":
+        # Same path as the dashboard's Power off button: refuses mid-recording,
+        # checks the sudoers grant, arms the UPS cut, then powers off after a
+        # short delay so this result still reaches the fleet.
+        from fastapi import HTTPException
+        from grabette.app.routers.system import system_shutdown
+        try:
+            return {"status": "ok", **(await system_shutdown())}
+        except HTTPException as e:
+            return {"status": "error", "message": str(e.detail)}
+
     if ctype == "upload_episodes":
         # Fleet-orchestrated dataset build: push THIS device's recorded streams
         # for the given episodes into a shared raw dataset, each under
@@ -1158,7 +1169,7 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
                           "delete_episode", "edit_task", "delete_task",
-                          "assign_episodes", "prepare_capture"],
+                          "assign_episodes", "prepare_capture", "shutdown"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
