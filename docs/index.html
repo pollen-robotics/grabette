@@ -372,6 +372,10 @@
             color: #fecaca;
         }
         .browser-note.fatal b, .browser-note.fatal svg { color: #fca5a5; }
+        .trouble { margin: .4rem 0 0; padding-left: 1.3rem; }
+        .trouble li { margin: .25rem 0; }
+        .trouble ul { margin: .1rem 0; padding-left: 1.1rem; list-style: disc; }
+        .browser-note .led-diagram { display: block; margin: .4rem 0 .2rem; color: inherit; }
 
         .pw-field { position: relative; margin-bottom: .5rem; }
         .pw-field input { margin-bottom: 0; padding-right: 2.6rem; }
@@ -391,25 +395,6 @@
             color: #8b98ad;
         }
         .pw-toggle:hover { color: #e2e8f0; background: rgba(255,255,255,.08); opacity: 1; }
-
-        /* Why the WiFi controls are greyed out. Amber = needs an action from
-           you, as opposed to the red .step-msg.err used for failures. */
-        .lock-note {
-            display: flex;
-            gap: .45rem;
-            align-items: flex-start;
-            margin-top: .6rem;
-            padding: .45rem .6rem;
-            border-radius: 8px;
-            border: 1px solid rgba(245,158,11,.4);
-            background: rgba(245,158,11,.08);
-            color: #fde68a;
-            font-size: .78rem;
-            line-height: 1.4;
-        }
-        .lock-note[hidden] { display: none; }
-        .lock-note svg { flex-shrink: 0; margin-top: .12rem; color: #fcd34d; }
-        .lock-note b { color: #fcd34d; }
 
         /* Dashboard hand-off — deliberately not the emerald→blue gradient the
            in-flow actions share. This is the one control that leaves the tool,
@@ -441,6 +426,14 @@
             transform: translateY(-1px);
         }
         .dash-link:active { transform: none; }
+        .bookmark-url {
+            font-family: "SF Mono", "Fira Code", monospace;
+            font-size: .88em;
+            padding: .1rem .4rem;
+            border-radius: 5px;
+            background: rgba(245,158,11,.18);
+            color: #fde68a;
+        }
         @media (prefers-reduced-motion: reduce) {
             .dash-link { transition: none; }
             .dash-link:hover { transform: none; }
@@ -639,7 +632,7 @@
             <button class="btn-primary next-btn" onclick="selectTab('wifi')">Start the setup →</button>
         </div>
 
-        <!-- Tab 3 — the Bluetooth WiFi provisioning tool, unchanged: three
+        <!-- Tab 3 — the Bluetooth WiFi provisioning tool: two
              cards revealed in turn, plus the diagnostics panel that only makes
              sense while a device is connected. -->
         <div class="panel" id="panel-wifi" role="tabpanel" aria-labelledby="tab-wifi" tabindex="0" hidden>
@@ -655,15 +648,41 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             <div id="browserNoteText">
                 <b>Chrome or Edge only</b> — The Web Bluetooth Tool only works on those browsers. <br> 
-                <details><summary>No Grabette found on Chrome?</summary>  
-                1. Enable this flag:
-                <button type="button" class="copy-url" id="copyFlag" onclick="copyFlagUrl()"
-                        title="Copy to clipboard">
-                    <code id="flagUrl"></code>
-                    <span class="copy-hint" id="copyFlagHint">Copy</span>
-                </button>
-                <br> 
-                2. Check that the bluetooth is on on both side 
+                <details><summary>No Grabette found ?</summary>
+                <ol class="trouble">
+                    <li>If you're under Chrome, <b>enable</b> this flag:
+                        <button type="button" class="copy-url" id="copyFlag" onclick="copyCode(this)"
+                                title="Copy to clipboard">
+                            <code id="flagUrl"></code>
+                            <span class="copy-hint">Copy</span>
+                        </button>
+                    </li>
+                    <li>Check that the <b>bluetooth is on</b> on your machine</li>
+                    <li>Check that the Grabette is <b>switched on</b> and its battery is <b>charged</b>:
+                        <ul>
+                            <li>the <b>blue LED</b> is on</li>
+                            <li>at least <b>2 green lights</b> are on under it if you press the button</li>
+                        </ul>
+                        <svg class="led-diagram" width="124" height="36" viewBox="0 0 124 36" role="img"
+                             aria-label="Blue LED on, followed by two of the four green battery lights on">
+                            <rect x="1" y="1" width="122" height="34" rx="8" fill="rgba(0,0,0,.28)" stroke="rgba(255,255,255,.15)"/>
+                            <circle cx="20" cy="18" r="10" fill="#3b82f6" opacity=".35"/>
+                            <circle cx="20" cy="18" r="6" fill="#60a5fa"/>
+                            <circle cx="44" cy="18" r="5" fill="#22c55e"/>
+                            <circle cx="62" cy="18" r="5" fill="#22c55e"/>
+                            <circle cx="80" cy="18" r="5" fill="none" stroke="#4b5563" stroke-width="1.5"/>
+                            <circle cx="98" cy="18" r="5" fill="none" stroke="#4b5563" stroke-width="1.5"/>
+                        </svg>
+                    </li>
+                    <li>Try to <b>restart</b> the Grabette</li>
+                    <li>Remove the <b>Bluetooth pairing </b>with the Grabette on your Bluetooth settings, then search again. <br><i>On Linux, you can execute:</i>
+                        <button type="button" class="copy-url" onclick="copyCode(this)"
+                                title="Copy to clipboard">
+                            <code>bluetoothctl devices | grep -i grabette | cut -d' ' -f2 | xargs -rn1 bluetoothctl remove</code>
+                            <span class="copy-hint">Copy</span>
+                        </button>
+                    </li>
+                </ol>
                 </details>
             </div>
         </div>
@@ -702,21 +721,11 @@
             <div class="step-msg" id="msgConnect"></div>
         </div>
 
-        <!-- Authentication — revealed once the BLE link is up. -->
-        <div class="card step-card" id="card-auth" hidden>
-            <div class="step"><span class="step-num">2</span> Authenticate</div>
-            <input type="text" id="pinInput" placeholder="PIN (default: 00000)" value="00000">
-            <p class="step-hint">Also encrypts the password. Used up by each WiFi command.<br> <i>Need to re-authenticate before making a new command. </i></p>
-            <button class="btn-primary" id="btnPin" onclick="sendPin()" disabled>
-                Authenticate
-            </button>
-            <div class="step-msg" id="msgAuth"></div>
-        </div>
-
-        <!-- WiFi Configuration — revealed once the PIN is accepted. -->
+        <!-- WiFi Configuration — revealed once the BLE link is up. -->
         <div class="card step-card" id="card-wifi" hidden>
-            <div class="step"><span class="step-num">3</span> Configure WiFi</div>
-            <button class="btn-secondary" id="btnScan" onclick="scanWifi()" disabled>
+            <div class="step"><span class="step-num">2</span> Configure WiFi</div>
+            <button class="btn-secondary" id="btnScan" onclick="scanWifi()" disabled
+                    title="List the WiFi networks the device can currently see">
                 Scan networks
             </button>
             <details id="networkDetails" hidden>
@@ -729,16 +738,14 @@
                 <button type="button" class="pw-toggle" id="pwToggle" onclick="togglePassword()"
                         title="Show password" aria-label="Show password"></button>
             </div>
-            <button class="btn-success" id="btnWifi" onclick="sendWifi()" disabled>
+            <button class="btn-success" id="btnWifi" onclick="sendWifi()" disabled
+                    title="Send this SSID and password to the device, encrypted">
                 Connect WiFi
             </button>
-            <button class="btn-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled>
+            <button class="btn-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled
+                    title="Delete every WiFi profile saved on the device (the Hotspot profile is kept)">
                 Forget all saved WiFi networks
             </button>
-            <div class="lock-note" id="wifiLocked" hidden>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                <span>PIN used up. <b>Authenticate again</b> to retry.</span>
-            </div>
             <div class="step-msg" id="msgWifi"></div>
         </div>
 
@@ -778,8 +785,8 @@
         <div class="panel" id="panel-dash" role="tabpanel" aria-labelledby="tab-dash" tabindex="0" hidden>
             <div class="section-head">
                 <h2>Open your Grabette dashboard</h2>
-                <p class="prereq-lead">Allows you to get an overview of Grabette’s <b>sensors</b> and <b>data</b> and <b>log in</b> to HuggingFace there.<br>
-                <i>Bookmark it, you will not need this page again.<br></i></p>
+                <p class="prereq-lead">Allows you to get an overview of Grabette’s <b>sensors</b> and <b>data</b> and <b>log in</b> to HuggingFace there.</p>
+                </div>
 
 
                     
@@ -790,16 +797,16 @@
                 <p class="prereq-lead"><i>Make sure you're on the <b>same network</b> as Grabette.</i></p>
 
                 <ol class="facts">
-                    <li><b>Log in</b> to your HuggingFace account : by one-click OAuth or with a token</li>
-                    <li>Take a look at the view of both <b>cameras</b> and the <b>gripper joint data</b></li>
-                    <li>Make a <b>test recording</b> to check everything is working fine.</li>
-                    <li>Access the <b>Grabette Fleet</b> space.</li>
+                    <li>&nbsp;Take a look at the view of both <b>cameras</b> and the <b>gripper joint data</b></li>
+                    <li>&nbsp;Make a <b>test recording</b> to check everything is working fine.</li>
+                    <li>&nbsp;<b>Log in</b> to your HuggingFace account : by one-click OAuth or with a token</li>
+                    <li>&nbsp;Access the <b>Grabette Fleet</b> space to start making sessions of recording.</li>
                 </ol>
             </div>
 
             <div class="card" id="dashWait">
                 <p class="wait-note">Finish <b>WiFi setup</b> — the link appears once the Grabette
-                 reports its address.</p>
+                 reports its IP address.<br> Or you can also use : <code class="bookmark-url">http://&lt;hostname&gt;.local:8000/</code> </p>
             </div>
 
             <div class="card step-card" id="card-dash" hidden>
@@ -957,39 +964,14 @@
 
     // Progressive disclosure. A card is revealed once the step before it has
     // succeeded, so the page only ever shows what is actionable right now.
-    // Reveals are sticky for the rest of the session: the robot consumes the
-    // PIN on every WiFi write, but hiding step 3 again at that point would take
-    // away the very form the user is being asked to re-submit.
     function reveal(id, on) {
         document.getElementById(id).hidden = !on;
-    }
-
-    // The device clears `authenticated` on every WiFi write, and WIFI_SCAN needs
-    // it too (it just doesn't consume it) — so all three step-3 controls die
-    // together. Mirroring the flag here greys them out with a reason, instead of
-    // letting the user click into an "ERROR: Not authenticated" reply.
-    const WIFI_BTN_TITLES = {
-        btnScan: 'List the WiFi networks the device can currently see',
-        btnWifi: 'Send this SSID and password to the device, encrypted with the PIN',
-        btnWifiReset: 'Delete every WiFi profile saved on the device (the Hotspot profile is kept)',
-    };
-
-    function setAuthed(on) {
-        for (const id of Object.keys(WIFI_BTN_TITLES)) {
-            const b = document.getElementById(id);
-            b.disabled = !on;
-            b.title = on ? WIFI_BTN_TITLES[id]
-                         : 'Authenticate again in step 2 — the device consumed the PIN';
-        }
-        // The callout is raised by noteAuthConsumed, and only when re-entering
-        // the PIN is actually the next thing to do.
-        document.getElementById('wifiLocked').hidden = true;
     }
 
     // The button does not just connect: it opens the browser's chooser after a
     // BLE scan filtered on the selected type. Name that, and name the type, so
     // the control describes what actually happens. Deliberately "Search" and not
-    // "Scan" — step 3 already owns "Scan networks", for WiFi.
+    // "Scan" — step 2 already owns "Scan networks", for WiFi.
     function updateConnectLabel() {
         document.getElementById('btnConnectLabel').textContent =
             'Search for a ' + document.getElementById('deviceSelect').value + ' nearby';
@@ -1003,17 +985,15 @@
             connected ? 'Connected device' : 'Select the type of device';
         if (connected) document.getElementById('statusText').textContent = deviceName || '?';
 
-        reveal('card-auth', connected);
+        reveal('card-wifi', connected);
         reveal('card-diag', connected);
-        if (!connected) reveal('card-wifi', false);
         // Always hidden on a state change: the address belongs to whichever
         // device was on the other end, and is stale the moment that changes.
         setDashReady(false);
 
-        document.getElementById('btnPin').disabled = !connected;
-        document.getElementById('btnPing').disabled = !connected;
-        document.getElementById('btnNetStatus').disabled = !connected;
-        setAuthed(false);  // a fresh link is never authenticated
+        for (const id of ['btnPing', 'btnNetStatus', 'btnScan', 'btnWifi', 'btnWifiReset']) {
+            document.getElementById(id).disabled = !connected;
+        }
         if (!connected) setPasswordShown(false);  // don't leave it on screen
     }
 
@@ -1041,7 +1021,7 @@
         const btnConnect = document.getElementById('btnConnect');
         btnConnect.disabled = true;
         try {
-            clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+            clearMsg('msgWifi', 'msgStatus');
             stepMsg('msgConnect', 'Searching for a ' + targetName + ' nearby…');
             log('Scanning for ' + targetName + '...');
             // Match by name PREFIX: the device advertises "Grabette (hostname)"
@@ -1054,7 +1034,7 @@
 
             device.addEventListener('gattserverdisconnected', () => {
                 log('Device disconnected', 'log-err');
-                clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+                clearMsg('msgWifi', 'msgStatus');
                 stepMsg('msgConnect', 'Device disconnected', 'err');
                 setConnected(false);
             });
@@ -1127,7 +1107,7 @@
             device.gatt.disconnect();
         }
         setConnected(false);
-        clearMsg('msgAuth', 'msgWifi', 'msgStatus');
+        clearMsg('msgWifi', 'msgStatus');
         stepMsg('msgConnect', 'Disconnected');
         log('Disconnected');
     }
@@ -1169,20 +1149,26 @@
                 resp === 'PONG' ? 'ok' : 'err');
     }
 
-    async function sendPin() {
-        const pin = document.getElementById('pinInput').value.trim();
-        if (!pin) { stepMsg('msgAuth', 'Enter a PIN', 'err'); log('Enter a PIN', 'log-err'); return; }
-        stepMsg('msgAuth', 'Authenticating…');
-        const resp = await sendCommand('PIN_' + pin);
-        if (resp === null) { stepMsg('msgAuth', 'No response from the device', 'err'); return; }
-        // A wrong PIN five times in a row arms an escalating lockout on the
-        // robot, so the "Locked for Ns" reply is surfaced verbatim.
-        const failed = resp.startsWith('ERROR');
-        setAuthed(!failed);
-        if (!failed) reveal('card-wifi', true);
-        stepMsg('msgAuth',
-                failed ? replyText(resp) : 'Authenticated',
-                failed ? 'err' : 'ok');
+    // The device wants a PIN before each WiFi command (WIFI_CONNECT_ENC and
+    // WIFI_RESET consume it), and nobody changes it from the default — so the
+    // page sends it itself rather than making it a step. A device with a custom
+    // PIN rejects the default, and only then is the user asked for it.
+    let pin = '00000';
+
+    async function authenticate(msgId) {
+        for (;;) {
+            const resp = await sendCommand('PIN_' + pin, true);
+            if (resp === null) { stepMsg(msgId, 'No response from the device', 'err'); return false; }
+            if (!resp.startsWith('ERROR')) return true;
+            log(resp, 'log-err');
+            const entered = /Incorrect PIN/i.test(resp)
+                ? prompt('This device uses a custom Bluetooth PIN. Enter it:') : null;
+            if (!entered || !entered.trim()) {
+                stepMsg(msgId, replyText(resp), 'err');
+                return false;
+            }
+            pin = entered.trim();
+        }
     }
 
     // ---- WiFi password sealing (mirrors bluetooth_service.py) ----
@@ -1255,7 +1241,6 @@
     async function sendWifi() {
         const ssid = document.getElementById('ssidInput').value.trim();
         const password = document.getElementById('passwordInput').value;
-        const pin = document.getElementById('pinInput').value.trim();
         if (!ssid) { stepMsg('msgWifi', 'Enter an SSID', 'err'); return; }
         if (!password) { stepMsg('msgWifi', 'Enter a password', 'err'); return; }
         if ((password.length < PSK_MIN_LEN || password.length > PSK_MAX_LEN)
@@ -1264,10 +1249,9 @@
                     + ' characters — this one is ' + password.length + '.', 'err');
             return;
         }
-        if (!pin) { stepMsg('msgWifi', 'Enter the PIN in step 2', 'err'); return; }
-
         stepMsg('msgWifi', 'Sending credentials for "' + ssid + '"…');
         log('Sending WiFi credentials for "' + ssid + '"…', 'log-cmd');
+        if (!await authenticate('msgWifi')) return;
 
         // 1. Fetch the robot's ephemeral public key (plumbing — kept quiet).
         const keyexRaw = await sendCommand('WIFI_KEYEX', true);
@@ -1287,23 +1271,7 @@
         log(resp, failed ? 'log-err' : 'log-ok');
         stepMsg('msgWifi', failed ? wifiErrorText(resp, ssid) : replyText(resp),
                 failed ? 'err' : 'ok');
-        noteAuthConsumed(failed);
         if (!failed) awaitDashboard();
-    }
-
-    // WIFI_CONNECT_ENC and WIFI_RESET both clear the robot's authenticated flag
-    // BEFORE they run, so the PIN is spent whether the command worked or not.
-    //
-    // Only say so when the user still has something to do here. After a
-    // successful connect they are on their way to the dashboard, and an amber
-    // "authenticate again" on a step that just succeeded reads as a failure —
-    // the greyed-out buttons still carry the reason in their tooltip. After a
-    // failure the retry is real, and needs a fresh PIN to go through.
-    function noteAuthConsumed(retryLikely) {
-        setAuthed(false);
-        if (!retryLikely) return;
-        document.getElementById('wifiLocked').hidden = false;
-        stepMsg('msgAuth', 'PIN used up — authenticate again to retry');
     }
 
     // Destructive and irreversible from here: nmcli deletes the profiles, so the
@@ -1320,10 +1288,10 @@
     async function sendWifiReset() {
         if (!confirm(RESET_CONFIRM)) return;
         stepMsg('msgWifi', 'Clearing saved networks…');
+        if (!await authenticate('msgWifi')) return;
         const resp = await sendCommand('WIFI_RESET');
         if (resp === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
         stepMsg('msgWifi', replyText(resp), resp.startsWith('ERROR') ? 'err' : 'ok');
-        noteAuthConsumed(resp.startsWith('ERROR'));
     }
 
     async function scanWifi() {
@@ -1332,6 +1300,7 @@
         const listEl = document.getElementById('networkList');
         stepMsg('msgWifi', 'Scanning for networks…');
         log('Scanning for networks…', 'log-cmd');
+        if (!await authenticate('msgWifi')) return;
         // Quiet: the SSID list is shown in the collapsible panel, not the log.
         const response = await sendCommand('WIFI_SCAN', true);
         if (response === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
@@ -1379,19 +1348,20 @@
 
     // A chrome:// URL cannot be navigated to from web content — Chrome blocks it
     // outright — so the closest thing to a clickable link is one-click copy for
-    // pasting into the address bar. Kept in JS so the button label and the text
-    // copied can never drift apart.
+    // pasting into the address bar.
     const CHROME_FLAG_URL = 'chrome://flags/#enable-experimental-web-platform-features';
     document.getElementById('flagUrl').textContent = CHROME_FLAG_URL;
 
-    async function copyFlagUrl() {
-        const hint = document.getElementById('copyFlagHint');
+    // Copies the button's own <code>, so the text shown and the text copied
+    // can never drift apart.
+    async function copyCode(btn) {
+        const hint = btn.querySelector('.copy-hint');
         try {
-            await navigator.clipboard.writeText(CHROME_FLAG_URL);
+            await navigator.clipboard.writeText(btn.querySelector('code').textContent);
             hint.textContent = 'Copied';
         } catch (e) {
-            // Clipboard access can be refused by permissions policy; the URL is
-            // still on screen and selectable.
+            // Clipboard access can be refused by permissions policy; the text
+            // is still on screen and selectable.
             hint.textContent = 'Copy failed';
         }
         setTimeout(() => { hint.textContent = 'Copy'; }, 1800);

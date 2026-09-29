@@ -5,12 +5,11 @@ A standalone BLE GATT service (`grabette-bluetooth.service`) lets you configure 
 Connect from a phone or laptop via Bluetooth Low Energy on the [BT Tool](https://pollen-robotics.github.io/grabette/) in **Chrome/Edge** and follow those steps:
 1. Select Grabette and click on Connect
 2. Select your Grabette on the pop-up, then Pair
-3. Authenticate with the PIN
-4. Scan networks, select your wifi and send WiFi credentials (the tool does the key exchange and seals the password for you).
+3. Scan networks, select your wifi and send WiFi credentials (the tool sends the PIN, does the key exchange and seals the password for you).
 
 > Be careful, Chrome may need to enable experimental features : <code>chrome://flags/#enable-experimental-web-platform-features</code>
 
-PIN is configurable via the `GRABETTE_BT_PIN` env var (default: `00000`); set it in `systemd/grabette-bluetooth.service` (`Environment=GRABETTE_BT_PIN=...`) before installing.
+PIN is configurable via the `GRABETTE_BT_PIN` env var (default: `00000`); set it in `systemd/grabette-bluetooth.service` (`Environment=GRABETTE_BT_PIN=...`) before installing. The tool tries the default PIN on its own; if the device rejects it, the browser asks for the custom PIN once and reuses it until the page is closed.
 
 **Commands** (written to the COMMAND characteristic as UTF-8; responses arrive as notifications):
 
