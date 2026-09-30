@@ -2,7 +2,7 @@
 <img src="docs/images/grabette_actions.gif" align="left" width="200px"/>
 <br>
 &nbsp;&nbsp;&nbsp;&nbsp;Autonomous Raspberry Pi service for robotic manipulation data collection:<br>
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;captures synchronized camera + depth + IMU streams from a handheld gripper<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;captures synchronized camera + depth (+ IMU with the OAK-D SR) streams from a handheld gripper<br>
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;manages recording sessions<br>
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&bull;&nbsp;uploads episodes to Hugging Face for cloud SLAM processing.
 
@@ -16,7 +16,7 @@
 |---|---|
 | **Board** | Raspberry Pi 4 |
 | **Primary camera** | RPi camera module, 1296x972 @ 46fps, fisheye lens (KannalaBrandt8) |
-| **Depth camera** | Orbbec Gemini 305 — the default. Provides the depth stream SLAM needs, which is **required** for trajectory recovery on Grabette. Passive stereo, no IMU; SLAM runs IMU-free. Mounted inverted, and the frames are un-rotated at capture ([setup](#depth-camera-using-an-orbbec-gemini-305)). Toggled on demand (default off to save battery; turn it on when recording for the pipeline). |
+| **Depth camera** | Orbbec Gemini 305 — the default. Provides the depth stream SLAM needs, which is **required** for trajectory recovery on Grabette. Passive stereo, no IMU; SLAM runs IMU-free. Mounted inverted, and the frames are un-rotated at capture ([setup](#depth-camera-using-an-orbbec-gemini-305)). Toggled on demand (default off to save battery; a recording turns it on automatically). |
 | **Depth camera (alt.)** | Luxonis OAK-D SR — kept working as a second source so the rig is not single-sourced. Stereo RGB-D with an on-board BNO IMU (200Hz), which gravity-aligns the trajectory. Replaces the legacy BMI088. Select with `GRABETTE_DEPTH_CAMERA=oakd`, or `make install-rpi CAMERA=oakd`. |
 | **Angle sensors** | 2x AS5600L rotary encoders (proximal + distal finger joints), one per I2C bus (`/dev/i2c-3` distal, `/dev/i2c-4` proximal) |
 | **Button** | Grove LED Button (GPIO22 LED, GPIO23 button) — physical start/stop |
@@ -32,11 +32,11 @@
 
 ### Development (mock mode, no hardware needed)
 
-> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
-> monorepo* environment. Always pass `--package` (root README → Development).
+> Part of the uv **workspace**: a bare `uv sync` from the repo root builds the
+> *entire monorepo* environment. Always pass `--package` (root README → Development).
 
 ```bash
-uv sync --package grabette
+uv sync --package grabette --extra ui --extra hf   # ui: dashboard, hf: Hugging Face login
 uv run --package grabette python main.py
 # → http://localhost:8000
 ```
@@ -328,28 +328,18 @@ sudo reboot
 
 ## Usage
 
-Once running (mock or on-device), open the dashboard at `http://<device>.local:8000`: 
-<img align= "center" src="docs/images/grabette-dashboard.png"  width="80%" /><br>
+Recordings are started and stopped with the **physical button** on the device. Once running (mock or on-device), open the dashboard at `http://<device>.local:8000`:
+<!-- TODO(after 170/171 merge): add a screenshot of the Overview page. -->
 
+**Overview**: live cameras (RGB / depth), 3D model, device info and health, Hugging Face sign-in, and the link to the Fleet Space.
 
-From the different sections, you can:
+**Test Recording**: a guided first recording — record, replay, delete.
 
-**Episodes**:
-1. Start/stop a recording (you can either use the button on the device)
-2. Create tasks
-3. Start/stop a session of recordings for one same task
-4. Replay and manage captured episodes.
+**Episodes**: replay, check, download and delete captured episodes, by task.
 
-**Datasets**:
-- Trigger postprocessing with SLAM and upload episodes to a Hugging Face dataset repo (LeRobot format).
+**Network**: device info and WiFi connection.
 
-**Live View**: 
-- Preview the cameras and live sensor charts.
-
-**Settings**:
-1. Find IP address and device info
-2. Manage the Wifi connexion
-3. Log in to Hugging Face 
+Tasks, recording sessions, uploads and dataset creation (SLAM → LeRobot) are done from the [Fleet Space](https://huggingface.co/spaces/pollen-robotics/grabette-fleet). Every page has a **Power off** button.
 
 
 

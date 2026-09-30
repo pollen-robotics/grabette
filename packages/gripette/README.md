@@ -13,7 +13,7 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 - Raspberry Pi Zero 2W
 - RPi camera module (1296x972, fisheye lens)
 - Two Feetech STS3215 servos on `/dev/serial0` (baudrate 1000000, IDs 1 and 2)
-- *Optional:* an OAK-D SR RGB-D camera — add it if you want depth/SLAM on the gripper; **not required** for the standard motor + camera service (unlike Grabette, where the OAK-D is mandatory for SLAM)
+- *Optional:* an OAK-D SR RGB-D camera — add it if you want depth/SLAM on the gripper; **not required** for the standard motor + camera service (unlike Grabette, where a depth camera is required for SLAM)
 
 **Build the hardware:**
 
@@ -25,8 +25,8 @@ Streams camera frames (JPEG) at ~10Hz synchronized with motor positions, and acc
 
 ### Development machine (mock mode, no hardware needed)
 
-> Part of the uv **workspace**: a bare `uv sync` here would build the *entire
-> monorepo* environment. Always pass `--package` (root README → Development).
+> Part of the uv **workspace**: a bare `uv sync` from the repo root builds the
+> *entire monorepo* environment. Always pass `--package` (root README → Development).
 
 ```bash
 uv sync --package gripette --extra dev
@@ -184,5 +184,5 @@ The gRPC contract is defined in `proto/gripper.proto`; regenerate the committed 
 
 | Package | Description |
 |---|---|
-| [grabette](../grabette) | Handheld data-collection device (camera + OAK-D + angle sensors) |
+| [grabette](../grabette) | Handheld data-collection device (camera + depth camera + angle sensors) |
 | [grabette-postprocess](../grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |

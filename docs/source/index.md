@@ -2,7 +2,7 @@
 
 **Grabette is an open-source toolkit for collecting robotic manipulation demonstrations and turning them into training-ready datasets.**
 
-A Grabette rig records synchronized **camera + depth + IMU** streams from a hand-held or gripper-mounted device, recovers the camera trajectory with SLAM, and exports a [LeRobot](https://huggingface.co/docs/lerobot) dataset ready for policy learning. You demonstrate the task with your own hand; no robot is involved in the recording, and the resulting dataset is **robot-agnostic**.
+A Grabette rig records synchronized **camera + depth** streams (plus IMU with the OAK-D SR) from a hand-held or gripper-mounted device, recovers the camera trajectory with SLAM, and exports a [LeRobot](https://huggingface.co/docs/lerobot) dataset ready for policy learning. You demonstrate the task with your own hand; no robot is involved in the recording, and the resulting dataset is **robot-agnostic**.
 
 <video controls src="https://github.com/user-attachments/assets/6db9dd7b-1762-4004-8a76-ce76323499ba"></video>
 
@@ -12,7 +12,7 @@ Data collection is three steps, and each one has a page in this documentation:
 
 | 1. Record | 2. Process | 3. Train |
 | :--- | :--- | :--- |
-| Grab an object while the handheld device captures camera, depth, IMU and finger-joint angles. Start and stop with the physical button or from the [dashboard](./dashboard.md). | Offline visual-inertial SLAM recovers the camera trajectory, then everything is assembled into a LeRobot v3 dataset — [locally](./get_started.md#turn-recordings-into-a-lerobot-dataset) or in the [SLAM Space](./spaces.md#grabette-slam--lerobot). | Feed the dataset to your policy of choice. The repository ships Diffusion Policy and π0.5 integrations as worked examples. |
+| Grab an object while the handheld device captures camera, depth and finger-joint angles. Start and stop with the physical button; organize tasks and sessions in the [Fleet Space](./spaces.md#grabette-fleet). | Offline RGB-D SLAM recovers the camera trajectory (visual-inertial when an IMU is present), then everything is assembled into a LeRobot v3 dataset — [locally](./get_started.md#turn-recordings-into-a-lerobot-dataset) or in the [SLAM Space](./spaces.md#grabette-slam--lerobot). | Feed the dataset to your policy of choice. The repository ships Diffusion Policy and π0.5 integrations as worked examples. |
 
 ## Build the hardware
 
@@ -28,14 +28,14 @@ No hardware yet? The device software runs in **mock mode** on any laptop, so you
 
 | Device | What it is | Runs on |
 | :--- | :--- | :--- |
-| **Grabette** | The hand-held data-collection device: RPi camera, OAK-D SR depth camera + IMU, two finger-joint encoders, one button. This is what you record with. | Raspberry Pi 4 |
+| **Grabette** | The hand-held data-collection device: RPi camera, a depth camera (Orbbec Gemini 305 by default, or Luxonis OAK-D SR with IMU), two finger-joint encoders, one button. This is what you record with. | Raspberry Pi 4 |
 | **Gripette** | The robot-mounted motorized gripper — the same fingers, driven by two servos, so a robot can reproduce what you demonstrated. | Raspberry Pi Zero 2W |
 | **Casquette** *(WIP)* | A head-mounted point-of-view camera, for recording the scene from the operator's viewpoint. | Raspberry Pi Zero 2W |
 
 ## Where to go next
 
 - **[Getting started](./get_started.md)** — from an empty SD card to your first LeRobot dataset.
-- **[The dashboard](./dashboard.md)** — the web interface you record and manage episodes from.
+- **[The dashboard](./dashboard.md)** — the web interface to check the device, make a test recording and review episodes.
 - **[Hugging Face Spaces](./spaces.md)** — run SLAM in the cloud and drive a fleet of devices.
 - **[FAQ](./faq.md)** — common questions and troubleshooting.
 

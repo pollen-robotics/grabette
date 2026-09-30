@@ -8,7 +8,7 @@
 Open-source toolkit for collecting robotic manipulation demonstrations and
 turning them into training-ready datasets.
 
-A GRABETTE rig records synchronized **camera + IMU** streams from hand-held or
+A GRABETTE rig records synchronized **camera + depth** streams (+ IMU with the OAK-D SR) from hand-held or
 gripper-mounted devices, recovers camera trajectories with SLAM, and exports
 [LeRobot](https://huggingface.co/docs/lerobot) datasets for policy learning.
 The data-collection pipeline is **robot-agnostic**.
@@ -86,8 +86,8 @@ uv run --package grabette python packages/grabette/main.py   # run a service (mo
 ```
 
 > **The one rule to know:** this repo is a single uv **workspace** — one shared
-> `.venv` and one `uv.lock` at the root. A bare `uv sync`, run from *anywhere*
-> in the repo, builds the **whole workspace** and installs every package's
+> `.venv` and one `uv.lock` at the root. A bare `uv sync`, run from the repo
+> root, builds the **whole workspace** and installs every package's
 > dependencies — gigabytes of torch/mujoco on a Raspberry Pi if you're not
 > careful. Therefore:
 >

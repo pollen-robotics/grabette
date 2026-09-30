@@ -11,7 +11,7 @@ You need [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11.
 ```bash
 git clone https://github.com/pollen-robotics/grabette.git
 cd grabette
-uv sync --package grabette
+uv sync --package grabette --extra ui --extra hf   # ui: the dashboard, hf: Hugging Face login
 uv run --package grabette python packages/grabette/main.py
 ```
 
@@ -27,7 +27,7 @@ The repository is a single uv **workspace**: a bare `uv sync` builds *every* pac
 
 ### 1. Flash and install
 
-Flash **Raspberry Pi OS Lite (64-bit)** onto an SD card with the [Raspberry Pi Imager](https://www.raspberrypi.com/software/), setting a hostname (for example `R-grabette`), a user, your WiFi credentials, and enabling SSH. Both Bookworm and Trixie are tested.
+Flash **Raspberry Pi OS Lite (64-bit)** onto an SD card with the [Raspberry Pi Imager](https://www.raspberrypi.com/software/), setting a hostname (for example `R-grabette`), the user **`rasp`** (the install targets and the systemd service expect that name), your WiFi credentials, and enabling SSH. Both Bookworm and Trixie are tested.
 
 SSH into the Pi and install:
 
@@ -37,28 +37,38 @@ git clone https://github.com/pollen-robotics/grabette.git
 cd grabette/packages/grabette
 
 sudo cp config/config.txt /boot/firmware   # hardware overlays
+make install-audio                         # speaker overlay, must be built before the reboot
 make install-netdev                        # rights for WiFi scanning
 sudo reboot
 ```
 
-After the reboot, run the one-shot bringup. A Grabette is built as either a **left** or a **right** hand — the angle sensors are mirrored, so the daemon has to be told which one this device is:
+After the reboot, run the one-shot bringup. A Grabette is built as either a **left** or a **right** hand — the angle sensors are mirrored, so the daemon has to be told which one this device is. It also has to know which depth camera it carries: the Orbbec Gemini 305 (the default) or a Luxonis OAK-D SR:
 
 ```bash
-make install-rpi HAND=right    # or HAND=left
-make install-systemd           # start on boot
+make install-rpi HAND=right              # or HAND=left; Gemini 305
+make install-rpi HAND=right CAMERA=oakd  # on a Grabette with an OAK-D SR
+make install-systemd                     # start on boot
 ```
 
-`install-rpi` installs the apt-managed `picamera2` stack, the OAK-D udev rule, and a `--system-site-packages` virtualenv against the system Python; `install-systemd` enables the daemon and the Bluetooth WiFi-setup service. Both are idempotent — re-run them if something looks wrong.
+`install-rpi` installs the apt-managed `picamera2` stack, the udev rule for the chosen camera, and a `--system-site-packages` virtualenv against the system Python, and writes `HAND` and `CAMERA` to `/etc/grabette/env`. `install-systemd` enables the daemon and the Bluetooth WiFi-setup service.
+
+Both can be re-run if something looks wrong, with two caveats: re-running `install-rpi` without `CAMERA=oakd` switches an OAK-D device to the Gemini, and `install-systemd` doesn't restart services that are already running — follow it with `sudo systemctl restart grabette grabette-bluetooth`.
 
 <Tip>
 
-If the logs say `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the virtualenv didn't pick up the system packages. Re-running `make install-rpi HAND=...` fixes it.
+If the logs say `No RPi hardware, using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the virtualenv didn't pick up the system packages. Re-running `make install-rpi HAND=...` fixes it.
 
 </Tip>
 
 ### 2. Get it on the network
 
-If the WiFi you set at flash time isn't the one you need, you can provision the device over Bluetooth — no screen, no SSH. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/) in Chrome or Edge, connect to the device, scan and pick your network. The tool sends the default PIN (`00000`) itself and only asks for it if you changed it.
+If the WiFi you set at flash time isn't the one you need, you can provision the device over Bluetooth — no screen, no SSH. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) in Chrome or Edge on a computer or an Android phone, connect to the device, scan and pick your network. The tool sends the default PIN (`00000`) itself and only asks for it if you changed it.
+
+<Tip warning={true}>
+
+The tool doesn't work on iPhone or iPad, whatever the browser: every iOS browser runs on WebKit, which has no Web Bluetooth.
+
+</Tip>
 
 ### 3. Calibrate
 
@@ -71,9 +81,9 @@ sudo reboot
 
 ### 4. Record
 
-Browse to `http://<hostname>.local:8000` and record — the physical button on the device and the dashboard's **Episodes** section do the same thing. See [The dashboard](./dashboard.md) for what each section does.
+Recording is started and stopped with the **physical button** on the device. For a first try, browse to `http://<hostname>.local:8000` and follow the dashboard's [Test Recording](./dashboard.md#test-recording) page, which walks you through one recording and its replay.
 
-Recordings land in `~/grabette-data/` on the device.
+Recordings land in `~/grabette-data/` on the device. For real data — tasks, sessions, several devices at once — sign the device in to Hugging Face and use the [Fleet Space](./spaces.md#grabette-fleet).
 
 ## Turn recordings into a LeRobot dataset
 
@@ -81,7 +91,7 @@ Two routes produce the same thing.
 
 ### In the cloud
 
-Upload the episodes to a Hugging Face dataset from the dashboard's **Datasets** section, then run the [Grabette SLAM Space](./spaces.md#grabette-slam--lerobot) on them. Nothing to install; the Space does the SLAM and pushes the LeRobot dataset under your account.
+Upload the episodes to a Hugging Face dataset from the [Fleet Space](./spaces.md#grabette-fleet), then build the dataset with the [Grabette SLAM Space](./spaces.md#grabette-slam--lerobot) — the Fleet Space can trigger it for you. Nothing to install; the Space does the SLAM and pushes the LeRobot dataset under your account.
 
 ### On your workstation
 
