@@ -90,7 +90,9 @@ jobs:
         # error fails the whole run, not just that file. It lives in its own
         # extra rather than in `rpi`, which is unusable off a Pi (picamera2,
         # depthai, gpiod) and so can never be installed here.
-        run: uv run --package grabette --extra test --extra hf --extra vision pytest packages/grabette/tests -q
+        #
+        # --extra ui installs gradio: the dashboard tests import grabette.ui.app.
+        run: uv run --package grabette --extra test --extra hf --extra vision --extra ui pytest packages/grabette/tests -q
 
       - name: Postprocess unit tests
         # Trajectory math + SLAM-quality / recording checks + episode tags.
