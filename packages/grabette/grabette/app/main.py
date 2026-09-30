@@ -651,6 +651,17 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         hf_logout()
         return {"status": "ok"}
 
+    if ctype == "shutdown":
+        # Same path as the dashboard's Power off button: refuses mid-recording,
+        # checks the sudoers grant, arms the UPS cut, then powers off after a
+        # short delay so this result still reaches the fleet.
+        from fastapi import HTTPException
+        from grabette.app.routers.system import system_shutdown
+        try:
+            return {"status": "ok", **(await system_shutdown())}
+        except HTTPException as e:
+            return {"status": "error", "message": str(e.detail)}
+
     if ctype == "upload_episodes":
         # Fleet-orchestrated dataset build: push THIS device's recorded streams
         # for the given episodes into a shared raw dataset, each under
@@ -1158,7 +1169,7 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
                           "delete_episode", "edit_task", "delete_task",
-                          "assign_episodes", "prepare_capture"],
+                          "assign_episodes", "prepare_capture", "shutdown"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
@@ -1255,6 +1266,17 @@ def create_app() -> FastAPI:
         app.mount("/urdf", StaticFiles(directory=str(_urdf_dir)), name="urdf")
         logger.info("URDF assets mounted at /urdf from %s", _urdf_dir)
 
+    # Images the dashboard pages reference directly (step illustrations). Must
+    # be mounted before Gradio takes "/", like every other route here.
+    #
+    # NOT at /assets: Gradio's page shell references its own frontend bundle as
+    # ./assets/index-*.js, so mounting there shadows it — the dashboard's
+    # JavaScript 404s and every page hangs on a loading spinner forever.
+    _assets_dir = Path(__file__).resolve().parent.parent / "ui" / "assets"
+    if _assets_dir.is_dir():
+        app.mount("/ui-assets", StaticFiles(directory=str(_assets_dir)), name="ui-assets")
+        logger.info("UI assets mounted at /ui-assets from %s", _assets_dir)
+
     # Auth router (OAuth PKCE + manual token) — must be registered before Gradio
     from grabette.auth import get_hf_auth
     from grabette.webauth import build_auth_router
@@ -1265,7 +1287,7 @@ def create_app() -> FastAPI:
     if settings.ui_enabled:
         try:
             import gradio as gr
-            from grabette.ui.app import create_ui
+            from grabette.ui.app import MODAL_CSS, NAV_HEAD, create_ui
 
             demo = create_ui()
             # `allowed_paths` whitelists directories from which Gradio's
@@ -1275,8 +1297,14 @@ def create_app() -> FastAPI:
             # exists on disk but Gradio refuses to hand it out, and the UI
             # never surfaces a download link. Default allowed paths cover
             # only Gradio's own cache and the OS temp dir.
+            # `css=` is not optional here: mount_gradio_app overwrites
+            # blocks.css with its own argument, so the stylesheet passed to
+            # gr.Blocks(css=...) is silently dropped when the UI is mounted
+            # rather than launched (gradio 6.17, routes.py: blocks.css = css
+            # or ""). Every custom rule — the Test Recording layout, the
+            # auth modal — disappears without this.
             app = gr.mount_gradio_app(
-                app, demo, path="/",
+                app, demo, path="/", css=MODAL_CSS, head=NAV_HEAD, footer_links=[],
                 allowed_paths=[str(settings.data_dir / ".downloads")],
             )
             logger.info("Gradio UI mounted at /")

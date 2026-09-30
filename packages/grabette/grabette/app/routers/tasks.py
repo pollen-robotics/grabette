@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +10,10 @@ from pydantic import BaseModel
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
 from grabette.capture_scheduler import get_capture_scheduler
+from grabette.config import settings
+from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
+from grabette.hardware.episode_files import DCAM_LEFT, resolve
 from grabette.task import TaskManager, episode_id_for
 
 router = APIRouter(tags=["tasks"])
@@ -257,6 +261,26 @@ def get_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
         raise HTTPException(status_code=404, detail="Episode not found")
 
 
+@router.get("/api/episodes/{episode_id}/check")
+def check_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+    """Which required artifacts this episode lacks ([] = it can be converted).
+
+    The same screen the upload applies per episode, exposed so the dashboard can
+    answer "did the recording actually capture everything?" — the counters in
+    EpisodeInfo cover the RGB camera and the encoders, and say nothing at all
+    about whether the depth camera wrote a single file.
+
+    Its own route rather than a field on EpisodeInfo: that model is built once
+    per episode of every task on each /api/tasks call, and this costs a stat()
+    per required file.
+    """
+    ep_dir = tm.episode_dir(episode_id)
+    if not ep_dir.exists():
+        raise HTTPException(status_code=404, detail="Episode not found")
+    lacks = missing_files(ep_dir)
+    return {"episode_id": episode_id, "missing": lacks, "complete": not lacks}
+
+
 @router.get("/api/episodes/{episode_id}/download")
 def download_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
     try:
@@ -289,6 +313,35 @@ def stream_video(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
     return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.get("/api/episodes/{episode_id}/dcam-video")
+def stream_dcam_video(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+    """The depth camera's own image stream (dcam_left.mp4), not the depth map.
+
+    Through resolve() so an episode recorded before the oakd_ -> dcam_ rename
+    still plays.
+    """
+    video_path = resolve(tm.episode_dir(episode_id), DCAM_LEFT)
+    if not video_path.exists():
+        raise HTTPException(status_code=404, detail="Depth-camera video not found")
+    return FileResponse(video_path, media_type="video/mp4")
+
+
+@router.delete("/api/episodes")
+def delete_all_episodes(
+    backend: Backend = Depends(get_backend),
+    tm: TaskManager = Depends(get_task_manager),
+):
+    if backend.is_capturing or get_capture_scheduler().is_scheduled():
+        raise HTTPException(status_code=409, detail="A recording is in progress")
+    try:
+        count = tm.delete_all_episodes()
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    # Archives built for the dashboard's Download button are copies of episodes.
+    shutil.rmtree(settings.data_dir / ".downloads", ignore_errors=True)
+    return {"deleted": count}
 
 
 @router.delete("/api/episodes/{episode_id}")
