@@ -116,6 +116,7 @@ class OrbbecCapture:
         enable_depth: bool = True,
         ir_exposure_us: int = 0,
         ir_gain: int = 0,
+        rotate_180: bool = False,
     ) -> None:
         self.sync = sync_manager
         self.fps = fps
@@ -126,6 +127,7 @@ class OrbbecCapture:
         # Non-zero disables AE and pins exposure/gain — see _apply_exposure.
         self.ir_exposure_us = ir_exposure_us
         self.ir_gain = ir_gain
+        self.rotate_180 = rotate_180
 
         # The SDK collects a temporary Context mid-call and then raises
         # 'NULL pointer passed for argument "deviceMgr"', so the Context and the
@@ -328,13 +330,17 @@ class OrbbecCapture:
         try:
             cam = self._pipeline.get_camera_param()
             intr = cam.depth_intrinsic
+            w, h = int(intr.width), int(intr.height)
+            cx, cy = float(intr.cx), float(intr.cy)
+            if self.rotate_180:
+                cx, cy = (w - 1) - cx, (h - 1) - cy
             return {
-                "width": int(intr.width),
-                "height": int(intr.height),
+                "width": w,
+                "height": h,
                 "fx": float(intr.fx),
                 "fy": float(intr.fy),
-                "cx": float(intr.cx),
-                "cy": float(intr.cy),
+                "cx": cx,
+                "cy": cy,
                 "baseline": float(self._device.get_baseline().baseline) / 1000.0,
             }
         except Exception as e:
@@ -520,6 +526,8 @@ class OrbbecCapture:
                     continue
 
             depth_mm = self._to_millimetres(depth_frame)
+            if self.rotate_180:
+                depth_mm = depth_mm[::-1, ::-1]
             if self._mask_mul is not None and depth_mm.shape == self._mask_mul.shape:
                 depth_mm = depth_mm * self._mask_mul
             self._latest_depth = depth_mm  # atomic reference swap for preview
@@ -543,6 +551,8 @@ class OrbbecCapture:
 
             gray = np.frombuffer(ir_frame.get_data(), dtype=np.uint8).reshape(
                 ir_frame.get_height(), ir_frame.get_width())
+            if self.rotate_180:
+                gray = gray[::-1, ::-1]
 
             with self._files_lock:
                 if not self._recording or self._encoder is None:
@@ -647,6 +657,8 @@ class OrbbecCapture:
         }
         info = {k: v for k, v in fields.items() if v is not None}
         info["imu"] = None
+        info["image_orientation"] = (
+            "rotate_180_in_capture" if self.rotate_180 else "as_captured")
         return info
 
     @property

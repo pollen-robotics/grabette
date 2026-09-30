@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand write-env install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-ntp install-audio install-asound-conf ensure-ble-only help
+.PHONY: install-rpi check-hand check-camera write-env install-udev install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-ntp install-audio install-asound-conf ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -14,10 +14,15 @@ SUBMAKE := $(MAKE)
 # Only ever READ by this Makefile — see install-audio for why.
 BOOT_CONFIG := $(firstword $(wildcard /boot/firmware/config.txt /boot/config.txt))
 
+CAMERA ?= gemini305
+
 help:
 	@echo "Targets:"
 	@echo "  install-rpi HAND=L|R  Install apt deps + udev rule, create venv, sync, verify."
 	@echo "                        HAND={left,right} REQUIRED — determines proximal/distal sign."
+	@echo "                        CAMERA={gemini305,oakd} optional, default gemini305 — installs"
+	@echo "                        that camera's udev rule (and SDK) and nothing for the other."
+	@echo "  install-udev          Install the udev rule for CAMERA only"
 	@echo "  install-udev-oak      Install only the OAK-D / Movidius udev rule"
 	@echo "  install-udev-orbbec   Install only the Orbbec Gemini 305 udev rule"
 	@echo "  install-orbbec-sdk    Install pyorbbecsdk2 (--no-deps) for depth_camera=gemini305"
@@ -31,11 +36,15 @@ help:
 	@echo "HAND must be 'left' or 'right' — this grabette's hand. Determines the per-sensor"
 	@echo "sign mapping in grabette/hardware/angle.py, written to /etc/grabette/env as"
 	@echo "GRABETTE_HAND. Example:  make install-rpi HAND=right"
+	@echo ""
+	@echo "CAMERA is this grabette's depth camera, written to /etc/grabette/env as"
+	@echo "GRABETTE_DEPTH_CAMERA. A fresh Pi has no config yet, so install-rpi cannot read"
+	@echo "the setting — it writes it. Example:  make install-rpi HAND=right CAMERA=oakd"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: check-hand install-udev-oak install-udev-orbbec install-ntp install-audio
+install-rpi: check-hand check-camera install-udev install-ntp install-audio
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
@@ -48,12 +57,15 @@ install-rpi: check-hand install-udev-oak install-udev-orbbec install-ntp install
 	sudo rm -rf $(WORKSPACE_ROOT)/.venv
 	cd $(WORKSPACE_ROOT) && uv venv --python /usr/bin/python3 --system-site-packages \
 	  && uv sync --package grabette --extra rpi --extra ui --extra hf
+	@if [ "$(CAMERA)" = "gemini305" ]; then \
+		$(SUBMAKE) --no-print-directory install-orbbec-sdk; \
+	fi
 	@echo "--- verifying imports ---"
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import picamera2, depthai, cv2, gpiod, numpy; print('all imports OK')"
 	@echo "--- pyvenv.cfg ---"
 	@grep -E "home|version_info|system-site" $(WORKSPACE_ROOT)/.venv/pyvenv.cfg
 	@echo
-	@$(MAKE) --no-print-directory write-env HAND=$(HAND)
+	@$(MAKE) --no-print-directory write-env HAND=$(HAND) CAMERA=$(CAMERA)
 	@echo
 	@echo "Done. Run 'uv run --package grabette python -m grabette' to start the daemon."
 	@echo "Watch journalctl for 'RPi hardware detected, using RpiBackend' (NOT MockBackend)."
@@ -67,22 +79,37 @@ check-hand:
 		exit 1; \
 	fi
 
+check-camera:
+	@if [ "$(CAMERA)" != "gemini305" ] && [ "$(CAMERA)" != "oakd" ]; then \
+		echo "ERROR: CAMERA must be 'gemini305' or 'oakd'."; \
+		echo "Usage:  make install-rpi HAND=right CAMERA=gemini305"; \
+		exit 1; \
+	fi
+
 # Write /etc/grabette/env with GRABETTE_HAND=$(HAND), PRESERVING any existing
 # GRABETTE_*_SIGN lines (operator may have overridden one for an asymmetric
 # build) so a re-run of install-rpi doesn't wipe them.
-write-env: check-hand
+write-env: check-hand check-camera
 	@sudo mkdir -p /etc/grabette
 	@sudo touch /etc/grabette/env
 	@{ \
 	  echo "# /etc/grabette/env — per-device persistent config."; \
-	  echo "# Written by 'make install-rpi HAND=...'."; \
+	  echo "# Written by 'make install-rpi HAND=... CAMERA=...'."; \
 	  echo "# Sourced by grabette.service via EnvironmentFile=-/etc/grabette/env."; \
 	  echo "GRABETTE_HAND=$(HAND)"; \
+	  echo "GRABETTE_DEPTH_CAMERA=$(CAMERA)"; \
 	  sudo grep -E '^GRABETTE_(PROXIMAL|DISTAL)_SIGN=' /etc/grabette/env 2>/dev/null || true; \
 	} | sudo tee /etc/grabette/env.new >/dev/null
 	@sudo mv /etc/grabette/env.new /etc/grabette/env
 	@echo "Wrote /etc/grabette/env:"
 	@sudo cat /etc/grabette/env | sed 's/^/  /'
+
+install-udev: check-camera
+	@if [ "$(CAMERA)" = "gemini305" ]; then \
+		$(SUBMAKE) --no-print-directory install-udev-orbbec; \
+	else \
+		$(SUBMAKE) --no-print-directory install-udev-oak; \
+	fi
 
 # Movidius / OAK-D USB access rule. Without this, depthai needs sudo to talk
 # to the device. Idempotent.

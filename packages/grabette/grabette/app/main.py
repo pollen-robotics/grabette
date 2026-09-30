@@ -73,6 +73,7 @@ def _create_backend():
             depth_camera=settings.depth_camera,
             orbbec_ir_exposure_us=settings.orbbec_ir_exposure_us,
             orbbec_ir_gain=settings.orbbec_ir_gain,
+            orbbec_rotate_180=settings.orbbec_rotate_180,
         )
     else:  # auto
         try:
@@ -86,6 +87,7 @@ def _create_backend():
                 depth_camera=settings.depth_camera,
                 orbbec_ir_exposure_us=settings.orbbec_ir_exposure_us,
                 orbbec_ir_gain=settings.orbbec_ir_gain,
+                orbbec_rotate_180=settings.orbbec_rotate_180,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend

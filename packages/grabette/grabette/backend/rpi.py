@@ -82,6 +82,7 @@ class RpiBackend(Backend):
         self, enable_angle: bool = False, enable_oakd: bool = True,
         oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
         orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
+        orbbec_rotate_180: bool = False,
     ) -> None:
         super().__init__()
         self._running = False
@@ -105,6 +106,7 @@ class RpiBackend(Backend):
         self._depth_camera = depth_camera
         self._orbbec_ir_exposure_us = orbbec_ir_exposure_us
         self._orbbec_ir_gain = orbbec_ir_gain
+        self._orbbec_rotate_180 = orbbec_rotate_180
 
         self._sync = None
         self._camera = None
@@ -181,6 +183,7 @@ class RpiBackend(Backend):
                     self._sync,
                     ir_exposure_us=self._orbbec_ir_exposure_us,
                     ir_gain=self._orbbec_ir_gain,
+                    rotate_180=self._orbbec_rotate_180,
                 )
             else:
                 self._oakd = OakdCapture(self._sync)
