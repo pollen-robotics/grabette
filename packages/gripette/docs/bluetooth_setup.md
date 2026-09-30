@@ -100,15 +100,13 @@ Click **"Connect to Gripette"**. A browser popup will show nearby BLE devices. S
 
 Click **"Ping"**. You should see `PONG` in the log.
 
-### 4. Authenticate
+### 4. Send WiFi credentials
 
-Enter the PIN (default: `00000`) and click **"Authenticate"**. The log should show `OK: Connected`.
+Enter the SSID and password, then click **"Connect WiFi"**. The tool sends the PIN, exchanges keys and seals the password before sending it (see the command reference below); the Pi then connects via an explicit WPA-PSK `nmcli` profile.
 
-### 5. Send WiFi credentials
+The tool tries the default PIN (`00000`) on its own. If you changed it, the browser asks for it the first time the device rejects the default, and reuses it until the page is closed.
 
-Enter the SSID and password, then click **"Connect WiFi"**. The tool exchanges keys and seals the password before sending it (see the command reference below); the Pi then connects via an explicit WPA-PSK `nmcli` profile.
-
-### 6. Verify
+### 5. Verify
 
 Click **"Read Network Status"**. If successful, you should see something like:
 
