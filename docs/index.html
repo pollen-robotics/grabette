@@ -1456,6 +1456,13 @@
     // hides navigator.bluetooth even in a perfectly capable Chrome, so testing
     // this file over http://<host>:<port> would otherwise be told to switch
     // browsers — advice that cannot work.
+    // iPadOS reports itself as a Mac, so the touch check is what distinguishes
+    // an iPad from a desktop Safari.
+    function isIOS() {
+        return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+            (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    }
+
     const browserNote = document.getElementById('browserNote');
     const browserNoteText = document.getElementById('browserNoteText');
     if (!window.isSecureContext) {
@@ -1467,6 +1474,17 @@
             "<b>Bluetooth doesn't work on this address.</b> Use " +
             '<a href="https://pollen-robotics.github.io/grabette/">pollen-robotics.github.io/grabette/</a>' +
             ' — or, for a local copy, <code>' + localUrl + '</code>.';
+        document.getElementById('btnConnect').disabled = true;
+        document.getElementById('wifiTabWarn').hidden = false;
+    } else if (isIOS()) {
+        // Every iOS browser is WebKit underneath, Chrome included, and WebKit
+        // has no Web Bluetooth — so the "use Chrome" advice below is a dead end
+        // exactly where a reader is most likely to have already tried it.
+        browserNote.classList.add('fatal');
+        browserNoteText.innerHTML =
+            "<b>iPhone and iPad can't run this tool.</b> Every browser there, " +
+            'Chrome included, uses Apple\'s engine, which has no Web Bluetooth. ' +
+            'Use a computer or an Android phone.';
         document.getElementById('btnConnect').disabled = true;
         document.getElementById('wifiTabWarn').hidden = false;
     } else if (!navigator.bluetooth) {
