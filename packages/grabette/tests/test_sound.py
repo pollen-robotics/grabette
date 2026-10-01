@@ -340,9 +340,9 @@ def test_set_volume_is_clamped(monkeypatch):
 
 
 def test_volume_set_before_prepare_is_the_one_rendered(monkeypatch):
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=0.2)
     speaker.set_volume(1.0)
-    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
     speaker.prepare()
     loud = _peak(speaker._cues[sound.CUE_START])
     assert loud > 0.9 * 32767
