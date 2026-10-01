@@ -201,11 +201,17 @@ html.gb-off .toast-wrap {
     width: auto !important;
     min-width: 0 !important;
 }
-/* Centred on the title's line, and indented like the title's own text (the
-   HTML block's padding), which is what lines them up once wrapped on a phone. */
+/* Indented like the title's own text (the HTML block's padding), which is what
+   lines them up once wrapped on a phone. */
 #ov-page .ov-status-head > .ov-volume {
-    margin-top: 8px !important;
     padding-left: 12px !important;
+    gap: .2rem !important;
+}
+#ov-page .ov-volume-title .html-container {
+    padding: 0 !important;
+}
+#ov-page .ov-volume-title > div > div {
+    margin-bottom: 0 !important;
 }
 /* Speaker, bar, test: one line, centred on each other. */
 #ov-page .ov-volume-row {
@@ -1827,6 +1833,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         "What your Grabette sees and how it is doing right now.",
                     ))
                 with gr.Column(min_width=0, elem_classes="ov-volume"):
+                    gr.HTML(_section_label("Speaker"), elem_classes="ov-volume-title")
                     with gr.Row(equal_height=True, elem_classes="ov-volume-row"):
                         ov_mute_btn = gr.Button(
                             "", size="sm", scale=0, min_width=0,
