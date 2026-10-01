@@ -421,3 +421,57 @@ def test_both_faults_are_reported_in_a_stable_order(monkeypatch):
     first, second = b.hardware_error, b.hardware_error
     assert first == second
     assert first.index("calibration") < first.index("angle_data.json")
+
+
+def test_replugging_the_depth_camera_clears_its_start_fault(monkeypatch):
+    import asyncio
+    from grabette.backend import rpi
+    from grabette.hardware import depth_camera, oakd as oakd_mod
+
+    def _boom(sync):
+        raise RuntimeError("no device found")
+
+    monkeypatch.setattr(oakd_mod, "OakdCapture", _boom)
+    bus = iter([False, True])
+    monkeypatch.setattr(depth_camera, "usb_connected", lambda model: next(bus, True))
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda s: real_sleep(0))
+
+    b = rpi.RpiBackend()
+    b._init_oakd()
+    assert b.hardware_error
+
+    async def run():
+        task = asyncio.ensure_future(b._watch_depth_camera_cable())
+        for _ in range(5):
+            await real_sleep(0)
+        task.cancel()
+
+    asyncio.run(run())
+    assert b.hardware_error == ""
+
+
+def test_a_camera_that_never_left_the_bus_keeps_its_fault(monkeypatch):
+    import asyncio
+    from grabette.backend import rpi
+    from grabette.hardware import depth_camera, oakd as oakd_mod
+
+    def _boom(sync):
+        raise RuntimeError("udev rules missing")
+
+    monkeypatch.setattr(oakd_mod, "OakdCapture", _boom)
+    monkeypatch.setattr(depth_camera, "usb_connected", lambda model: True)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda s: real_sleep(0))
+
+    b = rpi.RpiBackend()
+    b._init_oakd()
+
+    async def run():
+        task = asyncio.ensure_future(b._watch_depth_camera_cable())
+        for _ in range(5):
+            await real_sleep(0)
+        task.cancel()
+
+    asyncio.run(run())
+    assert b.hardware_error
