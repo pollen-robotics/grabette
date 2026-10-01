@@ -2,7 +2,7 @@
 
 The repository ships two policy integrations as worked examples. Both consume the LeRobot dataset built in [Data collection](./data_collection.md#build-the-lerobot-dataset), and share the same dataset preparation. Each one is a **standalone uv project** under `integrations/`, with its own environment and Python 3.12 — a plain `uv sync` inside it is correct and touches nothing else.
 
-Before recording data for training, read the [guide to recording good demonstrations](https://github.com/pollen-robotics/grabette/blob/develop/integrations/DiffusionPolicy/recording_demonstrations_guide.md): consistency, diversity, failures and SLAM-friendly motion all show up in the trained policy.
+Before recording data for training, read the [recording guidelines](./data_collection.md#guidelines-for-recording-a-dataset): how you record shows up in the trained policy.
 
 ## DiffusionPolicy
 

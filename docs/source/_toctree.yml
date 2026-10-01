@@ -3,12 +3,12 @@
 - sections:
     - local: get_started
       title: Getting started
-    - local: usage
-      title: Usage
     - local: data_collection
       title: Data collection
     - local: training
       title: Training
+    - local: build_your_own
+      title: Build your own
   title: Grabette
 - local: gripette
   title: Gripette

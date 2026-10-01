@@ -12,7 +12,7 @@ Data collection is three steps:
 
 | 1. Record | 2. Process | 3. Train |
 | :--- | :--- | :--- |
-| Grab an object while the handheld device captures camera, depth and finger-joint angles. Start and stop with the [physical button](./usage.md#start-and-stop-a-recording); organize tasks and sessions in the [Fleet Space](./data_collection.md). | Offline RGB-D SLAM recovers the camera trajectory (visual-inertial when an IMU is present), then everything is assembled into a LeRobot v3 dataset in the [SLAM Space](./data_collection.md#build-the-lerobot-dataset). | Feed the dataset to your policy of choice. The repository ships [Diffusion Policy and π0.5](./training.md) integrations as worked examples. |
+| Grab an object while the handheld device captures camera, depth and finger-joint angles. Start and stop with the [physical button](./data_collection.md#start-and-stop-a-recording); organize tasks and sessions in the [Fleet Space](./data_collection.md). | Offline RGB-D SLAM recovers the camera trajectory (visual-inertial when an IMU is present), then everything is assembled into a LeRobot v3 dataset in the [SLAM Space](./data_collection.md#build-the-lerobot-dataset). | Feed the dataset to your policy of choice. The repository ships [Diffusion Policy and π0.5](./training.md) integrations as worked examples. |
 
 ## The devices
 
@@ -24,9 +24,9 @@ Data collection is three steps:
 
 ## Where to go next
 
-- **[Getting started](./get_started.md)** — from a box of parts to a device ready to record.
-- **[Usage](./usage.md)** — powering, the dashboard, and recording.
-- **[Data collection](./data_collection.md)** — sessions, tasks and datasets with the Fleet Space.
+- **[Getting started](./get_started.md)** — power, WiFi and the dashboard.
+- **[Data collection](./data_collection.md)** — the Fleet Space, and how to record a good dataset.
+- **[Build your own](./build_your_own.md)** — parts, assembly and software install.
 - **[Training](./training.md)** — Diffusion Policy and π0.5.
 - **[Gripette](./gripette.md)** — the robot-mounted gripper.
 - **[FAQ](./faq.md)** — common questions and troubleshooting.

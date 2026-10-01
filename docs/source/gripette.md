@@ -8,7 +8,7 @@ Gripette shares the [Bill of Materials](https://docs.google.com/spreadsheets/d/e
 
 ## Install
 
-Flash **Raspberry Pi OS Lite (64-bit)** for the Pi Zero 2W, as for [Grabette](./get_started.md#flash-the-raspberry-pi), then on the Pi:
+Flash **Raspberry Pi OS Lite (64-bit)** for the Pi Zero 2W, as for [Grabette](./build_your_own.md#flash-the-raspberry-pi), then on the Pi:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh

@@ -1,60 +1,38 @@
 # Getting started
 
-This page takes you from a box of parts to a Grabette ready to record.
-
-## Assembly
-
-Grabette is built from off-the-shelf parts, 3D-printed components and a Raspberry Pi 4.
-
-- 📋 **[Bill of Materials](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — the complete parts list, shared by Grabette and Gripette.
-- 🧩 **[CAD on Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — the full assembly.
-- 🔩 **[Assembly guide](https://github.com/pollen-robotics/grabette/blob/develop/packages/grabette/assembly/Grabette_Assembly.pdf)**, with the matching 3D-print guide in the same folder.
-
-## Flash the Raspberry Pi
-
-Flash **Raspberry Pi OS Lite (64-bit)** onto an SD card with the [Raspberry Pi Imager](https://www.raspberrypi.com/software/), setting a hostname (for example `R-grabette`), the user **`rasp`** (the install targets and the systemd service expect that name), your WiFi credentials, and enabling SSH. Both Bookworm and Trixie are tested.
-
-SSH into the Pi and install:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/pollen-robotics/grabette.git
-cd grabette/packages/grabette
-
-sudo cp config/config.txt /boot/firmware   # hardware overlays
-make install-audio                         # speaker overlay, must be built before the reboot
-make install-netdev                        # rights for WiFi scanning
-sudo reboot
-```
-
-After the reboot, run the one-shot bringup. A Grabette is built as either a **left** or a **right** hand — the angle sensors are mirrored, so the daemon has to be told which one this device is. It also has to know which depth camera it carries: the Orbbec Gemini 305 (the default) or a Luxonis OAK-D SR:
-
-```bash
-make install-rpi HAND=right              # or HAND=left; Gemini 305
-make install-rpi HAND=right CAMERA=oakd  # on a Grabette with an OAK-D SR
-```
-
-`install-rpi` installs the apt-managed `picamera2` stack, the udev rule for the chosen camera, and a `--system-site-packages` virtualenv against the system Python, and writes `HAND` and `CAMERA` to `/etc/grabette/env`.
+This page takes you from a Grabette in its box to its dashboard, ready to record.
 
 <Tip>
 
-If the logs later say `No RPi hardware, using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the virtualenv didn't pick up the system packages. Re-running `make install-rpi HAND=...` fixes it.
+Don't have a device yet? Grabette is open hardware: [Build your own](./build_your_own.md) walks you through the parts, the assembly and the software install.
 
 </Tip>
 
-## Start the services
+## Power
 
-```bash
-make install-systemd    # start on boot
-```
+### Power on and off
 
-This enables and starts the daemon (`grabette`) and the Bluetooth WiFi-setup service (`grabette-bluetooth`).
+To power on, press the button once, then press it a second time and hold it until the blue light appears. Give the device a moment to start up.
 
-Both install targets can be re-run if something looks wrong, with two caveats: re-running `install-rpi` without `CAMERA=oakd` switches an OAK-D device to the Gemini, and `install-systemd` doesn't restart services that are already running — follow it with `sudo systemctl restart grabette grabette-bluetooth`.
+To power off, use the **Power off** button in the [dashboard](#dashboard)'s title bar, or power the device off from the [Fleet Space](./data_collection.md#grabette-fleet).
 
-## Connect with the Bluetooth tool
+<!-- TODO: document powering off with the physical button, if supported. -->
 
-If the WiFi you set at flash time isn't the one you need, you can provision the device over Bluetooth — no screen, no SSH. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) in Chrome or Edge on a computer or an Android phone, connect to the device, scan and pick your network. The tool sends the default PIN (`00000`) itself and only asks for it if you changed it.
+### Charging
+
+<!-- TODO: how to charge the device (connector, charge time, battery indicator). -->
+
+The battery level is shown on the dashboard's **Overview** page.
+
+## Set up the WiFi with the Bluetooth tool
+
+Your Grabette has to join your WiFi network before you can reach it. Set it up over Bluetooth — no screen, no SSH:
+
+1. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) in Chrome or Edge, on a computer or an Android phone.
+2. Connect to the device.
+3. Scan for networks, pick yours and enter its password.
+
+The tool sends the device's default PIN (`00000`) itself and only asks for it if you changed it. Once connected, it gives you the address of the device's dashboard.
 
 <Tip warning={true}>
 
@@ -62,13 +40,67 @@ The tool doesn't work on iPhone or iPad, whatever the browser: every iOS browser
 
 </Tip>
 
-## Calibrate the angles
+If the tool can't find or connect to the device, see the [FAQ](./faq.md#the-bluetooth-tool-wont-connect).
 
-Once, before the first recording: open the gripper so that **both joints are fully extended**, then
+## Dashboard
 
-```bash
-uv run python scripts/calibrate_angles.py
-sudo reboot
+Every Grabette serves a web dashboard on port **8000**. It is how you check the device, make a test recording and review episodes — no SSH, no command line.
+
+```
+http://<hostname>.local:8000     # e.g. http://R-grabette.local:8000
 ```
 
-The device is ready. [Usage](./usage.md) shows how to power it, reach its dashboard and record.
+The device's IP address works too, and is shown on the **Overview** and **Network** pages if `.local` name resolution isn't available on your network.
+
+<!-- TODO(after 170/171 merge): add a screenshot of the Overview page. -->
+
+Every page has a **Power off** button in the title bar, the clean way to shut the device down.
+
+### Overview
+
+The landing page.
+
+- **Cameras** — the live image, with an RGB / Depth toggle. Choosing Depth turns the depth camera on if it's off.
+- **3D model** — the gripper, moving with the live finger-joint angles. Open and close it to check the angle sensors.
+- **Device** — hostname, side (left or right hand), IP address and WiFi network, with a **Change network** shortcut.
+- **Health** — battery, temperature and storage used.
+- **Grabette data** — shortcuts to **Test Recording** and **Episodes**.
+- **Account & fleet** — the Hugging Face sign-in, and the **Fleet Space** button to record data and create datasets.
+
+### Signing in to Hugging Face
+
+Click the Hugging Face button to sign in with your account (OAuth, one click). Pasting an access token is available as a fallback under *or use a token*; create one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with write access to the datasets you intend to push.
+
+The Fleet Space and every upload depend on this login.
+
+### Test Recording
+
+A guided first recording, to check the whole device before a real session:
+
+1. **Record a few seconds** — press the button, pick an object up, press again to stop.
+2. **Check what was recorded** — a summary, a replay of the RGB and depth video with the angle chart, and a download link.
+3. **Delete it** — a test recording is not training data. If you keep it, it is filed under the *Unassigned* task in **Episodes**.
+4. **Record real data** — sign in to Hugging Face if needed, and open the Fleet Space.
+
+<!-- TODO(after 170/171 merge): add a screenshot of the Test Recording page. -->
+
+### Episodes
+
+Where you review what is on the device.
+
+- **Tasks** — pick a task to list its episodes. Tasks are created in the Fleet Space, not here.
+- **Episodes table** — duration, frame count, angles and status for each episode.
+- **Replay** — the video with the angle chart and a timeline.
+- **Check** — a full verdict on the episode's files and quality. Deleting a bad take now is much cheaper than discovering it after SLAM.
+- **Download** — the episode as an archive.
+- **Delete**, and **Delete all Grabette data** at the bottom of the page.
+
+<!-- TODO(after 170/171 merge): add a screenshot of the Episodes page. -->
+
+### Network
+
+The device card again, and **Change WiFi network** to see the current connection and switch networks. The [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) is the fallback when the device isn't reachable at all.
+
+## Ready to record your first dataset?
+
+Sign in to Hugging Face, then hop on to the [Fleet Space](./data_collection.md) 🚀
