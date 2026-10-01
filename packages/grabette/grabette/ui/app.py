@@ -436,6 +436,49 @@ def _tr_pill(kind: str, text: str) -> str:
     )
 
 
+_CAM_STATES = {
+    "connected": ("#10b981", "✓", "Connected"),
+    "starting": ("#f59e0b", "…", "Starting"),
+    "missing": ("#ef4444", "✗", "Not detected"),
+    "unknown": ("#94a3b8", "?", "Unknown"),
+    "absent": ("#94a3b8", "—", "None on this device"),
+}
+
+
+def _camera_state(cam: dict | None) -> str:
+    if cam is None:
+        return "unknown"
+    if cam.get("connected"):
+        return "connected"
+    return "starting" if cam.get("reinitializing") else "missing"
+
+
+def _depth_camera_state(dcam: dict | None) -> str:
+    if dcam is None:
+        return "unknown"
+    if not dcam.get("supported"):
+        return "absent"
+    return {True: "connected", False: "missing"}.get(dcam.get("connected"),
+                                                       "unknown")
+
+
+def _tr_cameras(rgb: str, depth: str, depth_label: str) -> str:
+    """One chip per camera: whether it is plugged in. The depth camera is not
+    started here — the recording brings it up, LED blinking, as usual."""
+    chips = []
+    for label, state in (("RGB camera", rgb), (f"RGB-D ({depth_label})", depth)):
+        color, mark, text = _CAM_STATES[state]
+        chips.append(
+            '<span style="display:inline-flex;align-items:baseline;gap:.4rem;'
+            'padding:.3rem .7rem;border-radius:999px;font-size:.82rem;'
+            f'border:1px solid {color}55;">'
+            f'<span style="color:{color};font-weight:700;">{mark}</span>'
+            f'<span style="opacity:.75;">{html.escape(label)}</span>'
+            f'<strong>{text}</strong></span>')
+    return ('<div style="display:flex;flex-wrap:wrap;gap:.4rem;">'
+            + "".join(chips) + "</div>")
+
+
 def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
     """Player slaved to the replay clock. stream="dcam" plays the depth
     camera's own image stream rather than the head camera."""
@@ -1016,8 +1059,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def poll_test_recording(flow):
         """One tick: mirror the device's capture state onto the page.
 
-        Outputs: status pill, verdict card, the three episode controls (check,
-        download, delete) and the flow dict.
+        Outputs: status pill, camera chips, verdict card, the three episode
+        controls (check, download, delete) and the flow dict.
         """
         flow = dict(flow or _TR_FLOW0)
         cap = (client.get_state() or {}).get("capture", {})
@@ -1031,6 +1074,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return (
                 _tr_pill("recording",
                          f"Recording — {float(cap.get('duration_seconds') or 0):.0f}s"),
+                gr.update(),
                 gr.update(value=""),
                 *_tr_controls(None),
                 flow,
@@ -1046,6 +1090,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     and flow["settling"] < _TR_SETTLE_TICKS):
                 flow["settling"] += 1
                 return (_tr_pill("waiting", "Saving the episode…"),
+                        gr.update(),
                         gr.update(value=""),
                         *_tr_controls(None), flow)
             flow["settling"] = 0
@@ -1058,13 +1103,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 )
             return (
                 _tr_pill("done", "Recorded — check it below"),
+                gr.update(),
                 gr.update(value=verdict),
                 *_tr_controls(flow["episode_id"]),
                 flow,
             )
 
-        # Idle. Only the pill moves from here on: the verdict and the two
-        # buttons keep whatever the tick that finished the recording set.
+        # Idle. Only the pill and the cameras move from here on: the verdict
+        # and the buttons keep whatever the tick that finished the recording
+        # set.
+        dcam = client.get_oakd_status()
+        rgb_state = _camera_state(client.get_camera_status())
+        depth_state = _depth_camera_state(dcam)
+        cameras = _tr_cameras(rgb_state, depth_state,
+                              (dcam or {}).get("label") or "depth camera")
         if blocked:
             # Not capturing is not the same as ready: a device held back by an
             # upload or a hardware fault would read "waiting for the recording"
@@ -1072,11 +1124,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pill = _tr_pill("blocked", f"Cannot record — {blocked}")
         elif cap.get("is_starting"):
             pill = _tr_pill("waiting", "Starting…")
+        elif "missing" in (rgb_state, depth_state):
+            pill = _tr_pill("blocked", "A camera is not detected — check its cable")
+        elif "starting" in (rgb_state, depth_state):
+            pill = _tr_pill("waiting", "Camera starting — wait before pressing")
         elif flow["episode_id"]:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
-            pill = _tr_pill("idle", "Waiting for the recording")
-        return pill, *([gr.update()] * 4), flow
+            pill = _tr_pill("idle", "Cameras connected — press the button")
+        return pill, cameras, *([gr.update()] * 4), flow
 
     def on_test_check(flow):
         """Replay the episode: the daemon feeds its recorded samples back into
@@ -1718,6 +1774,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     with gr.Column(scale=1, min_width=200):
                         gr.HTML(_button_gif("stop-recording.gif",
                                             "Press again to stop"))
+                tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
                 # 1 Hz against the daemon's cached state — the page has no other
                 # way to learn about a press that happened on the device.
@@ -1750,7 +1807,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             gr.HTML(_section_label("Depth camera (RGB-D)"))
                             tr_dcam_video = gr.HTML(value="")
                     gr.HTML(_section_label("Angle sensors"))
-                    gr.HTML(_ANGLE_IFRAME_HTML)
+                    gr.HTML(_ANGLE_IFRAME_HTML.replace(
+                        "/charts/angle", "/charts/angle?mode=replay"))
                     with gr.Row():
                         tr_replay_again_btn = gr.Button("↻ Replay again",
                                                         size="sm",
@@ -1785,8 +1843,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # ── Wire events ───────────────────────────────────────────────
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
-            outputs=[tr_state, tr_summary, tr_check_btn, tr_download_link,
-                     tr_delete_btn, tr_flow],
+            outputs=[tr_state, tr_cameras, tr_summary, tr_check_btn,
+                     tr_download_link, tr_delete_btn, tr_flow],
         )
         # Same handler for both: a restart is a replay started over from zero,
         # and the players follow whatever the clock says.

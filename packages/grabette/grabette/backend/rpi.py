@@ -309,6 +309,14 @@ class RpiBackend(Backend):
     def is_oakd_initializing(self) -> bool:
         return self._oakd_initializing
 
+    @property
+    def is_depth_camera_connected(self) -> bool | None:
+        """Plugged in, read from the USB bus without starting the camera."""
+        if self.is_oakd_initialized:
+            return True
+        from grabette.hardware.depth_camera import usb_connected
+        return usb_connected(self._depth_camera)
+
     async def set_oakd_enabled(self, on: bool) -> None:
         if self._capturing:
             raise RuntimeError("cannot toggle OAK-D while a capture is running")

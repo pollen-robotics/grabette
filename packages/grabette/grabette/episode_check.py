@@ -53,6 +53,21 @@ REQUIRED_FILES = (
 _DEPTH_ALTERNATIVES = (DCAM_DEPTH_VIDEO, DCAM_DEPTH_DIR)
 
 
+# Sidecars listing one entry per recorded frame. A depth camera that streamed
+# nothing still writes them, as {"samples": []}, next to a header-only video:
+# every file is there and non-empty, and not a single frame was recorded.
+_FRAME_SIDECARS = (DCAM_LEFT_TS, DCAM_DEPTH_TS)
+
+
+def _has_frames(path: Path) -> bool:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return False
+    samples = data.get("samples") if isinstance(data, dict) else data
+    return bool(samples)
+
+
 def _present(path: Path) -> bool:
     """A file that exists but is empty is missing for our purposes — a zero-byte
     video or JSON fails upstream exactly like an absent one, and an interrupted
@@ -98,7 +113,8 @@ def missing_files(episode_dir: Path) -> list[str]:
     required = [name for name in REQUIRED_FILES
                 if name != DCAM_IMU or _expects_imu(episode_dir)]
     missing = [name for name in required
-               if not _present(resolve(episode_dir, name))]
+               if not _present(path := resolve(episode_dir, name))
+               or (name in _FRAME_SIDECARS and not _has_frames(path))]
     if not any(_present(resolve(episode_dir, alt)) for alt in _DEPTH_ALTERNATIVES):
         missing.append(_DEPTH_ALTERNATIVES[0])
     return sorted(missing)
