@@ -3,7 +3,7 @@
 Offline debugging for GRABETTE policies: where does the policy attend on each
 camera, and how much does the commanded chunk change when a camera is removed?
 
-**Read `docs/attention_saliency_review.md` first.** On pi0.5 an interventional
+**Read [`docs/saliency_review.md`](docs/saliency_review.md) first.** On pi0.5 an interventional
 score is measurably more faithful than attention, so the maps here are
 hypothesis generators and the ablation millimetres are the evidence. A broad,
 low-peak map is normal for pi0.5 and more so after action fine-tuning.

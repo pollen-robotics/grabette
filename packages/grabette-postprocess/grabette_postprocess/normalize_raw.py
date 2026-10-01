@@ -13,7 +13,7 @@ ways, none of them handled downstream:
     added here instead.
 
 Written because the pick3 chunk-relative dataset was assembled with throwaway
-scripts (recorded in docs/relative_actions_lerobot_native.md but not committed),
+scripts (recorded in packages/grabette-chunkrel/docs/relative_actions_lerobot_native.md but not committed),
 which made the build unreproducible. Everything here is non-destructive: the
 source is never modified.
 

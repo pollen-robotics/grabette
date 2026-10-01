@@ -240,7 +240,7 @@ status = check_publish("<user>/<dataset>")   # Hub id or local path -> dict of f
 ### 8. Relative action stats (optional chunk-relative mode)
 
 Chunk-relative training (`GRABETTE_CHUNK_RELATIVE=1`, see
-`docs/relative_actions_lerobot_native.md`) normalizes actions with statistics
+`packages/grabette-chunkrel/docs/relative_actions_lerobot_native.md`) normalizes actions with statistics
 of the *relative* representation, not of the stored deltas.
 `write_relative_action_stats` computes them and stamps the stats file with a
 provenance marker; the training guard refuses a stats/representation mismatch.

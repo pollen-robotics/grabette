@@ -18,7 +18,7 @@
 # position servo replaying a demonstrated angle under-closes: the recorded angle
 # is where the human's fingers sat while PRESSING the object, so reproducing it
 # stops just short and grips nothing (demos use only 38-60% of the proximal
-# range). See docs/grasp_projection.md.
+# range). See packages/gripette/docs/grasp_projection.md.
 #
 # Training is intentionally NOT run here — it's long-running and you'll want to
 # launch it deliberately (GPU, steps, wandb, ...). The script prints the exact
@@ -55,7 +55,7 @@
 #   --rest-is-closed      --grasp-projection: recording convention where the
 #                         operator holds the gripper CLOSED when idle. Must match
 #                         how the episodes were actually recorded — see
-#                         docs/grasp_projection_recording_procedure.md.
+#                         packages/gripette/docs/grasp_projection_recording_procedure.md.
 #   --projection-repo-id ID
 #                         --grasp-projection: repo_id the converted dataset is
 #                         opened under for its (mandatory) stats pass. Defaults to

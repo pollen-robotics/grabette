@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 _original = policy_factory.make_pre_post_processors
 
-# Opt-in chunk-relative actions (docs/relative_actions_lerobot_native.md).
+# Opt-in chunk-relative actions (packages/grabette-chunkrel/docs/relative_actions_lerobot_native.md).
 # An env var, not a CLI flag: lerobot-train parses argv itself and rejects
 # unknown flags. Pass it with `hf jobs uv run --env GRABETTE_CHUNK_RELATIVE=1`.
 _CHUNK_RELATIVE = os.environ.get("GRABETTE_CHUNK_RELATIVE", "").lower() in ("1", "true", "yes")
