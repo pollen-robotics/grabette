@@ -43,6 +43,7 @@ from __future__ import annotations
 import array
 import logging
 import math
+import os
 import shutil
 import subprocess
 import sys
@@ -97,16 +98,35 @@ ERROR_TONES: tuple[tuple[float, float], ...] = (
 # and the triplet above.
 SAVED_TONES: tuple[tuple[float, float], ...] = ((1760.0, 0.06),)
 
+# Preview: the beep the dashboard plays when the volume is changed, so the
+# level is heard at once. A single tone at the stop/start pitch — loud enough on
+# this speaker to judge the level by, and not one of the four capture cues, so
+# nobody mistakes it for a take starting or failing.
+PREVIEW_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.12),)
+
 CUE_START = "capture_start"
 CUE_STOP = "capture_stop"
 CUE_SAVED = "capture_saved"
 CUE_ERROR = "capture_error"
+CUE_PREVIEW = "volume_preview"
 CUES: dict[str, tuple[tuple[float, float], ...]] = {
     CUE_START: START_TONES,
     CUE_STOP: STOP_TONES,
     CUE_SAVED: SAVED_TONES,
     CUE_ERROR: ERROR_TONES,
+    CUE_PREVIEW: PREVIEW_TONES,
 }
+
+# What the dashboard's test button plays: the four cues a recording uses, in
+# the order a take produces them (same as scripts/test_speaker.py).
+TEST_SEQUENCE: tuple[str, ...] = (CUE_START, CUE_STOP, CUE_SAVED, CUE_ERROR)
+# Silence between two cues of the test sequence, so each is heard on its own.
+TEST_GAP_S = 0.5
+
+# The volume picked on the dashboard, kept across restarts. Per-device state
+# like device_id (see config._stable_device_id), so it lives beside it rather
+# than in .env — GRABETTE_SOUND_VOLUME stays the default it falls back to.
+VOLUME_FILE = Path.home() / ".cache" / "grabette" / "sound_volume"
 
 # Per-cue multiplier on the configured volume (GRABETTE_SOUND_VOLUME). The error
 # buzz is not a routine confirmation like the other three — it is the one cue
@@ -158,6 +178,24 @@ def _render_wav(path: Path, tones, volume: float, rate: int = SAMPLE_RATE) -> No
         w.writeframes(samples.tobytes())
 
 
+def load_saved_volume(default: float) -> float:
+    """The volume saved by the dashboard, or `default` if none was ever saved
+    (or the file is unreadable — a corrupt file must not silence the cues)."""
+    try:
+        return max(0.0, min(1.0, float(VOLUME_FILE.read_text().strip())))
+    except (OSError, ValueError):
+        return default
+
+
+def save_volume(volume: float) -> None:
+    """Persist `volume` for the next start. Written to a temp file and renamed,
+    so a power cut mid-write leaves the old value, not an empty file."""
+    VOLUME_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = VOLUME_FILE.with_suffix(".tmp")
+    tmp.write_text(f"{max(0.0, min(1.0, volume)):.2f}\n")
+    os.replace(tmp, VOLUME_FILE)
+
+
 def autodetect_device() -> str | None:
     """ALSA device for the HAT codec, or None if the card isn't registered.
 
@@ -185,6 +223,10 @@ class Speaker:
         self._lock = threading.Lock()
         # cue name -> monotonic time it last played (see CUE_DEBOUNCE_S).
         self._last_played: dict[str, float] = {}
+        # Serialises re-renders: the dashboard can send volume changes faster
+        # than one render takes.
+        self._render_lock = threading.Lock()
+        self._testing = False
 
     def prepare(self) -> None:
         """Resolve the device and pre-render the cue. Called once at backend
@@ -214,11 +256,7 @@ class Speaker:
             self._device = device
         try:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="grabette-sound-")
-            for name, tones in CUES.items():
-                path = Path(self._tmpdir.name) / f"{name}.wav"
-                gain = CUE_GAINS.get(name, 1.0)
-                _render_wav(path, tones, self._volume * gain)
-                self._cues[name] = path
+            self._render_cues()
         except Exception:
             logger.warning("Speaker cue rendering failed; sound disabled", exc_info=True)
             self._cues = {}
@@ -226,9 +264,76 @@ class Speaker:
             return
         logger.info("Speaker ready on '%s'", self._device)
 
+    def _render_cues(self) -> None:
+        """(Re-)render every cue at the current volume. Each file is written
+        beside its final name and renamed over it, so an aplay already playing
+        the old one keeps its file and a cue fired meanwhile is never half
+        written."""
+        with self._render_lock:
+            volume = self._volume
+            for name, tones in CUES.items():
+                path = Path(self._tmpdir.name) / f"{name}.wav"
+                tmp = path.with_suffix(".tmp")
+                _render_wav(tmp, tones, volume * CUE_GAINS.get(name, 1.0))
+                os.replace(tmp, path)
+                self._cues[name] = path
+
     @property
     def is_available(self) -> bool:
         return self._enabled and bool(self._cues)
+
+    @property
+    def is_testing(self) -> bool:
+        """Whether play_test_sequence() is still playing."""
+        return self._testing
+
+    @property
+    def volume(self) -> float:
+        return self._volume
+
+    def set_volume(self, volume: float) -> None:
+        """Change the cue amplitude (0..1) on the fly. 0 mutes: the cues are
+        then not played at all. Before prepare() — or with no speaker — it is
+        only remembered, and prepare() renders at it. Never raises."""
+        self._volume = max(0.0, min(1.0, volume))
+        if self._tmpdir is None or not self.is_available:
+            return
+        try:
+            self._render_cues()
+        except Exception:
+            logger.warning("Speaker cue re-rendering failed", exc_info=True)
+
+    def play_preview(self) -> None:
+        """One beep at the current volume, for the dashboard's volume control.
+        Not debounced: every change of level has to be heard. Returns at once;
+        never raises."""
+        self._play(CUE_PREVIEW, debounce=False)
+
+    def play_test_sequence(self) -> bool:
+        """Play TEST_SEQUENCE once, off the caller's thread, bypassing the
+        debounce. Returns False (and plays nothing) when the speaker is
+        unavailable, muted, or a test is already playing."""
+        if not self.is_available or self._volume <= 0.0:
+            return False
+        with self._lock:
+            if self._testing:
+                return False
+            self._testing = True
+
+        def run() -> None:
+            try:
+                for i, name in enumerate(TEST_SEQUENCE):
+                    if i:
+                        time.sleep(TEST_GAP_S)
+                    wav = self._cues.get(name)
+                    if wav is None or not self._spawn(wav):
+                        break
+            finally:
+                with self._lock:
+                    self._testing = False
+
+        threading.Thread(target=run, daemon=True, name="speaker-test").start()
+        return True
 
     def play_start(self) -> None:
         """Beep 'recording is live' (ascending). Returns at once; never raises."""
@@ -249,13 +354,13 @@ class Speaker:
         once; never raises."""
         self._play(CUE_ERROR)
 
-    def _play(self, name: str) -> None:
+    def _play(self, name: str, debounce: bool = True) -> None:
         wav = self._cues.get(name) if self._enabled else None
-        if wav is None:
+        if wav is None or self._volume <= 0.0:
             return
         now = time.monotonic()
         with self._lock:
-            if now - self._last_played.get(name, 0.0) < CUE_DEBOUNCE_S:
+            if debounce and now - self._last_played.get(name, 0.0) < CUE_DEBOUNCE_S:
                 return
             self._last_played[name] = now
         # Off-thread so the caller (start_capture, right after the streams go
@@ -347,7 +452,7 @@ def get_speaker() -> Speaker:
         from grabette.config import settings
         _speaker = Speaker(
             device=settings.sound_device,
-            volume=settings.sound_volume,
+            volume=load_saved_volume(settings.sound_volume),
             enabled=settings.sound_enabled,
         )
     return _speaker

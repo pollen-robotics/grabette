@@ -155,3 +155,13 @@ def test_camera_metadata_without_a_camera():
     from grabette.backend.rpi import _camera_metadata
 
     assert _camera_metadata("oakd", None) == {"model": "oakd"}
+
+
+def test_usb_connected_reads_the_vendor_ids(tmp_path, monkeypatch):
+    from grabette.hardware import depth_camera
+    monkeypatch.setattr(depth_camera, "_USB_DEVICES", tmp_path)
+    (tmp_path / "2-1").mkdir()
+    (tmp_path / "2-1" / "idVendor").write_text("2bc5\n")
+    assert depth_camera.usb_connected("gemini305") is True
+    assert depth_camera.usb_connected("oakd") is False
+    assert depth_camera.usb_connected(None) is None
