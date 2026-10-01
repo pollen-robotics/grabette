@@ -777,7 +777,7 @@ _POWEROFF_DONE_JS = """
     document.documentElement.classList.add('gb-off');
     const done = () => {
         document.querySelectorAll('.gb-poweroff-ok').forEach(el => {
-            el.textContent = '✓ Your Grabette has been shut down. You can close this page.';
+            el.textContent = '✓ Your Grabette is shutting down (~30s). You can close this page.';
         });
     };
     const poll = setInterval(() => {
