@@ -82,7 +82,7 @@ class RpiBackend(Backend):
         self, enable_angle: bool = False, enable_oakd: bool = True,
         oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
         orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
-        orbbec_rotate_180: bool = False,
+        orbbec_rotate_180: bool = False, enable_tactile: bool = False,
     ) -> None:
         super().__init__()
         self._running = False
