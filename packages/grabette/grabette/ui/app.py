@@ -143,6 +143,8 @@ html.gb-off .toast-wrap {
     background: var(--background-fill-primary) !important;
     color: var(--body-text-color-subdued) !important;
     font-size: var(--button-small-text-size) !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Helvetica, Arial, sans-serif !important;
     font-weight: 600 !important;
     cursor: pointer;
     box-shadow: none !important;
