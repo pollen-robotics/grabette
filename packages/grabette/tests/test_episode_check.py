@@ -6,7 +6,7 @@ rejected on the Space, and — in a bimanual build — takes the peer arm's good
 recording down with it. The screen has to catch that before the upload, so the
 required set is pinned here against the pipeline's own contract.
 """
-from grabette.episode_check import REQUIRED_FILES, missing_files
+from grabette.episode_check import _FRAME_SIDECARS, REQUIRED_FILES, missing_files
 
 
 def _write_episode(tmp_path, *, skip=(), depth="mkv"):
@@ -17,6 +17,9 @@ def _write_episode(tmp_path, *, skip=(), depth="mkv"):
         if name in skip:
             continue
         (ep / name).write_bytes(b"x")
+    for name in _FRAME_SIDECARS:
+        if name not in skip:
+            (ep / name).write_text('{"samples": [{"seq": 0}]}')
     if depth == "mkv" and "dcam_depth.mkv" not in skip:
         (ep / "dcam_depth.mkv").write_bytes(b"x")
     elif depth == "dir":
@@ -83,6 +86,8 @@ def _write_legacy_episode(tmp_path):
     ep.mkdir()
     for name in REQUIRED_FILES:
         (ep / legacy_name(name)).write_bytes(b"x")
+    for name in _FRAME_SIDECARS:
+        (ep / legacy_name(name)).write_text('{"samples": [{"seq": 0}]}')
     (ep / "oakd_depth.mkv").write_bytes(b"x")
     return ep
 
@@ -122,3 +127,18 @@ def test_imu_required_when_metadata_is_unreadable(tmp_path):
     (ep / "metadata.json").write_text("{not json")
 
     assert missing_files(ep) == ["dcam_imu.json"]
+
+
+def test_depth_sidecars_without_frames_are_missing(tmp_path):
+    """A depth camera that streamed nothing still writes every file: a
+    header-only video and {"samples": []}. Present and non-empty, no frames."""
+    ep = _write_episode(tmp_path)
+    for name in _FRAME_SIDECARS:
+        (ep / name).write_text('{"samples": []}')
+    assert missing_files(ep) == sorted(_FRAME_SIDECARS)
+
+
+def test_unreadable_depth_sidecar_is_missing(tmp_path):
+    ep = _write_episode(tmp_path)
+    (ep / "dcam_left_timestamps.json").write_text("{not json")
+    assert missing_files(ep) == ["dcam_left_timestamps.json"]
