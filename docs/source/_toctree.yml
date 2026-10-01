@@ -1,12 +1,22 @@
 - sections:
     - local: index
       title: Grabette
+  title: Project
+- sections:
     - local: get_started
       title: Getting started
-    - local: dashboard
-      title: The dashboard
-    - local: spaces
-      title: Hugging Face Spaces
+    - local: usage
+      title: Usage
+    - local: data_collection
+      title: Data collection
+    - local: training
+      title: Training
+  title: Grabette
+- sections:
+    - local: gripette
+      title: Gripette
+  title: Gripette
+- sections:
     - local: faq
       title: FAQ
-  title: Get Started
+  title: Help

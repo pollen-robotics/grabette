@@ -8,21 +8,11 @@ A Grabette rig records synchronized **camera + depth** streams (plus IMU with th
 
 ## How it works
 
-Data collection is three steps, and each one has a page in this documentation:
+Data collection is three steps:
 
 | 1. Record | 2. Process | 3. Train |
 | :--- | :--- | :--- |
-| Grab an object while the handheld device captures camera, depth and finger-joint angles. Start and stop with the physical button; organize tasks and sessions in the [Fleet Space](./spaces.md#grabette-fleet). | Offline RGB-D SLAM recovers the camera trajectory (visual-inertial when an IMU is present), then everything is assembled into a LeRobot v3 dataset — [locally](./get_started.md#turn-recordings-into-a-lerobot-dataset) or in the [SLAM Space](./spaces.md#grabette-slam--lerobot). | Feed the dataset to your policy of choice. The repository ships Diffusion Policy and π0.5 integrations as worked examples. |
-
-## Build the hardware
-
-Grabette is built from off-the-shelf parts, 3D-printed components and a Raspberry Pi.
-
-- 📋 **[Bill of Materials](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — the complete parts list, shared by Grabette and Gripette.
-- 🧩 **[CAD on Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — the full assembly.
-- 🔩 **Assembly guides** — [Grabette](https://github.com/pollen-robotics/grabette/blob/develop/packages/grabette/assembly/Grabette_Assembly.pdf) · [Gripette](https://github.com/pollen-robotics/grabette/blob/develop/packages/gripette/assembly/Gripette_Assembly.pdf), with matching 3D-print guides in the same folders.
-
-No hardware yet? The device software runs in **mock mode** on any laptop, so you can explore the dashboard before you build anything — see [Getting started](./get_started.md).
+| Grab an object while the handheld device captures camera, depth and finger-joint angles. Start and stop with the [physical button](./usage.md#start-and-stop-a-recording); organize tasks and sessions in the [Fleet Space](./data_collection.md). | Offline RGB-D SLAM recovers the camera trajectory (visual-inertial when an IMU is present), then everything is assembled into a LeRobot v3 dataset in the [SLAM Space](./data_collection.md#build-the-lerobot-dataset). | Feed the dataset to your policy of choice. The repository ships [Diffusion Policy and π0.5](./training.md) integrations as worked examples. |
 
 ## The devices
 
@@ -34,9 +24,11 @@ No hardware yet? The device software runs in **mock mode** on any laptop, so you
 
 ## Where to go next
 
-- **[Getting started](./get_started.md)** — from an empty SD card to your first LeRobot dataset.
-- **[The dashboard](./dashboard.md)** — the web interface to check the device, make a test recording and review episodes.
-- **[Hugging Face Spaces](./spaces.md)** — run SLAM in the cloud and drive a fleet of devices.
+- **[Getting started](./get_started.md)** — from a box of parts to a device ready to record.
+- **[Usage](./usage.md)** — powering, the dashboard, and recording.
+- **[Data collection](./data_collection.md)** — sessions, tasks and datasets with the Fleet Space.
+- **[Training](./training.md)** — Diffusion Policy and π0.5.
+- **[Gripette](./gripette.md)** — the robot-mounted gripper.
 - **[FAQ](./faq.md)** — common questions and troubleshooting.
 
 Grabette is developed by [Pollen Robotics](https://pollen-robotics.com/) and released under the Apache-2.0 licence. The code lives at [pollen-robotics/grabette](https://github.com/pollen-robotics/grabette).

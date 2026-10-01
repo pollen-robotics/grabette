@@ -16,10 +16,6 @@ On **Grabette**, yes. Trajectory recovery uses the depth stream; without it ther
 
 On **Gripette** a depth camera is optional — the standard motor-and-camera service doesn't need it.
 
-## The daemon says `Using MockBackend` on a real Raspberry Pi
-
-The virtualenv didn't pick up the apt-managed `picamera2` and `libcamera` packages, so the hardware backend can't import and the daemon falls back to mock data. Re-run `make install-rpi HAND=...`; it rebuilds the venv with `--system-site-packages` against the system Python and verifies every import.
-
 ## Why does `make install-rpi` insist on `HAND=`?
 
 A device is built as a left or a right hand, and the angle sensors are mounted mirrored between the two. The daemon has to know which it is to interpret them. The value is written to `/etc/grabette/env` (`/etc/gripette/env` on a Gripette) and persists across reboots.
@@ -27,14 +23,6 @@ A device is built as a left or a right hand, and the angle sensors are mounted m
 ## I re-ran `install-rpi` and my OAK-D Grabette stopped working
 
 `CAMERA` defaults to `gemini305`, and `install-rpi` writes the setting rather than reading the previous one. Re-running it without `CAMERA=oakd` switches the device to the Gemini. Re-run `make install-rpi HAND=... CAMERA=oakd`.
-
-## `uv sync` is downloading gigabytes of PyTorch
-
-You ran it from the repository root without `--package`. The repository is a single uv workspace, so a bare `uv sync` at the root resolves *every* workspace package, robot and dataset dependencies included. Use `uv sync --package grabette` for one package, or `uv sync --all-packages` when you genuinely want the full development environment.
-
-## The `.stl` or `.pdf` files are 130-byte text files
-
-The repository stores mesh assets and the assembly PDFs in Git LFS and you cloned before running `git lfs install`. Install it, then `git lfs pull` in the clone. If you're deploying to a Pi, which never loads the meshes, skip them entirely with `GIT_LFS_SKIP_SMUDGE=1 git clone ...`.
 
 ## I can't reach `http://<hostname>.local:8000`
 
@@ -60,10 +48,6 @@ pair <device-mac>
 ```
 
 Once bonded, Chrome connects without pairing again. Windows and macOS ship a pairing agent, so this only affects Linux.
-
-## Dataset generation fails on Python 3.11
-
-LeRobot 0.6 requires Python ≥ 3.12, so dataset generation, publishing and visualization do too. The device packages stay installable on 3.11 — the requirement is gated by environment markers — but the post-processing side needs the newer interpreter.
 
 ## Recordings from two devices don't line up
 
