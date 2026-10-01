@@ -29,6 +29,7 @@ def _status() -> dict:
         "volume": round(speaker.volume * 100),
         "default": round(max(0.0, min(1.0, settings.sound_volume)) * 100),
         "available": speaker.is_available,
+        "testing": speaker.is_testing,
     }
 
 

@@ -56,3 +56,10 @@ def test_test_is_refused_during_a_recording(api, monkeypatch):
     r = client.post("/api/sound/test")
     assert r.status_code == 409
     assert "recording" in r.json()["detail"]
+
+
+def test_status_says_whether_a_test_is_playing(api):
+    client, speaker = api
+    assert client.get("/api/sound").json()["testing"] is False
+    speaker._testing = True
+    assert client.get("/api/sound").json()["testing"] is True

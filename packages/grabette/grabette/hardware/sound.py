@@ -283,6 +283,11 @@ class Speaker:
         return self._enabled and bool(self._cues)
 
     @property
+    def is_testing(self) -> bool:
+        """Whether play_test_sequence() is still playing."""
+        return self._testing
+
+    @property
     def volume(self) -> float:
         return self._volume
 

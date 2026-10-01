@@ -6,6 +6,7 @@ import html
 import io
 import logging
 import math
+import time
 from urllib.parse import quote
 
 import gradio as gr
@@ -216,6 +217,11 @@ html.gb-off .toast-wrap {
     flex: 0 0 auto !important;
     width: auto !important;
     min-width: 0 !important;
+}
+/* Same width as "Test sounds" or "Playing", so the bar never shifts. */
+#ov-page .ov-volume-row .ov-sound-test {
+    width: 6.5rem !important;
+    justify-content: center !important;
 }
 #ov-page .ov-volume-row .block {
     padding: 0 !important;
@@ -683,6 +689,14 @@ def _ov_health_card(info: dict | None) -> str:
 # routers/sound.py). The default is GRABETTE_SOUND_VOLUME, which un-muting goes
 # back to; the page starts on it until the device says what it is set to.
 _SOUND_DEFAULT = round(max(0.0, min(1.0, settings.sound_volume)) * 100)
+
+
+# The test button's two labels. Its width is pinned in MODAL_CSS so the bar
+# beside it does not shift when one replaces the other.
+_SOUND_TEST = "Test sounds"
+_SOUND_PLAYING = "Playing"
+# Upper bound on waiting for the test sequence (~3 s) to report it is over.
+_SOUND_TEST_TIMEOUT_S = 15.0
 
 
 def _mute_classes(level: int) -> list[str]:
@@ -1781,11 +1795,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (res["volume"], gr.update(elem_classes=_mute_classes(res["volume"])),
                 _sound_note(res))
 
+    def on_sound_test_start():
+        """Show the test as running before the request even leaves."""
+        return gr.update(value=_SOUND_PLAYING, interactive=False)
+
     def on_sound_test():
+        """Play the cues, and hold the button on "Playing" until they end."""
         res = client.test_sound()
-        if "error" in res:
-            return _sound_note(res)
-        return "*Playing: start · stop · saved · error*"
+        if "error" not in res:
+            deadline = time.monotonic() + _SOUND_TEST_TIMEOUT_S
+            while time.monotonic() < deadline:
+                time.sleep(0.3)
+                st = client.get_sound()
+                if st is None or not st.get("testing"):
+                    break
+        return (gr.update(value=_SOUND_TEST, interactive=True),
+                _sound_note(res) if "error" in res else gr.update())
 
     with gr.Blocks(title="Grabette", css=MODAL_CSS, head=NAV_HEAD) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
@@ -1813,7 +1838,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             scale=0, min_width=0,
                         )
                         ov_sound_test_btn = gr.Button(
-                            "Test sounds", size="sm", scale=0, min_width=0,
+                            _SOUND_TEST, size="sm", scale=0, min_width=0,
+                            elem_classes="ov-sound-test",
                         )
                     ov_sound_note = gr.Markdown("", elem_classes="ov-note")
             ov_sound_default = gr.State(_SOUND_DEFAULT)
@@ -1899,7 +1925,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                           outputs=[ov_mute_btn, ov_sound_note])
         ov_mute_btn.click(fn=on_mute, inputs=[ov_volume, ov_sound_default],
                           outputs=[ov_volume, ov_mute_btn, ov_sound_note])
-        ov_sound_test_btn.click(fn=on_sound_test, outputs=ov_sound_note)
+        ov_sound_test_btn.click(
+            fn=on_sound_test_start, outputs=ov_sound_test_btn, queue=False,
+        ).then(fn=on_sound_test, outputs=[ov_sound_test_btn, ov_sound_note])
         demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
                                           ov_sound_note, ov_sound_default])
         demo.load(fn=None, js=_VOLUME_TIP_JS)
