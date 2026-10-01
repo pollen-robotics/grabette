@@ -50,6 +50,30 @@ def display_name(model: str | None) -> str:
     return DISPLAY_NAMES.get(model or "", GENERIC_DISPLAY_NAME)
 
 
+# USB vendor ids, so presence can be checked without starting the camera:
+# Intel Movidius (the OAK-D's VPU, booted or not) and Orbbec.
+USB_VENDOR_IDS = {
+    "oakd": "03e7",
+    "gemini305": "2bc5",
+}
+
+_USB_DEVICES = Path("/sys/bus/usb/devices")
+
+
+def usb_connected(model: str | None) -> bool | None:
+    """Whether a depth camera of this model is on the USB bus, None if unknown."""
+    vendor = USB_VENDOR_IDS.get(model or "")
+    if vendor is None or not _USB_DEVICES.is_dir():
+        return None
+    for id_file in _USB_DEVICES.glob("*/idVendor"):
+        try:
+            if id_file.read_text().strip() == vendor:
+                return True
+        except OSError:
+            continue
+    return False
+
+
 @runtime_checkable
 class DepthCameraCapture(Protocol):
     """Depth camera driving one episode's depth (+ optionally IMU) streams.

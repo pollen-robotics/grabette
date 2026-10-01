@@ -94,6 +94,11 @@ class RpiBackend(Backend):
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
         self._oakd_initializing = False
+        # A "did not start" fault is cleared once the camera is seen leaving
+        # and coming back on the USB bus (_watch_depth_camera_cable).
+        self._depth_camera_start_failed = False
+        self._depth_camera_unplugged_seen = False
+        self._depth_camera_watch_task = None
         # Live hardware faults, keyed by _HW_* — each one a state in which
         # recording would produce unusable data (no OAK-D offline calibration, no
         # angle sensors). Any of them BLOCKS capture and drives the error LED —
@@ -152,9 +157,35 @@ class RpiBackend(Backend):
 
         self._init_speaker()
 
+        import asyncio
+        self._depth_camera_watch_task = asyncio.create_task(
+            self._watch_depth_camera_cable())
+
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
+
+    async def _watch_depth_camera_cable(self) -> None:
+        """Clear a "did not start" fault once the cable is plugged back in.
+
+        Only on an unplug followed by a replug: a camera that is on the bus
+        yet failed to start has another problem, which the next bring-up (on
+        the button press) reports again. Nothing is started here.
+        """
+        import asyncio
+        from grabette.hardware.depth_camera import usb_connected
+        while True:
+            await asyncio.sleep(1.0)
+            if not self._depth_camera_start_failed or self._oakd_initializing:
+                continue
+            present = usb_connected(self._depth_camera)
+            if present is False:
+                self._depth_camera_unplugged_seen = True
+            elif present and self._depth_camera_unplugged_seen:
+                self._depth_camera_start_failed = False
+                self._depth_camera_unplugged_seen = False
+                self._clear_hw_error(_HW_OAKD)
+                logger.info("Depth camera plugged back in — fault cleared")
 
     def _init_oakd(self) -> None:
         """Initialize the depth camera (always-on pipeline: live view + recording).
@@ -191,9 +222,11 @@ class RpiBackend(Backend):
                 self._oakd = OakdCapture(self._sync)
             self._oakd.init_device()
             self._clear_hw_error(_HW_OAKD)
+            self._depth_camera_start_failed = False
             logger.info("Depth camera initialized: %s", self._depth_camera)
         except OakdCalibrationError as e:
             self._oakd = None
+            self._depth_camera_start_failed = False  # replugging won't fix it
             self._set_hw_error(_HW_OAKD, (
                 f"{e} — this grabette cannot record convertible episodes. "
                 "Power-cycle it; if it persists the OAK-D needs re-flashing."
@@ -206,11 +239,10 @@ class RpiBackend(Backend):
             # used to only log and let the capture go ahead — the episode looked
             # fine on the device and was rejected after the upload.
             self._oakd = None
-            self._set_hw_error(_HW_OAKD, (
-                f"the depth camera ({self._depth_camera}) did not start "
-                f"({_exc_text(e)}) — episodes would carry no RGB-D data and "
-                "could never be converted. Check its cable, then power-cycle."
-            ))
+            self._set_hw_error(_HW_OAKD,
+                               "depth camera did not start, check its cable")
+            self._depth_camera_start_failed = True
+            self._depth_camera_unplugged_seen = False
             logger.error("Depth camera (%s) unusable — recording disabled: %s",
                          self._depth_camera, e)
 
@@ -252,6 +284,9 @@ class RpiBackend(Backend):
             logger.error("Angle sensors unusable — recording disabled: %s", e)
 
     async def stop(self) -> None:
+        if self._depth_camera_watch_task is not None:
+            self._depth_camera_watch_task.cancel()
+            self._depth_camera_watch_task = None
         if self._capturing:
             await self.stop_capture()
         # After any stop_capture (which may re-arm the keep-alive), drop the
@@ -308,6 +343,14 @@ class RpiBackend(Backend):
     @property
     def is_oakd_initializing(self) -> bool:
         return self._oakd_initializing
+
+    @property
+    def is_depth_camera_connected(self) -> bool | None:
+        """Plugged in, read from the USB bus without starting the camera."""
+        if self.is_oakd_initialized:
+            return True
+        from grabette.hardware.depth_camera import usb_connected
+        return usb_connected(self._depth_camera)
 
     async def set_oakd_enabled(self, on: bool) -> None:
         if self._capturing:

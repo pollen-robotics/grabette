@@ -19,8 +19,10 @@ def get_state(daemon: Daemon = Depends(get_daemon)):
 
 @router.get("/history")
 def get_state_history(cursor: int = 0, daemon: Daemon = Depends(get_daemon)):
-    result = daemon.get_active_ring().get_since(cursor)
+    ring = daemon.get_active_ring()
+    result = ring.get_since(cursor)
     result["gen"] = daemon.generation
+    result["replay"] = ring is not daemon.sample_ring
     return result
 
 
