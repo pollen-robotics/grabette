@@ -308,8 +308,7 @@ def test_a_depth_camera_that_will_not_start_is_a_fault(monkeypatch):
 
     b._init_oakd()
 
-    assert "no device found" in b.hardware_error
-    assert "RGB-D" in b.hardware_error
+    assert b.hardware_error == "depth camera did not start, check its cable"
     with pytest.raises(RuntimeError):
         b.raise_if_capture_blocked()
 

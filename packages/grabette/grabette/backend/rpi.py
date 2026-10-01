@@ -206,11 +206,8 @@ class RpiBackend(Backend):
             # used to only log and let the capture go ahead — the episode looked
             # fine on the device and was rejected after the upload.
             self._oakd = None
-            self._set_hw_error(_HW_OAKD, (
-                f"the depth camera ({self._depth_camera}) did not start "
-                f"({_exc_text(e)}) — episodes would carry no RGB-D data and "
-                "could never be converted. Check its cable, then power-cycle."
-            ))
+            self._set_hw_error(_HW_OAKD,
+                               "depth camera did not start, check its cable")
             logger.error("Depth camera (%s) unusable — recording disabled: %s",
                          self._depth_camera, e)
 
