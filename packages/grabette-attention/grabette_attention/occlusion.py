@@ -5,7 +5,7 @@ This asks the same question of each REGION of one view: cover a block of the
 image, re-run, and measure how far the commanded chunk moves. The result is a
 causal map in millimetres, not an attention map -- which matters because on
 this policy attention mass does not track causal effect (see
-docs/attention_maps_findings.md), and the attention map's dominant component is
+packages/grabette-attention/docs/findings.md), and the attention map's dominant component is
 locked to the gripper rather than to the scene.
 
 The occlusion grid divides the SOURCE image into blocks. The attention grid has

@@ -9,7 +9,7 @@ LeRobot's built-in relative-action processor subtracts `observation.state`
 elementwise. That is correct for joint-space actions (each dim a 1-DOF rotation
 about a fixed axis, which commutes) and wrong for a Cartesian pose: subtraction is
 not rotation composition, and it yields world-frame offsets, which move with the
-arbitrary SLAM origin. See `docs/relative_actions_lerobot_native.md`.
+arbitrary SLAM origin. See `packages/grabette-chunkrel/docs/relative_actions_lerobot_native.md`.
 
 DEPLOYMENT NOTE — read before shipping a checkpoint
 ---------------------------------------------------

@@ -3,7 +3,7 @@
 Chunk-relative action representation for GRABETTE policies, as an **optional,
 default-off** alternative to the per-step deltas the rest of the pipeline
 uses. Design, measurements and the (negative) robot results are in
-`docs/relative_actions_lerobot_native.md`.
+[`docs/relative_actions_lerobot_native.md`](docs/relative_actions_lerobot_native.md).
 
 ## What it does
 

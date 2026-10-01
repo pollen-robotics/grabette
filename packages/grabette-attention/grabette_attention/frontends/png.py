@@ -17,7 +17,7 @@ _GUARD = (
     "NOTE: pi0.5 spreads attention broadly with low peaks, and action "
     "fine-tuning makes it more diffuse. A broad map is NORMAL and is not "
     "evidence of anything. The ablation millimetres are the interventional "
-    "measurement; the map is a hypothesis. See docs/attention_saliency_review.md."
+    "measurement; the map is a hypothesis. See packages/grabette-attention/docs/saliency_review.md."
 )
 
 # Attention grids routinely carry one or two "register" cells -- high-norm

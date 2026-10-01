@@ -1,9 +1,9 @@
 # Attention maps and view ablation: first measurements
 
 What the tool in `packages/grabette-attention` actually found. Companion to
-`docs/attention_saliency_review.md`, which is the literature review and the
+`saliency_review.md`, which is the literature review and the
 argument for the tool's design; this file is the data. Every script and CSV
-cited here is in `docs/attention_maps_refs/`.
+cited here is in `refs/`.
 
 Checkpoints analysed, all pi0.5 fine-tunes:
 
@@ -29,7 +29,7 @@ The checkpoint emits 8 channels: `x, y, z, ax, ay, az, strategy, closure`
 first three are translation, chunk-relative — offsets from the current pose,
 not per-step deltas.
 
-Measured over 172 usable episodes (`docs/attention_maps_refs/axis_convention.py`), splitting
+Measured over 172 usable episodes (`refs/axis_convention.py`), splitting
 each episode at first gripper closure:
 
 | phase | dx | dy | dz |
@@ -55,7 +55,7 @@ This agrees independently with the calibration in the project `CLAUDE.md`:
 
 The units fix (apply the postprocessor before scaling) was pinned only by a
 unit test with a stub postprocessor. Checked against real data
-(`docs/attention_maps_refs/check_units.py`), frame 192 of episode 0:
+(`refs/check_units.py`), frame 192 of episode 0:
 
 | quantity | value |
 | --- | --- |
@@ -75,7 +75,7 @@ delta.
 80 frames, 10 episodes, aligned on each episode's grasp, with **remaining
 forward travel to the grasp** on the x-axis — a physical distance read from
 the recorded actions, so episodes performed at different speeds line up
-(`docs/attention_maps_refs/ablation_sweep.py`, rows in `docs/attention_maps_refs/sweep_rows.csv`).
+(`refs/ablation_sweep.py`, rows in `refs/sweep_rows.csv`).
 
 | offset | remaining | mass | delta | x/lat | y/vert | z/depth |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -97,7 +97,7 @@ carried almost entirely by one axis (per-axis correlations: z **+0.928**,
 x +0.532, y **−0.084**), and near the grasp there is barely any forward
 distance left to get wrong.
 
-Dividing out that opportunity (`docs/attention_maps_refs/sweep_confound.py`):
+Dividing out that opportunity (`refs/sweep_confound.py`):
 
 | remaining | z delta | z / remaining |
 | --- | --- | --- |
@@ -121,7 +121,7 @@ demonstrated vertical travel — over 100% of the signal.
 
 **That flatness is an artefact of the window, not a property of the policy.**
 A later run reaching the true start of each episode (~200 mm out, 6 episodes ×
-5 timings, `docs/attention_maps_refs/episode_grid.py`) shows the dominant axis
+5 timings, `refs/episode_grid.py`) shows the dominant axis
 crossing over:
 
 | phase | depth | vertical |
@@ -202,7 +202,7 @@ The test that works needs no template model at all. For each frame, compare
 its attention on **its own** object footprint against its attention on **other
 frames'** footprints. Every fixed structure — fingers, borders, sinks —
 contributes equally to both, so any gap is object-following and nothing else
-(`docs/attention_maps_refs/object_and_corners.py`):
+(`refs/object_and_corners.py`):
 
 | | |
 | --- | --- |
@@ -257,7 +257,7 @@ what it found, and §10 for the object-level reading that corrects the
 
 Covering one 30×30-pixel block of the image and re-running gives a causal map
 on exactly the grid the attention map uses, so the two are comparable cell for
-cell (`docs/attention_maps_refs/occlusion_run.py`,
+cell (`refs/occlusion_run.py`,
 `attn_vs_causal.py`). Sugar-cube task, episode 0, 12×16 grid, mean fill,
 193 forward passes per frame.
 
@@ -283,7 +283,7 @@ grasp (6.7% of 94 mm), while removing the whole camera moves the trajectory
 Language plus state carries roughly **0.7 of the prefix attention mass**, about
 twice the camera's, and had never been intervened on. Same method as the view
 ablation: substitute the prompt, re-run with the same noise, measure the change
-in commanded translation (`docs/attention_maps_refs/prompt_run.py`). 21 frames
+in commanded translation (`refs/prompt_run.py`). 21 frames
 over 3 episodes, `sugar_cup_chunkrel_pi05_step20000`, mean baseline motion
 100.5 mm.
 
@@ -323,7 +323,7 @@ do and is spent by contact; vision makes the contact.
 The model was retrained on `"put the sugar cube in the mug"` — which describes
 the real task and shares only "the" with any pick3 string — and the sweep
 repeated on `sugarcube_in_mug_chunkrel_pi05_step20000`
-(`docs/attention_maps_refs/prompt_run_retrained.py`):
+(`refs/prompt_run_retrained.py`):
 
 | prompt substituted | original | retrained |
 | --- | --- | --- |
@@ -347,7 +347,7 @@ them and has not been run.
 ## 9. Delta vs chunk-relative: the representation changes attention, not dependence
 
 Same recording, same 20 000 steps, same prompt; only the action
-parameterisation differs (`docs/attention_maps_refs/delta_vs_chunkrel.py`,
+parameterisation differs (`refs/delta_vs_chunkrel.py`,
 `endpoint_run.py`).
 
 **These cannot be compared in millimetres.** Read from the checkpoints' own
@@ -401,7 +401,7 @@ task's geometry rather than an artefact of chunk-relative actions.
 
 Colour could not find the sugar cube: four masks either claimed a third of the
 frame or latched onto a shadow. Two things fixed it
-(`docs/attention_maps_refs/zoom_frame.py`, `detect_cube.py`,
+(`refs/zoom_frame.py`, `detect_cube.py`,
 `cube_vs_rest.py`). A grid-labelled zoom read by eye put the cube at
 `x 248–286, y 224–248` — cells r7c8, r7c9, r8c8, r8c9. Then **Grounding DINO
 for the box plus SAM2 for the mask**, run locally, reproduced exactly those

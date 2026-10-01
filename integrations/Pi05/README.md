@@ -32,7 +32,7 @@ gates, and remote deployment.
   fingers sat while *pressing* the object. The projected dataset's channels are
   `(strategy, closure)`; commands below use `_graspproj` for it, and a
   `_cartesian` id is the unprojected output.
-  See [`docs/grasp_projection.md`](../../docs/grasp_projection.md).
+  See [`packages/gripette/docs/grasp_projection.md`](../../packages/gripette/docs/grasp_projection.md).
 - **Training GPU**: A100-80GB class for batch 32 (bf16 + gradient
   checkpointing). An HF Jobs `a100-large` run costs ~$30 and ~12 h.
 - **Inference GPU**: ~10 GB in fp32 (RTX 3090/4090/5090) — either on the
@@ -167,7 +167,7 @@ default** (both learned by hitting them):
   Trains on UMI-style chunk-relative offsets instead of per-step deltas; needs
   relative stats in the dataset (`write_relative_action_stats`) and the guard
   refuses a stats/representation mismatch. Measured *not* better than deltas —
-  see `docs/relative_actions_lerobot_native.md`. Deltas remain the default.
+  see `packages/grabette-chunkrel/docs/relative_actions_lerobot_native.md`. Deltas remain the default.
 
   **On HF Jobs this also needs `--with`.** The processor lives in
   `packages/grabette-chunkrel`, and `hf jobs uv run` uploads ONE script — so
@@ -435,5 +435,5 @@ Deployment settings that matter (each traced to a measured failure):
 | `smoke_generation.py` | Observation-conditioning gate on YOUR fine-tune (step 3) |
 | `tests/test_checkpointing.py` | 37 tests for the eval-split selector, the best-checkpoint keeper, the eval-loss capture, and the push targets (`uv run pytest`). |
 | `probe_task_sensitivity.py` | Language-channel gate via the Ficelle server (step 4) |
-| `grabette-attn` (from `packages/grabette-attention`) | Offline attention maps per camera plus view-ablation deltas in mm. Answers "where is it looking" and "which camera does it rely on". The maps are hypotheses; the ablation numbers are the measurement. See `docs/attention_saliency_review.md`. |
+| `grabette-attn` (from `packages/grabette-attention`) | Offline attention maps per camera plus view-ablation deltas in mm. Answers "where is it looking" and "which camera does it rely on". The maps are hypotheses; the ablation numbers are the measurement. See `packages/grabette-attention/docs/saliency_review.md`. |
 | `pi0fast/` | The Pi0-FAST attempt: tokenizer tooling + recipe + why it failed |

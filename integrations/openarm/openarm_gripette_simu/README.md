@@ -140,7 +140,7 @@ the model's per-step noise as jitter (15 is visibly jerky). The width of the
 action vector is cross-checked against the mode (8-D chunk-relative, 11-D
 delta) and a mismatch aborts with a hint instead of silently misinterpreting.
 Install with the `eval` extra (`grabette-chunkrel` is a workspace dependency)
-— see `docs/relative_actions_lerobot_native.md` for the design and results.
+— see `packages/grabette-chunkrel/docs/relative_actions_lerobot_native.md` for the design and results.
 
 Note: `--skip_stale` used to read a dead action queue on pi05 and dropped the
 chunk head on every tick; it now drops exactly once per replan.

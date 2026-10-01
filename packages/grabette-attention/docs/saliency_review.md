@@ -282,7 +282,7 @@ targets and stacking the maps beats one summed map.
   forward passes and an MSE.
 
 Full annotated bibliography with per-entry verification status:
-`attention_maps_refs/biblio_saliency.md`.
+`refs/biblio_saliency.md`.
 
 ---
 
@@ -371,7 +371,7 @@ these are the acceptance criteria for the implementation:
 
 All of this was verified against the installed sources. The four venvs that
 matter carry byte-identical `modeling_pi05.py`, so there is one target, not
-four. Details and line numbers: `attention_maps_refs/repo_internals.md`.
+four. Details and line numbers: `refs/repo_internals.md`.
 
 ### 5.1 pi0.5 attention is available with a forward hook and no patching
 
@@ -518,7 +518,7 @@ dropped, is **training-only**. At inference the path is different and friendlier
 
 Neither `openpi` nor `lerobot` ships an attention-visualisation utility; expect
 to hook the eager attention path ourselves. Full annotated bibliography with
-verification status per entry: `attention_maps_refs/biblio_vla_attention.md`.
+verification status per entry: `refs/biblio_vla_attention.md`.
 
 ---
 

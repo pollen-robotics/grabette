@@ -257,8 +257,8 @@ def _write_card(dst_root: Path, repo_id: str | None = None) -> None:
         "observable.\n\n"
         f"The exact calibration is recorded in `{PROJECTION_SIDECAR}`. Decode with "
         "`gripette.grasp_projection.GraspProjection` — see "
-        "[docs/grasp_projection.md](https://github.com/pollen-robotics/grabette/"
-        "blob/develop/docs/grasp_projection.md).\n"
+        "[grasp_projection.md](https://github.com/pollen-robotics/grabette/"
+        "blob/develop/packages/gripette/docs/grasp_projection.md).\n"
     )
     logger.info("Wrote %s", path)
 
