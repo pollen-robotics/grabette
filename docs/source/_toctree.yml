@@ -1,6 +1,4 @@
-- sections:
-    - local: index
-      title: Grabette
+- local: index
   title: Project
 - sections:
     - local: get_started
@@ -12,11 +10,7 @@
     - local: training
       title: Training
   title: Grabette
-- sections:
-    - local: gripette
-      title: Gripette
+- local: gripette
   title: Gripette
-- sections:
-    - local: faq
-      title: FAQ
-  title: Help
+- local: faq
+  title: FAQ
