@@ -324,12 +324,15 @@ window.addEventListener('message', e => {
 // Self-poll /api/state/history when not receiving postMessage
 // Uses the same history endpoint as charts so it sees replay data automatically
 function startPolling() {
-  let cur = 0;
+  let cur = 0, gen = -1;
   setInterval(async () => {
     if (gotPostMessage) return;
     try {
       const resp = await fetch('/api/state/history?cursor=' + cur);
       const data = await resp.json();
+      // A replay starting or ending swaps the ring, whose cursor means nothing
+      // in the new one.
+      if (data.gen !== undefined && data.gen !== gen) { gen = data.gen; cur = 0; return; }
       if (data.cursor) cur = data.cursor;
       if (data.angle && data.angle.length) {
         const latest = data.angle[data.angle.length - 1];
