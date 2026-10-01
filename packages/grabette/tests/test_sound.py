@@ -309,3 +309,107 @@ def test_play_never_raises_when_spawn_fails(monkeypatch):
     monkeypatch.setattr(sound.subprocess, "Popen", boom)
     speaker._spawn(speaker._cues[sound.CUE_START])  # swallowed + logged, never raised
     speaker.close()
+
+
+# ── Volume set from the dashboard ─────────────────────────────────────
+
+
+def _ready_speaker(monkeypatch, calls, volume=0.6):
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(calls, FakeProc()))
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=volume)
+    speaker.prepare()
+    return speaker
+
+
+def test_set_volume_rerenders_the_cues(monkeypatch):
+    speaker = _ready_speaker(monkeypatch, [], volume=0.2)
+    quiet = _peak(speaker._cues[sound.CUE_START])
+    speaker.set_volume(0.9)
+    assert _peak(speaker._cues[sound.CUE_START]) > quiet
+    assert speaker.volume == 0.9
+    speaker.close()
+
+
+def test_set_volume_is_clamped(monkeypatch):
+    speaker = sound.Speaker(enabled=False)
+    speaker.set_volume(1.7)
+    assert speaker.volume == 1.0
+    speaker.set_volume(-1)
+    assert speaker.volume == 0.0
+
+
+def test_volume_set_before_prepare_is_the_one_rendered(monkeypatch):
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=0.2)
+    speaker.set_volume(1.0)
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    speaker.prepare()
+    loud = _peak(speaker._cues[sound.CUE_START])
+    assert loud > 0.9 * 32767
+    speaker.close()
+
+
+def test_muted_speaker_plays_nothing(monkeypatch):
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    speaker.set_volume(0.0)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    speaker.play_start()
+    speaker.play_error()
+    speaker.play_preview()
+    assert speaker.play_test_sequence() is False
+    assert calls == []
+    speaker.close()
+
+
+class _inline_thread:
+    """threading.Thread stand-in that runs the target on start()."""
+
+    def __init__(self, target, args=(), **kw):
+        self._run = lambda: target(*args)
+
+    def start(self):
+        self._run()
+
+
+def test_preview_is_not_debounced(monkeypatch):
+    """Every change of level on the bar has to be heard, however fast."""
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    speaker.play_preview()
+    speaker.play_preview()
+    assert len(calls) == 2
+    assert calls[0][-1].endswith(f"{sound.CUE_PREVIEW}.wav")
+    speaker.close()
+
+
+def test_test_sequence_plays_the_recording_cues_in_order(monkeypatch):
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    monkeypatch.setattr(sound.time, "sleep", lambda _: None)
+    assert speaker.play_test_sequence() is True
+    assert [c[-1].rsplit("/", 1)[-1] for c in calls] == [
+        f"{name}.wav" for name in sound.TEST_SEQUENCE
+    ]
+    assert sound.TEST_SEQUENCE == (
+        sound.CUE_START, sound.CUE_STOP, sound.CUE_SAVED, sound.CUE_ERROR,
+    )
+    speaker.close()
+
+
+def test_saved_volume_round_trips(monkeypatch, tmp_path):
+    monkeypatch.setattr(sound, "VOLUME_FILE", tmp_path / "sub" / "sound_volume")
+    assert sound.load_saved_volume(0.6) == 0.6       # nothing saved yet
+    sound.save_volume(0.35)
+    assert sound.load_saved_volume(0.6) == 0.35
+    sound.save_volume(0.0)                           # mute survives a restart
+    assert sound.load_saved_volume(0.6) == 0.0
+
+
+def test_corrupt_saved_volume_falls_back_to_default(monkeypatch, tmp_path):
+    path = tmp_path / "sound_volume"
+    path.write_text("loud\n")
+    monkeypatch.setattr(sound, "VOLUME_FILE", path)
+    assert sound.load_saved_volume(0.6) == 0.6

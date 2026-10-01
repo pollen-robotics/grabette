@@ -187,6 +187,49 @@ html.gb-off .toast-wrap {
 #ov-page .ov-rule-bottom {
     display: none !important;
 }
+/* Title and speaker volume on one line, both started at the top. */
+#ov-page .ov-status-head {
+    align-items: flex-start !important;
+}
+#ov-page .ov-volume {
+    gap: .3rem !important;
+}
+/* The buttons sit on the bar's line, under the slider's readout. */
+#ov-page .ov-volume-row {
+    align-items: flex-end !important;
+    flex-wrap: nowrap !important;
+    gap: .6rem !important;
+}
+#ov-page .ov-volume-row button {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+}
+#ov-page .ov-volume-row .ov-mute {
+    font-size: 1.1rem !important;
+    padding: .2rem .55rem !important;
+}
+/* The slider's 0 and 100 ends: its number box already says the level. */
+#ov-page .ov-volume-row .min_value,
+#ov-page .ov-volume-row .max_value {
+    display: none !important;
+}
+/* ...as a readout only: the level is set on the bar, whose release is what
+   applies it and beeps. A typed value would fire neither. */
+#ov-page .ov-volume-row .tab-like-container {
+    border-color: transparent !important;
+    background: transparent !important;
+}
+#ov-page .ov-volume-row input[type=number] {
+    pointer-events: none !important;
+    border-color: transparent !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    text-align: right !important;
+}
+#ov-page .ov-volume .ov-note p {
+    text-align: left !important;
+}
 @media (max-width: 560px) {
     /* A phone shows one column, so a full-width button is the easy target. */
     #ov-page .ov-cta button,
@@ -581,6 +624,28 @@ def _ov_health_card(info: dict | None) -> str:
         + _ov_row("Storage", storage)
         + "</div>"
     )
+
+
+# Speaker volume control on the Overview, in % of the cue amplitude (see
+# routers/sound.py). The default is GRABETTE_SOUND_VOLUME, which un-muting goes
+# back to; the page starts on it until the device says what it is set to.
+_SOUND_DEFAULT = round(max(0.0, min(1.0, settings.sound_volume)) * 100)
+
+
+def _mute_label(level: int) -> str:
+    """The mute button shows the speaker's state: crossed out when muted."""
+    return "🔇" if level <= 0 else "🔊"
+
+
+def _sound_note(res: dict | None) -> str:
+    """The line under the volume bar: why it can't work, or nothing."""
+    if res is None:
+        return "*Could not reach the Grabette API.*"
+    if "error" in res:
+        return f"⛔ {res['error']}"
+    if not res.get("available"):
+        return "*No speaker detected on this Grabette.*"
+    return ""
 
 
 _TITLE_HTML = (
@@ -1586,6 +1651,38 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return mode, f"⛔ {result['error']}"
         return mode, f"*Starting {name}…*"
 
+    # ── Speaker volume ────────────────────────────────────────────────
+
+    def load_sound():
+        """Slider, mute button, note and the un-mute level, as the device has
+        them — the saved volume, not the page's default."""
+        st = client.get_sound()
+        if st is None:
+            return gr.update(), gr.update(), _sound_note(None), _SOUND_DEFAULT
+        return (st["volume"], _mute_label(st["volume"]), _sound_note(st),
+                st["default"])
+
+    def on_volume_release(level):
+        """A click or a drag let go on the bar: set it, and beep at it."""
+        res = client.set_sound_volume(int(level))
+        if "error" in res:
+            return gr.update(), _sound_note(res)
+        return _mute_label(res["volume"]), _sound_note(res)
+
+    def on_mute(level, default):
+        """Mute; pressed again, back to the default level (with its beep)."""
+        target, beep = (0, False) if level > 0 else (default, True)
+        res = client.set_sound_volume(target, beep=beep)
+        if "error" in res:
+            return gr.update(), gr.update(), _sound_note(res)
+        return res["volume"], _mute_label(res["volume"]), _sound_note(res)
+
+    def on_sound_test():
+        res = client.test_sound()
+        if "error" in res:
+            return _sound_note(res)
+        return "*Playing: start · stop · saved · error*"
+
     with gr.Blocks(title="Grabette", css=MODAL_CSS, head=NAV_HEAD) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         _title_bar()
@@ -1596,10 +1693,32 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # min_width is what makes this responsive: four columns on a
             # laptop, two on a tablet, one on a phone, decided by gradio from
             # the width each column says it needs.
-            gr.HTML(_ov_group_title(
-                "Grabette status",
-                "What your Grabette sees and how it is doing right now.",
-            ))
+            # The title shares its line with the speaker volume; on a phone the
+            # two columns no longer fit side by side and the volume wraps under
+            # the title.
+            with gr.Row(equal_height=False, elem_classes="ov-status-head"):
+                with gr.Column(scale=3, min_width=280):
+                    gr.HTML(_ov_group_title(
+                        "Grabette status",
+                        "What your Grabette sees and how it is doing right now.",
+                    ))
+                with gr.Column(scale=2, min_width=300, elem_classes="ov-volume"):
+                    gr.HTML(_section_label("Speaker volume"))
+                    with gr.Row(equal_height=True, elem_classes="ov-volume-row"):
+                        ov_mute_btn = gr.Button(
+                            _mute_label(_SOUND_DEFAULT), size="sm", scale=0,
+                            min_width=0, elem_classes="ov-mute",
+                        )
+                        ov_volume = gr.Slider(
+                            0, 100, value=_SOUND_DEFAULT, step=1,
+                            show_label=False, container=False, buttons=[],
+                            scale=1, min_width=120,
+                        )
+                        ov_sound_test_btn = gr.Button(
+                            "▶ Test sounds", size="sm", scale=0, min_width=0,
+                        )
+                    ov_sound_note = gr.Markdown("", elem_classes="ov-note")
+            ov_sound_default = gr.State(_SOUND_DEFAULT)
             with gr.Row(equal_height=False, elem_classes="ov-tiles"):
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Cameras"))
@@ -1672,6 +1791,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cn_camera_timer = gr.Timer(0.2)
         cn_camera_timer.tick(fn=ov_frame, inputs=ov_mode_state,
                              outputs=ov_camera_img)
+
+        ov_volume.release(fn=on_volume_release, inputs=ov_volume,
+                          outputs=[ov_mute_btn, ov_sound_note])
+        ov_mute_btn.click(fn=on_mute, inputs=[ov_volume, ov_sound_default],
+                          outputs=[ov_volume, ov_mute_btn, ov_sound_note])
+        ov_sound_test_btn.click(fn=on_sound_test, outputs=ov_sound_note)
+        demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
+                                          ov_sound_note, ov_sound_default])
 
         ov_info_timer = gr.Timer(10.0)
         ov_info_timer.tick(fn=refresh_overview,
