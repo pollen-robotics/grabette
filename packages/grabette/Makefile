@@ -16,6 +16,14 @@ BOOT_CONFIG := $(firstword $(wildcard /boot/firmware/config.txt /boot/config.txt
 
 CAMERA ?= gemini305
 
+# Optional tactile overrides (TACTILE_SENSORS, TACTILE_PORT, ...). Only the ones
+# passed on the command line are written; the others keep their env/default value.
+TACTILE_KEYS := TACTILE_SENSORS TACTILE_PORT TACTILE_BAUDRATE TACTILE_ADDRESSES TACTILE_SHAPES
+TACTILE_SET := $(foreach k,$(TACTILE_KEYS),$(if $($(k)),$(k)))
+EMPTY :=
+SPACE := $(EMPTY) $(EMPTY)
+ENV_MANAGED := $(subst $(SPACE),|,$(strip HAND DEPTH_CAMERA $(TACTILE_SET)))
+
 help:
 	@echo "Targets:"
 	@echo "  install-rpi HAND=L|R  Install apt deps + udev rule, create venv, sync, verify."
@@ -40,6 +48,10 @@ help:
 	@echo "CAMERA is this grabette's depth camera, written to /etc/grabette/env as"
 	@echo "GRABETTE_DEPTH_CAMERA. A fresh Pi has no config yet, so install-rpi cannot read"
 	@echo "the setting — it writes it. Example:  make install-rpi HAND=right CAMERA=oakd"
+	@echo ""
+	@echo "Tactile settings are optional and written to /etc/grabette/env only when given:"
+	@echo "TACTILE_SENSORS={true,false} TACTILE_PORT TACTILE_BAUDRATE TACTILE_ADDRESSES TACTILE_SHAPES."
+	@echo "Example:  make install-rpi HAND=right TACTILE_PORT=/dev/ttyACM1 TACTILE_SHAPES=6x6,4x8"
 
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
@@ -65,7 +77,8 @@ install-rpi: check-hand check-camera install-udev install-ntp install-audio
 	@echo "--- pyvenv.cfg ---"
 	@grep -E "home|version_info|system-site" $(WORKSPACE_ROOT)/.venv/pyvenv.cfg
 	@echo
-	@$(MAKE) --no-print-directory write-env HAND=$(HAND) CAMERA=$(CAMERA)
+	@$(MAKE) --no-print-directory write-env HAND=$(HAND) CAMERA=$(CAMERA) \
+	  $(foreach k,$(TACTILE_SET),$(k)="$($(k))")
 	@echo
 	@echo "Done. Run 'uv run --package grabette python -m grabette' to start the daemon."
 	@echo "Watch journalctl for 'RPi hardware detected, using RpiBackend' (NOT MockBackend)."
@@ -86,9 +99,9 @@ check-camera:
 		exit 1; \
 	fi
 
-# Write /etc/grabette/env with GRABETTE_HAND=$(HAND), PRESERVING any existing
-# GRABETTE_*_SIGN lines (operator may have overridden one for an asymmetric
-# build) so a re-run of install-rpi doesn't wipe them.
+# Write /etc/grabette/env with GRABETTE_HAND=$(HAND) and GRABETTE_DEPTH_CAMERA=$(CAMERA),
+# PRESERVING every other existing line (sign overrides, tactile config, ...) so a
+# re-run of install-rpi doesn't wipe them.
 write-env: check-hand check-camera
 	@sudo mkdir -p /etc/grabette
 	@sudo touch /etc/grabette/env
@@ -98,7 +111,8 @@ write-env: check-hand check-camera
 	  echo "# Sourced by grabette.service via EnvironmentFile=-/etc/grabette/env."; \
 	  echo "GRABETTE_HAND=$(HAND)"; \
 	  echo "GRABETTE_DEPTH_CAMERA=$(CAMERA)"; \
-	  sudo grep -E '^GRABETTE_(PROXIMAL|DISTAL)_SIGN=' /etc/grabette/env 2>/dev/null || true; \
+	  $(foreach k,$(TACTILE_SET),echo "GRABETTE_$(k)=$($(k))";) \
+	  sudo grep -vE '^GRABETTE_($(ENV_MANAGED))=|^# (/etc/grabette/env —|Written by|Sourced by)' /etc/grabette/env 2>/dev/null || true; \
 	} | sudo tee /etc/grabette/env.new >/dev/null
 	@sudo mv /etc/grabette/env.new /etc/grabette/env
 	@echo "Wrote /etc/grabette/env:"

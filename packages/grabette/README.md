@@ -86,12 +86,15 @@ A grabette is built as either a **left** or **right** hand — the angle sensors
 ```bash
 make install-rpi HAND=right                  # or HAND=left
 make install-rpi HAND=right CAMERA=oakd      # on a grabette that carries an OAK-D SR
+make install-rpi HAND=right TACTILE_PORT=/dev/ttyACM1 TACTILE_SHAPES=6x6,4x8   # non-default tactile rig
 uv run python -m grabette
 ```
 
 > `HAND` is required — running `make install-rpi` without it fails with a clear error. The choice is written to `/etc/grabette/env` as `GRABETTE_HAND=<value>` and persists across reboots (sourced by `grabette.service`).
 
 > `CAMERA` is optional and defaults to `gemini305`. It selects which depth camera this device is set up for: only that camera's udev rule is installed, the Orbbec SDK is installed only when it is needed, and the choice is written as `GRABETTE_DEPTH_CAMERA=<value>`. A fresh Pi has no config for `install-rpi` to read, so the target writes the setting rather than consulting it — **re-running `install-rpi` on an OAK-D grabette without `CAMERA=oakd` will switch it to the Gemini.**
+
+> `TACTILE_SENSORS`, `TACTILE_PORT`, `TACTILE_BAUDRATE`, `TACTILE_ADDRESSES` and `TACTILE_SHAPES` are optional. Each one passed is written as `GRABETTE_TACTILE_<NAME>=<value>`, replacing any previous value; the ones omitted keep what `/etc/grabette/env` already has, or the code default (the V2 rig: two sensors at addresses `1,2`, shapes `6x6,4x8`, on `/dev/ttyACM0` @ `921600`). See [configuration](docs/configuration.md#environment-variables). To change them without a full reinstall: `make write-env HAND=right CAMERA=oakd TACTILE_PORT=/dev/ttyACM1`.
 
 `make install-rpi HAND=...` does the following — automating the steps that are easy to get subtly wrong by hand:
 - `sudo apt install python3-libcamera python3-picamera2 libcap-dev ffmpeg python3-dbus python3-gi` (the dbus/gi packages are system deps for the BLE WiFi service).
@@ -101,7 +104,7 @@ uv run python -m grabette
   - `--system-site-packages` makes the apt-installed `libcamera` and `numpy` visible to the venv.
 - Runs `uv sync --package grabette --extra rpi --extra ui --extra hf` and verifies all imports succeed.
 - Runs `install-orbbec-sdk` when `CAMERA=gemini305` (`pyorbbecsdk2` is not in the `rpi` extra — see below).
-- Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` and `GRABETTE_DEPTH_CAMERA=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
+- Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>`, `GRABETTE_DEPTH_CAMERA=<value>` and any `GRABETTE_TACTILE_*` passed (preserving every other existing line, e.g. `GRABETTE_*_SIGN` overrides).
 - Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
 - Runs `install-audio` (below) so the HAT speaker's overlay + mixer init are in place.
 
