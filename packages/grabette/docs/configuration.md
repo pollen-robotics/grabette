@@ -24,6 +24,11 @@ All settings via environment variables with `GRABETTE_` prefix. Persistent per-d
 | `GRABETTE_CAMERA_FPS` | `46` | Camera frame rate |
 | `GRABETTE_IMU_HZ` | `200` | IMU sample rate |
 | `GRABETTE_ANGLE_SENSORS` | `true` | Enable AS5600 angle sensors |
+| `GRABETTE_TACTILE_SENSORS` | `true` | Enable the DFRobot SEN0704/SEN0705 tactile sensors (init is non-fatal). Written by `make install-rpi TACTILE_SENSORS=…` |
+| `GRABETTE_TACTILE_PORT` | `/dev/ttyACM0` | Serial port of the Modbus RTU bus. Written by `make install-rpi TACTILE_PORT=…` |
+| `GRABETTE_TACTILE_BAUDRATE` | `921600` | Modbus baud rate. Written by `make install-rpi TACTILE_BAUDRATE=…` |
+| `GRABETTE_TACTILE_ADDRESSES` | `1,2` | Comma-separated Modbus addresses. Written by `make install-rpi TACTILE_ADDRESSES=…` |
+| `GRABETTE_TACTILE_SHAPES` | `6x6,4x8` | `ROWSxCOLS` per address, or a single shape applied to all. Written by `make install-rpi TACTILE_SHAPES=…` |
 | `GRABETTE_HAND` | `right` | `left` or `right` — determines default `*_sign`. Written by `make install-rpi HAND=…` |
 | `GRABETTE_DISTAL_SIGN` | (from `hand`) | Override the hand-derived distal sensor sign. ±1 |
 | `GRABETTE_PROXIMAL_SIGN` | (from `hand`) | Override the hand-derived proximal sensor sign. ±1 |
