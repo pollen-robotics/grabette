@@ -766,18 +766,31 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         # — same device→Space trust boundary the SLAM flow already uses. Needs no
         # capture hardware. The command completes only when the Space is done.
         import aiohttp
-        from huggingface_hub import get_token
+        from huggingface_hub import get_token, list_repo_files
 
         args = cmd.get("args", {})
-        # A device-pinned Space (settings) takes precedence over the fleet's, so a
-        # device can force its own fork (e.g. one with tactile export).
-        space_url = (settings.slam_space_url or args.get("space_url") or "").rstrip("/")
-        space_repo = settings.slam_space_repo or args.get("space_repo")
         source_repo = args.get("source_repo")
         target_repo = args.get("target_repo")
+        token = get_token()
+        has_tactile = False
+        if settings.tactile_space_url and source_repo:
+            try:
+                files = await asyncio.to_thread(
+                    list_repo_files, source_repo, repo_type="dataset", token=token or None)
+                has_tactile = any(f.endswith("tactile_data.json") for f in files)
+            except Exception as e:  # noqa: BLE001 — fall back to the regular Space
+                logger.info("Could not list %s for tactile data: %s", source_repo, _exc_text(e))
+        if has_tactile:
+            space_url = settings.tactile_space_url.rstrip("/")
+            space_repo = settings.tactile_space_repo or None
+            logger.info("Tactile data in %s, processing on %s", source_repo, space_url)
+        else:
+            # A device-pinned Space (settings) takes precedence over the fleet's, so a
+            # device can force its own fork.
+            space_url = (settings.slam_space_url or args.get("space_url") or "").rstrip("/")
+            space_repo = settings.slam_space_repo or args.get("space_repo")
         if not space_url or not source_repo or not target_repo:
             return {"status": "error", "message": "space_url, source_repo, target_repo are required"}
-        token = get_token()
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         # A SLAM check, not a dataset build: the run exists FOR its per-episode
         # tracking report, and a clean one deliberately pushes nothing. Two things

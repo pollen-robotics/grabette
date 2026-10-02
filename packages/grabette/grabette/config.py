@@ -128,6 +128,10 @@ class Settings(BaseSettings):
     # own fork (e.g. one with tactile export). Empty falls back to the fleet value.
     slam_space_url: str = "https://pollen-robotics-grabette-slam-test.hf.space"
     slam_space_repo: str = "pollen-robotics/grabette-slam-test"
+    # Used instead of the above when the source dataset holds tactile data
+    # (any tactile_data.json). Empty disables the switch.
+    tactile_space_url: str = "https://carolinepascal-grabette-slam.hf.space"
+    tactile_space_repo: str = "CarolinePascal/grabette-slam"
 
     # Fleet relay
     relay_url: str = "https://pollen-robotics-grabette-fleet.hf.space"
