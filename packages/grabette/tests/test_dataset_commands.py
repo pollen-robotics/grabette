@@ -267,6 +267,30 @@ async def _awake(*a, **kw):
     return None  # the Space is up
 
 
+@pytest.fixture(autouse=True)
+def _no_hub_listing(monkeypatch):
+    monkeypatch.setattr("huggingface_hub.list_repo_files", lambda *a, **kw: [])
+
+
+@pytest.mark.parametrize("files, expected", [
+    (["ep1/left/tactile_data.json"], main.settings.tactile_space_url),
+    (["ep1/left/metadata.json"], main.settings.slam_space_url),
+])
+def test_tactile_data_is_processed_on_the_tactile_space(monkeypatch, files, expected):
+    woken = []
+
+    async def _wake(s, url, *a, **kw):
+        woken.append(url)
+
+    monkeypatch.setattr(main, "_wake_space", _wake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+    monkeypatch.setattr("huggingface_hub.list_repo_files", lambda *a, **kw: files)
+
+    _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"})
+
+    assert woken == [expected]
+
+
 # --- 2. a bounded, retried episode upload ------------------------------------
 
 class _Hf:

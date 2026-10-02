@@ -32,6 +32,8 @@ All settings via environment variables with `GRABETTE_` prefix. Persistent per-d
 | `GRABETTE_HAND` | `right` | `left` or `right` — determines default `*_sign`. Written by `make install-rpi HAND=…` |
 | `GRABETTE_DISTAL_SIGN` | (from `hand`) | Override the hand-derived distal sensor sign. ±1 |
 | `GRABETTE_PROXIMAL_SIGN` | (from `hand`) | Override the hand-derived proximal sensor sign. ±1 |
+| `GRABETTE_TACTILE_SPACE_URL` | `https://carolinepascal-grabette-slam.hf.space` | Processing Space used when the source dataset contains tactile data (`tactile_data.json`). Empty disables the switch |
+| `GRABETTE_TACTILE_SPACE_REPO` | `CarolinePascal/grabette-slam` | Repo id of that Space (lets the device wake or restart it) |
 | `GRABETTE_UI_ENABLED` | `true` | Enable Gradio dashboard |
 | `GRABETTE_BUTTON_ENABLED` | `true` | Enable hardware button |
 | `GRABETTE_SOUND_ENABLED` | `true` | Cues on the HAT speaker: recording start, recording stop, episode saved, failed command |
