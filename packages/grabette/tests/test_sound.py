@@ -9,7 +9,31 @@ from __future__ import annotations
 
 import wave
 
+import pytest
+
 from grabette.hardware import sound
+
+
+@pytest.fixture(autouse=True)
+def mixer(monkeypatch):
+    """Records the amixer calls instead of running them: the tests' shutil.which
+    stand-ins resolve amixer too, and nothing here may touch a real mixer."""
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return sound.subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(sound.subprocess, "run", run)
+    return calls
+
+
+def _dac_set(call) -> int:
+    """The 'Line DAC Playback Volume' value an amixer call sets."""
+    assert f"name={sound.MIXER_CONTROL}" in call
+    left, right = call[-1].split(",")
+    assert left == right
+    return int(left)
 
 
 def test_rendered_cue_is_48k_stereo_16bit(tmp_path):
@@ -309,3 +333,153 @@ def test_play_never_raises_when_spawn_fails(monkeypatch):
     monkeypatch.setattr(sound.subprocess, "Popen", boom)
     speaker._spawn(speaker._cues[sound.CUE_START])  # swallowed + logged, never raised
     speaker.close()
+
+
+# ── Volume set from the dashboard ─────────────────────────────────────
+
+
+def _ready_speaker(monkeypatch, calls, volume=0.6):
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    monkeypatch.setattr(sound.subprocess, "Popen", _fake_popen(calls, FakeProc()))
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=volume)
+    speaker.prepare()
+    return speaker
+
+
+def test_set_volume_sets_the_codec_mixer(monkeypatch, mixer):
+    """The level is the codec's, not the samples': the cues stay as rendered."""
+    speaker = _ready_speaker(monkeypatch, [], volume=0.2)
+    peak = _peak(speaker._cues[sound.CUE_START])
+    speaker.set_volume(0.9)
+    assert _dac_set(mixer[-1]) == sound.dac_value(0.9)
+    assert _peak(speaker._cues[sound.CUE_START]) == peak
+    assert speaker.volume == 0.9
+    speaker.close()
+
+
+def test_volume_maps_linearly_onto_the_dac_range():
+    assert sound.dac_value(1.0) == sound.DAC_MAX
+    assert sound.dac_value(0.0) == sound.DAC_MIN
+    values = [sound.dac_value(v / 100) for v in range(1, 101)]
+    assert values == sorted(values)
+    assert 0 < sound.DAC_MIN < sound.DAC_MAX <= 118
+
+
+def test_default_volume_is_the_init_script_level():
+    """Until a level is picked on the dashboard, a grabette sounds as it did
+    before the volume control: at the mixer level aic3104-init.sh sets."""
+    from grabette.config import Settings
+
+    assert sound.dac_value(Settings.model_fields["sound_volume"].default) == 45
+
+
+def test_no_volume_leaves_the_mixer_alone(monkeypatch, mixer):
+    """scripts/test_speaker.py plays at a level set by hand with amixer."""
+    speaker = _ready_speaker(monkeypatch, [], volume=None)
+    assert speaker.is_available
+    assert mixer == []
+    speaker.close()
+
+
+def test_mute_leaves_the_mixer_alone(monkeypatch, mixer):
+    """Muting is done by not playing; un-muting then sets the level back."""
+    speaker = _ready_speaker(monkeypatch, [], volume=0.0)
+    speaker.set_volume(0.0)
+    assert mixer == []
+    speaker.close()
+
+
+def test_amixer_failure_is_logged_not_raised(monkeypatch, caplog):
+    def run(cmd, **kw):
+        return sound.subprocess.CompletedProcess(cmd, 1, b"", b"Invalid card")
+
+    speaker = _ready_speaker(monkeypatch, [])
+    monkeypatch.setattr(sound.subprocess, "run", run)
+    with caplog.at_level("WARNING"):
+        speaker.set_volume(0.5)
+    assert "Invalid card" in caplog.text
+    speaker.close()
+
+
+def test_set_volume_is_clamped(monkeypatch):
+    speaker = sound.Speaker(enabled=False)
+    speaker.set_volume(1.7)
+    assert speaker.volume == 1.0
+    speaker.set_volume(-1)
+    assert speaker.volume == 0.0
+
+
+def test_volume_set_before_prepare_is_the_one_applied(monkeypatch, mixer):
+    monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
+    speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=0.2)
+    speaker.set_volume(1.0)
+    assert mixer == []                    # nothing to set before prepare()
+    speaker.prepare()
+    assert [_dac_set(c) for c in mixer] == [sound.DAC_MAX]
+    speaker.close()
+
+
+def test_muted_speaker_plays_nothing(monkeypatch):
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    speaker.set_volume(0.0)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    speaker.play_start()
+    speaker.play_error()
+    speaker.play_preview()
+    assert speaker.play_test_sequence() is False
+    assert calls == []
+    speaker.close()
+
+
+class _inline_thread:
+    """threading.Thread stand-in that runs the target on start()."""
+
+    def __init__(self, target, args=(), **kw):
+        self._run = lambda: target(*args)
+
+    def start(self):
+        self._run()
+
+
+def test_preview_is_not_debounced(monkeypatch):
+    """Every change of level on the bar has to be heard, however fast."""
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    speaker.play_preview()
+    speaker.play_preview()
+    assert len(calls) == 2
+    assert calls[0][-1].endswith(f"{sound.CUE_PREVIEW}.wav")
+    speaker.close()
+
+
+def test_test_sequence_plays_the_recording_cues_in_order(monkeypatch):
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    monkeypatch.setattr(sound.time, "sleep", lambda _: None)
+    assert speaker.play_test_sequence() is True
+    assert [c[-1].rsplit("/", 1)[-1] for c in calls] == [
+        f"{name}.wav" for name in sound.TEST_SEQUENCE
+    ]
+    assert sound.TEST_SEQUENCE == (
+        sound.CUE_START, sound.CUE_STOP, sound.CUE_SAVED, sound.CUE_ERROR,
+    )
+    speaker.close()
+
+
+def test_saved_volume_round_trips(monkeypatch, tmp_path):
+    monkeypatch.setattr(sound, "VOLUME_FILE", tmp_path / "sub" / "sound_volume")
+    assert sound.load_saved_volume(0.6) == 0.6       # nothing saved yet
+    sound.save_volume(0.35)
+    assert sound.load_saved_volume(0.6) == 0.35
+    sound.save_volume(0.0)                           # mute survives a restart
+    assert sound.load_saved_volume(0.6) == 0.0
+
+
+def test_corrupt_saved_volume_falls_back_to_default(monkeypatch, tmp_path):
+    path = tmp_path / "sound_volume"
+    path.write_text("loud\n")
+    monkeypatch.setattr(sound, "VOLUME_FILE", path)
+    assert sound.load_saved_volume(0.6) == 0.6
