@@ -1,10 +1,11 @@
-name: Deploy BT Tool to Pages
+name: Deploy getting-started page to Pages
 
-# Publishes the single shared Bluetooth WiFi-provisioning web client
-# (docs/index.html) to https://pollen-robotics.github.io/grabette/. The page
-# has a device chooser, so the one site provisions any robot (Grabette /
-# Gripette / Casquette). The per-package packages/*/docs/index.html are symlinks
-# to docs/index.html, so this single source is the only thing to deploy.
+# Publishes the Grabette getting-started page (docs/index.html + docs/media/) to
+# https://pollen-robotics.github.io/grabette/ — the first-run walkthrough and
+# the Bluetooth WiFi-provisioning client it leads into. The client has a device
+# chooser, so the one site also provisions a Gripette or a Casquette. The
+# per-package packages/*/docs/index.html are symlinks to docs/index.html, so
+# this single source is the only thing to deploy.
 
 on:
   push:
@@ -36,11 +37,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
-      # Stage only the BT tool. `docs/` also holds the doc-builder sources for
-      # the Hugging Face documentation site, which must not be published here.
+      # Stage only the getting-started page and its media. `docs/` also holds
+      # the doc-builder sources for the Hugging Face documentation site, which
+      # must not be published here.
       - run: |
-          mkdir _site
+          mkdir -p _site/images
           cp docs/index.html _site/
+          cp -r docs/media _site/media
+          # Just the images the page uses — docs/images/ is shared with the
+          # READMEs and has no business being published wholesale.
+          cp docs/images/grabette_logo_small.png docs/images/turn_on.gif _site/images/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

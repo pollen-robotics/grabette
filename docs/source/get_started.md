@@ -58,7 +58,7 @@ If the logs say `Using MockBackend` instead of `RPi hardware detected, using Rpi
 
 ### 2. Get it on the network
 
-If the WiFi you set at flash time isn't the one you need, you can provision the device over Bluetooth — no screen, no SSH. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/) in Chrome or Edge, connect to the device, enter the PIN (`00000` by default), scan and pick your network.
+If the WiFi you set at flash time isn't the one you need, you can provision the device over Bluetooth — no screen, no SSH. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/) in Chrome or Edge, connect to the device, scan and pick your network. The tool sends the default PIN (`00000`) itself and only asks for it if you changed it.
 
 ### 3. Calibrate
 
