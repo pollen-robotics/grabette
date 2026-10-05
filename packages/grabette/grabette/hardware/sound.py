@@ -137,7 +137,9 @@ VOLUME_FILE = Path.home() / ".cache" / "grabette" / "sound_volume"
 # from the bar. 0 is not mapped: a volume of 0 plays no cue at all (mute).
 MIXER_CONTROL = "Line DAC Playback Volume"
 DAC_MIN = 30    # value at 1 %  (-44 dB)
-DAC_MAX = 118   # value at 100 % (0 dB)
+# 100 %: chosen by ear on three V2 HATs; the codec's 0 dB (118) is far too
+# loud for operator feedback.
+DAC_MAX = 70    # value at 100 % (-24 dB)
 
 # Amplitude of the rendered cues, fixed: the loudness is the mixer's job (see
 # above). 0.6 leaves room for CUE_GAINS below.
