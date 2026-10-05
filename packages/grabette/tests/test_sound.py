@@ -9,7 +9,31 @@ from __future__ import annotations
 
 import wave
 
+import pytest
+
 from grabette.hardware import sound
+
+
+@pytest.fixture(autouse=True)
+def mixer(monkeypatch):
+    """Records the amixer calls instead of running them: the tests' shutil.which
+    stand-ins resolve amixer too, and nothing here may touch a real mixer."""
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return sound.subprocess.CompletedProcess(cmd, 0, b"", b"")
+
+    monkeypatch.setattr(sound.subprocess, "run", run)
+    return calls
+
+
+def _dac_set(call) -> int:
+    """The 'Line DAC Playback Volume' value an amixer call sets."""
+    assert f"name={sound.MIXER_CONTROL}" in call
+    left, right = call[-1].split(",")
+    assert left == right
+    return int(left)
 
 
 def test_rendered_cue_is_48k_stereo_16bit(tmp_path):
@@ -322,12 +346,58 @@ def _ready_speaker(monkeypatch, calls, volume=0.6):
     return speaker
 
 
-def test_set_volume_rerenders_the_cues(monkeypatch):
+def test_set_volume_sets_the_codec_mixer(monkeypatch, mixer):
+    """The level is the codec's, not the samples': the cues stay as rendered."""
     speaker = _ready_speaker(monkeypatch, [], volume=0.2)
-    quiet = _peak(speaker._cues[sound.CUE_START])
+    peak = _peak(speaker._cues[sound.CUE_START])
     speaker.set_volume(0.9)
-    assert _peak(speaker._cues[sound.CUE_START]) > quiet
+    assert _dac_set(mixer[-1]) == sound.dac_value(0.9)
+    assert _peak(speaker._cues[sound.CUE_START]) == peak
     assert speaker.volume == 0.9
+    speaker.close()
+
+
+def test_volume_maps_linearly_onto_the_dac_range():
+    assert sound.dac_value(1.0) == sound.DAC_MAX
+    assert sound.dac_value(0.0) == sound.DAC_MIN
+    values = [sound.dac_value(v / 100) for v in range(1, 101)]
+    assert values == sorted(values)
+    assert 0 < sound.DAC_MIN < sound.DAC_MAX <= 118
+
+
+def test_default_volume_is_the_init_script_level():
+    """Until a level is picked on the dashboard, a grabette sounds as it did
+    before the volume control: at the mixer level aic3104-init.sh sets."""
+    from grabette.config import Settings
+
+    assert sound.dac_value(Settings.model_fields["sound_volume"].default) == 45
+
+
+def test_no_volume_leaves_the_mixer_alone(monkeypatch, mixer):
+    """scripts/test_speaker.py plays at a level set by hand with amixer."""
+    speaker = _ready_speaker(monkeypatch, [], volume=None)
+    assert speaker.is_available
+    assert mixer == []
+    speaker.close()
+
+
+def test_mute_leaves_the_mixer_alone(monkeypatch, mixer):
+    """Muting is done by not playing; un-muting then sets the level back."""
+    speaker = _ready_speaker(monkeypatch, [], volume=0.0)
+    speaker.set_volume(0.0)
+    assert mixer == []
+    speaker.close()
+
+
+def test_amixer_failure_is_logged_not_raised(monkeypatch, caplog):
+    def run(cmd, **kw):
+        return sound.subprocess.CompletedProcess(cmd, 1, b"", b"Invalid card")
+
+    speaker = _ready_speaker(monkeypatch, [])
+    monkeypatch.setattr(sound.subprocess, "run", run)
+    with caplog.at_level("WARNING"):
+        speaker.set_volume(0.5)
+    assert "Invalid card" in caplog.text
     speaker.close()
 
 
@@ -339,13 +409,13 @@ def test_set_volume_is_clamped(monkeypatch):
     assert speaker.volume == 0.0
 
 
-def test_volume_set_before_prepare_is_the_one_rendered(monkeypatch):
+def test_volume_set_before_prepare_is_the_one_applied(monkeypatch, mixer):
     monkeypatch.setattr(sound.shutil, "which", lambda _: "/usr/bin/aplay")
     speaker = sound.Speaker(device="plughw:CARD=aic3104,DEV=0", volume=0.2)
     speaker.set_volume(1.0)
+    assert mixer == []                    # nothing to set before prepare()
     speaker.prepare()
-    loud = _peak(speaker._cues[sound.CUE_START])
-    assert loud > 0.9 * 32767
+    assert [_dac_set(c) for c in mixer] == [sound.DAC_MAX]
     speaker.close()
 
 

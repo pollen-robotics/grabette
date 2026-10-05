@@ -31,7 +31,7 @@ All settings via environment variables with `GRABETTE_` prefix. Persistent per-d
 | `GRABETTE_BUTTON_ENABLED` | `true` | Enable hardware button |
 | `GRABETTE_SOUND_ENABLED` | `true` | Cues on the HAT speaker: recording start, recording stop, episode saved, failed command |
 | `GRABETTE_SOUND_DEVICE` | (auto) | ALSA device. Empty = auto-detect the codec by card name (`plughw:CARD=aic3104`) |
-| `GRABETTE_SOUND_VOLUME` | `0.6` | Default amplitude of the generated cue, `0`..`1` (absolute loudness is the codec mixer's job). Overridden by the level set on the dashboard, see below |
+| `GRABETTE_SOUND_VOLUME` | `0.5` | Default speaker volume, `0`..`1`, set on the codec mixer (`0.5` = the level `aic3104-init.sh` sets at boot). Overridden by the level set on the dashboard, see below |
 | `GRABETTE_LOG_LEVEL` | `INFO` | Logging level |
 
 ## Audible recording cue
@@ -66,7 +66,9 @@ status*): a 0–100 % bar that beeps at the level picked, a mute button (pressed
 again, it goes back to `GRABETTE_SOUND_VOLUME`), and a test button that plays
 the four cues above in order. The level is saved to
 `~/.cache/grabette/sound_volume` and used at the next start in place of
-`GRABETTE_SOUND_VOLUME`; delete that file to go back to the default. API:
+`GRABETTE_SOUND_VOLUME`; delete that file to go back to the default. The level
+drives the codec's `Line DAC Playback Volume` (1–100 % → 30–60, i.e. −44 dB to
+−29 dB; 0 % plays nothing), not the amplitude of the cues. API:
 `GET /api/sound`, `PUT /api/sound/volume` (`{"volume": 0..100, "beep": bool}`),
 `POST /api/sound/test` (refused during a recording).
 
