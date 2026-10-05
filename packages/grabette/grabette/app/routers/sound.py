@@ -1,7 +1,7 @@
 """Speaker volume and test, for the dashboard's volume control.
 
-The volume is the amplitude of the rendered cues (see hardware/sound.py), shown
-as 0..100 %. It is persisted on every change, so the next start of the daemon
+The volume is the codec's line-out level (see hardware/sound.py), shown as
+0..100 %. It is persisted on every change, so the next start of the daemon
 plays the cues at the level last picked here; GRABETTE_SOUND_VOLUME is only the
 default it falls back to, and what un-muting goes back to.
 """

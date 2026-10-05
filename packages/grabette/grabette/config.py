@@ -105,9 +105,11 @@ class Settings(BaseSettings):
     # (plughw:CARD=aic3104) — never by index, since on a Pi 4 the vc4-hdmi
     # cards shift the numbering. Set explicitly only to override.
     sound_device: str = ""
-    # Amplitude of the generated tone, 0..1. The speaker's absolute loudness is
-    # set by the codec mixer in scripts/aic3104-init.sh; this only trims it.
-    sound_volume: float = 0.6
+    # Default speaker volume, 0..1 (the dashboard's 0..100 %), used until one is
+    # picked on the dashboard. Set on the codec mixer, see hardware/sound.py
+    # (DAC_MIN/DAC_MAX). 0.17 gives the level scripts/aic3104-init.sh sets at
+    # boot ('Line DAC Playback Volume' 45).
+    sound_volume: float = 0.17
 
     # Logging
     log_level: str = "INFO"

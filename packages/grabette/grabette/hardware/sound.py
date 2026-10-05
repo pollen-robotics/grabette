@@ -128,15 +128,28 @@ TEST_GAP_S = 0.5
 # than in .env — GRABETTE_SOUND_VOLUME stays the default it falls back to.
 VOLUME_FILE = Path.home() / ".cache" / "grabette" / "sound_volume"
 
-# Per-cue multiplier on the configured volume (GRABETTE_SOUND_VOLUME). The error
-# buzz is not a routine confirmation like the other three — it is the one cue
-# that must never be missed — so it renders at the full digital scale
-# (_render_wav clamps there) while the rest keep the shared trim, which exists
-# to stop the routine cues being obnoxious. A multiplier rather than a fixed
-# amplitude, so lowering GRABETTE_SOUND_VOLUME keeps the buzz proportionally
-# louder instead of quietly flattening the difference. It buys ~4 dB: real, but
-# a safety margin on top of a cue placed where the speaker can reproduce it
-# (see ERROR_TONES) — never a substitute for that.
+# The volume (0..1, the dashboard's 0..100 %) is set on the CODEC, not in the
+# rendered samples: 'Line DAC Playback Volume' is the DAC -> line-out level,
+# 0..118 in 0.5 dB steps (118 = 0 dB, 0 = mute). Scaling the samples instead
+# could only ever go down from the mixer level set by scripts/aic3104-init.sh,
+# and spends waveform resolution to do it. The steps being 0.5 dB each, a
+# linear map onto DAC values is linear in dB, which is what the ear expects
+# from the bar. 0 is not mapped: a volume of 0 plays no cue at all (mute).
+MIXER_CONTROL = "Line DAC Playback Volume"
+DAC_MIN = 30    # value at 1 %  (-44 dB)
+DAC_MAX = 118   # value at 100 % (0 dB)
+
+# Amplitude of the rendered cues, fixed: the loudness is the mixer's job (see
+# above). 0.6 leaves room for CUE_GAINS below.
+CUE_AMPLITUDE = 0.6
+
+# Per-cue multiplier on CUE_AMPLITUDE. The error buzz is not a routine
+# confirmation like the other three — it is the one cue that must never be
+# missed — so it renders at the full digital scale (_render_wav clamps there)
+# while the rest keep the shared amplitude, which exists to stop the routine
+# cues being obnoxious. It buys ~4 dB: real, but a safety margin on top of a
+# cue placed where the speaker can reproduce it (see ERROR_TONES) — never a
+# substitute for that.
 CUE_GAINS: dict[str, float] = {CUE_ERROR: 1.7}
 
 # A failure is typically noticed by several layers at once (the backend raises,
@@ -196,6 +209,11 @@ def save_volume(volume: float) -> None:
     os.replace(tmp, VOLUME_FILE)
 
 
+def dac_value(volume: float) -> int:
+    """'Line DAC Playback Volume' value for a volume in (0, 1]."""
+    return round(DAC_MIN + max(0.0, min(1.0, volume)) * (DAC_MAX - DAC_MIN))
+
+
 def autodetect_device() -> str | None:
     """ALSA device for the HAT codec, or None if the card isn't registered.
 
@@ -211,11 +229,14 @@ class Speaker:
     """Fire-and-forget cue player. Safe to construct with no audio hardware."""
 
     def __init__(
-        self, device: str = "", volume: float = 0.6, enabled: bool = True,
+        self, device: str = "", volume: float | None = None, enabled: bool = True,
     ) -> None:
         self._enabled = enabled
         self._device = device or ""
-        self._volume = volume
+        # None: leave the codec mixer as scripts/aic3104-init.sh set it — what
+        # scripts/test_speaker.py wants, to play at a level set by hand with
+        # amixer. Otherwise prepare() applies it to the mixer.
+        self._volume = None if volume is None else max(0.0, min(1.0, volume))
         self._tmpdir: tempfile.TemporaryDirectory | None = None
         self._cues: dict[str, Path] = {}
         self._aplay = shutil.which("aplay")
@@ -223,9 +244,10 @@ class Speaker:
         self._lock = threading.Lock()
         # cue name -> monotonic time it last played (see CUE_DEBOUNCE_S).
         self._last_played: dict[str, float] = {}
-        # Serialises re-renders: the dashboard can send volume changes faster
-        # than one render takes.
-        self._render_lock = threading.Lock()
+        # Serialises mixer writes: the dashboard can send volume changes faster
+        # than one amixer call takes, and the last one sent must be the one set.
+        self._mixer_lock = threading.Lock()
+        self._amixer = shutil.which("amixer")
         self._testing = False
 
     def prepare(self) -> None:
@@ -256,27 +278,46 @@ class Speaker:
             self._device = device
         try:
             self._tmpdir = tempfile.TemporaryDirectory(prefix="grabette-sound-")
-            self._render_cues()
+            for name, tones in CUES.items():
+                path = Path(self._tmpdir.name) / f"{name}.wav"
+                _render_wav(path, tones, CUE_AMPLITUDE * CUE_GAINS.get(name, 1.0))
+                self._cues[name] = path
         except Exception:
             logger.warning("Speaker cue rendering failed; sound disabled", exc_info=True)
             self._cues = {}
             self._enabled = False
             return
+        if self._volume is not None:
+            self._apply_volume()
         logger.info("Speaker ready on '%s'", self._device)
 
-    def _render_cues(self) -> None:
-        """(Re-)render every cue at the current volume. Each file is written
-        beside its final name and renamed over it, so an aplay already playing
-        the old one keeps its file and a cue fired meanwhile is never half
-        written."""
-        with self._render_lock:
-            volume = self._volume
-            for name, tones in CUES.items():
-                path = Path(self._tmpdir.name) / f"{name}.wav"
-                tmp = path.with_suffix(".tmp")
-                _render_wav(tmp, tones, volume * CUE_GAINS.get(name, 1.0))
-                os.replace(tmp, path)
-                self._cues[name] = path
+    def _apply_volume(self) -> None:
+        """Write the current volume to the codec mixer. A muted speaker (0)
+        leaves the mixer as it is: muting is done by not playing. Never raises
+        — a failure is logged, and the cues play at whatever level the mixer
+        was left at."""
+        if not self._volume:
+            return
+        if self._amixer is None:
+            logger.warning("Speaker: no amixer binary, volume not applied")
+            return
+        with self._mixer_lock:
+            value = dac_value(self._volume)
+            try:
+                res = subprocess.run(
+                    [self._amixer, "-c", CARD_NAME, "-q", "cset",
+                     f"name={MIXER_CONTROL}", f"{value},{value}"],
+                    capture_output=True, timeout=PLAY_TIMEOUT_S,
+                )
+            except Exception:
+                logger.warning("Speaker: cannot run amixer", exc_info=True)
+                return
+        if res.returncode != 0:
+            logger.warning(
+                "Speaker: amixer failed setting '%s' to %d (exit %s): %s",
+                MIXER_CONTROL, value, res.returncode,
+                (res.stderr or b"").decode("utf-8", "replace").strip() or "(no message)",
+            )
 
     @property
     def is_available(self) -> bool:
@@ -288,20 +329,17 @@ class Speaker:
         return self._testing
 
     @property
-    def volume(self) -> float:
+    def volume(self) -> float | None:
+        """0..1, or None when the mixer is left as the init script set it."""
         return self._volume
 
     def set_volume(self, volume: float) -> None:
-        """Change the cue amplitude (0..1) on the fly. 0 mutes: the cues are
-        then not played at all. Before prepare() — or with no speaker — it is
-        only remembered, and prepare() renders at it. Never raises."""
+        """Change the volume (0..1) on the fly, on the codec mixer. 0 mutes: the
+        cues are then not played at all. Before prepare() — or with no speaker
+        — it is only remembered, and prepare() applies it. Never raises."""
         self._volume = max(0.0, min(1.0, volume))
-        if self._tmpdir is None or not self.is_available:
-            return
-        try:
-            self._render_cues()
-        except Exception:
-            logger.warning("Speaker cue re-rendering failed", exc_info=True)
+        if self.is_available:
+            self._apply_volume()
 
     def play_preview(self) -> None:
         """One beep at the current volume, for the dashboard's volume control.
@@ -313,7 +351,7 @@ class Speaker:
         """Play TEST_SEQUENCE once, off the caller's thread, bypassing the
         debounce. Returns False (and plays nothing) when the speaker is
         unavailable, muted, or a test is already playing."""
-        if not self.is_available or self._volume <= 0.0:
+        if not self.is_available or self._volume == 0.0:
             return False
         with self._lock:
             if self._testing:
@@ -356,7 +394,7 @@ class Speaker:
 
     def _play(self, name: str, debounce: bool = True) -> None:
         wav = self._cues.get(name) if self._enabled else None
-        if wav is None or self._volume <= 0.0:
+        if wav is None or self._volume == 0.0:
             return
         now = time.monotonic()
         with self._lock:

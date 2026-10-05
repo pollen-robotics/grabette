@@ -52,10 +52,9 @@ def main() -> int:
         return 1
     print(f"[OK]   using device {device}")
 
-    speaker = Speaker(
-        device=device,
-        volume=float(os.environ.get("GRABETTE_SOUND_VOLUME", "0.6")),
-    )
+    # No volume: the mixer is left as it is, so a level set by hand with
+    # amixer is the one heard (see scripts/aic3104-init.sh).
+    speaker = Speaker(device=device)
     speaker.prepare()
     if not speaker.is_available:
         print("[FAIL] speaker unavailable — see the log line above "
