@@ -107,9 +107,9 @@ class Settings(BaseSettings):
     sound_device: str = ""
     # Default speaker volume, 0..1 (the dashboard's 0..100 %), used until one is
     # picked on the dashboard. Set on the codec mixer, see hardware/sound.py
-    # (DAC_MIN/DAC_MAX). 0.38 gives the level scripts/aic3104-init.sh sets at
+    # (DAC_MIN/DAC_MAX). 0.5 gives the level scripts/aic3104-init.sh sets at
     # boot ('Line DAC Playback Volume' 45).
-    sound_volume: float = 0.38
+    sound_volume: float = 0.5
 
     # Logging
     log_level: str = "INFO"
