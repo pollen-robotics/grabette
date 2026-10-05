@@ -240,10 +240,12 @@ def test_stale_relative_stats_provenance_is_dropped(tmp_path):
         "action_relative_meta": {"chunk_size": 50},
         "observation.state": {"min": [0.0], "max": [1.0]},
     }))
+    (root / "meta" / "relative_action.json").write_text(json.dumps({"mode": "pose"}))
 
     _drop_stale_action_stats(root)
 
     st = json.loads((root / "meta" / "stats.json").read_text())
+    assert not (root / "meta" / "relative_action.json").exists()
     assert "action_relative_meta" not in st
     assert "action_absolute" not in st
     assert "action" in st and "observation.state" in st, "unrelated keys must survive"
@@ -260,3 +262,37 @@ def test_dropping_provenance_is_a_no_op_when_absent(tmp_path):
     (root / "meta" / "stats.json").write_text(json.dumps(before))
     _drop_stale_action_stats(root)
     assert json.loads((root / "meta" / "stats.json").read_text()) == before
+
+
+def test_the_stats_pass_survives_tactile_features(tmp_path):
+    """lerobot's recompute_stats breaks on multi-dim int16 tactile grids, so the
+    stats pass must recompute only the rewritten columns and keep the rest."""
+    np = pytest.importorskip("numpy")
+    LeRobotDataset = pytest.importorskip("lerobot.datasets").LeRobotDataset
+    from grabette_postprocess.grasp_projection_convert import convert_dataset
+
+    src = tmp_path / "src"
+    ds = LeRobotDataset.create(repo_id="local/src", fps=10, root=src, use_videos=False, features={
+        "action": {"dtype": "float32", "shape": (3,), "names": ["x", "proximal", "distal"]},
+        "observation.state": {"dtype": "float32", "shape": (2,), "names": ["proximal", "distal"]},
+        "observation.tactile.sensor_1": {"dtype": "int16", "shape": (2, 3), "names": ["rows", "columns"]},
+    })
+    for _ in range(2):
+        prox, dist = pick_and_lift()
+        for i, (p, d) in enumerate(zip(prox, dist)):
+            ds.add_frame({
+                "action": np.array([0.0, p, d], dtype=np.float32),
+                "observation.state": np.array([p, d], dtype=np.float32),
+                "observation.tactile.sensor_1": np.full((2, 3), i, dtype=np.int16),
+                "task": "grasp",
+            })
+        ds.save_episode()
+    ds.finalize()
+    tactile_before = json.loads((src / "meta" / "stats.json").read_text())["observation.tactile.sensor_1"]
+
+    dst = tmp_path / "dst"
+    convert_dataset(src, dst, stats_repo_id="local/dst")
+
+    stats = json.loads((dst / "meta" / "stats.json").read_text())
+    assert stats["observation.tactile.sensor_1"] == tactile_before
+    assert stats["action"]["max"][2] == pytest.approx(1.0)  # closure, no longer radians

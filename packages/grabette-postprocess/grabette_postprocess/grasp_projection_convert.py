@@ -182,8 +182,13 @@ def _drop_stale_action_stats(dst_root: Path) -> None:
     stale marker would make that guard PASS.
 
     `action_absolute` goes for the same reason: it archives the pre-relative
-    stats of a different representation.
+    stats of a different representation. lerobot's `meta/relative_action.json`
+    marker is the same provenance in its current form.
     """
+    marker = dst_root / "meta" / "relative_action.json"
+    if marker.is_file():
+        marker.unlink()
+        logger.info("Dropped stale %s", marker)
     path = dst_root / "meta" / "stats.json"
     if not path.is_file():
         return
@@ -297,9 +302,16 @@ def convert_dataset(
     ds = None
     if stats_repo_id:
         from lerobot.datasets import LeRobotDataset
+        from lerobot.datasets.dataset_tools import (
+            aggregate_stats,
+            compute_episode_stats,
+            write_stats,
+        )
 
         ds = LeRobotDataset(repo_id=stats_repo_id, root=dst_root)
         logger.info("Opened %s at %s for the stats pass", stats_repo_id, dst_root)
+        stats_feats = {k: ds.meta.features[k] for k in ("action", "observation.state")}
+    ep_stats = []
 
     info_path = dst_root / "meta" / "info.json"
     info = json.loads(info_path.read_text())
@@ -328,6 +340,9 @@ def convert_dataset(
             states[m, s_ip], states[m, s_id] = s_pair[:, 0], s_pair[:, 1]
             rep["episode"] = int(ep)
             reports.append(rep)
+            if ds is not None:
+                ep_stats.append(compute_episode_stats(
+                    {"action": actions[m], "observation.state": states[m]}, stats_feats))
 
         cols = {}
         for c in table.column_names:
@@ -357,11 +372,15 @@ def convert_dataset(
     if ds is not None:
         # Mandatory: `closure` is now 0..1 where the raw angle was 0..1.6 rad, so
         # stale stats would mis-scale the channel. Uses the object opened above —
-        # constructing a new one here is what caused the clobber.
-        from lerobot.datasets.dataset_tools import recompute_stats
-
-        logger.info("Recomputing stats...")
-        recompute_stats(ds, skip_image_video=True)
+        # constructing a new one here is what caused the clobber. Only the two
+        # rewritten columns are recomputed: lerobot's recompute_stats breaks on
+        # multi-dim ArrayND features such as the int16 tactile grids.
+        logger.info("Recomputing stats (action + observation.state only)...")
+        new_stats = aggregate_stats(ep_stats)
+        for k, v in (ds.meta.stats or {}).items():
+            new_stats.setdefault(k, v)
+        write_stats(new_stats, ds.root)
+        ds.meta.stats = new_stats
         logger.info("Stats recomputed")
 
     _drop_stale_action_stats(dst_root)
