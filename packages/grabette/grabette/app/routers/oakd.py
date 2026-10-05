@@ -43,6 +43,8 @@ def _status(backend: Backend) -> dict:
         # failure, and "the camera is red" sends an operator hunting for a cable
         # when the fault is a calibration the device can't read.
         "hardware_error": getattr(backend, "hardware_error", ""),
+        # Plugged in, checked without starting the camera (None = can't tell).
+        "connected": getattr(backend, "is_depth_camera_connected", None),
     }
 
 

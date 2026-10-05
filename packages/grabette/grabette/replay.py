@@ -16,7 +16,9 @@ logger = logging.getLogger(__name__)
 
 
 class ReplayEngine:
-    def __init__(self) -> None:
+    def __init__(self, on_end=None) -> None:
+        # Called once playback reaches the end; the engine is inactive by then.
+        self._on_end = on_end
         self.ring = SampleRing(maxlen=500)
         self._episode_id: str | None = None
         self._duration_ms: float = 0
@@ -192,9 +194,14 @@ class ReplayEngine:
                         self._playback_ms = self._duration_ms
                         self._push_window(prev, self._playback_ms)
                         self._playing = False
+                        self._active = False
                         logger.info("Replay reached end of episode")
-                        # Stay active but paused at end
-                        continue
+                        # Ending here, not paused at the end: a replay left
+                        # active pins every live reading (3D model, charts) to
+                        # its last sample once nobody is watching it.
+                        if self._on_end is not None:
+                            self._on_end(self)
+                        return
                     self._push_window(prev, self._playback_ms)
                 await asyncio.sleep(tick_ms / 1000)
         except asyncio.CancelledError:

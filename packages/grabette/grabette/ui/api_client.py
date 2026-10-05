@@ -18,6 +18,23 @@ logger = logging.getLogger(__name__)
 _DOWNLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
 
+def _error_detail(exc: httpx.HTTPStatusError) -> str:
+    """The server's `detail`, or the bare HTTP error when the body isn't JSON.
+
+    Error bodies are not always JSON — a reverse proxy's HTML 404, a gateway's
+    plain-text 502 — and calling .json() on one raises from inside the except
+    clause that was supposed to be handling the failure, so the caller gets a
+    JSONDecodeError instead of the message it knows how to display.
+    """
+    try:
+        payload = exc.response.json()
+    except Exception:
+        return str(exc)
+    if isinstance(payload, dict):
+        return str(payload.get("detail", exc))
+    return str(exc)
+
+
 class GrabetteClient:
     """Synchronous client for the grabette REST/WebSocket API.
 
@@ -108,7 +125,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            return {"error": e.response.json().get("detail", str(e))}
+            return {"error": _error_detail(e)}
         except Exception as e:
             return {"error": str(e)}
 
@@ -121,7 +138,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            detail = e.response.json().get("detail", str(e))
+            detail = _error_detail(e)
             return {"error": detail}
         except Exception as e:
             return {"error": str(e)}
@@ -132,7 +149,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            detail = e.response.json().get("detail", str(e))
+            detail = _error_detail(e)
             return {"error": detail}
         except Exception as e:
             return {"error": str(e)}
@@ -152,7 +169,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            return {"error": e.response.json().get("detail", str(e))}
+            return {"error": _error_detail(e)}
         except Exception as e:
             return {"error": str(e)}
 
@@ -178,7 +195,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            return {"error": e.response.json().get("detail", str(e))}
+            return {"error": _error_detail(e)}
         except Exception as e:
             return {"error": str(e)}
 
@@ -203,14 +220,49 @@ class GrabetteClient:
 
     # -- Episodes --
 
+    def get_episode(self, episode_id: str) -> dict | None:
+        """One episode's recorded facts, or None if it cannot be read.
+
+        None and {} mean different things to the caller: None is "could not
+        ask", which is not evidence that anything is wrong with the episode.
+        """
+        try:
+            r = self._http.get(f"/api/episodes/{episode_id}")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
+    def check_episode(self, episode_id: str) -> dict | None:
+        """Which required artifacts an episode lacks, or None if it cannot be
+        asked. The only thing that tells the dashboard whether the depth camera
+        wrote anything — the episode's counters cover the RGB camera and the
+        encoders only."""
+        try:
+            r = self._http.get(f"/api/episodes/{episode_id}/check")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     def delete_episode(self, episode_id: str) -> dict:
         try:
             r = self._http.delete(f"/api/episodes/{episode_id}")
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            detail = e.response.json().get("detail", str(e))
+            detail = _error_detail(e)
             return {"error": detail}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def delete_all_episodes(self) -> dict:
+        try:
+            r = self._http.delete("/api/episodes")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
         except Exception as e:
             return {"error": str(e)}
 
@@ -243,7 +295,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            detail = e.response.json().get("detail", str(e))
+            detail = _error_detail(e)
             return {"error": detail}
         except Exception as e:
             return {"error": str(e)}
@@ -264,7 +316,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            return {"error": e.response.json().get("detail", str(e))}
+            return {"error": _error_detail(e)}
         except Exception as e:
             return {"error": str(e)}
 
@@ -276,7 +328,7 @@ class GrabetteClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            detail = e.response.json().get("detail", str(e))
+            detail = _error_detail(e)
             return {"error": detail}
         except Exception as e:
             return {"error": str(e)}
