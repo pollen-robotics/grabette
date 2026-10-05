@@ -17,6 +17,13 @@ dataset by the postprocess build), NOT a magnitude heuristic:
 Everything else is kept (held pose ≈ no motion); the 80 mm/5° per-frame despike
 in convert_dataset.py mops up the few re-acquisition jumps / genuine glitches.
 
+With --max_reacquire_jump_mm, a lost run is judged by where tracking comes back
+instead of by its length: the run is fine if the pose re-acquired right after it
+is within the threshold of the held pose (e.g. a pause while releasing the
+object), and the episode is rejected if any run — short or long — re-acquires
+far away (a wrong relocalization). Runs touching an episode edge have no pose on
+one side, so they still fall under --max_lost_run.
+
 Requires the `is_lost` feature (rebuild the dataset with the postprocess
 generate_dataset.py if it's missing). Non-destructive: writes a NEW dataset via
 lerobot's delete_episodes; the source is untouched.
@@ -37,6 +44,7 @@ import shutil
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from lerobot.datasets import LeRobotDataset, delete_episodes, remove_feature
 
@@ -58,15 +66,28 @@ def find_runs(flag: np.ndarray) -> list[tuple[int, int]]:
     return runs
 
 
-def detect_episode(is_lost: np.ndarray) -> dict:
-    """SLAM-lost stats for one episode: count, fraction, longest run, run spans."""
+def detect_episode(is_lost: np.ndarray, poses: np.ndarray | None = None) -> dict:
+    """SLAM-lost stats for one episode: count, fraction, longest run, run spans.
+
+    With ``poses`` ([x, y, z, ax, ay, az, ...] per frame), also the (mm, deg) jump
+    between the held pose and the pose re-acquired after each run (None at an
+    episode edge).
+    """
     n = len(is_lost)
     lost = is_lost.astype(bool)
     runs = find_runs(lost)
     longest = max((b - a + 1 for a, b in runs), default=0)
     n_lost = int(lost.sum())
+    jumps = []
+    for a, b in runs if poses is not None else []:
+        if a == 0 or b + 1 >= n:
+            jumps.append(None)
+            continue
+        held, back = poses[a - 1], poses[b + 1]
+        rot = Rotation.from_rotvec(held[3:6]).inv() * Rotation.from_rotvec(back[3:6])
+        jumps.append((float(np.linalg.norm(back[:3] - held[:3]) * 1000), float(np.degrees(rot.magnitude()))))
     return {"n": n, "n_lost": n_lost, "longest_run": longest,
-            "frac": n_lost / max(n, 1), "runs": runs}
+            "frac": n_lost / max(n, 1), "runs": runs, "jumps": jumps}
 
 
 def decide(stats: dict, cfg) -> tuple[bool, str]:
@@ -77,7 +98,15 @@ def decide(stats: dict, cfg) -> tuple[bool, str]:
         return True, f"only {stats['n']} frames < {cfg.min_frames} (truncated/aborted recording)"
     if stats["n_lost"] == 0:
         return False, "clean"
-    if stats["longest_run"] > cfg.max_lost_run:
+    if cfg.max_reacquire_jump_mm is not None:
+        for (a, b), jump in zip(stats["runs"], stats["jumps"]):
+            if jump is None:
+                if b - a + 1 > cfg.max_lost_run:
+                    return True, f"lost run {b - a + 1}>{cfg.max_lost_run} at an episode edge (unverifiable)"
+            elif jump[0] > cfg.max_reacquire_jump_mm or jump[1] > cfg.max_reacquire_jump_deg:
+                return True, (f"re-acquired {jump[0]:.0f} mm / {jump[1]:.0f}° away after lost {a}-{b} "
+                              "(wrong relocalization)")
+    elif stats["longest_run"] > cfg.max_lost_run:
         return True, f"lost run {stats['longest_run']}>{cfg.max_lost_run} (motion unrecoverable)"
     if stats["frac"] > cfg.max_lost_fraction:
         return True, f"lost {stats['frac']*100:.0f}%>{cfg.max_lost_fraction*100:.0f}%"
@@ -114,19 +143,28 @@ def audit(repo_id: str, root, cfg) -> list[int]:
             "Dataset has no 'is_lost' feature — it predates the SLAM-lost fix.\n"
             "Rebuild it with the postprocess scripts/pipeline/generate_dataset.py first."
         )
-    hf = ds.hf_dataset.select_columns(["is_lost", "episode_index"])
+    hf = ds.hf_dataset.select_columns(["is_lost", "episode_index", "action"])
     il = np.asarray(hf["is_lost"], dtype=np.float32).reshape(-1)
     ep = np.asarray(hf["episode_index"])
     eps = np.unique(ep)
+    poses = None
+    if cfg.max_reacquire_jump_mm is not None:
+        poses = np.asarray(hf["action"], dtype=np.float64)
+        if poses.shape[1] != 8:
+            raise SystemExit(f"--max_reacquire_jump_mm needs the raw 8-D pose actions, got {poses.shape[1]}-D.")
+        run_rule = (f"lost run re-acquired > {cfg.max_reacquire_jump_mm:g} mm / {cfg.max_reacquire_jump_deg:g}° away "
+                    f"(edge runs: > {cfg.max_lost_run})")
+    else:
+        run_rule = f"longest lost run > {cfg.max_lost_run}"
 
     print(f"\n{'='*72}\n  AUDIT  {repo_id}\n{'='*72}")
     print(f"  episodes: {len(eps)}   frames: {len(il)}   reject if: frames < {cfg.min_frames}  "
-          f"OR  longest lost run > {cfg.max_lost_run}  OR  lost fraction > {cfg.max_lost_fraction*100:.0f}%")
+          f"OR  {run_rule}  OR  lost fraction > {cfg.max_lost_fraction*100:.0f}%")
 
     reject, rej_lines, keep_lines = [], [], []
     for e in eps:
         idx = np.where(ep == e)[0]
-        stats = detect_episode(il[idx])
+        stats = detect_episode(il[idx], poses[idx] if poses is not None else None)
         is_reject, reason = decide(stats, cfg)
         spans = ",".join(f"{a}-{b}" if b > a else f"{a}" for a, b in stats["runs"])
         line = (f"    ep {int(e):>4}  {stats['n']:>4} frames  {stats['n_lost']:>3} lost "
@@ -140,7 +178,7 @@ def audit(repo_id: str, root, cfg) -> list[int]:
     print(f"\n  REJECT ({len(reject)}/{len(eps)}) — truncated, or motion lost through a long occlusion:")
     for line in rej_lines or ["    (none)"]:
         print(line)
-    print(f"\n  KEEP, SHORT LOST GAPS ({len(keep_lines)}) — held pose ≈ no motion; despike backstop in convert:")
+    print(f"\n  KEEP, WITH LOST GAPS ({len(keep_lines)}) — held pose ≈ no motion; despike backstop in convert:")
     print("  (spans = local lost-frame index ranges)")
     for line in keep_lines or ["    (none)"]:
         print(line)
@@ -177,6 +215,13 @@ def parse_args():
     p.add_argument("--max_lost_run", type=int, default=10,
                    help="Reject if the longest consecutive SLAM-lost run exceeds this (frames). "
                         "Short runs are kept: held pose ≈ no motion.")
+    p.add_argument("--max_reacquire_jump_mm", type=float, default=None,
+                   help="Judge lost runs by the re-acquisition jump instead of their length: reject "
+                        "if any run re-acquires farther than this from the held pose (wrong "
+                        "relocalization), keep long runs that re-acquire close (e.g. a pause). "
+                        "Off by default.")
+    p.add_argument("--max_reacquire_jump_deg", type=float, default=10.0,
+                   help="Rotation counterpart of --max_reacquire_jump_mm.")
     p.add_argument("--max_lost_fraction", type=float, default=0.3,
                    help="Also reject if the lost-frame fraction exceeds this (catches many scattered losses).")
     p.add_argument("--keep_cameras", nargs="+", default=None, metavar="CAM",

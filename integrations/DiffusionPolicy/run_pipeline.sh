@@ -37,7 +37,13 @@
 #                         (default: ~/.cache/grabette_pipeline/<name> — must be on
 #                         real disk, NOT /tmp: /tmp is often RAM-backed tmpfs)
 #   --proprioception M    convert mode: none (default) | relative
+#   --actions A           convert actions: delta (default, Diffusion) | absolute (11D
+#                         absolute poses for lerobot pose-mode relative actions)
 #   --max-lost-run N      clean: reject if longest lost run > N (default: script's 10)
+#   --max-reacquire-jump-mm N
+#                         clean: judge lost runs by the pose jump when tracking comes
+#                         back instead of their length (keep pauses, reject wrong
+#                         relocalizations; rotation limit: script's 10 deg). Off by default.
 #   --smooth-poses N      Savitzky-Golay window (odd, frames) smoothing the absolute
 #                         poses before differencing (recommended: 9 at 50fps). Removes
 #                         SLAM pose jitter that dominates grasp-phase delta supervision.
@@ -76,7 +82,7 @@ set -euo pipefail
 # silently truncates the help text the moment the header grows (it did).
 usage() { awk 'NR>1 && /^#/ {sub(/^# ?/, ""); print; next} NR>1 {exit}' "$0"; }
 
-RAW="" RAW_ROOT="" WORK="" PROPRIO="none" MAX_LOST_RUN="" CAMERAS="cam0" SMOOTH_POSES="" DO_QA=1 DO_RESIZE=1
+RAW="" RAW_ROOT="" WORK="" PROPRIO="none" ACTIONS="delta" MAX_LOST_RUN="" MAX_JUMP_MM="" CAMERAS="cam0" SMOOTH_POSES="" DO_QA=1 DO_RESIZE=1
 DO_PROJECTION=0 REST_IS_CLOSED=0 PROJ_REPO_ID=""
 
 while [[ $# -gt 0 ]]; do
@@ -84,7 +90,9 @@ while [[ $# -gt 0 ]]; do
     --raw-root)       RAW_ROOT="$2"; shift 2 ;;
     --work)           WORK="$2"; shift 2 ;;
     --proprioception) PROPRIO="$2"; shift 2 ;;
+    --actions)        ACTIONS="$2"; shift 2 ;;
     --max-lost-run)   MAX_LOST_RUN="$2"; shift 2 ;;
+    --max-reacquire-jump-mm) MAX_JUMP_MM="$2"; shift 2 ;;
     --smooth-poses)   SMOOTH_POSES="$2"; shift 2 ;;
     --cameras)        CAMERAS="$2"; shift 2 ;;
     --no-qa)          DO_QA=0; shift ;;
@@ -133,6 +141,7 @@ CART_ROOT="$WORK/cartesian"
 # has to run on both.
 RAW_ROOT_ARG=();  [[ -n "$RAW_ROOT" ]]     && RAW_ROOT_ARG=(--root "$RAW_ROOT")
 CLEAN_EXTRA=();   [[ -n "$MAX_LOST_RUN" ]] && CLEAN_EXTRA=(--max_lost_run "$MAX_LOST_RUN")
+[[ -n "$MAX_JUMP_MM" ]] && CLEAN_EXTRA+=(--max_reacquire_jump_mm "$MAX_JUMP_MM")
 # Camera filter: keep only the training camera(s) unless --cameras all.
 # (word-splitting of $CAMERAS is intentional: --cameras "cam0 cam1")
 if [[ "$CAMERAS" != "all" ]]; then
@@ -157,7 +166,7 @@ CONVERT_EXTRA=(); [[ -n "$SMOOTH_POSES" ]] && CONVERT_EXTRA=(--smooth_poses "$SM
 echo; echo "==> [2] convert — camera-local deltas + per-frame despike"
 uv run python convert_dataset.py \
   --repo_id "$CLEAN_ID" --root "$CLEAN_ROOT" \
-  --proprioception "$PROPRIO" \
+  --proprioception "$PROPRIO" --actions "$ACTIONS" \
   --output_repo_id "$CART_ID" --output_root "$CART_ROOT" --overwrite_output \
   ${CONVERT_EXTRA[@]+"${CONVERT_EXTRA[@]}"}
 

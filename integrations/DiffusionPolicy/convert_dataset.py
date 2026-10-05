@@ -3,7 +3,9 @@
 Transforms the dataset:
   1. Converts rotation from axis-angle (3D) to 6D continuous representation.
   2. Computes delta actions: action[t] = pose[t+1] - pose[t] for position/rotation,
-     gripper stays absolute.
+     gripper stays absolute. With --actions absolute, the action is instead the
+     absolute 11D pose [x, y, z, r6d_0..5, proximal, distal] (for lerobot's
+     pose-mode relative actions with rotation_format=rot6d); no despike.
   3. Builds observation.state depending on --proprioception mode:
 
      --proprioception none (default):
@@ -61,6 +63,7 @@ ACTION_NAMES = [
     "proximal",
     "distal",
 ]
+ABSOLUTE_ACTION_NAMES = ["x", "y", "z", *[f"r6d_{i}" for i in range(6)], "proximal", "distal"]
 STATE_NAMES_NONE = ["proximal", "distal"]
 STATE_NAMES_RELATIVE = [
     "dx_start",
@@ -293,6 +296,13 @@ def parse_args():
         help="State mode: 'none' = gripper only (2D), 'relative' = pose relative to episode start (11D)",
     )
     parser.add_argument(
+        "--actions",
+        choices=["delta", "absolute"],
+        default="delta",
+        help="'delta' = camera-local per-step deltas (Diffusion), 'absolute' = absolute 11D poses "
+             "(lerobot pose-mode relative actions, rotation_format=rot6d).",
+    )
+    parser.add_argument(
         "--output_repo_id",
         type=str,
         default=None,
@@ -373,8 +383,10 @@ def main():
     use_relative = args.proprioception == "relative"
     state_names = STATE_NAMES_RELATIVE if use_relative else STATE_NAMES_NONE
     state_dim = len(state_names)
+    absolute = args.actions == "absolute"
+    action_names = ABSOLUTE_ACTION_NAMES if absolute else ACTION_NAMES
 
-    logger.info(f"Proprioception mode: {args.proprioception} ({state_dim}D state)")
+    logger.info(f"Proprioception mode: {args.proprioception} ({state_dim}D state), actions: {args.actions}")
 
     # If --output_repo_id is set, copy the source dataset to a new local
     # directory and operate on the copy. Otherwise the conversion is in-place
@@ -463,12 +475,14 @@ def main():
         if args.smooth_poses > 0:
             poses_11d = smooth_poses_11d(poses_11d, episode_indices, args.smooth_poses)
 
-        # Compute delta actions
-        delta_actions = compute_delta_actions(poses_11d, episode_indices)
-        logger.info(
-            f"  {pf.name}: delta actions "
-            f"(mean pos delta: {np.linalg.norm(delta_actions[:, :3], axis=1).mean() * 1000:.2f} mm)"
-        )
+        if absolute:
+            delta_actions = poses_11d.astype(np.float32)
+        else:
+            delta_actions = compute_delta_actions(poses_11d, episode_indices)
+            logger.info(
+                f"  {pf.name}: delta actions "
+                f"(mean pos delta: {np.linalg.norm(delta_actions[:, :3], axis=1).mean() * 1000:.2f} mm)"
+            )
 
         # --- Zero out per-step outlier deltas (SLAM tracking glitches) ---
         # A single glitch frame yields one impossibly-large delta (a
@@ -478,7 +492,7 @@ def main():
         # with no side effect on the rest of the trajectory. Episodes with
         # segments too long to absorb this way are dropped upstream by
         # clean_dataset.py (same --despike_max_* thresholds).
-        if not args.no_despike:
+        if not args.no_despike and not absolute:
             dpos_mm = np.linalg.norm(delta_actions[:, :3], axis=1) * 1000.0
             r6d = delta_actions[:, 3:9]
             Rd = rotation_6d_to_rotation_matrix_numpy(r6d)
@@ -525,7 +539,7 @@ def main():
     with open(info_path) as f:
         info = json.load(f)
 
-    info["features"]["action"] = {"dtype": "float32", "shape": [11], "names": ACTION_NAMES}
+    info["features"]["action"] = {"dtype": "float32", "shape": [11], "names": action_names}
     info["features"]["observation.state"] = {
         "dtype": "float32",
         "shape": [state_dim],
@@ -535,7 +549,7 @@ def main():
     with open(info_path, "w") as f:
         json.dump(info, f, indent=4)
     logger.info(
-        f"Updated info.json: action=11D (deltas), observation.state={state_dim}D ({args.proprioception})"
+        f"Updated info.json: action=11D ({args.actions}), observation.state={state_dim}D ({args.proprioception})"
     )
 
     # --- 3. Recompute stats ---
@@ -594,7 +608,7 @@ def main():
 
     action = sample["action"].tolist()
     logger.info("  action (11D):")
-    for n, v in zip(ACTION_NAMES, action, strict=True):
+    for n, v in zip(action_names, action, strict=True):
         logger.info(f"    {n:8s}: {v:+.6f}")
 
     if use_relative:
@@ -605,8 +619,9 @@ def main():
         for n, v in zip(state_names, state0, strict=True):
             logger.info(f"    {n:12s}: {v:+.6f}")
 
-    pos_delta = np.array(action[:3])
-    logger.info(f"\n  Position delta magnitude: {np.linalg.norm(pos_delta) * 1000:.2f} mm")
+    if not absolute:
+        pos_delta = np.array(action[:3])
+        logger.info(f"\n  Position delta magnitude: {np.linalg.norm(pos_delta) * 1000:.2f} mm")
 
     logger.info("\nConversion complete!")
 
