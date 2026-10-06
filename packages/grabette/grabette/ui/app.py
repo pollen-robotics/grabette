@@ -326,17 +326,42 @@ html.gb-off .toast-wrap {
 /* "Not calibrated" warning and the button that fixes it, on the Overview and
    on Test Recording (see _calibration_prompt). */
 .gb-calib-box {
-    gap: .6rem !important;
-    align-items: flex-start !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    flex-wrap: wrap !important;
+    gap: .75rem 1.25rem !important;
+}
+.gb-calib-box > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
 }
 .gb-calib-box .html-container {
     padding: 0 !important;
 }
-.gb-calib-box button {
+/* The warning and its button in one amber callout (Overview). */
+.gb-calib-box.gb-calib-callout {
+    padding: .7rem 1rem !important;
+    border-radius: 12px !important;
+    background: #f59e0b1a !important;
+    border: 1px solid #f59e0b66 !important;
+}
+/* On Test Recording: lined up with the status pill above it, and room for
+   the shadow inside the card's overflow:hidden. */
+#tr-page .gb-calib-box {
+    padding: .2rem 12px .6rem !important;
+}
+/* One look wherever it appears; #tr-page is named so its own button rules and
+   the Group's squared corners don't restyle it there. */
+#tr-page .gb-calib-box .gb-calib-open,
+.gb-calib-box .gb-calib-open {
     width: auto !important;
     flex: 0 0 auto !important;
-    align-self: flex-start !important;
-    border-radius: var(--button-small-radius) !important;
+    align-self: center !important;
+    /* Literal: inside a Group gradio zeroes --button-large-radius (6px). */
+    border-radius: 6px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 14px rgba(249, 115, 22, .3) !important;
 }
 /* The calibration popup: a fixed backdrop with the steps as one card. */
 .gb-calib-modal {
@@ -383,7 +408,7 @@ html.gb-off .toast-wrap {
     min-width: 0 !important;
 }
 .gb-calib-card button {
-    border-radius: var(--button-large-radius) !important;
+    border-radius: 6px !important;  /* literal: zeroed inside a Group */
     width: auto !important;
     flex: 0 0 auto !important;
     align-self: flex-start !important;
@@ -399,7 +424,8 @@ html.gb-off .toast-wrap {
     font-size: 1.1rem !important;
 }
 @media (max-width: 560px) {
-    .gb-calib-box button,
+    #tr-page .gb-calib-box .gb-calib-open,
+    .gb-calib-box .gb-calib-open,
     .gb-calib-card .gb-calib-run {
         width: 100% !important;
     }
@@ -665,14 +691,13 @@ def _calibration_figure() -> str:
 
 
 def _calib_warning_html(text: str) -> str:
-    """The amber callout above the Calibrate button."""
+    """The warning line inside the amber callout; the callout itself is the
+    row around it (.gb-calib-callout), so the button can sit inside too."""
     return (
-        '<div style="display:flex;align-items:center;gap:.6rem;'
-        'padding:.65rem .9rem;border-radius:10px;'
-        'background:#f59e0b1a;border:1px solid #f59e0b66;">'
-        '<span style="font-size:1.1rem;line-height:1;">⚠️</span>'
-        f'<span style="font-weight:600;color:var(--body-text-color);">'
-        f'{html.escape(text)}</span></div>'
+        '<div style="display:flex;align-items:center;gap:.6rem;">'
+        '<span style="font-size:1.2rem;line-height:1;">⚠️</span>'
+        '<span style="font-weight:700;font-size:1.02rem;'
+        f'color:var(--body-text-color);">{html.escape(text)}</span></div>'
     )
 
 
@@ -1366,16 +1391,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(visible=bool(res.get("needs_calibration"))))
 
     def _calibration_prompt(warning: str | None, elem_id: str | None = None):
-        """The "Calibrate my device" button (under `warning`, when given) and
-        the two-step popup it opens. Returns the box holding the button, hidden
-        until the device says it needs calibrating — the caller's poll shows it.
+        """The "Calibrate my device" button (right after `warning`, in one
+        callout, when given) and the two-step popup it opens. Returns the box
+        holding the button, hidden until the device says it needs calibrating —
+        the caller's poll shows it.
         """
-        with gr.Column(visible=False, elem_id=elem_id,
-                       elem_classes="gb-calib-box") as box:
+        classes = ["gb-calib-box"] + (["gb-calib-callout"] if warning else [])
+        with gr.Row(visible=False, elem_id=elem_id,
+                    elem_classes=classes) as box:
             if warning:
                 gr.HTML(_calib_warning_html(warning))
-            open_btn = gr.Button("Calibrate my device", variant="primary",
-                                 size="sm")
+            open_btn = gr.Button("→ Calibrate my device", variant="primary",
+                                 size="lg", scale=0, min_width=0,
+                                 elem_classes="gb-calib-open")
         with gr.Column(visible=False, elem_classes="gb-calib-modal") as modal:
             with gr.Column(elem_classes="gb-calib-card"):
                 with gr.Row(elem_classes="gb-calib-head"):
