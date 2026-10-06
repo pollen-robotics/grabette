@@ -732,7 +732,8 @@ _ANGLE_FAULT = "The gripper angle sensors are not working — recording is disab
 
 _DIAG_FIX_CLASSES = ["gb-diag-fix"]
 _DIAG_PW_CLASSES = ["gb-diag-pw"]
-_DIAG_PW_HINT = "Default password: glouglou"
+_DIAG_DONE_CLASSES = ["gb-diag-done"]
+_DIAG_PW_HINT = "Default password: rasp"
 
 _DIAG_MARKS = {
     "ok": ("#10b981", "✓"),
@@ -1416,11 +1417,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Angle-sensor diagnostic (Overview + Test Recording) ───────────
 
     def _diag_fix_update(diag: dict | None):
-        """The fix button and the id it applies, as the diagnosis says."""
+        """The fix button, the id it applies, and the Close button (shown once
+        nothing is wrong any more), as the diagnosis says."""
         fix = (diag or {}).get("fix")
         return (_diag_fix_btn(bool(fix),
                               value=(diag or {}).get("fix_label") or "Fix it"),
-                fix)
+                fix, _diag_done_btn(bool((diag or {}).get("healthy"))))
 
     # The fix button is shown and hidden with a class, never with `visible`:
     # gradio 6 drops a visible=False -> True update on it often enough that
@@ -1430,24 +1432,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                                            ["gb-diag-gone"]),
                          interactive=True, **kw)
 
+    def _diag_done_btn(shown: bool):
+        return gr.update(elem_classes=_DIAG_DONE_CLASSES + ([] if shown else
+                                                            ["gb-diag-gone"]))
+
     def on_diag_open():
         """Open the popup on a clean slate, the walk about to run."""
         return (gr.update(visible=True), _diag_report_html(None),
-                gr.update(interactive=False), None, "",
+                gr.update(interactive=False), None, _diag_done_btn(False), "",
                 gr.update(interactive=False))
 
     def on_diag_again():
-        return (_diag_report_html(None), gr.update(interactive=False), None, "",
-                gr.update(interactive=False))
+        return (_diag_report_html(None), gr.update(interactive=False), None,
+                _diag_done_btn(False), "", gr.update(interactive=False))
 
     def on_diag_run():
-        """Outputs: report, fix button, fix id, "run again" button, the last
-        diagnosis (what the live refresh compares against) and its timer."""
+        """Outputs: report, fix button, fix id, Close button, "run again"
+        button, the last diagnosis (what the live refresh compares against)
+        and its timer."""
         res = client.angle_diagnose()
         if "error" in res:
             return (_diag_report_html(None, res["error"]),
-                    _diag_fix_btn(False), None, gr.update(interactive=True),
-                    None, gr.Timer(active=True))
+                    _diag_fix_btn(False), None, _diag_done_btn(False),
+                    gr.update(interactive=True), None, gr.Timer(active=True))
         return (_diag_report_html(res), *_diag_fix_update(res),
                 gr.update(interactive=True), res, gr.Timer(active=True))
 
@@ -1456,7 +1463,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         (or pulled out) shows up without a click. Only a CHANGED diagnosis is
         redrawn: the report stays still, and a message from a fix stays up
         until the situation it describes moves on."""
-        keep = (gr.update(),) * 6
+        keep = (gr.update(),) * 7
         if fix == i2c_diag.FIX_REBOOT and last is None:
             return keep  # a reboot pending after a config change: nothing to see
         res = client.angle_diagnose()
@@ -1482,8 +1489,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """Apply it, show the walk run again, and drop the callout at once
         rather than on the next poll when the sensors came back.
 
-        Outputs: report, fix button, fix id, message, callout box, the last
-        diagnosis, the live-refresh timer and the password field.
+        Outputs: report, fix button, fix id, Close button, message, callout
+        box, the last diagnosis, the live-refresh timer and the password field.
 
         The password stays in its field (the browser) until the popup closes,
         so a fix followed by a reboot asks for it once."""
@@ -1496,19 +1503,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             # Ask, and keep the refresh off: it would redraw the button and the
             # message while they type.
             return (report, _diag_fix_btn(True, value="Apply with this password"),
-                    fix, f"🔒 {res['error']}", box, gr.update(),
+                    fix, _diag_done_btn(False), f"🔒 {res['error']}", box, gr.update(),
                     gr.Timer(active=False), _diag_pw(True, value=""))
         if "error" in res:
             return (report, gr.update(value="Try again", interactive=True), fix,
-                    f"⛔ {res['error']}", box, gr.update(), live, keep_pw)
+                    _diag_done_btn(False), f"⛔ {res['error']}", box, gr.update(), live, keep_pw)
         if res.get("rebooting"):
-            return (report, _diag_fix_btn(False), None,
+            return (report, _diag_fix_btn(False), None, _diag_done_btn(False),
                     f"🔄 {res['done']}", box, None, gr.Timer(active=False),
                     _diag_pw(False, value=""))
         if res.get("reboot"):
             # last=None + fix "reboot" is what holds the refresh off.
             return (report, _diag_fix_btn(True, value="Reboot the grabette"),
-                    i2c_diag.FIX_REBOOT, f"✓ {res['done']}", box, None, live,
+                    i2c_diag.FIX_REBOOT, _diag_done_btn(False),
+                    f"✓ {res['done']}", box, None, live,
                     keep_pw)
         diag = res.get("diagnosis")
         return (_diag_report_html(diag), *_diag_fix_update(diag),
@@ -1547,6 +1555,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     fix_btn = gr.Button(
                         "Fix it", variant="primary", scale=0, min_width=0,
                         elem_classes=_DIAG_FIX_CLASSES + ["gb-diag-gone"])
+                    done_btn = gr.Button(
+                        "Close", variant="primary", scale=0, min_width=0,
+                        elem_classes=_DIAG_DONE_CLASSES + ["gb-diag-gone"])
                     again_btn = gr.Button("Run the diagnostic again",
                                           scale=0, min_width=0)
         fix_state = gr.State(None)
@@ -1554,36 +1565,40 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # Live refresh, only while the popup is open: each tick is a real walk
         # down the I2C stack on the device.
         live_timer = gr.Timer(2.0, active=False)
-        run_outputs = [report, fix_btn, fix_state, again_btn, last_diag,
-                       live_timer]
+        run_outputs = [report, fix_btn, fix_state, done_btn, again_btn,
+                       last_diag, live_timer]
 
         open_btn.click(
             fn=on_diag_open,
-            outputs=[modal, report, fix_btn, fix_state, msg, again_btn],
+            outputs=[modal, report, fix_btn, fix_state, done_btn, msg,
+                     again_btn],
             queue=False,
         ).then(fn=on_diag_run, outputs=run_outputs)
         again_btn.click(
             fn=on_diag_again,
-            outputs=[report, fix_btn, fix_state, msg, again_btn], queue=False,
+            outputs=[report, fix_btn, fix_state, done_btn, msg, again_btn],
+            queue=False,
         ).then(fn=on_diag_run, outputs=run_outputs)
         live_timer.tick(fn=on_diag_tick, inputs=[last_diag, fix_state],
-                        outputs=[report, fix_btn, fix_state, msg, last_diag, box])
+                        outputs=[report, fix_btn, fix_state, done_btn, msg,
+                                 last_diag, box])
         fix_btn.click(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
                       queue=False).then(
             fn=on_diag_fix, inputs=[fix_state, report, password],
-            outputs=[report, fix_btn, fix_state, msg, box, last_diag,
-                     live_timer, password])
+            outputs=[report, fix_btn, fix_state, done_btn, msg, box,
+                     last_diag, live_timer, password])
         # Enter in the field applies the fix, like the button.
         password.submit(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
                         queue=False).then(
             fn=on_diag_fix, inputs=[fix_state, report, password],
-            outputs=[report, fix_btn, fix_state, msg, box, last_diag,
-                     live_timer, password])
+            outputs=[report, fix_btn, fix_state, done_btn, msg, box,
+                     last_diag, live_timer, password])
         # Closing forgets the password.
-        close_btn.click(fn=lambda: (gr.update(visible=False),
-                                    gr.Timer(active=False),
-                                    _diag_pw(False, value="")),
-                        outputs=[modal, live_timer, password], queue=False)
+        for _btn in (close_btn, done_btn):
+            _btn.click(fn=lambda: (gr.update(visible=False),
+                                   gr.Timer(active=False),
+                                   _diag_pw(False, value="")),
+                       outputs=[modal, live_timer, password], queue=False)
         return box
 
     def poll_angle_fault():
