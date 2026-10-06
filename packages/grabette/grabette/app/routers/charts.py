@@ -97,6 +97,9 @@ ANGLE_CHART_HTML = f"""\
 var MAXLEN=750,cur=0,gen=-1;
 function clip(a){{while(a.length>MAXLEN)a.shift();}}
 var aT=[],pr=[],di=[],t0=null;
+// ?mode=replay: plot only replayed samples, and keep the last replay on screen
+// once it ends instead of switching over to the live sensors.
+var REPLAY=new URLSearchParams(location.search).get('mode')==='replay';
 
 (function init(){{
   var w=document.body.clientWidth||400;
@@ -121,12 +124,15 @@ var aT=[],pr=[],di=[],t0=null;
     .then(function(d){{
       if(!d)return;
       if(d.gen!==undefined&&d.gen!==gen){{
-        gen=d.gen;cur=0;t0=null;
+        gen=d.gen;cur=0;
+        if(REPLAY&&!d.replay)return;
+        t0=null;
         aT=[];pr=[];di=[];
         nC.setData([[],[],[]]);
         return;
       }}
       if(d.cursor)cur=d.cursor;
+      if(REPLAY&&!d.replay)return;
       if(!d.angle||!d.angle.length)return;
       for(var i=0;i<d.angle.length;i++){{
         var s=d.angle[i];

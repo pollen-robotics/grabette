@@ -6,6 +6,7 @@ import html
 import io
 import logging
 import math
+import time
 from urllib.parse import quote
 
 import gradio as gr
@@ -143,6 +144,8 @@ html.gb-off .toast-wrap {
     background: var(--background-fill-primary) !important;
     color: var(--body-text-color-subdued) !important;
     font-size: var(--button-small-text-size) !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+        Helvetica, Arial, sans-serif !important;
     font-weight: 600 !important;
     cursor: pointer;
     box-shadow: none !important;
@@ -186,6 +189,113 @@ html.gb-off .toast-wrap {
 }
 #ov-page .ov-rule-bottom {
     display: none !important;
+}
+/* Title and speaker volume side by side, the volume right after the title
+   rather than pushed to the far edge; on a phone it wraps under the title. */
+#ov-page .ov-status-head {
+    justify-content: flex-start !important;
+    align-items: flex-start !important;
+    flex-wrap: wrap !important;
+    gap: .25rem 2rem !important;
+}
+#ov-page .ov-status-head > .column {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+/* Indented like the title's own text (the HTML block's padding), which is what
+   lines them up once wrapped on a phone. */
+#ov-page .ov-status-head > .ov-volume {
+    padding-left: 12px !important;
+    gap: .2rem !important;
+}
+#ov-page .ov-volume-title .html-container {
+    padding: 0 !important;
+}
+#ov-page .ov-volume-title > div > div {
+    margin-bottom: 0 !important;
+}
+/* Speaker, bar, test: one line, centred on each other. */
+#ov-page .ov-volume-row {
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+    gap: .75rem !important;
+}
+#ov-page .ov-volume-row > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+/* Same width as "Test sounds" or "Playing", so the bar never shifts. */
+#ov-page .ov-volume-row .ov-sound-test {
+    width: 6.5rem !important;
+    justify-content: center !important;
+}
+#ov-page .ov-volume-row .block {
+    padding: 0 !important;
+    width: 150px !important;
+    overflow: visible !important;
+}
+/* Neither the number box nor the 0/100 ends: the level shows only while the
+   pointer is on the thumb (see _VOLUME_TIP_JS). */
+#ov-page .ov-volume-row .head,
+#ov-page .ov-volume-row .min_value,
+#ov-page .ov-volume-row .max_value {
+    display: none !important;
+}
+#ov-page .ov-volume-row .slider_input_container {
+    position: relative !important;
+    margin: 0 !important;
+}
+#ov-page .ov-vol-tip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    transform: translateX(-50%);
+    padding: .1rem .4rem;
+    border-radius: 4px;
+    background: var(--neutral-700, #374151);
+    color: #fff;
+    font-size: .72rem;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .1s;
+}
+#ov-page .ov-vol-tip.show {
+    opacity: 1;
+}
+/* The speaker is a plain grey system-style glyph, not an emoji: an SVG used as
+   a mask over the subdued text colour. Muted swaps the glyph (ov-muted). */
+#ov-page .ov-volume-row .ov-mute {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    cursor: pointer;
+}
+#ov-page .ov-volume-row .ov-mute::before {
+    content: "";
+    display: block;
+    width: 22px;
+    height: 22px;
+    margin: auto;
+    background-color: var(--body-text-color-subdued);
+    -webkit-mask: var(--ov-speaker-icon) center / contain no-repeat;
+    mask: var(--ov-speaker-icon) center / contain no-repeat;
+    --ov-speaker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M18.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5z'/%3E%3C/svg%3E");
+}
+#ov-page .ov-volume-row .ov-mute.ov-muted::before {
+    --ov-speaker-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 9v6h4l5 5V4L9 9H5z'/%3E%3Cpath d='M16 9.5l5 5M21 9.5l-5 5' stroke='%23000' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3C/svg%3E");
+}
+#ov-page .ov-volume-row .ov-mute:hover::before {
+    background-color: var(--body-text-color);
+}
+#ov-page .ov-volume .ov-note p {
+    text-align: left !important;
 }
 @media (max-width: 560px) {
     /* A phone shows one column, so a full-width button is the easy target. */
@@ -436,6 +546,49 @@ def _tr_pill(kind: str, text: str) -> str:
     )
 
 
+_CAM_STATES = {
+    "connected": ("#10b981", "✓", "Connected"),
+    "starting": ("#f59e0b", "…", "Starting"),
+    "missing": ("#ef4444", "✗", "Not detected"),
+    "unknown": ("#94a3b8", "?", "Unknown"),
+    "absent": ("#94a3b8", "—", "None on this device"),
+}
+
+
+def _camera_state(cam: dict | None) -> str:
+    if cam is None:
+        return "unknown"
+    if cam.get("connected"):
+        return "connected"
+    return "starting" if cam.get("reinitializing") else "missing"
+
+
+def _depth_camera_state(dcam: dict | None) -> str:
+    if dcam is None:
+        return "unknown"
+    if not dcam.get("supported"):
+        return "absent"
+    return {True: "connected", False: "missing"}.get(dcam.get("connected"),
+                                                       "unknown")
+
+
+def _tr_cameras(rgb: str, depth: str, depth_label: str) -> str:
+    """One chip per camera: whether it is plugged in. The depth camera is not
+    started here — the recording brings it up, LED blinking, as usual."""
+    chips = []
+    for label, state in (("RGB camera", rgb), (f"RGB-D ({depth_label})", depth)):
+        color, mark, text = _CAM_STATES[state]
+        chips.append(
+            '<span style="display:inline-flex;align-items:baseline;gap:.4rem;'
+            'padding:.3rem .7rem;border-radius:999px;font-size:.82rem;'
+            f'border:1px solid {color}55;">'
+            f'<span style="color:{color};font-weight:700;">{mark}</span>'
+            f'<span style="opacity:.75;">{html.escape(label)}</span>'
+            f'<strong>{text}</strong></span>')
+    return ('<div style="display:flex;flex-wrap:wrap;gap:.4rem;">'
+            + "".join(chips) + "</div>")
+
+
 def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
     """Player slaved to the replay clock. stream="dcam" plays the depth
     camera's own image stream rather than the head camera."""
@@ -581,6 +734,85 @@ def _ov_health_card(info: dict | None) -> str:
         + _ov_row("Storage", storage)
         + "</div>"
     )
+
+
+# Speaker volume control on the Overview, in % of the cue amplitude (see
+# routers/sound.py). The default is GRABETTE_SOUND_VOLUME, which un-muting goes
+# back to; the page starts on it until the device says what it is set to.
+_SOUND_DEFAULT = round(max(0.0, min(1.0, settings.sound_volume)) * 100)
+
+
+# The test button's two labels. Its width is pinned in MODAL_CSS so the bar
+# beside it does not shift when one replaces the other.
+_SOUND_TEST = "Test sounds"
+_SOUND_PLAYING = "Playing"
+# Upper bound on waiting for the test sequence (~3 s) to report it is over.
+_SOUND_TEST_TIMEOUT_S = 15.0
+
+
+def _mute_classes(level: int) -> list[str]:
+    """The mute button shows the speaker's state: crossed out when muted. The
+    glyph itself is CSS (see .ov-mute in MODAL_CSS)."""
+    return ["ov-mute", "ov-muted"] if level <= 0 else ["ov-mute"]
+
+
+# A bubble with the level above the slider thumb, shown only while the pointer
+# is on the thumb or dragging it. Gradio's slider has no such thing (only its
+# number box, hidden here), so it is added to the page once on load.
+_VOLUME_TIP_JS = """
+() => {
+  if (window.__grabetteVolumeTip) { return; }
+  window.__grabetteVolumeTip = true;
+  var THUMB = 18;
+  function setup() {
+    var r = document.querySelector('.ov-volume-row input[type=range]');
+    if (!r) { setTimeout(setup, 300); return; }
+    var tip = document.createElement('div');
+    tip.className = 'ov-vol-tip';
+    r.parentElement.appendChild(tip);
+    var dragging = false;
+    function frac() { return (r.value - r.min) / (r.max - r.min); }
+    function place() {
+      tip.textContent = r.value + ' %';
+      tip.style.left = (r.offsetLeft + THUMB / 2
+                        + frac() * (r.offsetWidth - THUMB)) + 'px';
+    }
+    function onThumb(e) {
+      var b = r.getBoundingClientRect();
+      var x = b.left + THUMB / 2 + frac() * (b.width - THUMB);
+      return Math.abs(e.clientX - x) <= THUMB / 2 + 2;
+    }
+    r.addEventListener('pointermove', function (e) {
+      place();
+      tip.classList.toggle('show', dragging || onThumb(e));
+    });
+    r.addEventListener('pointerleave', function () {
+      if (!dragging) { tip.classList.remove('show'); }
+    });
+    r.addEventListener('pointerdown', function () {
+      dragging = true;
+      place();
+      tip.classList.add('show');
+    });
+    r.addEventListener('input', place);
+    window.addEventListener('pointerup', function () {
+      if (dragging) { dragging = false; tip.classList.remove('show'); }
+    });
+  }
+  setup();
+}
+"""
+
+
+def _sound_note(res: dict | None) -> str:
+    """The line under the volume bar: why it can't work, or nothing."""
+    if res is None:
+        return "*Could not reach the Grabette API.*"
+    if "error" in res:
+        return f"⛔ {res['error']}"
+    if not res.get("available"):
+        return "*No speaker detected on this Grabette.*"
+    return ""
 
 
 _TITLE_HTML = (
@@ -732,7 +964,7 @@ _POWEROFF_DONE_JS = """
     document.documentElement.classList.add('gb-off');
     const done = () => {
         document.querySelectorAll('.gb-poweroff-ok').forEach(el => {
-            el.textContent = '✓ Your Grabette has been shut down. You can close this page.';
+            el.textContent = '✓ Your Grabette is shutting down (~30s). You can close this page.';
         });
     };
     const poll = setInterval(() => {
@@ -1016,8 +1248,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def poll_test_recording(flow):
         """One tick: mirror the device's capture state onto the page.
 
-        Outputs: status pill, verdict card, the three episode controls (check,
-        download, delete) and the flow dict.
+        Outputs: status pill, camera chips, verdict card, the three episode
+        controls (check, download, delete) and the flow dict.
         """
         flow = dict(flow or _TR_FLOW0)
         cap = (client.get_state() or {}).get("capture", {})
@@ -1031,6 +1263,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return (
                 _tr_pill("recording",
                          f"Recording — {float(cap.get('duration_seconds') or 0):.0f}s"),
+                gr.update(),
                 gr.update(value=""),
                 *_tr_controls(None),
                 flow,
@@ -1046,6 +1279,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     and flow["settling"] < _TR_SETTLE_TICKS):
                 flow["settling"] += 1
                 return (_tr_pill("waiting", "Saving the episode…"),
+                        gr.update(),
                         gr.update(value=""),
                         *_tr_controls(None), flow)
             flow["settling"] = 0
@@ -1058,13 +1292,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 )
             return (
                 _tr_pill("done", "Recorded — check it below"),
+                gr.update(),
                 gr.update(value=verdict),
                 *_tr_controls(flow["episode_id"]),
                 flow,
             )
 
-        # Idle. Only the pill moves from here on: the verdict and the two
-        # buttons keep whatever the tick that finished the recording set.
+        # Idle. Only the pill and the cameras move from here on: the verdict
+        # and the buttons keep whatever the tick that finished the recording
+        # set.
+        dcam = client.get_oakd_status()
+        rgb_state = _camera_state(client.get_camera_status())
+        depth_state = _depth_camera_state(dcam)
+        cameras = _tr_cameras(rgb_state, depth_state,
+                              (dcam or {}).get("label") or "depth camera")
         if blocked:
             # Not capturing is not the same as ready: a device held back by an
             # upload or a hardware fault would read "waiting for the recording"
@@ -1072,11 +1313,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pill = _tr_pill("blocked", f"Cannot record — {blocked}")
         elif cap.get("is_starting"):
             pill = _tr_pill("waiting", "Starting…")
+        elif "missing" in (rgb_state, depth_state):
+            pill = _tr_pill("blocked", "A camera is not detected — check its cable")
+        elif "starting" in (rgb_state, depth_state):
+            pill = _tr_pill("waiting", "Camera starting — wait before pressing")
         elif flow["episode_id"]:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
-            pill = _tr_pill("idle", "Waiting for the recording")
-        return pill, *([gr.update()] * 4), flow
+            pill = _tr_pill("idle", "Cameras connected — press the button")
+        return pill, cameras, *([gr.update()] * 4), flow
 
     def on_test_check(flow):
         """Replay the episode: the daemon feeds its recorded samples back into
@@ -1586,20 +1831,88 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             return mode, f"⛔ {result['error']}"
         return mode, f"*Starting {name}…*"
 
+    # ── Speaker volume ────────────────────────────────────────────────
+
+    def load_sound():
+        """Slider, mute button, note and the un-mute level, as the device has
+        them — the saved volume, not the page's default."""
+        st = client.get_sound()
+        if st is None:
+            return gr.update(), gr.update(), _sound_note(None), _SOUND_DEFAULT
+        return (st["volume"], gr.update(elem_classes=_mute_classes(st["volume"])),
+                _sound_note(st), st["default"])
+
+    def on_volume_release(level):
+        """A click or a drag let go on the bar: set it, and beep at it."""
+        res = client.set_sound_volume(int(level))
+        if "error" in res:
+            return gr.update(), _sound_note(res)
+        return (gr.update(elem_classes=_mute_classes(res["volume"])),
+                _sound_note(res))
+
+    def on_mute(level, default):
+        """Mute; pressed again, back to the default level (with its beep)."""
+        target, beep = (0, False) if level > 0 else (default, True)
+        res = client.set_sound_volume(target, beep=beep)
+        if "error" in res:
+            return gr.update(), gr.update(), _sound_note(res)
+        return (res["volume"], gr.update(elem_classes=_mute_classes(res["volume"])),
+                _sound_note(res))
+
+    def on_sound_test_start():
+        """Show the test as running before the request even leaves."""
+        return gr.update(value=_SOUND_PLAYING, interactive=False)
+
+    def on_sound_test():
+        """Play the cues, and hold the button on "Playing" until they end."""
+        res = client.test_sound()
+        if "error" not in res:
+            deadline = time.monotonic() + _SOUND_TEST_TIMEOUT_S
+            while time.monotonic() < deadline:
+                time.sleep(0.3)
+                st = client.get_sound()
+                if st is None or not st.get("testing"):
+                    break
+        return (gr.update(value=_SOUND_TEST, interactive=True),
+                _sound_note(res) if "error" in res else gr.update())
+
     with gr.Blocks(title="Grabette", css=MODAL_CSS, head=NAV_HEAD) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         _title_bar()
 
         with gr.Column(elem_id="ov-page"):
 
+            # The title with the speaker volume right beside it; on a phone
+            # the volume wraps under the title.
+            with gr.Row(equal_height=False, elem_classes="ov-status-head"):
+                with gr.Column(min_width=0):
+                    gr.HTML(_ov_group_title(
+                        "Grabette status",
+                        "What your Grabette sees and how it is doing right now.",
+                    ))
+                with gr.Column(min_width=0, elem_classes="ov-volume"):
+                    gr.HTML(_section_label("Speaker"), elem_classes="ov-volume-title")
+                    with gr.Row(equal_height=True, elem_classes="ov-volume-row"):
+                        ov_mute_btn = gr.Button(
+                            "", size="sm", scale=0, min_width=0,
+                            elem_classes=_mute_classes(_SOUND_DEFAULT),
+                        )
+                        ov_volume = gr.Slider(
+                            0, 100, value=_SOUND_DEFAULT, step=1,
+                            show_label=False, container=False, buttons=[],
+                            scale=0, min_width=0,
+                        )
+                        ov_sound_test_btn = gr.Button(
+                            _SOUND_TEST, size="sm", scale=0, min_width=0,
+                            elem_classes="ov-sound-test",
+                        )
+                    ov_sound_note = gr.Markdown("", elem_classes="ov-note")
+            ov_sound_default = gr.State(_SOUND_DEFAULT)
+
             # ── Camera | 3D model | Device | Health ───────────────────
             # min_width is what makes this responsive: four columns on a
             # laptop, two on a tablet, one on a phone, decided by gradio from
             # the width each column says it needs.
-            gr.HTML(_ov_group_title(
-                "Grabette status",
-                "What your Grabette sees and how it is doing right now.",
-            ))
             with gr.Row(equal_height=False, elem_classes="ov-tiles"):
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Cameras"))
@@ -1673,6 +1986,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cn_camera_timer.tick(fn=ov_frame, inputs=ov_mode_state,
                              outputs=ov_camera_img)
 
+        ov_volume.release(fn=on_volume_release, inputs=ov_volume,
+                          outputs=[ov_mute_btn, ov_sound_note])
+        ov_mute_btn.click(fn=on_mute, inputs=[ov_volume, ov_sound_default],
+                          outputs=[ov_volume, ov_mute_btn, ov_sound_note])
+        ov_sound_test_btn.click(
+            fn=on_sound_test_start, outputs=ov_sound_test_btn, queue=False,
+        ).then(fn=on_sound_test, outputs=[ov_sound_test_btn, ov_sound_note])
+        demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
+                                          ov_sound_note, ov_sound_default])
+        demo.load(fn=None, js=_VOLUME_TIP_JS)
+
         ov_info_timer = gr.Timer(10.0)
         ov_info_timer.tick(fn=refresh_overview,
                            outputs=[ov_device_card, ov_health_card])
@@ -1718,6 +2042,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     with gr.Column(scale=1, min_width=200):
                         gr.HTML(_button_gif("stop-recording.gif",
                                             "Press again to stop"))
+                tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
                 # 1 Hz against the daemon's cached state — the page has no other
                 # way to learn about a press that happened on the device.
@@ -1750,7 +2075,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             gr.HTML(_section_label("Depth camera (RGB-D)"))
                             tr_dcam_video = gr.HTML(value="")
                     gr.HTML(_section_label("Angle sensors"))
-                    gr.HTML(_ANGLE_IFRAME_HTML)
+                    gr.HTML(_ANGLE_IFRAME_HTML.replace(
+                        "/charts/angle", "/charts/angle?mode=replay"))
                     with gr.Row():
                         tr_replay_again_btn = gr.Button("↻ Replay again",
                                                         size="sm",
@@ -1785,8 +2111,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # ── Wire events ───────────────────────────────────────────────
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
-            outputs=[tr_state, tr_summary, tr_check_btn, tr_download_link,
-                     tr_delete_btn, tr_flow],
+            outputs=[tr_state, tr_cameras, tr_summary, tr_check_btn,
+                     tr_download_link, tr_delete_btn, tr_flow],
         )
         # Same handler for both: a restart is a replay started over from zero,
         # and the players follow whatever the clock says.

@@ -1243,6 +1243,7 @@ def create_app() -> FastAPI:
     from grabette.app.routers.charts import router as charts_router
     from grabette.app.routers.oakd import router as oakd_router
     from grabette.app.routers.replay import router as replay_router
+    from grabette.app.routers.sound import router as sound_router
     from grabette.app.routers.viewer import router as viewer_router
     from grabette.app.routers.wifi import router as wifi_router
     from grabette.app.routers.teleop import router as teleop_router
@@ -1254,6 +1255,7 @@ def create_app() -> FastAPI:
     app.include_router(camera_router)
     app.include_router(hf_router)
     app.include_router(system_router)
+    app.include_router(sound_router)
     app.include_router(viewer_router)
     app.include_router(charts_router)
     app.include_router(replay_router)

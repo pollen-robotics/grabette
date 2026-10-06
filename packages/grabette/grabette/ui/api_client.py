@@ -320,6 +320,38 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    # -- Sound --
+
+    def get_sound(self) -> dict | None:
+        try:
+            r = self._http.get("/api/sound")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
+    def set_sound_volume(self, volume: int, beep: bool = True) -> dict:
+        try:
+            r = self._http.put(
+                "/api/sound/volume", json={"volume": volume, "beep": beep},
+            )
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def test_sound(self) -> dict:
+        try:
+            r = self._http.post("/api/sound/test")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- Replay --
 
     def replay_start(self, episode_id: str) -> dict:

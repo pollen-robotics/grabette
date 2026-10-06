@@ -60,11 +60,12 @@ apply_mixer_levels() {
     #     done
     # (amixer alone is not persistent: this script re-applies at every boot.)
     #
-    # Trim HERE, on the codec, rather than through GRABETTE_SOUND_VOLUME: that
-    # one scales the rendered samples, so it buys quiet by spending waveform
-    # resolution.
+    # This is only the level until the daemon starts: it then sets 'Line DAC
+    # Playback Volume' itself, to the volume picked on the dashboard (or
+    # GRABETTE_SOUND_VOLUME, whose default maps back to the 45 below). See
+    # DAC_MIN/DAC_MAX in grabette/hardware/sound.py.
     amixer -c "$CARD" cset name='PCM Playback Volume'      127,127 >/dev/null 2>&1
-    amixer -c "$CARD" cset name='Line DAC Playback Volume' 42,42   >/dev/null 2>&1
+    amixer -c "$CARD" cset name='Line DAC Playback Volume' 45,45   >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Switch'     on,on   >/dev/null 2>&1
     amixer -c "$CARD" cset name='Line Playback Volume'     4,4     >/dev/null 2>&1
     echo "TLV320AIC3104 mixer levels set on card '$CARD'"
