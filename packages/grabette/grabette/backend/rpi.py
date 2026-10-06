@@ -82,6 +82,7 @@ class RpiBackend(Backend):
         self, enable_angle: bool = False, enable_oakd: bool = True,
         oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
         orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
+        orbbec_rotate_180: bool = False,
     ) -> None:
         super().__init__()
         self._running = False
@@ -93,6 +94,11 @@ class RpiBackend(Backend):
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
         self._oakd_initializing = False
+        # A "did not start" fault is cleared once the camera is seen leaving
+        # and coming back on the USB bus (_watch_depth_camera_cable).
+        self._depth_camera_start_failed = False
+        self._depth_camera_unplugged_seen = False
+        self._depth_camera_watch_task = None
         # Live hardware faults, keyed by _HW_* — each one a state in which
         # recording would produce unusable data (no OAK-D offline calibration, no
         # angle sensors). Any of them BLOCKS capture and drives the error LED —
@@ -105,6 +111,7 @@ class RpiBackend(Backend):
         self._depth_camera = depth_camera
         self._orbbec_ir_exposure_us = orbbec_ir_exposure_us
         self._orbbec_ir_gain = orbbec_ir_gain
+        self._orbbec_rotate_180 = orbbec_rotate_180
 
         self._sync = None
         self._camera = None
@@ -150,9 +157,35 @@ class RpiBackend(Backend):
 
         self._init_speaker()
 
+        import asyncio
+        self._depth_camera_watch_task = asyncio.create_task(
+            self._watch_depth_camera_cable())
+
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
+
+    async def _watch_depth_camera_cable(self) -> None:
+        """Clear a "did not start" fault once the cable is plugged back in.
+
+        Only on an unplug followed by a replug: a camera that is on the bus
+        yet failed to start has another problem, which the next bring-up (on
+        the button press) reports again. Nothing is started here.
+        """
+        import asyncio
+        from grabette.hardware.depth_camera import usb_connected
+        while True:
+            await asyncio.sleep(1.0)
+            if not self._depth_camera_start_failed or self._oakd_initializing:
+                continue
+            present = usb_connected(self._depth_camera)
+            if present is False:
+                self._depth_camera_unplugged_seen = True
+            elif present and self._depth_camera_unplugged_seen:
+                self._depth_camera_start_failed = False
+                self._depth_camera_unplugged_seen = False
+                self._clear_hw_error(_HW_OAKD)
+                logger.info("Depth camera plugged back in — fault cleared")
 
     def _init_oakd(self) -> None:
         """Initialize the depth camera (always-on pipeline: live view + recording).
@@ -164,14 +197,16 @@ class RpiBackend(Backend):
         absent on an OAK-D-only device; importing oakd is free either way, since
         that module only pulls depthai inside its own functions.
 
-        A missing/unusable OAK-D offline calibration is singled out from every
-        other init failure: the device is reachable, so it looks healthy, yet
-        every episode it records is unconvertible (the SLAM Space rejects them
-        with "missing dcam_calib_offline.json"). That one is latched as a
-        hardware error, which refuses capture and blinks the error pattern.
-        Other failures keep the historical behaviour (log + carry on without the
-        camera) so a deliberately camera-less bench setup still works. The
-        Gemini has no equivalent fault: it derives its calibration on the host.
+        ANY failure here latches a hardware error, which refuses capture and
+        blinks the error pattern. A camera that will not start and one whose
+        offline calibration is unusable differ only in wording: either way every
+        episode this grabette records is unconvertible, and the difference the
+        operator cares about is the message, not whether the recording is
+        allowed. An init failure used to be logged and walked past, which is how
+        a whole session came out with no RGB-D data in it and was rejected on
+        the SLAM Space long after the takes could have been redone. A
+        deliberately camera-less bench setup sets `enable_oakd=False` and never
+        reaches this method.
         """
         from grabette.hardware.oakd import OakdCalibrationError, OakdCapture
         try:
@@ -181,25 +216,35 @@ class RpiBackend(Backend):
                     self._sync,
                     ir_exposure_us=self._orbbec_ir_exposure_us,
                     ir_gain=self._orbbec_ir_gain,
+                    rotate_180=self._orbbec_rotate_180,
                 )
             else:
                 self._oakd = OakdCapture(self._sync)
             self._oakd.init_device()
             self._clear_hw_error(_HW_OAKD)
+            self._depth_camera_start_failed = False
             logger.info("Depth camera initialized: %s", self._depth_camera)
         except OakdCalibrationError as e:
             self._oakd = None
+            self._depth_camera_start_failed = False  # replugging won't fix it
             self._set_hw_error(_HW_OAKD, (
                 f"{e} — this grabette cannot record convertible episodes. "
                 "Power-cycle it; if it persists the OAK-D needs re-flashing."
             ))
             logger.error("OAK-D calibration unusable — recording disabled: %s", e)
         except Exception as e:
-            logger.warning(
-                "Depth camera (%s) not available, continuing without it: %s",
-                self._depth_camera, e,
-            )
+            # Not a calibration fault, but just as fatal for the episode: with
+            # no depth camera there are no dcam_* streams at all, so the
+            # recording carries no RGB-D data and the conversion drops it. This
+            # used to only log and let the capture go ahead — the episode looked
+            # fine on the device and was rejected after the upload.
             self._oakd = None
+            self._set_hw_error(_HW_OAKD,
+                               "depth camera did not start, check its cable")
+            self._depth_camera_start_failed = True
+            self._depth_camera_unplugged_seen = False
+            logger.error("Depth camera (%s) unusable — recording disabled: %s",
+                         self._depth_camera, e)
 
     def _init_speaker(self) -> None:
         """Resolve the HAT codec + pre-render the capture-start beep. Purely
@@ -239,6 +284,9 @@ class RpiBackend(Backend):
             logger.error("Angle sensors unusable — recording disabled: %s", e)
 
     async def stop(self) -> None:
+        if self._depth_camera_watch_task is not None:
+            self._depth_camera_watch_task.cancel()
+            self._depth_camera_watch_task = None
         if self._capturing:
             await self.stop_capture()
         # After any stop_capture (which may re-arm the keep-alive), drop the
@@ -295,6 +343,14 @@ class RpiBackend(Backend):
     @property
     def is_oakd_initializing(self) -> bool:
         return self._oakd_initializing
+
+    @property
+    def is_depth_camera_connected(self) -> bool | None:
+        """Plugged in, read from the USB bus without starting the camera."""
+        if self.is_oakd_initialized:
+            return True
+        from grabette.hardware.depth_camera import usb_connected
+        return usb_connected(self._depth_camera)
 
     async def set_oakd_enabled(self, on: bool) -> None:
         if self._capturing:

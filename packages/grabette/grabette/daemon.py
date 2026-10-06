@@ -174,7 +174,7 @@ class Daemon:
 
         if self._replay is not None and self._replay.active:
             await self._replay.stop()
-        engine = ReplayEngine()
+        engine = ReplayEngine(on_end=self._on_replay_end)
         engine.load(episode_dir, episode_id)
         await engine.start()
         self._replay = engine
@@ -187,6 +187,13 @@ class Daemon:
             self._replay = None
             self._generation += 1
             logger.info("Replay stopped (gen %d)", self._generation)
+
+    def _on_replay_end(self, engine) -> None:
+        """The replay played to the end: hand the live sensors back."""
+        if self._replay is engine:
+            self._replay = None
+            self._generation += 1
+            logger.info("Replay ended (gen %d)", self._generation)
 
     async def replay_pause(self) -> None:
         if self._replay is not None:

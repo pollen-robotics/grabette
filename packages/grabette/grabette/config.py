@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     # via depthai; "gemini305" is the Orbbec Gemini 305 via pyorbbecsdk2, kept as
     # a second source so the rig is not single-sourced on Luxonis. This selects
     # the model only — enable_oakd still controls whether it is powered at all.
-    depth_camera: Literal["oakd", "gemini305"] = "oakd"
+    depth_camera: Literal["oakd", "gemini305"] = "gemini305"
 
     # Gemini 305 IR exposure. 0 = leave the camera's auto-exposure alone.
     # AE favours low noise over short integration (~15.6 ms with gain 16 in a
@@ -87,6 +87,8 @@ class Settings(BaseSettings):
     # workspace lighting, so it is opt-in per device.
     orbbec_ir_exposure_us: int = 0
     orbbec_ir_gain: int = 0
+
+    orbbec_rotate_180: bool = True
 
     # UI
     ui_enabled: bool = True
@@ -103,9 +105,11 @@ class Settings(BaseSettings):
     # (plughw:CARD=aic3104) — never by index, since on a Pi 4 the vc4-hdmi
     # cards shift the numbering. Set explicitly only to override.
     sound_device: str = ""
-    # Amplitude of the generated tone, 0..1. The speaker's absolute loudness is
-    # set by the codec mixer in scripts/aic3104-init.sh; this only trims it.
-    sound_volume: float = 0.6
+    # Default speaker volume, 0..1 (the dashboard's 0..100 %), used until one is
+    # picked on the dashboard. Set on the codec mixer, see hardware/sound.py
+    # (DAC_MIN/DAC_MAX). 0.5 gives the level scripts/aic3104-init.sh sets at
+    # boot ('Line DAC Playback Volume' 45).
+    sound_volume: float = 0.5
 
     # Logging
     log_level: str = "INFO"

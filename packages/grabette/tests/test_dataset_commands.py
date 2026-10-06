@@ -483,7 +483,7 @@ class _Tm:
 
 
 def _make_episode(root, eid, *, complete=True):
-    from grabette.episode_check import REQUIRED_FILES
+    from grabette.episode_check import _FRAME_SIDECARS, REQUIRED_FILES
 
     ep = root / eid
     ep.mkdir(parents=True)
@@ -491,6 +491,8 @@ def _make_episode(root, eid, *, complete=True):
         if not complete and name == "dcam_calib_offline.json":
             continue
         (ep / name).write_bytes(b"x")
+    for name in _FRAME_SIDECARS:
+        (ep / name).write_text('{"samples": [{"seq": 0}]}')
     (ep / "dcam_depth.mkv").write_bytes(b"x")
     return ep
 

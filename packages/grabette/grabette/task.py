@@ -391,6 +391,29 @@ class TaskManager:
         shutil.rmtree(ep_dir)
         self._save()
 
+    def delete_all_episodes(self) -> int:
+        """Wipe every episode on the device, orphan directories included.
+
+        Named tasks that held episodes go with them, as delete_episode does for
+        a task's last one; tasks that were already empty (fleet-created, not
+        yet recorded) are kept. Returns the number of episode directories
+        removed. Refuses while a capture or session is running.
+        """
+        if self._session_active or self._pending_episode is not None:
+            raise RuntimeError("A recording is in progress")
+        dirs = [d for d in self.episodes_dir.iterdir() if d.is_dir()]
+        for d in dirs:
+            shutil.rmtree(d)
+        self._tasks = [
+            t for t in self._tasks
+            if t["id"] == UNASSIGNED_ID or not t["episode_ids"]
+        ]
+        for t in self._tasks:
+            t["episode_ids"] = []
+            t.pop("episode_members", None)
+        self._save()
+        return len(dirs)
+
     def _apply_episode_members(self, episode_id: str, members: dict,
                                device_signature: list | None = None) -> bool:
         """Merge members into the episode's entry on the task that holds it,
