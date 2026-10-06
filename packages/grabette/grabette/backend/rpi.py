@@ -69,6 +69,9 @@ _HW_OAKD = "oakd_calibration"
 _HW_ANGLE = "angle_sensors"
 _HW_ORDER = (_HW_OAKD, _HW_ANGLE)
 
+# How often the idle watch retries sensors that never came up.
+_ANGLE_RETRY_S = 3.0
+
 _ANGLE_FAULT_MSG = (
     "the gripper angle sensors {what} — episodes would carry no angle_data.json "
     "and could never be converted. Check the AS5600 wiring / I2C bus."
@@ -106,6 +109,8 @@ class RpiBackend(Backend):
         self._hw_faults: dict[str, str] = {}
         self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
+        # Last bring-up retry from the idle watch (_watch_angle_sensors).
+        self._angle_retry_at = 0.0
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
         self._depth_camera = depth_camera
@@ -257,7 +262,7 @@ class RpiBackend(Backend):
             logger.warning("Speaker init failed, continuing without sound", exc_info=True)
             self._speaker = None
 
-    def _init_angle_sensors(self) -> None:
+    def _init_angle_sensors(self, quiet: bool = False) -> None:
         """Bring up the AS5600 gripper encoders.
 
         Failing here is a hardware fault, not a degraded mode: stop_capture only
@@ -281,7 +286,45 @@ class RpiBackend(Backend):
             self._angle = None
             self._set_hw_error(_HW_ANGLE, _ANGLE_FAULT_MSG.format(
                 what=f"could not be initialised ({_exc_text(e)})"))
-            logger.error("Angle sensors unusable — recording disabled: %s", e)
+            # The idle watch retries every few seconds; one line, not one each.
+            (logger.debug if quiet else logger.error)(
+                "Angle sensors unusable — recording disabled: %s", e)
+
+    def _watch_angle_sensors(self) -> None:
+        """Keep the angle fault in step with the sensors while idle.
+
+        Runs on the idle poll (get_state), right after its reads. A sensor
+        unplugged after boot used to go unnoticed — the bus stays open, the
+        reads fail silently — until a whole recording came out without angle
+        data. Now silence for STALE_S raises the fault (capture refused, LED,
+        dashboard), and answers clear it. A device whose sensors never came up
+        retries the bring-up every few seconds, so plugging them back in is
+        enough.
+
+        Never during a capture or its start/stop: those own the sensors, and
+        _note_angle_output judges the recording itself."""
+        if (not self._enable_angle or self._capturing or self._starting
+                or self._stopping or self._needs_reinit):
+            return
+        a = self._angle
+        if a is None:
+            now = time.monotonic()
+            if now - self._angle_retry_at >= _ANGLE_RETRY_S:
+                self._angle_retry_at = now
+                self._init_angle_sensors(quiet=True)
+            return
+        unresponsive = getattr(a, "unresponsive", None)
+        if unresponsive is None:
+            return
+        dead = unresponsive()
+        if dead:
+            if _HW_ANGLE not in self._hw_faults:
+                logger.error("Angle sensors stopped answering: %s", ", ".join(dead))
+            self._set_hw_error(_HW_ANGLE, _ANGLE_FAULT_MSG.format(
+                what=f"stopped answering ({' and '.join(dead)})"))
+        elif _HW_ANGLE in self._hw_faults:
+            logger.info("Angle sensors answering again")
+            self._clear_hw_error(_HW_ANGLE)
 
     @property
     def angle_sensors_status(self) -> dict:
@@ -547,22 +590,29 @@ class RpiBackend(Backend):
                 )
         else:
             # When idle, read directly from sensors
-            if self._angle and self._angle._i2c_1 and self._angle._i2c_2:
-                try:
-                    raw1 = self._angle._read_angle_raw(self._angle._i2c_1)
-                    raw2 = self._angle._read_angle_raw(self._angle._i2c_2)
+            a = self._angle
+            if a and a._i2c_1 and a._i2c_2:
+                # Each sensor read on its own: a failing distal must not stop
+                # the proximal read, or it would look unplugged too.
+                raws = []
+                for i2c in (a._i2c_1, a._i2c_2):
+                    try:
+                        raws.append(a._read_angle_raw(i2c))
+                    except Exception:
+                        raws.append(None)
+                raw1, raw2 = raws
+                if raw1 is not None and raw2 is not None:
                     # Sign source matches AngleCapture._capture_loop — read
                     # from settings (derived from `hand`) rather than the
                     # AS5600 class constants that used to live on the wrapper.
-                    cal1 = self._angle._normalize_angle(raw1 - self._angle._offset_1_deg) * settings.distal_sign
-                    cal2 = self._angle._normalize_angle(raw2 - self._angle._offset_2_deg) * settings.proximal_sign
+                    cal1 = a._normalize_angle(raw1 - a._offset_1_deg) * settings.distal_sign
+                    cal2 = a._normalize_angle(raw2 - a._offset_2_deg) * settings.proximal_sign
                     angle = AngleSample(
                         timestamp_ms=time.time() * 1000,
                         proximal=math.radians(cal2),
                         distal=math.radians(cal1),
                     )
-                except Exception:
-                    pass
+            self._watch_angle_sensors()
 
         imu = None
         if self._oakd is not None and self._oakd.is_initialized:
