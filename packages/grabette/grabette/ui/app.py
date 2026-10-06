@@ -13,6 +13,7 @@ import gradio as gr
 from PIL import Image
 
 from grabette.config import settings
+from grabette.hardware import i2c_diag
 from grabette.ui.api_client import GrabetteClient
 from grabette.ui.summary import recording_summary
 
@@ -431,6 +432,7 @@ html.gb-off .toast-wrap {
     display: none !important;
 }
 .gb-diag-card {
+    position: relative !important;
     max-width: 560px !important;
     width: 100% !important;
     max-height: calc(100vh - 2rem) !important;
@@ -446,26 +448,22 @@ html.gb-off .toast-wrap {
 .gb-diag-card .html-container {
     padding: 0 !important;
 }
-#tr-page .gb-diag-card .gb-diag-head.row,
-.gb-diag-card .gb-diag-head,
 #tr-page .gb-diag-card .gb-diag-actions.row,
 .gb-diag-card .gb-diag-actions {
     align-items: center !important;
     flex-wrap: wrap !important;
     gap: .6rem !important;
 }
-.gb-diag-card .gb-diag-head {
-    justify-content: space-between !important;
-    flex-wrap: nowrap !important;
-}
 .gb-diag-card .gb-diag-actions {
     justify-content: flex-start !important;
 }
-.gb-diag-card .gb-diag-head > *,
 .gb-diag-card .gb-diag-actions > * {
     flex: 0 0 auto !important;
     width: auto !important;
     min-width: 0 !important;
+}
+.gb-diag-card button.gb-diag-gone {
+    display: none !important;
 }
 .gb-diag-card button {
     border-radius: 6px !important;  /* literal: zeroed inside a Group */
@@ -474,6 +472,11 @@ html.gb-off .toast-wrap {
 }
 #tr-page .gb-diag-card .gb-diag-close,
 .gb-diag-card .gb-diag-close {
+    position: absolute !important;
+    top: .6rem !important;
+    right: .6rem !important;
+    z-index: 1 !important;
+    width: auto !important;
     min-width: 0 !important;
     padding: .2rem .6rem !important;
     border: none !important;
@@ -724,6 +727,8 @@ def _tr_cameras(rgb: str, depth: str, depth_label: str,
 # Diagnose popup walks the I2C stack on the device (hardware/i2c_diag.py) and
 # offers the fix for the first broken layer.
 _ANGLE_FAULT = "The gripper angle sensors are not working — recording is disabled"
+
+_DIAG_FIX_CLASSES = ["gb-diag-fix"]
 
 _DIAG_MARKS = {
     "ok": ("#10b981", "✓"),
@@ -1409,12 +1414,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     def _diag_fix_update(diag: dict | None):
         """The fix button and the id it applies, as the diagnosis says."""
         fix = (diag or {}).get("fix")
-        return (gr.update(value=(diag or {}).get("fix_label") or "Fix it",
-                          visible=bool(fix), interactive=True), fix)
+        return (_diag_fix_btn(bool(fix),
+                              value=(diag or {}).get("fix_label") or "Fix it"),
+                fix)
 
-    # The fix button is greyed out while the walk runs, not hidden: hiding it
-    # and showing it again within one click chain leaves gradio's `hidden`
-    # class on it, and the fix never appears.
+    # The fix button is shown and hidden with a class, never with `visible`:
+    # gradio 6 drops a visible=False -> True update on it often enough that
+    # the one button the popup exists for would sometimes never appear.
+    def _diag_fix_btn(shown: bool, **kw):
+        return gr.update(elem_classes=_DIAG_FIX_CLASSES + ([] if shown else
+                                                           ["gb-diag-gone"]),
+                         interactive=True, **kw)
+
     def on_diag_open():
         """Open the popup on a clean slate, the walk about to run."""
         return (gr.update(visible=True), _diag_report_html(None),
@@ -1426,35 +1437,59 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(interactive=False))
 
     def on_diag_run():
+        """Outputs: report, fix button, fix id, "run again" button, the last
+        diagnosis (what the live refresh compares against) and its timer."""
         res = client.angle_diagnose()
         if "error" in res:
             return (_diag_report_html(None, res["error"]),
-                    gr.update(visible=False), None, gr.update(interactive=True))
+                    _diag_fix_btn(False), None, gr.update(interactive=True),
+                    None, gr.Timer(active=True))
         return (_diag_report_html(res), *_diag_fix_update(res),
-                gr.update(interactive=True))
+                gr.update(interactive=True), res, gr.Timer(active=True))
+
+    def on_diag_tick(last, fix):
+        """Run the walk again while the popup is open, so a sensor plugged in
+        (or pulled out) shows up without a click. Only a CHANGED diagnosis is
+        redrawn: the report stays still, and a message from a fix stays up
+        until the situation it describes moves on."""
+        keep = (gr.update(),) * 6
+        if fix == i2c_diag.FIX_REBOOT and last is None:
+            return keep  # a reboot pending after a config change: nothing to see
+        res = client.angle_diagnose()
+        if "error" in res or res == last:
+            return keep
+        status = client.get_angle_status() or {}
+        return (_diag_report_html(res), *_diag_fix_update(res), "", res,
+                gr.update(visible=bool(status.get("error"))))
 
     def on_diag_fix_start():
-        return gr.update(value="Working…", interactive=False)
+        # The live refresh pauses while the fix runs: it would redraw the
+        # button under the "Working…" the click just put there.
+        return gr.update(value="Working…", interactive=False), gr.Timer(active=False)
 
     def on_diag_fix(fix, report):
         """Apply it, show the walk run again, and drop the callout at once
-        rather than on the next poll when the sensors came back."""
+        rather than on the next poll when the sensors came back.
+
+        Outputs: report, fix button, fix id, message, callout box, the last
+        diagnosis and the live-refresh timer."""
         res = client.angle_fix(fix)
         status = client.get_angle_status() or {}
         box = gr.update(visible=bool(status.get("error")))
+        live = gr.Timer(active=True)
         if "error" in res:
             return (report, gr.update(value="Try again", interactive=True), fix,
-                    f"⛔ {res['error']}", box)
+                    f"⛔ {res['error']}", box, gr.update(), live)
         if res.get("rebooting"):
-            return (report, gr.update(visible=False), None,
-                    f"🔄 {res['done']}", box)
+            return (report, _diag_fix_btn(False), None,
+                    f"🔄 {res['done']}", box, None, gr.Timer(active=False))
         if res.get("reboot"):
-            return (report, gr.update(value="Reboot the grabette",
-                                      visible=True, interactive=True),
-                    "reboot", f"✓ {res['done']}", box)
+            # last=None + fix "reboot" is what holds the refresh off.
+            return (report, _diag_fix_btn(True, value="Reboot the grabette"),
+                    i2c_diag.FIX_REBOOT, f"✓ {res['done']}", box, None, live)
         diag = res.get("diagnosis")
         return (_diag_report_html(diag), *_diag_fix_update(diag),
-                f"✓ {res['done']}", box)
+                f"✓ {res['done']}", box, diag, live)
 
     def _angle_diag_prompt(warning: str | None, elem_id: str | None = None):
         """The "Diagnose" button (after `warning`, in one red callout, when
@@ -1472,34 +1507,47 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                  min_width=0, elem_classes="gb-diag-open")
         with gr.Column(visible=False, elem_classes="gb-diag-modal") as modal:
             with gr.Column(elem_classes="gb-diag-card"):
-                with gr.Row(elem_classes="gb-diag-head"):
-                    gr.HTML('<div style="font-weight:700;font-size:1.15rem;">'
-                            'Angle sensors diagnostic</div>')
-                    close_btn = gr.Button("✕", size="sm", scale=0,
-                                          elem_classes="gb-diag-close")
+                # Pinned to the card's top-right corner by CSS, not laid out
+                # beside the title.
+                close_btn = gr.Button("✕", size="sm", scale=0, min_width=0,
+                                      elem_classes="gb-diag-close")
+                gr.HTML('<div style="font-weight:700;font-size:1.15rem;'
+                        'padding-right:2rem;">Angle sensors diagnostic</div>')
                 report = gr.HTML(_diag_report_html(None))
                 msg = gr.Markdown("")
                 with gr.Row(elem_classes="gb-diag-actions"):
-                    fix_btn = gr.Button("Fix it", variant="primary",
-                                        visible=False, scale=0, min_width=0)
+                    fix_btn = gr.Button(
+                        "Fix it", variant="primary", scale=0, min_width=0,
+                        elem_classes=_DIAG_FIX_CLASSES + ["gb-diag-gone"])
                     again_btn = gr.Button("Run the diagnostic again",
                                           scale=0, min_width=0)
         fix_state = gr.State(None)
+        last_diag = gr.State(None)
+        # Live refresh, only while the popup is open: each tick is a real walk
+        # down the I2C stack on the device.
+        live_timer = gr.Timer(2.0, active=False)
+        run_outputs = [report, fix_btn, fix_state, again_btn, last_diag,
+                       live_timer]
 
         open_btn.click(
             fn=on_diag_open,
             outputs=[modal, report, fix_btn, fix_state, msg, again_btn],
             queue=False,
-        ).then(fn=on_diag_run, outputs=[report, fix_btn, fix_state, again_btn])
+        ).then(fn=on_diag_run, outputs=run_outputs)
         again_btn.click(
             fn=on_diag_again,
             outputs=[report, fix_btn, fix_state, msg, again_btn], queue=False,
-        ).then(fn=on_diag_run, outputs=[report, fix_btn, fix_state, again_btn])
-        fix_btn.click(fn=on_diag_fix_start, outputs=fix_btn, queue=False).then(
+        ).then(fn=on_diag_run, outputs=run_outputs)
+        live_timer.tick(fn=on_diag_tick, inputs=[last_diag, fix_state],
+                        outputs=[report, fix_btn, fix_state, msg, last_diag, box])
+        fix_btn.click(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
+                      queue=False).then(
             fn=on_diag_fix, inputs=[fix_state, report],
-            outputs=[report, fix_btn, fix_state, msg, box])
-        close_btn.click(fn=lambda: gr.update(visible=False), outputs=modal,
-                        queue=False)
+            outputs=[report, fix_btn, fix_state, msg, box, last_diag,
+                     live_timer])
+        close_btn.click(fn=lambda: (gr.update(visible=False),
+                                    gr.Timer(active=False)),
+                        outputs=[modal, live_timer], queue=False)
         return box
 
     def poll_angle_fault():
