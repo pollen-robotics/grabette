@@ -352,6 +352,36 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    # -- Angle sensors --
+
+    def get_angle_status(self) -> dict | None:
+        try:
+            r = self._http.get("/api/angle/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
+    def angle_diagnose(self) -> dict:
+        try:
+            r = self._http.post("/api/angle/diagnose", timeout=30.0)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def angle_fix(self, fix: str) -> dict:
+        try:
+            r = self._http.post("/api/angle/fix", json={"fix": fix}, timeout=30.0)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- Replay --
 
     def replay_start(self, episode_id: str) -> dict:

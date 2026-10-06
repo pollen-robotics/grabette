@@ -283,6 +283,23 @@ class RpiBackend(Backend):
                 what=f"could not be initialised ({_exc_text(e)})"))
             logger.error("Angle sensors unusable — recording disabled: %s", e)
 
+    @property
+    def angle_sensors_status(self) -> dict:
+        return {
+            "enabled": self._enable_angle,
+            "initialized": self._angle is not None,
+            "error": self._hw_faults.get(_HW_ANGLE, ""),
+        }
+
+    def reinit_angle_sensors(self) -> None:
+        if self._capturing or self._starting:
+            raise RuntimeError("A recording is in progress")
+        if not self._enable_angle:
+            return
+        if self._angle is not None:
+            self._angle.stop()  # idle: closes the bus handles, nothing to join
+        self._init_angle_sensors()
+
     async def stop(self) -> None:
         if self._depth_camera_watch_task is not None:
             self._depth_camera_watch_task.cancel()

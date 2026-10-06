@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import os
 import random
 import time
 from pathlib import Path
@@ -30,6 +31,25 @@ class MockBackend(Backend):
         self._frame_count = 0
         self._imu_sample_count = 0
         self._angle_sample_count = 0
+        # GRABETTE_MOCK_ANGLE_FAULT=1 starts with the angle sensors down, so
+        # the dashboard's fault chip and Diagnose popup can be tried without a
+        # Pi; "Reconnect the sensors" clears it.
+        self._angle_fault = (
+            "the gripper angle sensors could not be initialised (No device "
+            "found for /dev/i2c-3) — mock"
+            if os.environ.get("GRABETTE_MOCK_ANGLE_FAULT") else "")
+
+    @property
+    def hardware_error(self) -> str:
+        return self._angle_fault
+
+    @property
+    def angle_sensors_status(self) -> dict:
+        return {"enabled": True, "initialized": not self._angle_fault,
+                "error": self._angle_fault}
+
+    def reinit_angle_sensors(self) -> None:
+        self._angle_fault = ""
 
     async def start(self) -> None:
         self._running = True
@@ -124,6 +144,7 @@ class MockBackend(Backend):
             duration = time.time() - self._capture_start
         return CaptureStatus(
             is_capturing=self._capturing,
+            blocked_reason=self.hardware_error or self.busy_reason,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=self._frame_count,
