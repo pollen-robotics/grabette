@@ -2,7 +2,7 @@
 
 **Grabette is an open-source toolkit for collecting robotic manipulation demonstrations and turning them into training-ready datasets.**
 
-A Grabette rig records synchronized **camera + depth** streams (plus IMU with the OAK-D SR) from a hand-held or gripper-mounted device, recovers the camera trajectory with SLAM, and exports a [LeRobot](https://huggingface.co/docs/lerobot) dataset ready for policy learning. You demonstrate the task with your own hand; no robot is involved in the recording, and the resulting dataset is **robot-agnostic**.
+A Grabette rig records synchronized **camera + depth** streams from a hand-held or gripper-mounted device, recovers the camera trajectory with SLAM, and exports a [LeRobot](https://huggingface.co/docs/lerobot) dataset ready for policy learning. You demonstrate the task with your own hand; no robot is involved in the recording, and the resulting dataset is **robot-agnostic**.
 
 <video controls src="https://github.com/user-attachments/assets/6db9dd7b-1762-4004-8a76-ce76323499ba"></video>
 
@@ -24,11 +24,11 @@ Data collection is three steps:
 
 ## Where to go next
 
-- **[Getting started](./get_started.md)** — power, WiFi and the dashboard.
-- **[Data collection](./data_collection.md)** — the Fleet Space, and how to record a good dataset.
-- **[Build your own](./build_your_own.md)** — parts, assembly and software install.
-- **[Training](./training.md)** — Diffusion Policy and π0.5.
-- **[Gripette](./gripette.md)** — the robot-mounted gripper.
-- **[FAQ](./faq.md)** — common questions and troubleshooting.
+- **[Getting started](./get_started.md)**: power, WiFi and the dashboard.
+- **[Data collection](./data_collection.md)**: the Fleet Space, and how to record a good dataset.
+- **[Build your own](./build_your_own.md)**: parts, assembly and software install.
+- **[Training](./training.md)**: Diffusion Policy and π0.5.
+- **[Gripette](./gripette.md)**: the robot-mounted gripper.
+- **[FAQ](./faq.md)**: common questions and troubleshooting.
 
 Grabette is developed by [Pollen Robotics](https://pollen-robotics.com/) and released under the Apache-2.0 licence. The code lives at [pollen-robotics/grabette](https://github.com/pollen-robotics/grabette).
