@@ -73,8 +73,8 @@ _HW_ORDER = (_HW_OAKD, _HW_ANGLE)
 _ANGLE_RETRY_S = 3.0
 
 _ANGLE_FAULT_MSG = (
-    "the gripper angle sensors {what} — episodes would carry no angle_data.json "
-    "and could never be converted. Check the AS5600 wiring / I2C bus."
+    "the gripper angle sensors {what}. Episodes would carry no angle_data.json "
+    "and could never be converted."
 )
 
 

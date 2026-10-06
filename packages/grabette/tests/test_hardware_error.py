@@ -339,7 +339,8 @@ def test_angle_init_failure_latches_a_fault(monkeypatch):
     b._init_angle_sensors()
 
     assert "angle_data.json" in b.hardware_error
-    assert "I2C" in b.hardware_error  # names where to look
+    # Where to look is the dashboard's Diagnose popup, not the message.
+    assert "could not be initialised" in b.hardware_error
     assert b._angle is None
 
 

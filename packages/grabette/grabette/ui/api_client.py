@@ -372,13 +372,17 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def angle_fix(self, fix: str) -> dict:
+    def angle_fix(self, fix: str, password: str | None = None) -> dict:
+        """{"error", "needs_password"} when sudo wants the device password."""
         try:
-            r = self._http.post("/api/angle/fix", json={"fix": fix}, timeout=30.0)
+            r = self._http.post("/api/angle/fix",
+                                json={"fix": fix, "password": password or None},
+                                timeout=30.0)
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            return {"error": _error_detail(e)}
+            return {"error": _error_detail(e),
+                    "needs_password": e.response.status_code == 401}
         except Exception as e:
             return {"error": str(e)}
 
