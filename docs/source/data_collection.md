@@ -13,11 +13,6 @@ An operator dashboard and command broker for your devices. From the Space you:
 - run a **Trajectory Check** on the last few episodes of a session, to catch SLAM tracking failures without waiting for the end of the shoot;
 - **power off** a device.
 
-```
-operator (Space, HF login) ──queue command──▶ broker ◀──poll── device (Pi)
-                           ◀──device status──                  (Bearer hf_token)
-device data ─────────────────────────────────────────────────▶ HF dataset
-```
 
 Devices connect outbound with their Hugging Face token; the Space resolves the owner, so you only ever see and control your own devices.
 
@@ -33,7 +28,7 @@ Devices connect outbound with their Hugging Face token; the Space resolves the o
 
 ### Start and stop a recording
 
-Press the button on the device to start a recording, and press it again to stop. The device's dashboard has no record button, so you keep both hands on the task.
+Press the button on the device to start a recording, and press it again to stop. You can also use the recording button available on the page. 
 
 The button's LED shows the device's state:
 
@@ -46,7 +41,7 @@ The button's LED shows the device's state:
 | 1 pulse, pause, repeat | Busy uploading or converting data — recording is refused until it finishes |
 | 3 pulses, pause, repeat | Hardware fault — the device refuses to record |
 
-If a speaker is fitted, the device also beeps: an **ascending** beep when the recording actually starts (after the warm-up, not when you press), and a **descending** beep when it stops. Wait for the first beep, or the solid LED, before you start the motion.
+If a speaker is fitted, the device also beeps — set the volume, or mute it, on the dashboard's [Overview](./get_started.md#overview): an **ascending** beep when the recording actually starts (after the warm-up, not when you press), and a **descending** beep when it stops. Wait for the first beep, or the solid LED, before you start the motion.
 
 ### Upload a dataset
 

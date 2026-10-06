@@ -6,9 +6,9 @@ Grabette is open hardware. This page takes you from a box of parts to a device r
 
 Grabette is built from off-the-shelf parts, 3D-printed components and a Raspberry Pi 4.
 
-- 📋 **[Bill of Materials](https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml)** — the complete parts list, shared by Grabette and Gripette.
-- 🧩 **[CAD on Onshape](https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186)** — the full assembly.
-- 🔩 **[Assembly guide](https://github.com/pollen-robotics/grabette/blob/develop/packages/grabette/assembly/Grabette_Assembly.pdf)**, with the matching 3D-print guide in the same folder.
+- 📋 <a href="https://docs.google.com/spreadsheets/d/e/2PACX-1vQ3LyyWI-CiplVPtgrWkmLRYjdDqYhbVJXYt8PNa71FDzbTSMVj1YGV0Zpo5PJeBGJURaz8nZt1_v-8/pubhtml" target="_blank" rel="noopener"><strong>Bill of Materials</strong></a> — the complete parts list, shared by Grabette and Gripette.
+- 🧩 <a href="https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186" target="_blank" rel="noopener"><strong>CAD on Onshape</strong></a> — the full assembly.
+- 🔩 <a href="https://github.com/pollen-robotics/grabette/blob/develop/packages/grabette/assembly/Grabette_Assembly.pdf" target="_blank" rel="noopener"><strong>Assembly guide</strong></a>, with the matching 3D-print guide in the same folder.
 
 ## Flash the Raspberry Pi
 

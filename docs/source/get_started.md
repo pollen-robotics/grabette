@@ -32,7 +32,7 @@ Your Grabette has to join your WiFi network before you can reach it. Set it up o
 2. Connect to the device.
 3. Scan for networks, pick yours and enter its password.
 
-The tool sends the device's default PIN (`00000`) itself and only asks for it if you changed it. Once connected, it gives you the address of the device's dashboard.
+Once connected, it gives you the address of the device's dashboard.
 
 <Tip warning={true}>
 
@@ -44,24 +44,23 @@ If the tool can't find or connect to the device, see the [FAQ](./faq.md#the-blue
 
 ## Dashboard
 
-Every Grabette serves a web dashboard on port **8000**. It is how you check the device, make a test recording and review episodes — no SSH, no command line.
+Every Grabette serves a web dashboard on port **8000**. It is how you check the device, make a test recording, review episodes or switch wifi network — no SSH, no command line.
 
 ```
 http://<hostname>.local:8000     # e.g. http://R-grabette.local:8000
 ```
 
-The device's IP address works too, and is shown on the **Overview** and **Network** pages if `.local` name resolution isn't available on your network.
+The device's IP address works too.
 
 <!-- TODO(after 170/171 merge): add a screenshot of the Overview page. -->
-
-Every page has a **Power off** button in the title bar, the clean way to shut the device down.
 
 ### Overview
 
 The landing page.
 
+- **Speaker** — the volume of the recording beeps, a mute button, and **Test sounds** to play them. It says so when no speaker is fitted.
 - **Cameras** — the live image, with an RGB / Depth toggle. Choosing Depth turns the depth camera on if it's off.
-- **3D model** — the gripper, moving with the live finger-joint angles. Open and close it to check the angle sensors.
+- **3D model** — the gripper, moving with the live finger-joint angles. Open and close it to check if the angle sensors are properly calibrated.
 - **Device** — hostname, side (left or right hand), IP address and WiFi network, with a **Change network** shortcut.
 - **Health** — battery, temperature and storage used.
 - **Grabette data** — shortcuts to **Test Recording** and **Episodes**.
@@ -77,7 +76,7 @@ The Fleet Space and every upload depend on this login.
 
 A guided first recording, to check the whole device before a real session:
 
-1. **Record a few seconds** — press the button, pick an object up, press again to stop.
+1. **Record a few seconds** — press the button and wait for the LED to stop blinking, pick an object up, then press again to stop. The page shows whether each camera is connected, and tells you when to wait and when to press.
 2. **Check what was recorded** — a summary, a replay of the RGB and depth video with the angle chart, and a download link.
 3. **Delete it** — a test recording is not training data. If you keep it, it is filed under the *Unassigned* task in **Episodes**.
 4. **Record real data** — sign in to Hugging Face if needed, and open the Fleet Space.
