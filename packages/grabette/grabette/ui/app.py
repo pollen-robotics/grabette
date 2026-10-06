@@ -7,6 +7,7 @@ import io
 import logging
 import math
 import time
+from pathlib import Path
 from urllib.parse import quote
 
 import gradio as gr
@@ -310,12 +311,97 @@ html.gb-off .toast-wrap {
     #ov-page #ov-account {
         order: -1;
     }
+    /* …but a device that cannot record says so before anything else. */
+    #ov-page #ov-calib {
+        order: -3;
+    }
 
     #ov-page .ov-rule-top {
         display: none !important;
     }
     #ov-page .ov-rule-bottom {
         display: block !important;
+    }
+}
+/* "Not calibrated" warning and the button that fixes it, on the Overview and
+   on Test Recording (see _calibration_prompt). */
+.gb-calib-box {
+    gap: .6rem !important;
+    align-items: flex-start !important;
+}
+.gb-calib-box .html-container {
+    padding: 0 !important;
+}
+.gb-calib-box button {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+    border-radius: var(--button-small-radius) !important;
+}
+/* The calibration popup: a fixed backdrop with the steps as one card. */
+.gb-calib-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+    z-index: 9999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    padding: 1rem !important;
+}
+/* Gradio hides a column with a class; the display:flex above must not win. */
+.gb-calib-modal.hide,
+.gb-calib-modal.hidden {
+    display: none !important;
+}
+.gb-calib-card {
+    max-width: 520px !important;
+    width: 100% !important;
+    max-height: calc(100vh - 2rem) !important;
+    overflow-y: auto !important;
+    flex: 0 1 auto !important;
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 18px !important;
+    padding: 1.3rem 1.4rem !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45) !important;
+    gap: .9rem !important;
+}
+.gb-calib-card .html-container {
+    padding: 0 !important;
+}
+#tr-page .gb-calib-card .gb-calib-head.row,
+.gb-calib-card .gb-calib-head {
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: nowrap !important;
+}
+.gb-calib-card .gb-calib-head > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+.gb-calib-card button {
+    border-radius: var(--button-large-radius) !important;
+    width: auto !important;
+    flex: 0 0 auto !important;
+    align-self: flex-start !important;
+}
+#tr-page .gb-calib-card .gb-calib-close,
+.gb-calib-card .gb-calib-close {
+    min-width: 0 !important;
+    padding: .2rem .6rem !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: var(--body-text-color-subdued) !important;
+    font-size: 1.1rem !important;
+}
+@media (max-width: 560px) {
+    .gb-calib-box button,
+    .gb-calib-card .gb-calib-run {
+        width: 100% !important;
     }
 }
 /* Live dot on the Test Recording status pill (see _tr_pill). */
@@ -543,6 +629,50 @@ def _tr_pill(kind: str, text: str) -> str:
         f'<span style="width:.55rem;height:.55rem;border-radius:50%;'
         f'background:{color};{anim}"></span>'
         f'<span style="font-weight:600;">{html.escape(text)}</span></div>'
+    )
+
+
+# ── Angle-sensor calibration ─────────────────────────────────────────
+#
+# A grabette whose angle sensors were never zeroed refuses to record (see
+# RpiBackend._check_angle_calibration). The fix used to be an SSH session and a
+# script; it is now a button wherever that refusal shows, opening one popup.
+_CALIB_REQUIRED = "Your device is not calibrated"
+_CALIB_BLOCKED = "Cannot record, your device is not calibrated"
+
+# A photo of the grabette held fully open, if one is shipped in ui/assets;
+# otherwise the 3D model frozen in that pose (the viewer's ?pose=open).
+_CALIB_PHOTO = "calibration-open.jpg"
+_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+
+
+def _calibration_figure() -> str:
+    if (_ASSETS_DIR / _CALIB_PHOTO).is_file():
+        media = (f'<img src="/ui-assets/{_CALIB_PHOTO}" '
+                 'alt="Grabette with its gripper fully open"'
+                 ' style="width:100%;max-height:260px;object-fit:contain;'
+                 'display:block;border-radius:12px;background:#0f172a;">')
+    else:
+        media = ('<iframe src="/viewer?pose=open&yaw=180" '
+                 'style="width:100%;height:240px;border:none;display:block;'
+                 'border-radius:12px;background:#1a1a2e;"></iframe>')
+    return (
+        '<figure style="margin:0;">' + media
+        + '<figcaption style="margin-top:.45rem;text-align:center;'
+        'font-size:.82rem;color:var(--body-text-color-subdued);">'
+        'Gripper fully open, fingers against their stop</figcaption></figure>'
+    )
+
+
+def _calib_warning_html(text: str) -> str:
+    """The amber callout above the Calibrate button."""
+    return (
+        '<div style="display:flex;align-items:center;gap:.6rem;'
+        'padding:.65rem .9rem;border-radius:10px;'
+        'background:#f59e0b1a;border:1px solid #f59e0b66;">'
+        '<span style="font-size:1.1rem;line-height:1;">⚠️</span>'
+        f'<span style="font-weight:600;color:var(--body-text-color);">'
+        f'{html.escape(text)}</span></div>'
     )
 
 
@@ -1215,6 +1345,70 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Capture (Datasets page) ───────────────────────────────────────
 
+    # ── Calibration prompt (Overview + Test Recording) ────────────────
+
+    def on_calibrate_open():
+        """Open the popup on a clean slate: no message from a previous run."""
+        return (gr.update(visible=True),
+                gr.update(value="Start calibration", interactive=True), "")
+
+    def on_calibrate_start():
+        return gr.update(value="Calibrating…", interactive=False)
+
+    def on_calibrate():
+        """Run it, and drop the warning at once rather than on the next poll."""
+        res = client.calibrate()
+        if "error" in res:
+            return (gr.update(value="Start calibration", interactive=True),
+                    f"⛔ {res['error']}", gr.update())
+        return (gr.update(value="Calibrate again", interactive=True),
+                "✓ **Your device is calibrated.** You can close this window.",
+                gr.update(visible=bool(res.get("needs_calibration"))))
+
+    def _calibration_prompt(warning: str | None, elem_id: str | None = None):
+        """The "Calibrate my device" button (under `warning`, when given) and
+        the two-step popup it opens. Returns the box holding the button, hidden
+        until the device says it needs calibrating — the caller's poll shows it.
+        """
+        with gr.Column(visible=False, elem_id=elem_id,
+                       elem_classes="gb-calib-box") as box:
+            if warning:
+                gr.HTML(_calib_warning_html(warning))
+            open_btn = gr.Button("Calibrate my device", variant="primary",
+                                 size="sm")
+        with gr.Column(visible=False, elem_classes="gb-calib-modal") as modal:
+            with gr.Column(elem_classes="gb-calib-card"):
+                with gr.Row(elem_classes="gb-calib-head"):
+                    gr.HTML('<div style="font-weight:700;font-size:1.15rem;">'
+                            'Calibrate my device</div>')
+                    close_btn = gr.Button("✕", size="sm", scale=0,
+                                          elem_classes="gb-calib-close")
+                gr.HTML(_step_header(
+                    1, "Open the gripper fully",
+                    "Open the fingers all the way, until they are against "
+                    "their stop, and hold them there.",
+                ))
+                gr.HTML(_calibration_figure())
+                gr.HTML(_step_header(
+                    2, "Calibrate the sensors",
+                    "Keep the gripper fully open while it runs — it takes "
+                    "a second.",
+                ))
+                run_btn = gr.Button("Start calibration", variant="primary",
+                                    elem_classes="gb-calib-run")
+                msg = gr.Markdown("")
+        open_btn.click(fn=on_calibrate_open, outputs=[modal, run_btn, msg],
+                       queue=False)
+        close_btn.click(fn=lambda: gr.update(visible=False), outputs=modal,
+                        queue=False)
+        run_btn.click(fn=on_calibrate_start, outputs=run_btn, queue=False).then(
+            fn=on_calibrate, outputs=[run_btn, msg, box])
+        return box
+
+    def poll_calibration():
+        st = client.get_calibration() or {}
+        return gr.update(visible=bool(st.get("needs_calibration")))
+
     # ── Test Recording page ───────────────────────────────────────────
     #
     # The recording is started and stopped on the grabette's own button, so this
@@ -1249,12 +1443,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """One tick: mirror the device's capture state onto the page.
 
         Outputs: status pill, camera chips, verdict card, the three episode
-        controls (check, download, delete) and the flow dict.
+        controls (check, download, delete), the flow dict and the Calibrate
+        button's box.
         """
         flow = dict(flow or _TR_FLOW0)
         cap = (client.get_state() or {}).get("capture", {})
         capturing = bool(cap.get("is_capturing"))
         blocked = cap.get("blocked_reason") or ""
+        needs_calib = bool(cap.get("needs_calibration"))
+        calib = gr.update(visible=needs_calib and not capturing)
 
         if capturing:
             # A new recording supersedes whatever steps 2 and 3 were pointing at.
@@ -1267,6 +1464,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=""),
                 *_tr_controls(None),
                 flow,
+                calib,
             )
 
         if flow["capturing"] or flow["settling"]:
@@ -1281,7 +1479,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return (_tr_pill("waiting", "Saving the episode…"),
                         gr.update(),
                         gr.update(value=""),
-                        *_tr_controls(None), flow)
+                        *_tr_controls(None), flow, calib)
             flow["settling"] = 0
             if verdict is None:
                 # Out of patience: report what the episode actually says now,
@@ -1296,6 +1494,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=verdict),
                 *_tr_controls(flow["episode_id"]),
                 flow,
+                calib,
             )
 
         # Idle. Only the pill and the cameras move from here on: the verdict
@@ -1306,7 +1505,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         depth_state = _depth_camera_state(dcam)
         cameras = _tr_cameras(rgb_state, depth_state,
                               (dcam or {}).get("label") or "depth camera")
-        if blocked:
+        if needs_calib:
+            # Named on its own, with the button that fixes it right under the
+            # pill: "Cannot record — <fault>" would leave them to find it.
+            pill = _tr_pill("blocked", _CALIB_BLOCKED)
+        elif blocked:
             # Not capturing is not the same as ready: a device held back by an
             # upload or a hardware fault would read "waiting for the recording"
             # here, and the press it invites is the one that fails.
@@ -1321,7 +1524,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
             pill = _tr_pill("idle", "Cameras connected — press the button")
-        return pill, cameras, *([gr.update()] * 4), flow
+        return pill, cameras, *([gr.update()] * 4), flow, calib
 
     def on_test_check(flow):
         """Replay the episode: the daemon feeds its recorded samples back into
@@ -1909,6 +2112,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     ov_sound_note = gr.Markdown("", elem_classes="ov-note")
             ov_sound_default = gr.State(_SOUND_DEFAULT)
 
+            # Before anything else on the device: it will not record until
+            # this is done.
+            ov_calib_box = _calibration_prompt(_CALIB_REQUIRED, "ov-calib")
+
             # ── Camera | 3D model | Device | Health ───────────────────
             # min_width is what makes this responsive: four columns on a
             # laptop, two on a tablet, one on a phone, decided by gradio from
@@ -1997,6 +2204,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                           ov_sound_note, ov_sound_default])
         demo.load(fn=None, js=_VOLUME_TIP_JS)
 
+        ov_calib_timer = gr.Timer(3.0)
+        ov_calib_timer.tick(fn=poll_calibration, outputs=ov_calib_box)
+        demo.load(fn=poll_calibration, outputs=ov_calib_box)
+
         ov_info_timer = gr.Timer(10.0)
         ov_info_timer.tick(fn=refresh_overview,
                            outputs=[ov_device_card, ov_health_card])
@@ -2044,6 +2255,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                             "Press again to stop"))
                 tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
+                tr_calib_box = _calibration_prompt(None)
                 # 1 Hz against the daemon's cached state — the page has no other
                 # way to learn about a press that happened on the device.
                 tr_poll_timer = gr.Timer(1.0)
@@ -2112,7 +2324,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
             outputs=[tr_state, tr_cameras, tr_summary, tr_check_btn,
-                     tr_download_link, tr_delete_btn, tr_flow],
+                     tr_download_link, tr_delete_btn, tr_flow, tr_calib_box],
         )
         # Same handler for both: a restart is a replay started over from zero,
         # and the players follow whatever the clock says.

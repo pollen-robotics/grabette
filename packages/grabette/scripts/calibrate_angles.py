@@ -10,7 +10,8 @@ Sign flipping is independent of this calibration — it happens downstream in
 hardware/angle.py at sample time. Recalibrating after changing `hand` is NOT
 required.
 
-Must run on the Pi (needs I2C access).
+Must run on the Pi (needs I2C access). The dashboard does the same from its
+"Calibrate my device" button, without the restart.
 
 Usage:
     python scripts/calibrate_angles.py          # read & save
@@ -18,21 +19,25 @@ Usage:
 """
 
 import argparse
-import json
 import sys
-import time
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from grabette.hardware.angle import AngleCapture, CALIBRATION_FILE
+from grabette.hardware.angle import (
+    CALIBRATION_FILE,
+    CALIBRATION_SAMPLES,
+    AngleCapture,
+    load_calibration,
+    read_raw_averaged,
+    save_calibration,
+)
 
 AS5600_ADDRESS = AngleCapture.AS5600_ADDRESS
 ANGLE_REGISTER = AngleCapture.ANGLE_REGISTER
 I2C_BUS_1 = 3  # sensor 1 (distal,   V2 = /dev/i2c-3)
 I2C_BUS_2 = 4  # sensor 2 (proximal, V2 = /dev/i2c-4)
-NUM_SAMPLES = 20  # average over N reads for stability
+NUM_SAMPLES = CALIBRATION_SAMPLES  # average over N reads for stability
 
 
 def read_raw_angle(i2c) -> float:
@@ -41,22 +46,6 @@ def read_raw_angle(i2c) -> float:
     i2c.writeto_then_readfrom(AS5600_ADDRESS, bytes([ANGLE_REGISTER]), result)
     raw = ((result[0] & 0x0F) << 8) | result[1]
     return raw * 360.0 / 4096.0
-
-
-def read_averaged(i2c, n: int) -> float:
-    """Read N samples and return the average (handles wraparound at 360/0)."""
-    import math
-    # Use circular mean to handle wraparound
-    sin_sum = 0.0
-    cos_sum = 0.0
-    for _ in range(n):
-        deg = read_raw_angle(i2c)
-        rad = math.radians(deg)
-        sin_sum += math.sin(rad)
-        cos_sum += math.cos(rad)
-        time.sleep(0.01)
-    avg_rad = math.atan2(sin_sum / n, cos_sum / n)
-    return math.degrees(avg_rad) % 360.0
 
 
 def main():
@@ -70,8 +59,8 @@ def main():
     i2c_2 = ExtendedI2C(I2C_BUS_2)
 
     print(f"Reading {NUM_SAMPLES} samples from each sensor...")
-    raw1 = read_averaged(i2c_1, NUM_SAMPLES)
-    raw2 = read_averaged(i2c_2, NUM_SAMPLES)
+    raw1 = read_raw_averaged(lambda: read_raw_angle(i2c_1), NUM_SAMPLES)
+    raw2 = read_raw_averaged(lambda: read_raw_angle(i2c_2), NUM_SAMPLES)
 
     i2c_1.deinit()
     i2c_2.deinit()
@@ -80,9 +69,8 @@ def main():
     print(f"  Sensor 1 (distal,   bus {I2C_BUS_1}): {raw1:.1f}°")
     print(f"  Sensor 2 (proximal, bus {I2C_BUS_2}): {raw2:.1f}°")
 
-    if CALIBRATION_FILE.exists():
-        with open(CALIBRATION_FILE) as f:
-            old = json.load(f)
+    old = load_calibration()
+    if old is not None:
         print("\nCurrent calibration:")
         print(f"  Sensor 1 offset: {old.get('sensor_1_offset_deg', 0):.1f}°")
         print(f"  Sensor 2 offset: {old.get('sensor_2_offset_deg', 0):.1f}°")
@@ -90,16 +78,7 @@ def main():
     if args.read:
         return
 
-    # Save new calibration
-    calibration = {
-        "sensor_1_offset_deg": round(raw1, 6),
-        "sensor_2_offset_deg": round(raw2, 6),
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    }
-
-    CALIBRATION_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(CALIBRATION_FILE, "w") as f:
-        json.dump(calibration, f, indent=2)
+    save_calibration(raw1, raw2)
 
     print(f"\nNew calibration saved to {CALIBRATION_FILE}:")
     print(f"  Sensor 1 offset: {raw1:.1f}°")
