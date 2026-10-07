@@ -304,6 +304,13 @@ html.gb-off .toast-wrap {
     padding: 0 !important;
     border-radius: 50% !important;
     font-weight: 700 !important;
+    background: var(--color-accent-soft) !important;
+    border: 1px solid var(--color-accent) !important;
+    color: var(--color-accent) !important;
+}
+#ov-page .ov-volume-row .ov-sound-help:hover {
+    background: var(--color-accent) !important;
+    color: #fff !important;
 }
 /* The "?" next to Test sounds opens this, over the page. */
 #ov-sound-modal {
