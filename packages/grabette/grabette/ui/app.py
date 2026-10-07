@@ -617,16 +617,71 @@ html.gb-off .toast-wrap {
     display: block !important;
 }
 .gb-diag-card button.gb-fault-nav {
-    padding: .25rem .6rem !important;
-    border: 1px solid var(--border-color-primary) !important;
-    background: var(--background-fill-secondary) !important;
-    color: var(--body-text-color) !important;
-    font-weight: 600 !important;
+    padding: 0 .3rem !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: var(--body-text-color-subdued) !important;
+    font-size: 1.1rem !important;
+    line-height: 1 !important;
     cursor: pointer;
 }
+.gb-diag-card button.gb-fault-nav:hover:not(:disabled) {
+    color: var(--body-text-color) !important;
+}
 .gb-diag-card button.gb-fault-nav:disabled {
-    opacity: .4;
+    opacity: .3;
     cursor: default;
+}
+/* A check's detail: a tooltip on the ⓘ for a mouse, a subtitle the ⓘ toggles
+   on a touch screen (_DIAG_POPUP_JS). The verdict below says what matters. */
+.gb-diag-card .gb-check-head {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+}
+.gb-diag-card .gb-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    color: var(--body-text-color-subdued);
+    font-size: .65rem;
+    font-weight: 700;
+    font-style: normal;
+    line-height: 1;
+    cursor: help;
+    user-select: none;
+}
+.gb-diag-card .gb-tip {
+    display: none;
+    font-size: .85rem;
+    color: var(--body-text-color-subdued);
+}
+.gb-diag-card .gb-check.gb-open .gb-tip {
+    display: block;
+}
+@media (hover: hover) {
+    .gb-diag-card .gb-check:not(.gb-open) .gb-check-head:has(.gb-info:hover) + .gb-tip {
+        display: block;
+        position: absolute;
+        z-index: 2;
+        max-width: 22rem;
+        margin-top: .3rem;
+        padding: .4rem .6rem;
+        border-radius: 8px;
+        background: var(--background-fill-secondary);
+        border: 1px solid var(--border-color-primary);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+        color: var(--body-text-color);
+    }
+    .gb-diag-card .gb-check-body {
+        position: relative;
+    }
 }
 @media (max-width: 560px) {
     #tr-page .gb-diag-box .gb-diag-open,
@@ -953,13 +1008,16 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
     for c in diag.get("checks", []):
         color, mark = _DIAG_MARKS.get(c.get("status"), _DIAG_MARKS["skip"])
         rows.append(
-            '<div style="display:flex;gap:.6rem;align-items:baseline;'
+            '<div class="gb-check" style="display:flex;gap:.6rem;align-items:baseline;'
             'padding:.35rem 0;border-bottom:1px solid var(--border-color-primary);">'
             f'<span style="color:{color};font-weight:800;width:1rem;'
             f'text-align:center;flex:0 0 auto;">{mark}</span>'
-            f'<div><div style="font-weight:600;">{html.escape(c.get("label", ""))}</div>'
-            '<div style="font-size:.85rem;color:var(--body-text-color-subdued);">'
-            f'{html.escape(c.get("detail", ""))}</div></div></div>')
+            '<div class="gb-check-body"><div class="gb-check-head">'
+            f'<span style="font-weight:600;">{html.escape(c.get("label", ""))}</span>'
+            + ('<span class="gb-info" role="button" aria-label="Details">i</span>'
+               if c.get("detail") else '')
+            + f'</div><div class="gb-tip">{html.escape(c.get("detail", ""))}</div>'
+            '</div></div>')
     color = "#10b981" if diag.get("healthy") else "#ef4444"
     verdict = (_diag_faults_html(diag["faults"]) if diag.get("faults") else
                _diag_verdict_html(diag.get("summary", ""), color))
@@ -983,7 +1041,7 @@ def _diag_verdict_html(text: str, color: str) -> str:
 
 
 # Sensors at fault, one page each — its verdict, then how to fix it — with
-# Previous / Next between them when there are several (_DIAG_NAV_JS). The first
+# arrows between them when there are several (_DIAG_POPUP_JS). The first
 # page shows; a redraw (the live refresh, on a changed diagnosis) starts over
 # from it.
 def _diag_faults_html(faults: list[dict]) -> str:
@@ -993,12 +1051,12 @@ def _diag_faults_html(faults: list[dict]) -> str:
         nav = ""
         if n > 1:
             nav = (
-                '<div style="display:flex;align-items:center;gap:.5rem;'
-                'margin-top:.8rem;font-size:.85rem;font-weight:600;'
+                '<div style="display:flex;justify-content:flex-end;'
+                'align-items:center;gap:.2rem;margin-top:.8rem;font-size:.8rem;'
                 'color:var(--body-text-color-subdued);">'
-                f'<span style="flex:1;">Problem {i + 1} of {n}</span>'
-                + _diag_nav_btn("‹ Previous", -1, i == 0)
-                + _diag_nav_btn("Next ›", 1, i == n - 1) + '</div>')
+                + _diag_nav_btn("‹", "Previous problem", -1, i == 0)
+                + f'<span>{i + 1} / {n}</span>'
+                + _diag_nav_btn("›", "Next problem", 1, i == n - 1) + '</div>')
         pages.append(
             f'<div class="gb-fault{" gb-on" if i == 0 else ""}">{nav}'
             + _diag_verdict_html(f["summary"], "#ef4444")
@@ -1006,19 +1064,27 @@ def _diag_faults_html(faults: list[dict]) -> str:
     return '<div class="gb-faults">' + "".join(pages) + '</div>'
 
 
-def _diag_nav_btn(text: str, step: int, disabled: bool) -> str:
-    return (f'<button type="button" class="gb-fault-nav" data-step="{step}"'
-            f'{" disabled" if disabled else ""}>{text}</button>')
+def _diag_nav_btn(arrow: str, label: str, step: int, disabled: bool) -> str:
+    return (f'<button type="button" class="gb-fault-nav" data-step="{step}" '
+            f'aria-label="{label}" title="{label}"'
+            f'{" disabled" if disabled else ""}>{arrow}</button>')
 
 
 # Gradio sanitizes HTML-component content (no onclick survives it): one
-# delegated listener per page turns the fault pages instead.
-_DIAG_NAV_JS = """
+# delegated listener per page turns the fault pages and opens a check's detail
+# under it (the tap a touch screen has instead of hovering the ⓘ).
+_DIAG_POPUP_JS = """
 () => {
-  if (window.__grabetteDiagNav) { return; }
-  window.__grabetteDiagNav = true;
+  if (window.__grabetteDiagPopup) { return; }
+  window.__grabetteDiagPopup = true;
   document.addEventListener('click', function (e) {
-    var btn = e.target.closest && e.target.closest('.gb-fault-nav');
+    if (!e.target.closest) { return; }
+    var info = e.target.closest('.gb-diag-card .gb-info');
+    if (info) {
+      info.closest('.gb-check').classList.toggle('gb-open');
+      return;
+    }
+    var btn = e.target.closest('.gb-fault-nav');
     if (!btn || btn.disabled) { return; }
     var pages = btn.closest('.gb-faults').querySelectorAll(':scope > .gb-fault');
     var i = Array.prototype.findIndex.call(pages, function (p) {
@@ -2774,7 +2840,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
                                           ov_sound_note, ov_sound_default])
         demo.load(fn=None, js=_VOLUME_TIP_JS)
-        demo.load(fn=None, js=_DIAG_NAV_JS)
+        demo.load(fn=None, js=_DIAG_POPUP_JS)
 
         ov_diag_timer = gr.Timer(3.0)
         ov_diag_timer.tick(fn=poll_angle_fault, outputs=ov_diag_box)
@@ -2934,7 +3000,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_tr.change(fn=None, inputs=batt_beep_tr, outputs=None, js=_BATTERY_BEEP_JS)
         test_demo.load(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
         test_demo.load(fn=None, js=_BATTERY_INIT_JS)
-        test_demo.load(fn=None, js=_DIAG_NAV_JS)
+        test_demo.load(fn=None, js=_DIAG_POPUP_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 3 — Episodes

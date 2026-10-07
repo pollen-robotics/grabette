@@ -202,7 +202,7 @@ def test_report_pages_through_several_faults(tmp_path):
     one = _diag_report_html(d.diagnose(root, _probe({(3, 0x40): 0x20})).to_dict())
     assert "gb-fault-nav" not in one  # nothing to page through
     both = _diag_report_html(d.diagnose(root, _probe({})).to_dict())
-    assert "Problem 1 of 2" in both and "Problem 2 of 2" in both
+    assert "1 / 2" in both and "2 / 2" in both
     # The first page shows; the others wait for Next.
     assert both.count('class="gb-fault gb-on"') == 1
     assert both.index("gb-on") < both.index("distal-sensor-cable.gif") \
