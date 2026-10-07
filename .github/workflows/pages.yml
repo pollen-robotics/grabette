@@ -46,7 +46,9 @@ jobs:
           cp -r docs/media _site/media
           # Just the images the page uses — docs/images/ is shared with the
           # READMEs and has no business being published wholesale.
-          cp docs/images/grabette_logo_small.png docs/images/turn_on.gif _site/images/
+          cp docs/images/grabette_logo_small.png docs/images/turn_on.gif \
+             docs/images/calibration-open-front.png docs/images/calibration-open-top.png \
+             _site/images/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
