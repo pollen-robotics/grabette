@@ -938,14 +938,14 @@ class BluetoothWifiService:
             if len(parts) < 2:
                 return "ERROR: Usage: WIFI_CONNECT_ENC <json>"
             self.authenticated = False  # one-shot auth
-            return self._wifi_connect_enc(parts[1])
+            return self._refresh_status_after(self._wifi_connect_enc(parts[1]))
 
         # WIFI_RESET — requires auth
         if upper == "WIFI_RESET":
             if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             self.authenticated = False  # one-shot auth
-            return _wifi_reset()
+            return self._refresh_status_after(_wifi_reset())
 
         # CALIB_STATUS / CALIBRATE — angle-sensor zeroing, through the daemon
         # (requires auth; does NOT consume it: calibrating again is harmless)
@@ -955,6 +955,20 @@ class BluetoothWifiService:
             return _calib_status() if upper == "CALIB_STATUS" else _calibrate()
 
         return f"ERROR: Unknown command: {command_str}"
+
+    def _refresh_status_after(self, response: str) -> str:
+        """Republish the network status now rather than on the next 10s tick.
+
+        nmcli only returns once the device has its address, and the web client
+        reads the status right after this response to offer the dashboard link:
+        with the periodic refresh alone it waited up to 10s for an address that
+        was already there. Queued on the main loop (DBus is not thread-safe)
+        before the response itself is (see CommandCharacteristic._run_command),
+        so it is in place by the time the client reads it."""
+        status_service = getattr(self.app, "status_service", None)
+        if status_service is not None:
+            GLib.idle_add(lambda: status_service.update_network_status() and False)
+        return response
 
     def _check_pin(self, pin: str) -> str:
         """Validate the PIN with brute-force rate limiting.
