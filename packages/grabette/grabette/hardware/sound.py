@@ -349,10 +349,10 @@ class Speaker:
         never raises."""
         self._play(CUE_PREVIEW, debounce=False)
 
-    def play_test_sequence(self) -> bool:
-        """Play TEST_SEQUENCE once, off the caller's thread, bypassing the
-        debounce. Returns False (and plays nothing) when the speaker is
-        unavailable, muted, or a test is already playing."""
+    def play_test_sequence(self, cues: tuple[str, ...] = TEST_SEQUENCE) -> bool:
+        """Play `cues` (by default TEST_SEQUENCE) once, off the caller's thread,
+        bypassing the debounce. Returns False (and plays nothing) when the
+        speaker is unavailable, muted, or a test is already playing."""
         if not self.is_available or self._volume == 0.0:
             return False
         with self._lock:
@@ -362,7 +362,7 @@ class Speaker:
 
         def run() -> None:
             try:
-                for i, name in enumerate(TEST_SEQUENCE):
+                for i, name in enumerate(cues):
                     if i:
                         time.sleep(TEST_GAP_S)
                     wav = self._cues.get(name)

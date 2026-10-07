@@ -469,6 +469,15 @@ def test_test_sequence_plays_the_recording_cues_in_order(monkeypatch):
     speaker.close()
 
 
+def test_test_sequence_can_play_a_single_cue(monkeypatch):
+    calls = []
+    speaker = _ready_speaker(monkeypatch, calls)
+    monkeypatch.setattr(sound.threading, "Thread", _inline_thread)
+    assert speaker.play_test_sequence((sound.CUE_SAVED,)) is True
+    assert [c[-1].rsplit("/", 1)[-1] for c in calls] == [f"{sound.CUE_SAVED}.wav"]
+    speaker.close()
+
+
 def test_saved_volume_round_trips(monkeypatch, tmp_path):
     monkeypatch.setattr(sound, "VOLUME_FILE", tmp_path / "sub" / "sound_volume")
     assert sound.load_saved_volume(0.6) == 0.6       # nothing saved yet
