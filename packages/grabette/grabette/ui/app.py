@@ -670,7 +670,8 @@ html.gb-off .toast-wrap {
         display: block;
         position: absolute;
         z-index: 2;
-        max-width: 22rem;
+        width: max-content;
+        max-width: min(22rem, 80vw);
         margin-top: .3rem;
         padding: .4rem .6rem;
         border-radius: 8px;
