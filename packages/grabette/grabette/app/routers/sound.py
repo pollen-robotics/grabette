@@ -23,6 +23,11 @@ class VolumeRequest(BaseModel):
     beep: bool = True
 
 
+class TestRequest(BaseModel):
+    # One cue of sound.TEST_SEQUENCE, or None for the whole sequence.
+    cue: str | None = None
+
+
 def _status() -> dict:
     speaker = sound.get_speaker()
     return {
@@ -65,8 +70,12 @@ def set_volume(req: VolumeRequest):
 
 
 @router.post("/test")
-def test_sounds():
-    """Play the recording cues once, in the order a take produces them."""
+def test_sounds(req: TestRequest | None = None):
+    """Play the recording cues once, in the order a take produces them, or
+    only the one named by `cue`."""
+    cue = req.cue if req else None
+    if cue is not None and cue not in sound.TEST_SEQUENCE:
+        raise HTTPException(status_code=422, detail=f"Unknown sound: {cue}")
     # The sequence opens with the "recording is live" cue: played mid-take it
     # would tell the operator a recording just started.
     if _is_capturing():
@@ -76,6 +85,7 @@ def test_sounds():
         raise HTTPException(status_code=409, detail="No speaker on this Grabette.")
     if status["volume"] == 0:
         raise HTTPException(status_code=409, detail="The speaker is muted.")
-    if not sound.get_speaker().play_test_sequence():
+    cues = (cue,) if cue else sound.TEST_SEQUENCE
+    if not sound.get_speaker().play_test_sequence(cues):
         raise HTTPException(status_code=409, detail="A test is already playing.")
     return status

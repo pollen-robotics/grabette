@@ -342,9 +342,9 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
-    def test_sound(self) -> dict:
+    def test_sound(self, cue: str | None = None) -> dict:
         try:
-            r = self._http.post("/api/sound/test")
+            r = self._http.post("/api/sound/test", json={"cue": cue})
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:

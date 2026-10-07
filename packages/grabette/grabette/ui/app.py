@@ -7,6 +7,7 @@ import io
 import logging
 import math
 import time
+from functools import partial
 from urllib.parse import quote
 
 import gradio as gr
@@ -297,6 +298,74 @@ html.gb-off .toast-wrap {
 #ov-page .ov-volume .ov-note p {
     text-align: left !important;
 }
+#ov-page .ov-volume-row .ov-sound-help {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+    font-weight: 700 !important;
+    background: var(--color-accent-soft) !important;
+    border: 1px solid var(--color-accent) !important;
+    color: var(--color-accent) !important;
+}
+#ov-page .ov-volume-row .ov-sound-help:hover {
+    background: var(--color-accent) !important;
+    color: #fff !important;
+}
+/* The "?" next to Test sounds opens this, over the page. */
+#ov-sound-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+    z-index: 9999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    padding: 1rem !important;
+    border: none !important;
+    border-radius: 0 !important;
+}
+#ov-sound-modal.hide {
+    display: none !important;
+}
+#ov-sound-card {
+    max-width: 420px !important;
+    width: 100% !important;
+    flex: 0 1 auto !important;
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 12px !important;
+    padding: 1.5rem !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4) !important;
+}
+#ov-sound-card .ov-cue-row {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: .5rem !important;
+}
+#ov-sound-card .ov-cue {
+    display: grid;
+    grid-template-columns: 40px 1fr;
+    gap: 1rem;
+    align-items: center;
+}
+#ov-sound-card .ov-cue svg {
+    width: 40px;
+    height: 20px;
+    color: var(--body-text-color);
+}
+#ov-sound-card .ov-cue-play {
+    width: 32px !important;
+    height: 32px !important;
+    min-width: 32px !important;
+    padding: 0 !important;
+    border-radius: 50% !important;
+}
+#ov-sound-card .ov-sound-close {
+    align-self: flex-end !important;
+}
 @media (max-width: 560px) {
     /* A phone shows one column, so a full-width button is the easy target. */
     #ov-page .ov-cta button,
@@ -479,6 +548,25 @@ html.gb-off .toast-wrap {
 }
 #tr-page .grabette-step .row {
     justify-content: flex-start !important;
+}
+#tr-page .tr-howto {
+    background: var(--color-accent-soft);
+    border-left: 4px solid var(--color-accent);
+    border-radius: 10px;
+    padding: .8rem 1rem;
+    font-size: .9rem;
+}
+#tr-page .tr-howto .ov-cues {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: .5rem .75rem;
+    align-items: center;
+    margin-top: .5rem;
+}
+#tr-page .tr-howto svg {
+    width: 32px;
+    height: 16px;
+    color: var(--body-text-color);
 }
 /* Only the action row is centred: its two controls must sit on one line even
    when one of them wraps. Rows of figures stay top-aligned, so the animations
@@ -922,6 +1010,55 @@ _SOUND_TEST = "Test sounds"
 _SOUND_PLAYING = "Playing"
 # Upper bound on waiting for the test sequence (~3 s) to report it is over.
 _SOUND_TEST_TIMEOUT_S = 15.0
+
+
+def _cue_icon(ys: tuple[int, ...]) -> str:
+    """A cue drawn as its notes: one dot per note, higher for a higher pitch."""
+    step = 40 // (len(ys) + 1)
+    dots = "".join(
+        f"<circle cx='{step * (i + 1)}' cy='{y}' r='3.5' fill='currentColor'/>"
+        for i, y in enumerate(ys)
+    )
+    return f"<svg viewBox='0 0 40 20' aria-hidden='true'>{dots}</svg>"
+
+
+def _ramp_icon(rising: bool) -> str:
+    """A rising or falling cue: a right triangle, its slope the pitch."""
+    pts = "8,18 32,18 32,2" if rising else "8,2 8,18 32,18"
+    return (f"<svg viewBox='0 0 40 20' aria-hidden='true'>"
+            f"<polygon points='{pts}' fill='currentColor'/></svg>")
+
+
+_SOUND_HELP_HTML = (
+    "<h3 style='margin:0 0 .4rem;'>Grabette sounds</h3>"
+    "<p style='margin:0;color:var(--body-text-color-subdued);'>"
+    "<i>Test sounds</i> plays, in this order, the 4 sounds your Grabette can make. "
+    "▶ plays just one.</p>"
+)
+
+# What "Test sounds" plays, in TEST_SEQUENCE order (hardware/sound.py): the cue
+# each ▶ plays, and its explanation.
+_SOUND_CUES = (
+    ("capture_start",
+     f"{_ramp_icon(True)}<div><b>Rising</b>: a recording has started.</div>"),
+    ("capture_stop",
+     f"{_ramp_icon(False)}<div><b>Falling</b>: the recording has stopped.</div>"),
+    ("capture_saved",
+     f"{_cue_icon((10,))}<div><b>One beep</b>: muxing is done, the episode is saved.</div>"),
+    ("capture_error",
+     f"{_cue_icon((10, 10, 10))}<div><b>Three beeps</b>: something went wrong with the recording.</div>"),
+)
+
+# Above the button animations on Test Recording: what the LED and the beeps mean.
+_TR_HOWTO_HTML = (
+    "<div class='tr-howto'>"
+    "<b>Wait for the start and stop signals:</b>"
+    "<div class='ov-cues'>"
+    f"{_ramp_icon(True)}<div>Rising beep after the first press, LED stops blinking: <b>recording started</b>.</div>"
+    f"{_ramp_icon(False)}<div>Falling beep after the second press: <b>recording stopped</b>.</div>"
+    f"{_cue_icon((10,))}<div>Last beep, LED stops blinking: muxing done, <b>ready</b> for another episode.</div>"
+    "</div></div>"
+)
 
 
 def _mute_classes(level: int) -> list[str]:
@@ -2148,6 +2285,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (gr.update(value=_SOUND_TEST, interactive=True),
                 _sound_note(res) if "error" in res else gr.update())
 
+    def on_cue_play(cue):
+        """Play one cue of the help, on the Grabette's speaker."""
+        res = client.test_sound(cue)
+        return _sound_note(res) if "error" in res else ""
+
     with gr.Blocks(title="Grabette", css=MODAL_CSS, head=NAV_HEAD) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         _title_bar()
@@ -2178,8 +2320,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             _SOUND_TEST, size="sm", scale=0, min_width=0,
                             elem_classes="ov-sound-test",
                         )
+                        ov_sound_help_btn = gr.Button(
+                            "?", size="sm", scale=0, min_width=0,
+                            elem_classes="ov-sound-help",
+                        )
                     ov_sound_note = gr.Markdown("", elem_classes="ov-note")
             ov_sound_default = gr.State(_SOUND_DEFAULT)
+
+            with gr.Column(visible=False, elem_id="ov-sound-modal") as ov_sound_modal:
+                with gr.Column(elem_id="ov-sound-card"):
+                    gr.HTML(_SOUND_HELP_HTML)
+                    ov_cue_btns = []
+                    for cue, text in _SOUND_CUES:
+                        with gr.Row(elem_classes="ov-cue-row"):
+                            gr.HTML(f"<div class='ov-cue'>{text}</div>")
+                            ov_cue_btns.append((cue, gr.Button(
+                                "▶", size="sm", scale=0, min_width=0,
+                                elem_classes="ov-cue-play",
+                            )))
+                    ov_cue_note = gr.Markdown("", elem_classes="ov-note")
+                    ov_sound_close_btn = gr.Button(
+                        "Got it", size="sm", scale=0,
+                        elem_classes="ov-sound-close",
+                    )
 
             # Before anything else on the device: it will not record until
             # this is done.
@@ -2275,6 +2438,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ov_sound_test_btn.click(
             fn=on_sound_test_start, outputs=ov_sound_test_btn, queue=False,
         ).then(fn=on_sound_test, outputs=[ov_sound_test_btn, ov_sound_note])
+        ov_sound_help_btn.click(fn=lambda: gr.update(visible=True),
+                                outputs=ov_sound_modal, queue=False)
+        ov_sound_close_btn.click(fn=lambda: (gr.update(visible=False), ""),
+                                 outputs=[ov_sound_modal, ov_cue_note],
+                                 queue=False)
+        for cue, btn in ov_cue_btns:
+            btn.click(fn=partial(on_cue_play, cue), outputs=ov_cue_note)
         demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
                                           ov_sound_note, ov_sound_default])
         demo.load(fn=None, js=_VOLUME_TIP_JS)
@@ -2318,6 +2488,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     1, "Record a few seconds",
                     "Press the button, pick an object up, and press again to stop.",
                 ))
+                gr.HTML(_TR_HOWTO_HTML)
                 # min_width low enough to keep the two animations side by
                 # side in the narrow card, high enough that a phone wraps
                 # them onto two rows instead of shrinking them to thumbnails.
