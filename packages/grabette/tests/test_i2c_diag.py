@@ -164,3 +164,17 @@ def test_report_shows_checks_verdict_and_manual_commands(tmp_path):
     assert "I2C driver (i2c-dev)" in out
     assert "i2c-dev driver is not loaded" in out
     assert "sudo modprobe i2c-dev" in out
+
+
+def test_report_shows_cable_help_only_for_a_silent_proximal_sensor(tmp_path):
+    from grabette.ui.app import _diag_report_html
+
+    root = _healthy_root(tmp_path)
+    gif = "proximal-sensor-cable.gif"
+    no_proximal = _probe({(3, 0x40): 0x20})
+    assert gif in _diag_report_html(d.diagnose(root, no_proximal).to_dict())
+    assert gif not in _diag_report_html(d.diagnose(root, _BOTH_OK).to_dict())
+    no_distal = _probe({(4, 0x40): 0x20})
+    assert gif not in _diag_report_html(d.diagnose(root, no_distal).to_dict())
+    wrong_chip = _probe({(3, 0x40): 0x20, (4, 0x36): 0x20})
+    assert gif not in _diag_report_html(d.diagnose(root, wrong_chip).to_dict())

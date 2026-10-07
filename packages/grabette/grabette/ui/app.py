@@ -956,7 +956,40 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
             'grabette)</summary><pre style="margin:.4rem 0 0;padding:.6rem;'
             'border-radius:8px;background:var(--background-fill-secondary);'
             f'white-space:pre-wrap;">{cmds}</pre></details>')
-    return "<div>" + "".join(rows) + verdict + manual + "</div>"
+    return ("<div>" + "".join(rows) + _diag_cable_help_html(diag) + verdict
+            + manual + "</div>")
+
+
+# Where the proximal sensor's cable runs, for a sensor that does not answer at
+# all (a wrong chip is not a cable). Served from grabette/ui/assets like the
+# Test Recording gifs.
+_PROXIMAL_BUS = next(bus for name, bus, _, _ in i2c_diag.SENSOR_BUSES
+                     if name == "proximal")
+_CABLE_TIPS = (
+    "Check the connections on both ends of the cable.",
+    "Check the cable is not pinched anywhere along the way.",
+)
+
+
+def _diag_cable_help_html(diag: dict) -> str:
+    dead = any(c.get("key") == f"sensor_{_PROXIMAL_BUS}"
+               and c.get("status") == i2c_diag.FAIL
+               and c.get("detail", "").startswith("No answer")
+               for c in diag.get("checks", []))
+    if not dead:
+        return ""
+    tips = "".join(
+        '<li style="display:flex;gap:.5rem;align-items:baseline;">'
+        f'<span aria-hidden="true">👁</span><span>{html.escape(t)}</span></li>'
+        for t in _CABLE_TIPS)
+    return (
+        '<div style="margin-top:.8rem;">'
+        '<img src="/ui-assets/proximal-sensor-cable.gif" '
+        'alt="The proximal sensor cable, from the HAT to the sensor" '
+        'style="width:100%;display:block;border-radius:10px;background:#fff;" '
+        'onerror="this.style.display=\'none\';">'
+        '<ul style="list-style:none;margin:.6rem 0 0;padding:0;'
+        f'display:grid;gap:.3rem;font-weight:600;">{tips}</ul></div>')
 
 
 def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
