@@ -352,6 +352,26 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    # -- Calibration --
+
+    def get_calibration(self) -> dict | None:
+        try:
+            r = self._http.get("/api/calibration")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
+    def calibrate(self) -> dict:
+        try:
+            r = self._http.post("/api/calibration")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- Replay --
 
     def replay_start(self, episode_id: str) -> dict:

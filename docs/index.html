@@ -247,6 +247,12 @@
         /* Subdued card for the out-of-flow diagnostics panel — same treatment
            as the fleet's .sp-manage-zone. */
         .card.diag { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); margin-top: 1.4rem; }
+        /* Collapsed, it is a single line: the label keeps its own look, the
+           card loses most of its padding. */
+        details.card.diag { padding: .7rem 1.2rem; }
+        details.card.diag[open] { padding-bottom: 1.2rem; }
+        details.card.diag > summary { margin: 0; padding: 0; }
+        details.card.diag[open] > summary { margin-bottom: .9rem; }
         .section-label {
             font-size: .72rem;
             font-weight: 700;
@@ -509,6 +515,35 @@
             .step-card:not([hidden]) { animation: none; }
         }
 
+        /* Calibration photos: the grabette fully open, front and top, side by
+           side. Transparent PNGs with black fingers, so each sits on a light
+           tile — on the dark backdrop the fingers would vanish. Same treatment
+           as the dashboard's calibration popup. */
+        .calib-figure { margin: 0 0 1.2rem; }
+        .calib-photos { display: flex; gap: .6rem; }
+        .calib-photos > div { flex: 1; min-width: 0; }
+        .calib-photos img {
+            display: block;
+            width: 100%;
+            height: 200px;
+            object-fit: contain;
+            padding: .5rem;
+            border-radius: 12px;
+            background: #f1f5f9;
+        }
+        .calib-photos span,
+        .calib-figure figcaption {
+            display: block;
+            margin-top: .3rem;
+            text-align: center;
+            color: #8b98ad;
+            font-size: .76rem;
+        }
+        .calib-figure figcaption { margin-top: .5rem; font-size: .8rem; }
+        /* The emerald of .prereq and the success line: a state that is fine. */
+        .card.calib-done { background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.35); }
+        .calib-done-title { color: #a7f3d0; font-weight: 700; font-size: 1rem; margin-bottom: .35rem; }
+
         /* Collapsible "available networks" disclosure */
         details#networkDetails { margin-bottom: .5rem; }
         summary {
@@ -538,6 +573,7 @@
             .hero-logo { width: 52px; }
             .power-row { flex-direction: column; align-items: stretch; gap: 1rem; }
             .power-row .video-frame { flex: none; }
+            .calib-photos img { height: 150px; }
             .tabs { gap: .15rem; padding: .25rem; }
             .tab { padding: .5rem .3rem; font-size: .78rem; gap: .3rem; }
         }
@@ -558,7 +594,7 @@
             </div>
         </div>
 
-        <!-- Three tabs, in the order a new owner does them. Each panel is a
+        <!-- The tabs, in the order a new owner does them. Each panel is a
              tabpanel in the WAI-ARIA sense: one visible at a time, arrow keys
              move between the tabs, and the selected one is mirrored into the
              URL fragment so a tab can be linked to directly. -->
@@ -577,9 +613,14 @@
                 <span class="tab-warn" id="wifiTabWarn" hidden role="img"
                       aria-label="this browser cannot run the tool"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
             </button>
+            <button class="tab" id="tab-calib" role="tab" aria-selected="false" tabindex="-1"
+                    aria-controls="panel-calib" onclick="selectTab('calibration')">
+                #4 Calibration
+                <span class="tab-dot" id="calibDot" hidden aria-label="calibrated"></span>
+            </button>
             <button class="tab" id="tab-dash" role="tab" aria-selected="false" tabindex="-1"
                     aria-controls="panel-dash" onclick="selectTab('dashboard')">
-                #4 Dashboard
+                #5 Dashboard
                 <span class="tab-dot" id="dashDot" hidden aria-label="ready"></span>
             </button>
         </div>
@@ -595,7 +636,7 @@
             </video>
             <div class="video-missing" id="videoMissing" hidden>
                 <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m22 8-6 4 6 4V8z"/><rect x="2" y="6" width="14" height="12" rx="2"/></svg>
-                <div>Video coming soon.<br>The next three tabs have the written steps.</div>
+                <div>Video coming soon.<br>The next tabs have the written steps.</div>
             </div>
         </div>
         <p class="video-caption">An overview of what a Grabette is, what it's used for, and how to use it.</p>
@@ -750,9 +791,10 @@
         </div>
 
         <!-- Not a step: ping and network status are usable at any point once
-             connected, so this panel sits outside the numbered flow. -->
-        <div class="card diag step-card" id="card-diag" hidden>
-            <div class="section-label">Diagnostics</div>
+             connected, so this panel sits outside the numbered flow — and
+             collapsed, since it is only for when something goes wrong. -->
+        <details class="card diag step-card" id="card-diag" hidden>
+            <summary class="section-label">Diagnostics</summary>
             <button class="btn-secondary" id="btnPing" onclick="sendPing()" disabled>
                 Ping
             </button>
@@ -760,7 +802,7 @@
                 Read Network Status
             </button>
             <div class="step-msg" id="msgStatus"></div>
-        </div>
+        </details>
 
             <!-- Full protocol trace of the BLE exchange. Collapsed: each step
                  reports its own outcome above, so the raw command echo is for
@@ -770,14 +812,62 @@
                 <div id="log"></div>
             </details>
 
-            <!-- Appears with the address itself: the reader is on this tab when
-                 the device finally reports one, so the hand-off has to come to
-                 them rather than wait on the other tab. -->
-            <button class="btn-primary next-btn" id="btnToDash" hidden
+            <!-- Shown, greyed out, from the moment WiFi can be configured, so the
+                 next step is in sight; usable once the device reports an
+                 address. The reader is on this tab when it does, so the hand-off
+                 has to come to them rather than wait on the other tab. It leads
+                 to the calibration, the last step before the dashboard. -->
+            <button class="btn-primary next-btn" id="btnToDash" hidden disabled
+                    title="Available once your device is on WiFi"
+                    onclick="selectTab('calibration')">Next: calibrate →</button>
+        </div>
+
+        <!-- Tab 4 — angle-sensor calibration, over the same Bluetooth link: the
+             page cannot reach the dashboard's API (HTTPS → plain http is mixed
+             content), so the device's BLE service forwards CALIBRATE to it.
+             Same steps as the dashboard's "Calibrate my device" popup. -->
+        <div class="panel" id="panel-calib" role="tabpanel" aria-labelledby="tab-calib" tabindex="0" hidden>
+            <div class="section-head">
+                <h2>Calibrate the gripper sensors</h2>
+                <p>Sets the gripper's fully open position, so its opening is measured right. Your Grabette will not record until it is calibrated.</p>
+            </div>
+
+            <div class="card" id="calibWait">
+                <p class="wait-note" id="calibWaitText">Connect to your Grabette in <b>WiFi setup</b>
+                    first — the calibration goes over the same Bluetooth link.</p>
+            </div>
+
+            <!-- Already calibrated: said first, with the way out, so the steps
+                 below read as optional (calibrating again) rather than as the
+                 next thing to do. -->
+            <div class="card step-card calib-done" id="calibDone" hidden>
+                <div class="calib-done-title">✓ Your Grabette is already calibrated</div>
+                <p class="step-hint">You can go straight to the dashboard, or calibrate it again below.</p>
+                <button class="btn-primary" onclick="selectTab('dashboard')">Open the dashboard →</button>
+            </div>
+
+            <div class="card step-card" id="card-calib" hidden>
+                <div class="step"><span class="step-num">1</span> Open the gripper fully</div>
+                <p class="step-hint">Open the fingers all the way, until they are against their stop.</p>
+                <figure class="calib-figure">
+                    <div class="calib-photos">
+                        <div><img src="images/calibration-open-front.png" alt="Grabette fully open, front view"><span>Front view</span></div>
+                        <div><img src="images/calibration-open-top.png" alt="Grabette fully open, top view"><span>Top view</span></div>
+                    </div>
+                    <figcaption>Gripper fully open, fingers against their stop</figcaption>
+                </figure>
+
+                <div class="step"><span class="step-num">2</span> Calibrate the sensors</div>
+                <p class="step-hint">Keep the gripper fully open while it runs.</p>
+                <button class="btn-primary" id="btnCalib" onclick="runCalibration()">Start calibration</button>
+                <div class="step-msg" id="msgCalib"></div>
+            </div>
+
+            <button class="btn-primary next-btn" id="btnCalibNext" hidden
                     onclick="selectTab('dashboard')">Open the dashboard →</button>
         </div>
 
-        <!-- Tab 3 — the hand-off. The address only exists once the device has
+        <!-- Tab 5 — the hand-off. The address only exists once the device has
              joined a network and reported it; this page is served over HTTPS so
              it can never probe a plain-http address, only offer it. Reachable
              before then, because a tab that says what it is waiting for beats
@@ -841,9 +931,11 @@
 
     // Tabs. Roving tabindex + arrow keys, per the WAI-ARIA tabs pattern: only
     // the selected tab is in the tab order, the arrows move between them.
-    const TABS = ['video', 'power', 'wifi', 'dashboard'];
-    const TAB_ID = { video: 'tab-video', power: 'tab-power', wifi: 'tab-wifi', dashboard: 'tab-dash' };
-    const PANEL_ID = { video: 'panel-video', power: 'panel-power', wifi: 'panel-wifi', dashboard: 'panel-dash' };
+    const TABS = ['video', 'power', 'wifi', 'calibration', 'dashboard'];
+    const TAB_ID = { video: 'tab-video', power: 'tab-power', wifi: 'tab-wifi',
+                     calibration: 'tab-calib', dashboard: 'tab-dash' };
+    const PANEL_ID = { video: 'panel-video', power: 'panel-power', wifi: 'panel-wifi',
+                       calibration: 'panel-calib', dashboard: 'panel-dash' };
     let currentTab = 'video';
 
     function selectTab(name, moveFocus) {
@@ -860,6 +952,7 @@
         // into view — on a tall panel that lands the reader mid-page.
         history.replaceState(null, '', '#' + name);
         if (moveFocus) document.getElementById(TAB_ID[name]).focus();
+        if (name === 'calibration') checkCalibration();
     }
 
     document.querySelector('.tabs').addEventListener('keydown', (e) => {
@@ -874,8 +967,6 @@
         selectTab(next, true);
     });
 
-    selectTab(location.hash.slice(1) || 'video');
-
     // The dashboard tab's two states. The green dot and the hand-off button are
     // how the reader learns the address arrived while they were on the WiFi tab;
     // switching tabs under them would hide the WiFi step's own result.
@@ -883,7 +974,9 @@
         document.getElementById('card-dash').hidden = !on;
         document.getElementById('dashWait').hidden = on;
         document.getElementById('dashDot').hidden = !on;
-        document.getElementById('btnToDash').hidden = !on;
+        const next = document.getElementById('btnToDash');
+        next.disabled = !on;
+        next.title = on ? '' : 'Available once your device is on WiFi';
     }
 
     // The mp4 and the gif are deployed separately from this file; until they
@@ -983,6 +1076,8 @@
 
         reveal('card-wifi', connected);
         reveal('card-diag', connected);
+        reveal('btnToDash', connected);
+        resetCalibration();
         // Always hidden on a state change: the address belongs to whichever
         // device was on the other end, and is stale the moment that changes.
         setDashReady(false);
@@ -1426,18 +1521,18 @@
         return !hotspot;
     }
 
-    // After credentials are accepted the device still has to associate and take
-    // a DHCP lease, so the address is not there yet. The status characteristic
-    // is refreshed by the service every 10s; poll it until a non-hotspot address
-    // shows up, so step 4 appears on its own rather than waiting for the user to
-    // go hunting in Diagnostics.
+    // nmcli only answers once the device has its address, and the device
+    // republishes the status as it answers, so the first read usually has it.
+    // Older firmware only refreshes the status characteristic every 10s, so keep
+    // polling until a non-hotspot address shows up — the hand-off then appears
+    // on its own rather than waiting for the user to go hunting in Diagnostics.
     const DASH_POLL_MS = 2500;
     const DASH_POLL_TRIES = 10;
 
     async function awaitDashboard() {
         if (!networkStatusChar) return;
         for (let i = 0; i < DASH_POLL_TRIES; i++) {
-            await new Promise(r => setTimeout(r, DASH_POLL_MS));
+            if (i) await new Promise(r => setTimeout(r, DASH_POLL_MS));
             if (!device || !device.gatt.connected) return;
             let status;
             try {
@@ -1497,6 +1592,99 @@
         // mark the tab so a dead-end tool is not discovered three minutes in.
         document.getElementById('wifiTabWarn').hidden = false;
     }
+
+    // ---- Angle-sensor calibration (tab 4) ----
+    //
+    // CALIB_STATUS / CALIBRATE are forwarded by the device's BLE service to the
+    // dashboard's own /api/calibration, so this runs the very zeroing the
+    // dashboard's "Calibrate my device" does. Both need the PIN, neither
+    // consumes it. Firmware older than this step answers "Unknown command".
+    let calibChecked = false;   // CALIB_STATUS asked for the device now connected
+    let calibBusy = false;      // one BLE command at a time (see sendCommand)
+
+    const CALIB_TOO_OLD = "This Grabette's software is too old to calibrate from here — " +
+        'use "Calibrate my device" in its dashboard instead.';
+
+    function calibReplyText(resp) {
+        return /Unknown command/i.test(resp) ? CALIB_TOO_OLD : replyText(resp);
+    }
+
+    // Done (or nothing to do): the dashboard is next. Calibrating again stays
+    // possible, as the secondary action. `already` (found calibrated on
+    // arrival) says so above the steps, with the dashboard button there;
+    // otherwise it follows the steps, under the result of the run.
+    function setCalibrated(on, already = false) {
+        const btn = document.getElementById('btnCalib');
+        btn.textContent = on ? 'Calibrate again' : 'Start calibration';
+        btn.className = on ? 'btn-secondary' : 'btn-primary';
+        document.getElementById('calibDot').hidden = !on;
+        reveal('calibDone', on && already);
+        document.getElementById('btnCalibNext').hidden = !on || already;
+    }
+
+    // Which of the panel's three faces fits the device on the other end.
+    function resetCalibration() {
+        calibChecked = false;
+        clearMsg('msgCalib');
+        setCalibrated(false);
+        const connected = !!(device && device.gatt.connected && commandChar);
+        const grabette = connected && connectedType === 'Grabette';
+        reveal('card-calib', grabette);
+        document.getElementById('calibWait').hidden = grabette;
+        document.getElementById('calibWaitText').innerHTML = connected
+            ? 'Only a <b>Grabette</b> has gripper sensors to calibrate — nothing to do here for a '
+              + escapeHtml(connectedType) + '.'
+            : 'Connect to your Grabette in <b>WiFi setup</b> first — the calibration goes over '
+              + 'the same Bluetooth link.';
+        document.getElementById('btnCalibNext').hidden = !(connected && !grabette);
+        if (currentTab === 'calibration') checkCalibration();
+    }
+
+    // Asked once per connection, when the tab is opened: a Grabette that is
+    // already calibrated skips straight to the dashboard hand-off.
+    async function checkCalibration() {
+        if (calibChecked || calibBusy || connectedType !== 'Grabette'
+            || !device || !device.gatt.connected) return;
+        calibChecked = true;
+        calibBusy = true;
+        try {
+            stepMsg('msgCalib', 'Checking the calibration…');
+            if (!await authenticate('msgCalib')) return;
+            const resp = await sendCommand('CALIB_STATUS');
+            if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
+            if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
+            if (/NEEDS_CALIBRATION/.test(resp)) {
+                clearMsg('msgCalib');
+            } else {
+                clearMsg('msgCalib');
+                setCalibrated(true, true);
+            }
+        } finally {
+            calibBusy = false;
+        }
+    }
+
+    async function runCalibration() {
+        if (calibBusy) return;
+        const btn = document.getElementById('btnCalib');
+        calibBusy = true;
+        btn.disabled = true;
+        try {
+            stepMsg('msgCalib', 'Calibrating — keep the gripper fully open…');
+            if (!await authenticate('msgCalib')) return;
+            const resp = await sendCommand('CALIBRATE');
+            if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
+            if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
+            stepMsg('msgCalib', 'Your Grabette is calibrated.', 'ok');
+            setCalibrated(true);
+        } finally {
+            calibBusy = false;
+            btn.disabled = false;
+        }
+    }
+
+    resetCalibration();
+    selectTab(location.hash.slice(1) || 'video');
 
     async function readNetworkStatus() {
         if (!networkStatusChar) {
