@@ -1426,7 +1426,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """The "Calibrate my device" button (right after `warning`, in one
         callout, when given) and the two-step popup it opens. Returns the box
         holding the button, hidden until the device says it needs calibrating —
-        the caller's poll shows it.
+        the caller's poll shows it — and a function that makes any other button
+        open the same popup (the Overview's "Recalibrate").
         """
         classes = ["gb-calib-box"] + (["gb-calib-callout"] if warning else [])
         with gr.Row(visible=False, elem_id=elem_id,
@@ -1461,14 +1462,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     run_btn = gr.Button("Start calibration", variant="primary",
                                         scale=0, min_width=0,
                                         elem_classes="gb-calib-run")
-        open_btn.click(fn=on_calibrate_open,
-                       outputs=[modal, run_btn, msg, done_btn], queue=False)
+        def bind_open(btn: gr.Button) -> None:
+            btn.click(fn=on_calibrate_open,
+                      outputs=[modal, run_btn, msg, done_btn], queue=False)
+
+        bind_open(open_btn)
         for _btn in (close_btn, done_btn):
             _btn.click(fn=lambda: gr.update(visible=False), outputs=modal,
                        queue=False)
         run_btn.click(fn=on_calibrate_start, outputs=run_btn, queue=False).then(
             fn=on_calibrate, outputs=[run_btn, msg, box, done_btn])
-        return box
+        return box, bind_open
 
     def poll_calibration():
         st = client.get_calibration() or {}
@@ -2179,7 +2183,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # Before anything else on the device: it will not record until
             # this is done.
-            ov_calib_box = _calibration_prompt(_CALIB_REQUIRED, "ov-calib")
+            ov_calib_box, ov_calib_bind = _calibration_prompt(_CALIB_REQUIRED,
+                                                              "ov-calib")
 
             # ── Camera | 3D model | Device | Health ───────────────────
             # min_width is what makes this responsive: four columns on a
@@ -2202,6 +2207,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("3D model"))
                     gr.HTML(_OV_VIEWER_IFRAME)
+                    # Recalibrating is rare, so a small button under the
+                    # model rather than anything louder: it opens the same
+                    # popup as the "not calibrated" warning.
+                    with gr.Row(elem_classes="ov-tile-btn"):
+                        ov_calib_bind(gr.Button("Recalibrate", size="sm"))
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Device"))
                     ov_device_card = gr.HTML(_ov_device_card(None, None))
@@ -2320,7 +2330,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                             "Press again to stop"))
                 tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
-                tr_calib_box = _calibration_prompt(None)
+                tr_calib_box, _ = _calibration_prompt(None)
                 # 1 Hz against the daemon's cached state — the page has no other
                 # way to learn about a press that happened on the device.
                 tr_poll_timer = gr.Timer(1.0)
