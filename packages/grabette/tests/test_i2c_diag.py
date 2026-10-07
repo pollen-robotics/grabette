@@ -178,3 +178,11 @@ def test_report_shows_cable_help_only_for_a_silent_proximal_sensor(tmp_path):
     assert gif not in _diag_report_html(d.diagnose(root, no_distal).to_dict())
     wrong_chip = _probe({(3, 0x40): 0x20, (4, 0x36): 0x20})
     assert gif not in _diag_report_html(d.diagnose(root, wrong_chip).to_dict())
+
+
+def test_proximal_verdict_leaves_the_advice_to_the_cable_guide(tmp_path):
+    root = _healthy_root(tmp_path)
+    no_proximal = d.diagnose(root, _probe({(3, 0x40): 0x20}))
+    assert no_proximal.summary == "The proximal angle sensor does not answer."
+    no_distal = d.diagnose(root, _probe({(4, 0x40): 0x20}))
+    assert "check the sensor cable" in no_distal.summary

@@ -956,7 +956,7 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
             'grabette)</summary><pre style="margin:.4rem 0 0;padding:.6rem;'
             'border-radius:8px;background:var(--background-fill-secondary);'
             f'white-space:pre-wrap;">{cmds}</pre></details>')
-    return ("<div>" + "".join(rows) + _diag_cable_help_html(diag) + verdict
+    return ("<div>" + "".join(rows) + verdict + _diag_cable_help_html(diag)
             + manual + "</div>")
 
 

@@ -272,9 +272,12 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
                                   "on the joint"))
     if dead:
         d.summary = (f"The {' and '.join(dead)} angle sensor"
-                     f"{'s do' if len(dead) > 1 else ' does'} not answer: "
-                     "check the sensor cable and its connector on the HAT, "
-                     "then run the diagnostic again.")
+                     f"{'s do' if len(dead) > 1 else ' does'} not answer")
+        # A dead proximal sensor gets the dashboard's cable guide under the
+        # verdict (ui/app.py, _diag_cable_help_html): no advice here to repeat.
+        d.summary += ("." if "proximal" in dead else
+                      ": check the sensor cable and its connector on the HAT, "
+                      "then run the diagnostic again.")
         return _finish(d)
 
     # Everything below the daemon works. What is left is the daemon itself
