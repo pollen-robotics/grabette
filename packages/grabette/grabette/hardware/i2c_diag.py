@@ -79,6 +79,9 @@ class Diagnosis:
     # out when the service user is not allowed to run it (no sudoers grant).
     manual: list[str] = field(default_factory=list)
     healthy: bool = False
+    # The sensor ("distal" / "proximal") whose cable to check, when one does not
+    # answer at all: the dashboard shows where that cable runs.
+    cable: str | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -248,7 +251,9 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
             return _finish(d)
 
     # 5 — each sensor answers on its bus.
-    dead = []
+    # Every sensor gets its row; the verdict names the first fault only — they
+    # are fixed one at a time, the live refresh moving on to the next.
+    first = None
     for name, bus, _, pins in SENSOR_BUSES:
         label = f"{name.capitalize()} sensor (bus {bus})"
         try:
@@ -259,10 +264,12 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
                 d.checks.append(Check(f"sensor_{bus}", label, FAIL,
                                       "An AS5600 answers at 0x36 — this grabette "
                                       "expects an AS5600L (0x40)"))
+                first = first or (f"The {name} angle sensor is an AS5600: "
+                                  "this grabette expects an AS5600L.", None)
             except OSError:
                 d.checks.append(Check(f"sensor_{bus}", label, FAIL,
                                       f"No answer at 0x40 — check its cable on {pins}"))
-            dead.append(name)
+                first = first or (f"The {name} angle sensor does not answer.", name)
             continue
         if status & STATUS_MD:
             d.checks.append(Check(f"sensor_{bus}", label, OK, "Answers, magnet detected"))
@@ -270,14 +277,8 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
             d.checks.append(Check(f"sensor_{bus}", label, WARN,
                                   "Answers, but sees no magnet — check the magnet "
                                   "on the joint"))
-    if dead:
-        d.summary = (f"The {' and '.join(dead)} angle sensor"
-                     f"{'s do' if len(dead) > 1 else ' does'} not answer")
-        # A dead proximal sensor gets the dashboard's cable guide under the
-        # verdict (ui/app.py, _diag_cable_help_html): no advice here to repeat.
-        d.summary += ("." if "proximal" in dead else
-                      ": check the sensor cable and its connector on the HAT, "
-                      "then run the diagnostic again.")
+    if first:
+        d.summary, d.cable = first
         return _finish(d)
 
     # Everything below the daemon works. What is left is the daemon itself

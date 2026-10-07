@@ -960,11 +960,11 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
             + manual + "</div>")
 
 
-# Where the proximal sensor's cable runs, for a sensor that does not answer at
-# all (a wrong chip is not a cable). Served from grabette/ui/assets like the
-# Test Recording gifs.
-_PROXIMAL_BUS = next(bus for name, bus, _, _ in i2c_diag.SENSOR_BUSES
-                     if name == "proximal")
+# Where a sensor's cable runs, for the sensor the diagnosis says does not
+# answer at all (a wrong chip is not a cable): <name>-sensor-cable.gif, served
+# from grabette/ui/assets like the Test Recording gifs. Only the first fault
+# gets its guide — with both sensors down, the second one's comes once the
+# first answers.
 _CABLE_TIPS = (
     "Check the connections on both ends of the cable.",
     "Check the cable is not pinched anywhere along the way.",
@@ -972,11 +972,8 @@ _CABLE_TIPS = (
 
 
 def _diag_cable_help_html(diag: dict) -> str:
-    dead = any(c.get("key") == f"sensor_{_PROXIMAL_BUS}"
-               and c.get("status") == i2c_diag.FAIL
-               and c.get("detail", "").startswith("No answer")
-               for c in diag.get("checks", []))
-    if not dead:
+    name = diag.get("cable")
+    if name not in {n for n, _, _, _ in i2c_diag.SENSOR_BUSES}:
         return ""
     tips = "".join(
         '<li style="display:flex;gap:.5rem;align-items:baseline;">'
@@ -984,8 +981,8 @@ def _diag_cable_help_html(diag: dict) -> str:
         for t in _CABLE_TIPS)
     return (
         '<div style="margin-top:.8rem;">'
-        '<img src="/ui-assets/proximal-sensor-cable.gif" '
-        'alt="The proximal sensor cable, from the HAT to the sensor" '
+        f'<img src="/ui-assets/{name}-sensor-cable.gif" '
+        f'alt="The {name} sensor cable, from the HAT to the sensor" '
         'style="width:100%;display:block;border-radius:10px;background:#fff;" '
         'onerror="this.style.display=\'none\';">'
         '<ul style="list-style:none;margin:.6rem 0 0;padding:0;'

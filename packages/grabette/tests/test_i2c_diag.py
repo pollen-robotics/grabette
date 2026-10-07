@@ -166,23 +166,31 @@ def test_report_shows_checks_verdict_and_manual_commands(tmp_path):
     assert "sudo modprobe i2c-dev" in out
 
 
-def test_report_shows_cable_help_only_for_a_silent_proximal_sensor(tmp_path):
+def test_report_shows_the_cable_guide_of_the_silent_sensor(tmp_path):
     from grabette.ui.app import _diag_report_html
 
     root = _healthy_root(tmp_path)
-    gif = "proximal-sensor-cable.gif"
-    no_proximal = _probe({(3, 0x40): 0x20})
-    assert gif in _diag_report_html(d.diagnose(root, no_proximal).to_dict())
-    assert gif not in _diag_report_html(d.diagnose(root, _BOTH_OK).to_dict())
-    no_distal = _probe({(4, 0x40): 0x20})
-    assert gif not in _diag_report_html(d.diagnose(root, no_distal).to_dict())
-    wrong_chip = _probe({(3, 0x40): 0x20, (4, 0x36): 0x20})
-    assert gif not in _diag_report_html(d.diagnose(root, wrong_chip).to_dict())
+
+    def report(answers):
+        return _diag_report_html(d.diagnose(root, _probe(answers)).to_dict())
+
+    assert "proximal-sensor-cable.gif" in report({(3, 0x40): 0x20})
+    assert "distal-sensor-cable.gif" in report({(4, 0x40): 0x20})
+    assert "sensor-cable.gif" not in report({(3, 0x40): 0x20, (4, 0x40): 0x20})
+    # A wrong chip is not a cable.
+    assert "sensor-cable.gif" not in report({(3, 0x40): 0x20, (4, 0x36): 0x20})
 
 
-def test_proximal_verdict_leaves_the_advice_to_the_cable_guide(tmp_path):
+def test_verdict_names_one_sensor_fault_at_a_time(tmp_path):
     root = _healthy_root(tmp_path)
     no_proximal = d.diagnose(root, _probe({(3, 0x40): 0x20}))
     assert no_proximal.summary == "The proximal angle sensor does not answer."
-    no_distal = d.diagnose(root, _probe({(4, 0x40): 0x20}))
-    assert "check the sensor cable" in no_distal.summary
+    assert no_proximal.cable == "proximal"
+    # Both down: both rows fail, but the verdict and the guide are the distal
+    # one's; the proximal one's comes once the distal sensor answers.
+    both = d.diagnose(root, _probe({}))
+    assert [c.status for c in both.checks[-2:]] == [d.FAIL, d.FAIL]
+    assert both.summary == "The distal angle sensor does not answer."
+    assert both.cable == "distal"
+    wrong_chip = d.diagnose(root, _probe({(3, 0x40): 0x20, (4, 0x36): 0x20}))
+    assert "is an AS5600" in wrong_chip.summary and wrong_chip.cable is None
