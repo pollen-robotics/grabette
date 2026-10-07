@@ -79,9 +79,11 @@ class Diagnosis:
     # out when the service user is not allowed to run it (no sudoers grant).
     manual: list[str] = field(default_factory=list)
     healthy: bool = False
-    # The sensor ("distal" / "proximal") whose cable to check, when one does not
-    # answer at all: the dashboard shows where that cable runs.
-    cable: str | None = None
+    # One entry per sensor at fault, in SENSOR_BUSES order: {"summary": one
+    # line, "cable": the sensor whose cable to check, or None when the cable is
+    # not the problem}. `summary` above is the first one's; the dashboard pages
+    # through them all.
+    faults: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -251,9 +253,6 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
             return _finish(d)
 
     # 5 — each sensor answers on its bus.
-    # Every sensor gets its row; the verdict names the first fault only — they
-    # are fixed one at a time, the live refresh moving on to the next.
-    first = None
     for name, bus, _, pins in SENSOR_BUSES:
         label = f"{name.capitalize()} sensor (bus {bus})"
         try:
@@ -264,12 +263,14 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
                 d.checks.append(Check(f"sensor_{bus}", label, FAIL,
                                       "An AS5600 answers at 0x36 — this grabette "
                                       "expects an AS5600L (0x40)"))
-                first = first or (f"The {name} angle sensor is an AS5600: "
-                                  "this grabette expects an AS5600L.", None)
+                d.faults.append({"summary": f"The {name} angle sensor is an "
+                                            "AS5600: this grabette expects an "
+                                            "AS5600L.", "cable": None})
             except OSError:
                 d.checks.append(Check(f"sensor_{bus}", label, FAIL,
                                       f"No answer at 0x40 — check its cable on {pins}"))
-                first = first or (f"The {name} angle sensor does not answer.", name)
+                d.faults.append({"summary": f"The {name} angle sensor does not "
+                                            "answer.", "cable": name})
             continue
         if status & STATUS_MD:
             d.checks.append(Check(f"sensor_{bus}", label, OK, "Answers, magnet detected"))
@@ -277,8 +278,8 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
             d.checks.append(Check(f"sensor_{bus}", label, WARN,
                                   "Answers, but sees no magnet — check the magnet "
                                   "on the joint"))
-    if first:
-        d.summary, d.cable = first
+    if d.faults:
+        d.summary = d.faults[0]["summary"]
         return _finish(d)
 
     # Everything below the daemon works. What is left is the daemon itself

@@ -181,16 +181,29 @@ def test_report_shows_the_cable_guide_of_the_silent_sensor(tmp_path):
     assert "sensor-cable.gif" not in report({(3, 0x40): 0x20, (4, 0x36): 0x20})
 
 
-def test_verdict_names_one_sensor_fault_at_a_time(tmp_path):
+def test_every_sensor_fault_is_listed_the_verdict_names_the_first(tmp_path):
     root = _healthy_root(tmp_path)
     no_proximal = d.diagnose(root, _probe({(3, 0x40): 0x20}))
     assert no_proximal.summary == "The proximal angle sensor does not answer."
-    assert no_proximal.cable == "proximal"
-    # Both down: both rows fail, but the verdict and the guide are the distal
-    # one's; the proximal one's comes once the distal sensor answers.
+    assert no_proximal.faults == [{"summary": no_proximal.summary,
+                                   "cable": "proximal"}]
     both = d.diagnose(root, _probe({}))
-    assert [c.status for c in both.checks[-2:]] == [d.FAIL, d.FAIL]
     assert both.summary == "The distal angle sensor does not answer."
-    assert both.cable == "distal"
+    assert [f["cable"] for f in both.faults] == ["distal", "proximal"]
     wrong_chip = d.diagnose(root, _probe({(3, 0x40): 0x20, (4, 0x36): 0x20}))
-    assert "is an AS5600" in wrong_chip.summary and wrong_chip.cable is None
+    assert "is an AS5600" in wrong_chip.summary
+    assert wrong_chip.faults[0]["cable"] is None
+
+
+def test_report_pages_through_several_faults(tmp_path):
+    from grabette.ui.app import _diag_report_html
+
+    root = _healthy_root(tmp_path)
+    one = _diag_report_html(d.diagnose(root, _probe({(3, 0x40): 0x20})).to_dict())
+    assert "gb-fault-nav" not in one  # nothing to page through
+    both = _diag_report_html(d.diagnose(root, _probe({})).to_dict())
+    assert "Problem 1 of 2" in both and "Problem 2 of 2" in both
+    # The first page shows; the others wait for Next.
+    assert both.count('class="gb-fault gb-on"') == 1
+    assert both.index("gb-on") < both.index("distal-sensor-cable.gif") \
+        < both.index("proximal-sensor-cable.gif")

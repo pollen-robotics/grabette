@@ -610,6 +610,24 @@ html.gb-off .toast-wrap {
     color: var(--body-text-color-subdued) !important;
     font-size: 1.1rem !important;
 }
+.gb-diag-card .gb-fault {
+    display: none !important;
+}
+.gb-diag-card .gb-fault.gb-on {
+    display: block !important;
+}
+.gb-diag-card button.gb-fault-nav {
+    padding: .25rem .6rem !important;
+    border: 1px solid var(--border-color-primary) !important;
+    background: var(--background-fill-secondary) !important;
+    color: var(--body-text-color) !important;
+    font-weight: 600 !important;
+    cursor: pointer;
+}
+.gb-diag-card button.gb-fault-nav:disabled {
+    opacity: .4;
+    cursor: default;
+}
 @media (max-width: 560px) {
     #tr-page .gb-diag-box .gb-diag-open,
     .gb-diag-box .gb-diag-open,
@@ -943,10 +961,8 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
             '<div style="font-size:.85rem;color:var(--body-text-color-subdued);">'
             f'{html.escape(c.get("detail", ""))}</div></div></div>')
     color = "#10b981" if diag.get("healthy") else "#ef4444"
-    verdict = (
-        f'<div style="margin-top:.8rem;padding:.6rem .8rem;border-radius:10px;'
-        f'background:{color}1a;border:1px solid {color}55;font-weight:600;">'
-        f'{html.escape(diag.get("summary", ""))}</div>')
+    verdict = (_diag_faults_html(diag["faults"]) if diag.get("faults") else
+               _diag_verdict_html(diag.get("summary", ""), color))
     manual = ""
     if diag.get("manual"):
         cmds = html.escape("\n".join(diag["manual"]))
@@ -956,23 +972,77 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
             'grabette)</summary><pre style="margin:.4rem 0 0;padding:.6rem;'
             'border-radius:8px;background:var(--background-fill-secondary);'
             f'white-space:pre-wrap;">{cmds}</pre></details>')
-    return ("<div>" + "".join(rows) + verdict + _diag_cable_help_html(diag)
-            + manual + "</div>")
+    return "<div>" + "".join(rows) + verdict + manual + "</div>"
 
 
-# Where a sensor's cable runs, for the sensor the diagnosis says does not
-# answer at all (a wrong chip is not a cable): <name>-sensor-cable.gif, served
-# from grabette/ui/assets like the Test Recording gifs. Only the first fault
-# gets its guide — with both sensors down, the second one's comes once the
-# first answers.
+def _diag_verdict_html(text: str, color: str) -> str:
+    return (
+        f'<div style="margin-top:.8rem;padding:.6rem .8rem;border-radius:10px;'
+        f'background:{color}1a;border:1px solid {color}55;font-weight:600;">'
+        f'{html.escape(text)}</div>')
+
+
+# Sensors at fault, one page each — its verdict, then how to fix it — with
+# Previous / Next between them when there are several (_DIAG_NAV_JS). The first
+# page shows; a redraw (the live refresh, on a changed diagnosis) starts over
+# from it.
+def _diag_faults_html(faults: list[dict]) -> str:
+    n = len(faults)
+    pages = []
+    for i, f in enumerate(faults):
+        nav = ""
+        if n > 1:
+            nav = (
+                '<div style="display:flex;align-items:center;gap:.5rem;'
+                'margin-top:.8rem;font-size:.85rem;font-weight:600;'
+                'color:var(--body-text-color-subdued);">'
+                f'<span style="flex:1;">Problem {i + 1} of {n}</span>'
+                + _diag_nav_btn("‹ Previous", -1, i == 0)
+                + _diag_nav_btn("Next ›", 1, i == n - 1) + '</div>')
+        pages.append(
+            f'<div class="gb-fault{" gb-on" if i == 0 else ""}">{nav}'
+            + _diag_verdict_html(f["summary"], "#ef4444")
+            + _diag_cable_help_html(f.get("cable")) + '</div>')
+    return '<div class="gb-faults">' + "".join(pages) + '</div>'
+
+
+def _diag_nav_btn(text: str, step: int, disabled: bool) -> str:
+    return (f'<button type="button" class="gb-fault-nav" data-step="{step}"'
+            f'{" disabled" if disabled else ""}>{text}</button>')
+
+
+# Gradio sanitizes HTML-component content (no onclick survives it): one
+# delegated listener per page turns the fault pages instead.
+_DIAG_NAV_JS = """
+() => {
+  if (window.__grabetteDiagNav) { return; }
+  window.__grabetteDiagNav = true;
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.gb-fault-nav');
+    if (!btn || btn.disabled) { return; }
+    var pages = btn.closest('.gb-faults').querySelectorAll(':scope > .gb-fault');
+    var i = Array.prototype.findIndex.call(pages, function (p) {
+      return p.classList.contains('gb-on');
+    });
+    var next = i + Number(btn.dataset.step);
+    if (next < 0 || next >= pages.length) { return; }
+    pages[i].classList.remove('gb-on');
+    pages[next].classList.add('gb-on');
+  });
+}
+"""
+
+
+# Where a sensor's cable runs, for a sensor that does not answer at all (a
+# wrong chip is not a cable): <name>-sensor-cable.gif, served from
+# grabette/ui/assets like the Test Recording gifs.
 _CABLE_TIPS = (
     "Check the connections on both ends of the cable.",
     "Check the cable is not pinched anywhere along the way.",
 )
 
 
-def _diag_cable_help_html(diag: dict) -> str:
-    name = diag.get("cable")
+def _diag_cable_help_html(name: str | None) -> str:
     if name not in {n for n, _, _, _ in i2c_diag.SENSOR_BUSES}:
         return ""
     tips = "".join(
@@ -2704,6 +2774,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
                                           ov_sound_note, ov_sound_default])
         demo.load(fn=None, js=_VOLUME_TIP_JS)
+        demo.load(fn=None, js=_DIAG_NAV_JS)
 
         ov_diag_timer = gr.Timer(3.0)
         ov_diag_timer.tick(fn=poll_angle_fault, outputs=ov_diag_box)
@@ -2863,6 +2934,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_tr.change(fn=None, inputs=batt_beep_tr, outputs=None, js=_BATTERY_BEEP_JS)
         test_demo.load(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
         test_demo.load(fn=None, js=_BATTERY_INIT_JS)
+        test_demo.load(fn=None, js=_DIAG_NAV_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 3 — Episodes
