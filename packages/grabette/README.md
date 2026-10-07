@@ -321,7 +321,9 @@ To put the device on WiFi without a screen or SSH, use the BLE setup service —
 
 ## Calibration
 
-Before using Grabette, calibrate the angle sensors. For that, open completely the gripper (Both joints must be fully extended when opening), then run the calibration script:
+Before using Grabette, calibrate the angle sensors. Until it is done the grabette refuses to record (error LED), and the dashboard shows **Your device is not calibrated** with a **Calibrate my device** button, on the Overview and on Test Recording. Click it, open the gripper completely (both joints fully extended, against their stop) and click **Start calibration**. It applies at once, no reboot needed.
+
+Over SSH, the script does the same thing (but needs a restart):
 ```bash
 python3 scripts/calibrate_angles.py
 sudo reboot

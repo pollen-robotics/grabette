@@ -80,6 +80,25 @@ class Backend(ABC):
         Default: nothing to bring up."""
         return None
 
+    # --- gripper angle calibration -------------------------------------------
+    # The angle sensors read the raw magnet angle; the zero (fingers fully
+    # open) is per device and has to be taken once on the device itself. Until
+    # it is, every gripper angle recorded is meaningless, so a backend that
+    # needs one reports it as a hardware_error too — needs_calibration is what
+    # lets the dashboard offer the fix rather than only show the refusal.
+
+    @property
+    def needs_calibration(self) -> bool:
+        """True while the angle sensors have no saved zero. Default: nothing
+        to calibrate."""
+        return False
+
+    async def calibrate_angles(self) -> dict:
+        """Take the current gripper pose (fully open) as the angle sensors'
+        zero, save it and apply it. Returns the saved calibration; raises
+        RuntimeError when it cannot be done right now."""
+        raise RuntimeError("This Grabette has no angle sensors to calibrate.")
+
     # --- busy gate -----------------------------------------------------------
     # A recording must not start on top of dataset work. On a Pi the upload is
     # not a sleeping socket: hf_xet chunks and hashes in native threads, so it

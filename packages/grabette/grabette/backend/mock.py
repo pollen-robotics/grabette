@@ -38,10 +38,11 @@ class MockBackend(Backend):
             "the gripper angle sensors could not be initialised (No device "
             "found for /dev/i2c-3) — mock"
             if os.environ.get("GRABETTE_MOCK_ANGLE_FAULT") else "")
-
-    @property
-    def hardware_error(self) -> str:
-        return self._angle_fault
+        # Starts as the device's real file says, so the dashboard's calibration
+        # flow can be tried on a workstation; calibrating only flips it — a mock
+        # has no zero to write into ~/.grabette.
+        from grabette.hardware.angle import load_calibration
+        self._calibrated = load_calibration() is not None
 
     @property
     def angle_sensors_status(self) -> dict:
@@ -138,6 +139,25 @@ class MockBackend(Backend):
         logger.info("MockBackend capture stopped")
         return status
 
+    @property
+    def needs_calibration(self) -> bool:
+        return not self._calibrated
+
+    @property
+    def hardware_error(self) -> str:
+        # Every live fault, in the same order as RpiBackend's.
+        faults = [self._angle_fault,
+                  "your device is not calibrated" if self.needs_calibration else ""]
+        return " / ".join(f for f in faults if f)
+
+    async def calibrate_angles(self) -> dict:
+        if self._capturing:
+            raise RuntimeError("Not during a recording.")
+        await asyncio.sleep(1.0)  # roughly what reading the sensors takes
+        self._calibrated = True
+        return {"sensor_1_offset_deg": 0.0, "sensor_2_offset_deg": 0.0,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")}
+
     def get_capture_status(self) -> CaptureStatus:
         duration = 0.0
         if self._capture_start:
@@ -145,6 +165,7 @@ class MockBackend(Backend):
         return CaptureStatus(
             is_capturing=self._capturing,
             blocked_reason=self.hardware_error or self.busy_reason,
+            needs_calibration=self.needs_calibration,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=self._frame_count,

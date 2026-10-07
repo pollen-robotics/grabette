@@ -1241,6 +1241,7 @@ def create_app() -> FastAPI:
         )
 
     from grabette.app.routers.angle import router as angle_router
+    from grabette.app.routers.calibration import router as calibration_router
     from grabette.app.routers.charts import router as charts_router
     from grabette.app.routers.oakd import router as oakd_router
     from grabette.app.routers.replay import router as replay_router
@@ -1263,6 +1264,7 @@ def create_app() -> FastAPI:
     app.include_router(teleop_router)
     app.include_router(oakd_router)
     app.include_router(angle_router)
+    app.include_router(calibration_router)
 
     # Serve URDF model + STL meshes as static files
     _urdf_dir = Path(__file__).resolve().parent.parent.parent / "urdf"

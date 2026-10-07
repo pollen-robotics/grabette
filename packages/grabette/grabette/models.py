@@ -28,6 +28,10 @@ class CaptureStatus(BaseModel):
     # instead of "Idle" — a device that looks free while it is not is how a
     # recording gets started on top of one.
     blocked_reason: str = ""
+    # The gripper angle sensors were never calibrated. Also part of
+    # blocked_reason; split out so the dashboard can offer the fix (the
+    # "Calibrate my device" button) rather than only quote the refusal.
+    needs_calibration: bool = False
 
 
 class SensorState(BaseModel):

@@ -67,7 +67,8 @@ def _camera_metadata(model: str, cap) -> dict:
 # report order so a device with both always words it the same way.
 _HW_OAKD = "oakd_calibration"
 _HW_ANGLE = "angle_sensors"
-_HW_ORDER = (_HW_OAKD, _HW_ANGLE)
+_HW_CALIB = "angle_calibration"
+_HW_ORDER = (_HW_OAKD, _HW_ANGLE, _HW_CALIB)
 
 # How often the idle watch retries sensors that never came up.
 _ANGLE_RETRY_S = 3.0
@@ -76,6 +77,8 @@ _ANGLE_FAULT_MSG = (
     "the gripper angle sensors {what}. Episodes would carry no angle_data.json "
     "and could never be converted."
 )
+# Kept short: the dashboard shows it as is, next to the button that fixes it.
+_CALIB_FAULT_MSG = "your device is not calibrated"
 
 
 class RpiBackend(Backend):
@@ -156,6 +159,7 @@ class RpiBackend(Backend):
 
         if self._enable_angle:
             self._init_angle_sensors()
+            self._check_angle_calibration()
 
         if self._enable_oakd:
             self._init_oakd()
@@ -342,6 +346,51 @@ class RpiBackend(Backend):
         if self._angle is not None:
             self._angle.stop()  # idle: closes the bus handles, nothing to join
         self._init_angle_sensors()
+
+    def _check_angle_calibration(self) -> None:
+        """Latch a fault while the angle sensors have no saved zero.
+
+        Without one the offsets are 0 and the recorded "angles" are the raw
+        magnet positions — a gripper channel that converts fine and means
+        nothing, which is worse than a missing one. Read once here and updated
+        by calibrate_angles, never per poll: hardware_error is on the 50 Hz
+        state loop."""
+        from grabette.hardware.angle import load_calibration
+        if load_calibration() is None:
+            self._set_hw_error(_HW_CALIB, _CALIB_FAULT_MSG)
+            logger.error("Angle sensors not calibrated — recording disabled "
+                         "until the device is calibrated")
+        else:
+            self._clear_hw_error(_HW_CALIB)
+
+    @property
+    def needs_calibration(self) -> bool:
+        return _HW_CALIB in self._hw_faults
+
+    async def calibrate_angles(self) -> dict:
+        """Zero the angle sensors at the current (fully open) pose.
+
+        Uses the backend's own sensor handles, so it does not fight the live
+        reads for the bus, and applies the offsets at once — the CLI script
+        needed a restart for that."""
+        if not self._enable_angle:
+            raise RuntimeError("This Grabette has no angle sensors to calibrate.")
+        if self._capturing or self._starting or self._stopping:
+            raise RuntimeError("Not during a recording.")
+        if self._needs_reinit:
+            # Right after a stop the sensors are closed until the deferred
+            # re-init runs; do it now rather than refuse.
+            self._reinit_hardware()
+        elif self._angle is None:
+            self._init_angle_sensors()
+        if self._angle is None:
+            raise RuntimeError(self._hw_faults.get(_HW_ANGLE)
+                               or "the angle sensors are not available")
+        import asyncio
+        loop = asyncio.get_running_loop()
+        calibration = await loop.run_in_executor(None, self._angle.calibrate)
+        self._clear_hw_error(_HW_CALIB)
+        return calibration
 
     async def stop(self) -> None:
         if self._depth_camera_watch_task is not None:
@@ -1027,6 +1076,7 @@ class RpiBackend(Backend):
             is_capturing=self._capturing,
             is_starting=self._starting,
             blocked_reason=self.hardware_error or self.busy_reason,
+            needs_calibration=self.needs_calibration,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,
@@ -1084,8 +1134,9 @@ class RpiBackend(Backend):
     def hardware_error(self) -> str:
         """Why this grabette must not record right now ("" = fine).
 
-        Set by _init_oakd (no OAK-D offline calibration) and _init_angle_sensors
-        / stop_capture (no gripper angle data). Read by start_capture and
+        Set by _init_oakd (no OAK-D offline calibration), _init_angle_sensors
+        / stop_capture (no gripper angle data) and _check_angle_calibration
+        (angle sensors never zeroed). Read by start_capture and
         prepare_capture (which refuse) and by the button listener's LED monitor
         (which blinks the error pattern), so a fault is visible on the device
         itself and not only in the logs. Every live fault is reported, in a fixed

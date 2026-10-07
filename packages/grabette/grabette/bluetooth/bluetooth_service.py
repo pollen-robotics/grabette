@@ -28,6 +28,8 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.error
+import urllib.request
 from typing import Callable
 
 import dbus
@@ -777,6 +779,55 @@ def _wifi_reset() -> str:
 
 
 # =====================================================================
+# Angle-sensor calibration (first-run setup page)
+# =====================================================================
+
+# The daemon owns the angle sensors, so calibration is not done here: these go
+# through the same /api/calibration route as the dashboard's "Calibrate my
+# device". Same port as the daemon (GRABETTE_PORT, see grabette/config.py).
+_CALIB_URL = f"http://127.0.0.1:{os.environ.get('GRABETTE_PORT', '8000')}/api/calibration"
+# The BLE client gives up after 35s; the zeroing itself takes a second or two.
+_CALIB_TIMEOUT_S = 25
+
+
+def _calibration_request(method: str) -> dict:
+    """Call the daemon's /api/calibration; raises RuntimeError with a message
+    worth showing as is."""
+    req = urllib.request.Request(_CALIB_URL, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=_CALIB_TIMEOUT_S) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read()).get("detail")
+        except Exception:
+            detail = None
+        raise RuntimeError(detail or f"the Grabette service answered {e.code}")
+    except (urllib.error.URLError, OSError):
+        raise RuntimeError("The Grabette service is not running yet — "
+                           "wait a moment and try again.")
+
+
+def _calib_status() -> str:
+    try:
+        res = _calibration_request("GET")
+    except RuntimeError as e:
+        return f"ERROR: {e}"
+    return ("OK: NEEDS_CALIBRATION" if res.get("needs_calibration")
+            else "OK: CALIBRATED")
+
+
+def _calibrate() -> str:
+    try:
+        res = _calibration_request("POST")
+    except RuntimeError as e:
+        return f"ERROR: {e}"
+    if res.get("needs_calibration"):
+        return "ERROR: Calibration saved, but the device still reports it is not calibrated"
+    return "OK: Calibrated"
+
+
+# =====================================================================
 # Main service class
 # =====================================================================
 
@@ -790,13 +841,16 @@ class BluetoothWifiService:
         WIFI_KEYEX            → {"kid","pk","alg"} ephemeral pubkey for sealing
         WIFI_CONNECT_ENC json → OK: Connecting to <ssid> / ERROR: ...
         WIFI_RESET            → OK: WiFi connections cleared / ERROR: ...
+        CALIB_STATUS          → OK: CALIBRATED / OK: NEEDS_CALIBRATION / ERROR: ...
+        CALIBRATE             → OK: Calibrated / ERROR: ...
 
     The WiFi password is sealed client-side (see _wifi_connect_enc) and never
     sent in clear — there is no plaintext connect command.
 
     PIN authentication is required before WIFI_SCAN/WIFI_CONNECT_ENC/WIFI_RESET.
     Auth is consumed by WIFI_CONNECT_ENC/WIFI_RESET (re-PIN for each) but NOT by
-    WIFI_SCAN, so a client can scan then connect with a single PIN. WIFI_KEYEX
+    WIFI_SCAN, so a client can scan then connect with a single PIN. CALIB_STATUS
+    and CALIBRATE need it too, without consuming it either. WIFI_KEYEX
     is public (it returns only a public key). Auth is reset when the BLE central
     disconnects. Network status is readable from the STATUS service (every 10s).
     """
@@ -884,16 +938,37 @@ class BluetoothWifiService:
             if len(parts) < 2:
                 return "ERROR: Usage: WIFI_CONNECT_ENC <json>"
             self.authenticated = False  # one-shot auth
-            return self._wifi_connect_enc(parts[1])
+            return self._refresh_status_after(self._wifi_connect_enc(parts[1]))
 
         # WIFI_RESET — requires auth
         if upper == "WIFI_RESET":
             if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             self.authenticated = False  # one-shot auth
-            return _wifi_reset()
+            return self._refresh_status_after(_wifi_reset())
+
+        # CALIB_STATUS / CALIBRATE — angle-sensor zeroing, through the daemon
+        # (requires auth; does NOT consume it: calibrating again is harmless)
+        if upper in ("CALIB_STATUS", "CALIBRATE"):
+            if not self.authenticated:
+                return "ERROR: Not authenticated. Send PIN_xxxxx first."
+            return _calib_status() if upper == "CALIB_STATUS" else _calibrate()
 
         return f"ERROR: Unknown command: {command_str}"
+
+    def _refresh_status_after(self, response: str) -> str:
+        """Republish the network status now rather than on the next 10s tick.
+
+        nmcli only returns once the device has its address, and the web client
+        reads the status right after this response to offer the dashboard link:
+        with the periodic refresh alone it waited up to 10s for an address that
+        was already there. Queued on the main loop (DBus is not thread-safe)
+        before the response itself is (see CommandCharacteristic._run_command),
+        so it is in place by the time the client reads it."""
+        status_service = getattr(self.app, "status_service", None)
+        if status_service is not None:
+            GLib.idle_add(lambda: status_service.update_network_status() and False)
+        return response
 
     def _check_pin(self, pin: str) -> str:
         """Validate the PIN with brute-force rate limiting.
