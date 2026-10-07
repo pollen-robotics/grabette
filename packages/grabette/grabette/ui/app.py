@@ -1717,7 +1717,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         elif flow["episode_id"]:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
-            pill = _tr_pill("idle", "Cameras connected — press the button")
+            pill = _tr_pill("idle", "Ready — press the button")
         return pill, cameras, *([gr.update()] * 4), flow, diag
 
     def on_test_check(flow):
