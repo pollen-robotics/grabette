@@ -7,7 +7,6 @@ import io
 import logging
 import math
 import time
-from pathlib import Path
 from urllib.parse import quote
 
 import gradio as gr
@@ -666,25 +665,30 @@ def _tr_pill(kind: str, text: str) -> str:
 _CALIB_REQUIRED = "Your device is not calibrated"
 _CALIB_BLOCKED = "Cannot record, your device is not calibrated"
 
-# A photo of the grabette held fully open, if one is shipped in ui/assets;
-# otherwise the 3D model frozen in that pose (the viewer's ?pose=open).
-_CALIB_PHOTO = "calibration-open.jpg"
-_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+# Two photos of the grabette held fully open, front and top, side by side.
+# Their background is transparent and the fingers are black, so each sits on a
+# light tile that keeps them readable in the dark theme too.
+_CALIB_PHOTOS = (
+    ("calibration-open-front.png", "Front view"),
+    ("calibration-open-top.png", "Top view"),
+)
 
 
 def _calibration_figure() -> str:
-    if (_ASSETS_DIR / _CALIB_PHOTO).is_file():
-        media = (f'<img src="/ui-assets/{_CALIB_PHOTO}" '
-                 'alt="Grabette with its gripper fully open"'
-                 ' style="width:100%;max-height:260px;object-fit:contain;'
-                 'display:block;border-radius:12px;background:#0f172a;">')
-    else:
-        media = ('<iframe src="/viewer?pose=open&yaw=180" '
-                 'style="width:100%;height:240px;border:none;display:block;'
-                 'border-radius:12px;background:#1a1a2e;"></iframe>')
+    tiles = "".join(
+        '<div style="flex:1;min-width:0;">'
+        f'<img src="/ui-assets/{name}" alt="Grabette fully open, {label.lower()}"'
+        ' style="width:100%;height:220px;object-fit:contain;display:block;'
+        'padding:.5rem;box-sizing:border-box;border-radius:12px;'
+        'background:#f1f5f9;">'
+        '<div style="margin-top:.3rem;text-align:center;font-size:.78rem;'
+        f'color:var(--body-text-color-subdued);">{label}</div></div>'
+        for name, label in _CALIB_PHOTOS
+    )
     return (
-        '<figure style="margin:0;">' + media
-        + '<figcaption style="margin-top:.45rem;text-align:center;'
+        '<figure style="margin:0;">'
+        f'<div style="display:flex;gap:.6rem;">{tiles}</div>'
+        '<figcaption style="margin-top:.45rem;text-align:center;'
         'font-size:.82rem;color:var(--body-text-color-subdued);">'
         'Gripper fully open, fingers against their stop</figcaption></figure>'
     )

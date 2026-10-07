@@ -283,13 +283,6 @@ let rebaseModel = null;
     controls.update();
 
     loadingEl.style.display = 'none';
-    // ?pose=open shows the fingers fully open (the calibration pose) and
-    // stays there instead of following the sensors.
-    if (new URLSearchParams(location.search).get('pose') === 'open') {
-      setJoint('proximal', 0);
-      setJoint('distal', 0);
-      return;
-    }
     startPolling();
   } catch (err) {
     loadingEl.textContent = 'Error: ' + err.message;
