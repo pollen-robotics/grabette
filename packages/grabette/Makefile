@@ -4,6 +4,10 @@
 # lives at the workspace ROOT, not here. All venv ops target that root.
 WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
 
+# The services run as whoever owns the checkout (it owns the venv too), so no
+# recipe hardcodes a username. Override with `make SERVICE_USER=<name> ...`.
+SERVICE_USER ?= $(shell stat -c %U $(WORKSPACE_ROOT))
+
 # Recursive-make invocations go through this alias, NOT $(MAKE) directly: make
 # executes any recipe line whose text contains "$(MAKE)" even under -n, so a
 # `make -n install-audio` dry run would really write /etc/asound.conf and run
@@ -28,8 +32,8 @@ help:
 	@echo "  install-orbbec-sdk    Install pyorbbecsdk2 (--no-deps) for depth_camera=gemini305"
 	@echo "  install-systemd       Install + enable the grabette + bluetooth systemd services (BLE-only)"
 	@echo "  ensure-ble-only       Force BlueZ into BLE-only mode (ControllerMode = le)"
-	@echo "  install-netdev        Allow 'rasp' user to scan and connect to WiFi networks via nmcli"
-	@echo "  install-poweroff      Allow 'rasp' user to power off the Pi from the web UI"
+	@echo "  install-netdev        Allow the service user to scan and connect to WiFi networks via nmcli"
+	@echo "  install-poweroff      Allow the service user to power off the Pi from the web UI"
 	@echo "  install-ntp           Pin NTP to a shared time service (tight multi-device start sync)"
 	@echo "  install-audio         Build+install the TLV320AIC3104 overlay & mixer init (optional HAT speaker)"
 	@echo ""
@@ -150,7 +154,8 @@ install-udev-orbbec:
 # against. Verified on a Pi 4 / Trixie / Python 3.13: --no-deps imports, opens
 # the device and streams using the system numpy.
 install-orbbec-sdk:
-	$(WORKSPACE_ROOT)/.venv/bin/python -m pip install --no-deps pyorbbecsdk2
+	@# uv venvs ship without pip, so install through uv into the workspace venv.
+	uv pip install --python $(WORKSPACE_ROOT)/.venv/bin/python --no-deps pyorbbecsdk2
 	@$(WORKSPACE_ROOT)/.venv/bin/python -c "import pyorbbecsdk, numpy; print('pyorbbecsdk OK, numpy', numpy.__version__, 'from', numpy.__file__)"
 
 # nmcli --rescan yes triggers a real radio scan, gated by two things:
@@ -164,7 +169,7 @@ install-orbbec-sdk:
 POLKIT_SCAN_RULE    := /etc/polkit-1/rules.d/10-grabette-wifi-scan.rules
 POLKIT_CONNECT_RULE := /etc/polkit-1/rules.d/10-grabette-wifi-connect.rules
 install-netdev:
-	sudo usermod -aG netdev rasp
+	sudo usermod -aG netdev $(SERVICE_USER)
 	@if [ ! -f $(POLKIT_SCAN_RULE) ]; then \
 		echo "Installing polkit rule for WiFi scan..."; \
 		printf 'polkit.addRule(function(action, subject) {\n    if (action.id === "org.freedesktop.NetworkManager.wifi.scan" &&\n        subject.isInGroup("netdev")) {\n        return polkit.Result.YES;\n    }\n});\n' \
@@ -187,7 +192,7 @@ install-netdev:
 # out sudo. Idempotent.
 install-poweroff:
 	@tmp=$$(mktemp); \
-	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff' > $$tmp; \
+	echo '$(SERVICE_USER) ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff' > $$tmp; \
 	if sudo visudo -cf $$tmp; then \
 		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/grabette-poweroff; \
 		echo "Installed /etc/sudoers.d/grabette-poweroff"; \
@@ -223,13 +228,13 @@ install-ntp:
 # Changing the overlay requires a REBOOT to take effect (the mixer script does not).
 install-audio:
 	sudo apt install -y device-tree-compiler alsa-utils
-	@# /dev/snd/* is root:audio 0660 and the daemon runs as 'rasp' (see
+	@# /dev/snd/* is root:audio 0660 and the daemon runs as $(SERVICE_USER) (see
 	@# systemd/grabette.service), so without this group aplay dies with
 	@# "Permission denied" and only the beep is lost — silently, before the
 	@# _spawn logging was added. Pi OS normally puts the first user in 'audio'
 	@# already; this is for images/users where it isn't. Takes effect on the
 	@# next service start (or re-login).
-	sudo usermod -aG audio rasp
+	sudo usermod -aG audio $(SERVICE_USER)
 	dtc -@ -I dts -O dtb -o /tmp/tlv320aic3104.dtbo config/overlays/tlv320aic3104-overlay.dts
 	sudo install -m 0644 -o root -g root /tmp/tlv320aic3104.dtbo \
 	  /boot/firmware/overlays/tlv320aic3104.dtbo
@@ -342,11 +347,11 @@ ensure-ble-only:
 	@echo "BlueZ set to BLE-only (ControllerMode = le)"
 
 install-systemd: ensure-ble-only
-	@# Patch each unit's placeholder path to this device's actual workspace root
+	@# Patch each unit's placeholder path and User= to this device's workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
-	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette.service \
+	sed -e 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/grabette.service \
 	  | sudo tee /etc/systemd/system/grabette.service >/dev/null
-	sed 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' systemd/grabette-bluetooth.service \
+	sed -e 's#/home/rasp/Project/Repo/grabette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/grabette-bluetooth.service \
 	  | sudo tee /etc/systemd/system/grabette-bluetooth.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now grabette

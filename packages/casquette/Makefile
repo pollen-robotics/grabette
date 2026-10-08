@@ -4,6 +4,10 @@
 # lives at the workspace ROOT, not here. All venv ops target that root.
 WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
 
+# The services run as whoever owns the checkout (it owns the venv too), so no
+# recipe hardcodes a username. Override with `make SERVICE_USER=<name> ...`.
+SERVICE_USER ?= $(shell stat -c %U $(WORKSPACE_ROOT))
+
 help:
 	@echo "Targets:"
 	@echo "  install-rpi       One-shot bring-up: apt deps + I2C enable + venv + sync + verify"
@@ -63,13 +67,13 @@ ensure-ble-only:
 
 # Install both casquette services. Run after install-rpi has verified the
 # venv builds. The bluetooth service needs root (BlueZ DBus access); the
-# main service runs as rasp.
+# main service runs as $(SERVICE_USER).
 install-systemd: ensure-ble-only
-	@# Patch the units' hardcoded path to this device's actual workspace root
+	@# Patch the units' hardcoded path and User= to this device's workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
-	sed 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' systemd/casquette.service \
+	sed -e 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/casquette.service \
 	  | sudo tee /etc/systemd/system/casquette.service >/dev/null
-	sed 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' systemd/casquette-bluetooth.service \
+	sed -e 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/casquette-bluetooth.service \
 	  | sudo tee /etc/systemd/system/casquette-bluetooth.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now casquette

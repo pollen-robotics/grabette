@@ -245,8 +245,8 @@ is Pi-4-specific lives in `config/config.txt` and in how the card is addressed:
 
 `make install-audio` (idempotent) does:
 - `apt install device-tree-compiler alsa-utils`;
-- adds `rasp` to the `audio` group (`/dev/snd/*` is `root:audio 0660`, and the
-  daemon runs as `rasp`);
+- adds the service user (the checkout owner, `SERVICE_USER=` to override) to the
+  `audio` group (`/dev/snd/*` is `root:audio 0660`, and the daemon runs as that user);
 - compiles `config/overlays/tlv320aic3104-overlay.dts` → `/boot/firmware/overlays/tlv320aic3104.dtbo`;
 - **checks** (never writes) `/boot/firmware/config.txt` for `dtoverlay=tlv320aic3104`
   and `dtparam=i2s=on`, and tells you exactly which lines are missing — an
