@@ -99,7 +99,7 @@ def test_other_skins_are_untouched():
 
 from grabette.ui.app import (  # noqa: E402
     _ov_checks, _ov_checks_html, _ts_calib_html, _ts_depth_html,
-    _ts_first_section, _ts_tab_label,
+    _ts_first_section, _ts_tabs_css,
 )
 
 CAP = {"is_capturing": False, "blocked_reason": "", "needs_calibration": False}
@@ -160,12 +160,21 @@ def test_troubleshooting_opens_on_the_first_part_at_fault():
     assert _ts_first_section([("warn", None, "busy")]) == "rgb"
 
 
-def test_tab_labels_mark_their_part():
-    issues = [("fail", "angle", ""), ("warn", "rgb", "")]
-    assert _ts_tab_label("angle", issues) == "✗ Angle sensors"
-    assert _ts_tab_label("rgb", issues) == "! RGB camera"
-    assert _ts_tab_label("depth", issues) == "✓ RGB-D camera"
-    assert _ts_tab_label("depth", None) == "RGB-D camera"
+def test_tabs_take_the_colour_of_their_part():
+    css = _ts_tabs_css([("fail", "angle", ""), ("warn", "rgb", "")])
+    assert '[data-tab-id="angle"]{--gb-tab-c:#ef4444;--gb-tab-m:"✗";}' in css
+    assert '[data-tab-id="rgb"]{--gb-tab-c:#f59e0b;' in css
+    assert '[data-tab-id="depth"]{--gb-tab-c:#10b981;--gb-tab-m:"✓";}' in css
+    assert '[data-tab-id="depth"]{--gb-tab-c:#94a3b8;' in _ts_tabs_css(None)
+
+
+def test_an_unplugged_depth_camera_is_not_ready():
+    # Nothing past "Plugged in" can pass while it is unplugged.
+    out = _ts_depth_html({**DCAM, "connected": False})
+    assert "#10b981" not in out
+    assert "depth-camera-cable.gif" in out
+    assert "no need to restart" in out
+    assert "depth-camera-cable.gif" not in _ts_depth_html(DCAM)
 
 
 def test_calibration_waits_for_the_angle_sensors():

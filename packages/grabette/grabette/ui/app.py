@@ -547,6 +547,60 @@ html.gb-off .toast-wrap {
 .gb-diag-card.gb-ts-card {
     max-width: 640px !important;
 }
+/* The tabs as Test Recording's chips (_tr_cameras): a pill with a coloured
+   outline and a coloured mark, both set per tab by _ts_tabs_css. The one on
+   screen is filled with its colour. */
+.gb-ts-card .gb-ts-css {
+    display: none !important;
+}
+/* A phone gets two rows of pills rather than some of them in a "…" menu.
+   Gradio decides what overflows by adding up the widths of a hidden copy of
+   the tabs: with that copy at no width, every tab stays in the bar, which
+   wraps. */
+.gb-ts-card .tab-container.visually-hidden button {
+    font-size: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    min-width: 0 !important;
+}
+.gb-ts-card .tab-container {
+    flex-wrap: wrap !important;
+    height: auto !important;
+    gap: .4rem !important;
+    border: none !important;
+    padding: .3rem 0 !important;
+}
+/* Grey "?" until _ts_tabs_css says better: fallbacks, not defaults set here,
+   since gradio scopes these rules and they would outrank its. */
+.gb-ts-card [role=tab] {
+    display: inline-flex !important;
+    align-items: baseline !important;
+    gap: .4rem !important;
+    padding: .3rem .7rem !important;
+    border-radius: 999px !important;
+    border: 1px solid color-mix(in srgb, var(--gb-tab-c, #94a3b8) 33%, transparent) !important;
+    background: transparent !important;
+    color: var(--body-text-color) !important;
+    font-size: .82rem !important;
+    font-weight: 600 !important;
+    opacity: .75;
+}
+.gb-ts-card [role=tab]::before {
+    content: var(--gb-tab-m, "?");
+    color: var(--gb-tab-c, #94a3b8);
+    font-weight: 700;
+}
+.gb-ts-card [role=tab]::after {
+    display: none !important;
+}
+.gb-ts-card [role=tab]:hover {
+    opacity: 1;
+}
+.gb-ts-card [role=tab][aria-selected=true] {
+    opacity: 1;
+    border-color: var(--gb-tab-c, #94a3b8) !important;
+    background: color-mix(in srgb, var(--gb-tab-c, #94a3b8) 12%, transparent) !important;
+}
 .gb-ts-card img {
     object-fit: contain !important;
     border-radius: 10px;
@@ -1198,9 +1252,13 @@ _RGB_TIPS = (
     "Power the grabette off, then check the camera cable on both ends.",
     "Power it back on and wait for the LED before looking again.",
 )
+# The ribbon of the RGB camera is opened at start-up (and after each
+# recording) only, so it needs the power off and back on. The depth camera is
+# on USB: the backend watches the bus and clears its fault on an unplug and
+# replug (RpiBackend._watch_depth_camera_cable), so no restart is needed.
 _DEPTH_TIPS = (
-    "Check the depth camera's USB cable on both ends.",
-    "Power-cycle the grabette.",
+    "Check the USB cable on both ends.",
+    "Unplug it and plug it back in — no need to restart the grabette.",
 )
 
 
@@ -1287,14 +1345,21 @@ def _ts_first_section(issues: list[tuple[str, str | None, str]] | None) -> str:
     return _TS_RGB
 
 
-def _ts_tab_label(section: str,
-                  issues: list[tuple[str, str | None, str]] | None) -> str:
-    name = dict(_TS_SECTIONS)[section]
-    if issues is None:
-        return name
-    levels = {level for level, s, _ in issues if s == section}
-    mark = "✗" if "fail" in levels else "!" if "warn" in levels else "✓"
-    return f"{mark} {name}"
+def _ts_tabs_css(issues: list[tuple[str, str | None, str]] | None) -> str:
+    """Each tab's colour and mark, the way Test Recording's chips show a
+    part's state (_CAM_STATES): set as variables the static rules of the
+    tabs read (MODAL_CSS, .gb-ts-card), since a tab's label is plain text."""
+    rules = []
+    for section, _ in _TS_SECTIONS:
+        if issues is None:
+            color, mark = _CAM_STATES["unknown"][:2]
+        else:
+            levels = {level for level, s, _ in issues if s == section}
+            color, mark = _DIAG_MARKS["fail" if "fail" in levels else
+                                      "warn" if "warn" in levels else "ok"]
+        rules.append(f'.gb-ts-card [role=tab][data-tab-id="{section}"]'
+                     f'{{--gb-tab-c:{color};--gb-tab-m:"{mark}";}}')
+    return "<style>" + "".join(rules) + "</style>"
 
 
 def _ts_unknown_html() -> str:
@@ -1327,6 +1392,8 @@ def _ts_rgb_html(cam: dict | None) -> str:
 
 
 def _ts_depth_html(dcam: dict | None) -> str:
+    """Plugged in, started, ready to record: each step only checked once the
+    one before it holds, so an unplugged camera is not also "ready"."""
     if dcam is None:
         return _ts_unknown_html()
     label = dcam.get("label") or "Depth camera"
@@ -1334,11 +1401,15 @@ def _ts_depth_html(dcam: dict | None) -> str:
         return _diag_verdict_html("This grabette has no depth camera.",
                                   "#94a3b8")
     connected = dcam.get("connected")
+    error = dcam.get("error") or ""
+    first = "Plug it in first."
     rows = [_diag_check_row(
         {True: "ok", False: "fail"}.get(connected, "skip"), "Plugged in",
         "" if connected is not None else
         "Cannot be checked without starting it.")]
-    if dcam.get("initialized"):
+    if connected is False:
+        rows.append(_diag_check_row("skip", "Started", first))
+    elif dcam.get("initialized"):
         rows.append(_diag_check_row("ok", "Started"))
     elif dcam.get("initializing"):
         rows.append(_diag_check_row("warn", "Started", "Starting…"))
@@ -1349,21 +1420,37 @@ def _ts_depth_html(dcam: dict | None) -> str:
     else:
         rows.append(_diag_check_row("fail", "Started",
                                     "Switched on, but it did not start."))
-    error = dcam.get("error") or ""
-    rows.append(_diag_check_row("fail" if error else "ok", "Ready to record",
-                                error))
     if error:
-        verdict = _diag_verdict_html(f"{label}: {error}", "#ef4444")
+        rows.append(_diag_check_row("fail", "Ready to record", error))
     elif connected is False:
+        rows.append(_diag_check_row("skip", "Ready to record", first))
+    elif dcam.get("initializing"):
+        rows.append(_diag_check_row("warn", "Ready to record", "Starting…"))
+    else:
+        rows.append(_diag_check_row("ok", "Ready to record"))
+    if connected is False:
         verdict = (_diag_verdict_html(
             f"The {label} is not detected: recording is disabled until it is.",
-            "#ef4444") + _tips_html(_DEPTH_TIPS))
+            "#ef4444") + _depth_cable_help_html(label))
+    elif error:
+        verdict = _diag_verdict_html(f"{label}: {error}", "#ef4444")
     elif dcam.get("initializing"):
         verdict = _diag_verdict_html(f"The {label} is starting…", "#f59e0b")
     else:
         verdict = _diag_verdict_html(f"The {label} is ready to record.",
                                      "#10b981")
     return "<div>" + "".join(rows) + verdict + "</div>"
+
+
+def _depth_cable_help_html(label: str) -> str:
+    """Where the depth camera's cable runs, like the angle sensors' gifs."""
+    return (
+        '<div style="margin-top:.8rem;">'
+        '<img src="/ui-assets/depth-camera-cable.gif" '
+        f'alt="The {html.escape(label)} USB cable" '
+        'style="width:100%;display:block;border-radius:10px;background:#fff;" '
+        'onerror="this.style.display=\'none\';">'
+        + _tips_html(_DEPTH_TIPS) + '</div>')
 
 
 def _ts_calib_html(calib: dict | None, angle: dict | None) -> str:
@@ -2318,16 +2405,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     def ts_sections():
         """Every section but the angle sensors' (they have their own live
-        refresh), the four tab labels, and the checks themselves.
+        refresh), the tabs' colours, and the checks themselves.
 
         Outputs: RGB report and image, depth report, image and Start button,
-        calibration report and button, the four tabs, the issues."""
+        calibration report and button, the tabs' style, the issues."""
         cap, cam, dcam, angle = _ts_read()
         issues = _ov_checks(cap, cam, dcam, angle)
         calib = client.get_calibration()
         label = (dcam or {}).get("label") or "depth camera"
+        # Not while it is unplugged: the start could only fail.
         can_start = bool(dcam and dcam.get("supported")
-                         and not dcam.get("enabled"))
+                         and not dcam.get("enabled")
+                         and dcam.get("connected") is not False)
         must_calib = bool((calib or {}).get("needs_calibration")
                           and not (angle or {}).get("error"))
         rgb_frame = get_camera_frame()
@@ -2345,8 +2434,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                       + ([] if can_start else ["gb-diag-gone"])),
             _ts_calib_html(calib, angle),
             gr.update(**_ts_gone(["gb-ts-calib"], must_calib)),
-            *(gr.Tab(label=_ts_tab_label(sec, issues))
-              for sec, _ in _TS_SECTIONS),
+            _ts_tabs_css(issues),
             issues,
         )
 
@@ -2399,6 +2487,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         '<div style="font-size:.85rem;opacity:.75;">'
                         'What each part of the grabette reports, and how to '
                         'fix it.</div>')
+                tabs_css = gr.HTML(_ts_tabs_css(None), elem_classes="gb-ts-css")
                 with gr.Tabs():
                     with gr.Tab(dict(_TS_SECTIONS)[_TS_RGB], id=_TS_RGB) as tab_rgb:
                         rgb_html = gr.HTML(_ts_unknown_html())
@@ -2435,7 +2524,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         timer = gr.Timer(2.0, active=False)
         tab_list = [tab_rgb, tab_depth, tab_angle, tab_calib]
         outputs = [rgb_html, rgb_img, depth_html, depth_img, depth_btn,
-                   calib_html, calib_btn, *tab_list]
+                   calib_html, calib_btn, tabs_css]
 
         # The first part at fault is shown by clicking its tab, as a person
         # would: setting the tabs' `selected` from here pins them to it, and
