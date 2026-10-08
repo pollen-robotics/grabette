@@ -65,6 +65,21 @@ class Backend(ABC):
         itself. Default: no backend-detectable fault."""
         return ""
 
+    @property
+    def angle_sensors_status(self) -> dict:
+        """The gripper angle sensors, for the dashboard's "Angle sensors" chip.
+
+        enabled: this device is meant to have them; initialized: they came up;
+        error: the fault blocking capture because of them ("" = none).
+        Default: a backend without angle sensors."""
+        return {"enabled": False, "initialized": False, "error": ""}
+
+    def reinit_angle_sensors(self) -> None:
+        """Bring the angle sensors up again, now — the dashboard's way out of a
+        fault once its cause is fixed, without waiting for the next press.
+        Default: nothing to bring up."""
+        return None
+
     # --- gripper angle calibration -------------------------------------------
     # The angle sensors read the raw magnet angle; the zero (fingers fully
     # open) is per device and has to be taken once on the device itself. Until
