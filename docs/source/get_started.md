@@ -24,15 +24,17 @@ To power off, use the **Power off** button in the [dashboard](#dashboard)'s titl
 
 The battery level is shown on the dashboard's **Overview** page.
 
-## Set up the WiFi with the Bluetooth tool
+## First-time setup with the Bluetooth tool
 
-Your Grabette has to join your WiFi network before you can reach it. Set it up over Bluetooth — no screen, no SSH:
+You use the [Bluetooth tool](https://pollen-robotics.github.io/grabette/) **once**, when you set up your Grabette: it connects to the device over Bluetooth to put it on your WiFi network. After that, you reach the Grabette over WiFi, through its dashboard.
 
-1. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) in Chrome or Edge, on a computer or an Android phone.
-2. Connect to the device.
-3. Scan for networks, pick yours and enter its password.
+Open it in Chrome or Edge, on a computer or an Android phone, and follow its steps:
 
-Once connected, it gives you the address of the device's dashboard.
+1. **WiFi setup** — connect to the Grabette, scan for networks, pick yours and enter its password.
+2. **Calibration** — open the gripper fully and calibrate the sensors. The Grabette won't record until it is calibrated.
+3. **Dashboard** — the tool gives you the device's address.
+
+Come back to it only to move the Grabette to another WiFi network.
 
 <Tip warning={true}>
 

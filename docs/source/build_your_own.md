@@ -61,4 +61,4 @@ uv run python scripts/calibrate_angles.py
 sudo reboot
 ```
 
-The device is ready: continue with [Getting started](./get_started.md). If the WiFi you set at flash time isn't the one you need, the [Bluetooth tool](./get_started.md#set-up-the-wifi-with-the-bluetooth-tool) changes it.
+The device is ready: continue with [Getting started](./get_started.md). If the WiFi you set at flash time isn't the one you need, the [Bluetooth tool](./get_started.md#first-time-setup-with-the-bluetooth-tool) changes it.
