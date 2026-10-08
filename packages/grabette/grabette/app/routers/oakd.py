@@ -43,6 +43,9 @@ def _status(backend: Backend) -> dict:
         # failure, and "the camera is red" sends an operator hunting for a cable
         # when the fault is a calibration the device can't read.
         "hardware_error": getattr(backend, "hardware_error", ""),
+        # The depth camera's own part of it ("" = none): hardware_error also
+        # carries the angle-sensor and calibration faults.
+        "error": getattr(backend, "depth_camera_error", ""),
         # Plugged in, checked without starting the camera (None = can't tell).
         "connected": getattr(backend, "is_depth_camera_connected", None),
     }

@@ -93,3 +93,84 @@ def test_button_variant_keeps_the_one_login_implementation():
 def test_other_skins_are_untouched():
     assert "button.oauth{width:100%" not in widget_page()
     assert "button.oauth{width:100%" not in widget_page(compact=True)
+
+
+# ── Pre-recording checks ──────────────────────────────────────────────
+
+from grabette.ui.app import (  # noqa: E402
+    _ov_checks, _ov_checks_html, _ts_calib_html, _ts_depth_html,
+    _ts_first_section, _ts_tab_label,
+)
+
+CAP = {"is_capturing": False, "blocked_reason": "", "needs_calibration": False}
+CAM = {"connected": True, "reinitializing": False}
+DCAM = {"supported": True, "enabled": False, "initialized": False,
+        "initializing": False, "label": "Gemini 305", "connected": True,
+        "error": ""}
+ANGLE = {"enabled": True, "initialized": True, "error": ""}
+
+
+def test_a_healthy_device_is_ready():
+    issues = _ov_checks(CAP, CAM, DCAM, ANGLE)
+    assert issues == []
+    assert "Ready to record" in _ov_checks_html(issues)
+
+
+def test_a_silent_device_is_unknown_not_healthy():
+    assert _ov_checks(None, None, None, None) is None
+    assert "gb-checks-unknown" in _ov_checks_html(None)
+
+
+def test_every_part_at_fault_is_named_with_its_section():
+    issues = _ov_checks(
+        {**CAP, "blocked_reason": "x", "needs_calibration": True},
+        {"connected": False, "reinitializing": False},
+        {**DCAM, "connected": False},
+        {**ANGLE, "error": "the gripper angle sensors stopped answering"})
+    # The fault is the angle sensors; the calibration they cannot do waits.
+    assert [(lvl, sec) for lvl, sec, _ in issues] == [
+        ("fail", "rgb"), ("fail", "depth"), ("fail", "angle"),
+        ("warn", "calib")]
+    out = _ov_checks_html(issues)
+    assert "3 problems to fix before recording" in out
+    assert "gb-checks-fail" in out
+
+
+def test_the_depth_cameras_own_fault_is_quoted():
+    issues = _ov_checks(CAP, CAM, {**DCAM, "error": "calibration unreadable"},
+                        ANGLE)
+    assert issues == [("fail", "depth", "Gemini 305: calibration unreadable")]
+    assert "calibration unreadable" in _ts_depth_html(
+        {**DCAM, "error": "calibration unreadable"})
+
+
+def test_a_busy_device_only_waits():
+    # An upload refuses the recording, but no part is at fault.
+    issues = _ov_checks({**CAP, "blocked_reason": "an upload is running"},
+                        CAM, DCAM, ANGLE)
+    assert issues == [("warn", None,
+                       "Cannot record right now — an upload is running")]
+    assert "gb-checks-warn" in _ov_checks_html(issues)
+
+
+def test_troubleshooting_opens_on_the_first_part_at_fault():
+    assert _ts_first_section([]) == "rgb"
+    assert _ts_first_section(None) == "rgb"
+    assert _ts_first_section([("warn", "rgb", ""), ("fail", "calib", "")]) == "calib"
+    assert _ts_first_section([("warn", None, "busy")]) == "rgb"
+
+
+def test_tab_labels_mark_their_part():
+    issues = [("fail", "angle", ""), ("warn", "rgb", "")]
+    assert _ts_tab_label("angle", issues) == "✗ Angle sensors"
+    assert _ts_tab_label("rgb", issues) == "! RGB camera"
+    assert _ts_tab_label("depth", issues) == "✓ RGB-D camera"
+    assert _ts_tab_label("depth", None) == "RGB-D camera"
+
+
+def test_calibration_waits_for_the_angle_sensors():
+    out = _ts_calib_html({"needs_calibration": True},
+                         {**ANGLE, "error": "down"})
+    assert "Fix the angle sensors first" in out
+    assert "not calibrated" in _ts_calib_html({"needs_calibration": True},
+                                              ANGLE)

@@ -7,6 +7,7 @@ import io
 import logging
 import math
 import time
+from types import SimpleNamespace
 from urllib.parse import quote
 
 import gradio as gr
@@ -312,8 +313,7 @@ html.gb-off .toast-wrap {
         order: -1;
     }
     /* …but a device that cannot record says so before anything else. */
-    #ov-page #ov-angle-fault,
-    #ov-page #ov-calib {
+    #ov-page #ov-checks {
         order: -3;
     }
 
@@ -324,8 +324,8 @@ html.gb-off .toast-wrap {
         display: block !important;
     }
 }
-/* "Not calibrated" warning and the button that fixes it, on the Overview and
-   on Test Recording (see _calibration_prompt). */
+/* The "Calibrate my device" button, on the Overview and on Test Recording
+   (see _calibration_prompt). */
 .gb-calib-box {
     align-items: center !important;
     justify-content: flex-start !important;
@@ -339,13 +339,6 @@ html.gb-off .toast-wrap {
 }
 .gb-calib-box .html-container {
     padding: 0 !important;
-}
-/* The warning and its button in one amber callout (Overview). */
-.gb-calib-box.gb-calib-callout {
-    padding: .7rem 1rem !important;
-    border-radius: 12px !important;
-    background: #f59e0b1a !important;
-    border: 1px solid #f59e0b66 !important;
 }
 /* On Test Recording: lined up with the status pill above it, and room for
    the shadow inside the card's overflow:hidden. */
@@ -504,8 +497,67 @@ html.gb-off .toast-wrap {
         width: 100% !important;
     }
 }
-/* "Angle sensors not working" callout and its Diagnose button, on the Overview
-   and on Test Recording (see _angle_diag_prompt). */
+/* The Overview's pre-recording checks: one callout, coloured by the verdict
+   inside it (_ov_checks_html), with Troubleshooting on its right. */
+.gb-checks {
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: wrap !important;
+    gap: .75rem 1.25rem !important;
+    padding: .7rem 1rem !important;
+    border-radius: 12px !important;
+    border: 1px solid var(--border-color-primary) !important;
+    background: var(--background-fill-secondary) !important;
+}
+.gb-checks > * {
+    min-width: 0 !important;
+}
+.gb-checks .html-container {
+    padding: 0 !important;
+}
+.gb-checks:has(.gb-checks-ok) {
+    background: #10b9811a !important;
+    border-color: #10b98166 !important;
+}
+.gb-checks:has(.gb-checks-warn) {
+    background: #f59e0b1a !important;
+    border-color: #f59e0b66 !important;
+}
+.gb-checks:has(.gb-checks-fail) {
+    background: #ef44441a !important;
+    border-color: #ef444466 !important;
+}
+.gb-checks .gb-checks-actions {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    gap: .6rem !important;
+}
+.gb-checks .gb-checks-actions > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+.gb-checks button.gb-checks-open {
+    border-radius: 6px !important;
+    font-weight: 700 !important;
+}
+/* Troubleshooting: the diagnostic popup's card, a little wider for its tabs. */
+.gb-diag-card.gb-ts-card {
+    max-width: 640px !important;
+}
+.gb-ts-card img {
+    object-fit: contain !important;
+    border-radius: 10px;
+}
+@media (max-width: 560px) {
+    .gb-checks .gb-checks-actions,
+    .gb-checks .gb-checks-actions button {
+        width: 100% !important;
+    }
+}
+/* The Diagnose button on Test Recording (see _angle_diag_prompt). */
 .gb-diag-box {
     align-items: center !important;
     justify-content: flex-start !important;
@@ -519,12 +571,6 @@ html.gb-off .toast-wrap {
 }
 .gb-diag-box .html-container {
     padding: 0 !important;
-}
-.gb-diag-box.gb-diag-callout {
-    padding: .7rem 1rem !important;
-    border-radius: 12px !important;
-    background: #ef44441a !important;
-    border: 1px solid #ef444466 !important;
 }
 #tr-page .gb-diag-box {
     padding: .2rem 12px .6rem !important;
@@ -866,7 +912,6 @@ def _tr_pill(kind: str, text: str) -> str:
 # A grabette whose angle sensors were never zeroed refuses to record (see
 # RpiBackend._check_angle_calibration). The fix used to be an SSH session and a
 # script; it is now a button wherever that refusal shows, opening one popup.
-_CALIB_REQUIRED = "Your device is not calibrated"
 _CALIB_BLOCKED = "Cannot record, your device is not calibrated"
 
 # Two photos of the grabette held fully open, front and top, side by side.
@@ -895,17 +940,6 @@ def _calibration_figure() -> str:
         '<figcaption style="margin-top:.45rem;text-align:center;'
         'font-size:.82rem;color:var(--body-text-color-subdued);">'
         'Gripper fully open, fingers against their stop</figcaption></figure>'
-    )
-
-
-def _calib_warning_html(text: str) -> str:
-    """The warning line inside the amber callout; the callout itself is the
-    row around it (.gb-calib-callout), so the button can sit inside too."""
-    return (
-        '<div style="display:flex;align-items:center;gap:.6rem;">'
-        '<span style="font-size:1.2rem;line-height:1;">⚠️</span>'
-        '<span style="font-weight:700;font-size:1.02rem;'
-        f'color:var(--body-text-color);">{html.escape(text)}</span></div>'
     )
 
 
@@ -973,8 +1007,6 @@ def _tr_cameras(rgb: str, depth: str, depth_label: str,
 # the symptom ("No device found for /dev/i2c-3") but not the cause. The
 # Diagnose popup walks the I2C stack on the device (hardware/i2c_diag.py) and
 # offers the fix for the first broken layer.
-_ANGLE_FAULT = "The gripper angle sensors are not working — recording is disabled"
-
 _DIAG_FIX_CLASSES = ["gb-diag-fix"]
 _DIAG_PW_CLASSES = ["gb-diag-pw"]
 _DIAG_DONE_CLASSES = ["gb-diag-done"]
@@ -988,13 +1020,14 @@ _DIAG_MARKS = {
 }
 
 
-def _diag_warning_html(text: str) -> str:
-    return (
-        '<div style="display:flex;align-items:center;gap:.6rem;">'
-        '<span style="font-size:1.2rem;line-height:1;">⛔</span>'
-        '<span style="font-weight:700;font-size:1.02rem;'
-        f'color:var(--body-text-color);">{html.escape(text)}</span></div>'
-    )
+def _without(fn, i: int):
+    """`fn` with the i-th of its outputs dropped, for a container that has no
+    component to send it to."""
+    def wrapped(*args):
+        out = list(fn(*args))
+        del out[i]
+        return tuple(out)
+    return wrapped
 
 
 def _diag_report_html(diag: dict | None, error: str = "") -> str:
@@ -1005,20 +1038,9 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
     if diag is None:
         return ('<div style="opacity:.75;">Checking the I2C buses and the '
                 'sensors…</div>')
-    rows = []
-    for c in diag.get("checks", []):
-        color, mark = _DIAG_MARKS.get(c.get("status"), _DIAG_MARKS["skip"])
-        rows.append(
-            '<div class="gb-check" style="display:flex;gap:.6rem;align-items:baseline;'
-            'padding:.35rem 0;border-bottom:1px solid var(--border-color-primary);">'
-            f'<span style="color:{color};font-weight:800;width:1rem;'
-            f'text-align:center;flex:0 0 auto;">{mark}</span>'
-            '<div class="gb-check-body"><div class="gb-check-head">'
-            f'<span style="font-weight:600;">{html.escape(c.get("label", ""))}</span>'
-            + ('<span class="gb-info" role="button" aria-label="Details">i</span>'
-               if c.get("detail") else '')
-            + f'</div><div class="gb-tip">{html.escape(c.get("detail", ""))}</div>'
-            '</div></div>')
+    rows = [_diag_check_row(c.get("status"), c.get("label", ""),
+                            c.get("detail", ""))
+            for c in diag.get("checks", [])]
     color = "#10b981" if diag.get("healthy") else "#ef4444"
     verdict = (_diag_faults_html(diag["faults"]) if diag.get("faults") else
                _diag_verdict_html(diag.get("summary", ""), color))
@@ -1032,6 +1054,22 @@ def _diag_report_html(diag: dict | None, error: str = "") -> str:
             'border-radius:8px;background:var(--background-fill-secondary);'
             f'white-space:pre-wrap;">{cmds}</pre></details>')
     return "<div>" + "".join(rows) + verdict + manual + "</div>"
+
+
+def _diag_check_row(status: str | None, label: str, detail: str = "") -> str:
+    """One line of a checklist: its mark, its label, and the detail under ⓘ."""
+    color, mark = _DIAG_MARKS.get(status, _DIAG_MARKS["skip"])
+    return (
+        '<div class="gb-check" style="display:flex;gap:.6rem;align-items:baseline;'
+        'padding:.35rem 0;border-bottom:1px solid var(--border-color-primary);">'
+        f'<span style="color:{color};font-weight:800;width:1rem;'
+        f'text-align:center;flex:0 0 auto;">{mark}</span>'
+        '<div class="gb-check-body"><div class="gb-check-head">'
+        f'<span style="font-weight:600;">{html.escape(label)}</span>'
+        + ('<span class="gb-info" role="button" aria-label="Details">i</span>'
+           if detail else '')
+        + f'</div><div class="gb-tip">{html.escape(detail)}</div>'
+        '</div></div>')
 
 
 def _diag_verdict_html(text: str, color: str) -> str:
@@ -1100,6 +1138,17 @@ _DIAG_POPUP_JS = """
 """
 
 
+# Troubleshooting opens on the part at fault by clicking its tab (see
+# _troubleshooting).
+_TS_SHOW_JS = """
+(section) => {
+  var tab = document.querySelector(
+    '.gb-ts-card [role=tab][data-tab-id="' + section + '"]');
+  if (tab) { tab.click(); }
+}
+"""
+
+
 # Where a sensor's cable runs, for a sensor that does not answer at all (a
 # wrong chip is not a cable): <name>-sensor-cable.gif, served from
 # grabette/ui/assets like the Test Recording gifs.
@@ -1112,18 +1161,233 @@ _CABLE_TIPS = (
 def _diag_cable_help_html(name: str | None) -> str:
     if name not in {n for n, _, _, _ in i2c_diag.SENSOR_BUSES}:
         return ""
-    tips = "".join(
-        '<li style="display:flex;gap:.5rem;align-items:baseline;">'
-        f'<span aria-hidden="true">👁</span><span>{html.escape(t)}</span></li>'
-        for t in _CABLE_TIPS)
     return (
         '<div style="margin-top:.8rem;">'
         f'<img src="/ui-assets/{name}-sensor-cable.gif" '
         f'alt="The {name} sensor cable, from the HAT to the sensor" '
         'style="width:100%;display:block;border-radius:10px;background:#fff;" '
         'onerror="this.style.display=\'none\';">'
-        '<ul style="list-style:none;margin:.6rem 0 0;padding:0;'
-        f'display:grid;gap:.3rem;font-weight:600;">{tips}</ul></div>')
+        + _tips_html(_CABLE_TIPS) + '</div>')
+
+
+def _tips_html(tips: tuple[str, ...]) -> str:
+    """What to look at, one 👁 line each, under a verdict."""
+    items = "".join(
+        '<li style="display:flex;gap:.5rem;align-items:baseline;">'
+        f'<span aria-hidden="true">👁</span><span>{html.escape(t)}</span></li>'
+        for t in tips)
+    return ('<ul style="list-style:none;margin:.6rem 0 0;padding:0;'
+            f'display:grid;gap:.3rem;font-weight:600;">{items}</ul>')
+
+
+# ── Pre-recording checks (Overview) ──────────────────────────────────
+#
+# What Test Recording would refuse or warn about, read off the same status
+# endpoints, so a fault shows on the landing page before anyone presses the
+# button. The Troubleshooting popup behind it has one section per part, each
+# with its checks, its verdict and what to do about it.
+_TS_RGB, _TS_DEPTH, _TS_ANGLE, _TS_CALIB = "rgb", "depth", "angle", "calib"
+_TS_SECTIONS = (
+    (_TS_RGB, "RGB camera"),
+    (_TS_DEPTH, "RGB-D camera"),
+    (_TS_ANGLE, "Angle sensors"),
+    (_TS_CALIB, "Calibration"),
+)
+
+_RGB_TIPS = (
+    "Power the grabette off, then check the camera cable on both ends.",
+    "Power it back on and wait for the LED before looking again.",
+)
+_DEPTH_TIPS = (
+    "Check the depth camera's USB cable on both ends.",
+    "Power-cycle the grabette.",
+)
+
+
+def _ov_checks(cap: dict | None, cam: dict | None, dcam: dict | None,
+               angle: dict | None) -> list[tuple[str, str | None, str]] | None:
+    """What stands between this device and a recording, as (level, section,
+    text): "fail" refuses the recording, "warn" only holds it up. None when
+    the device did not answer at all.
+
+    `cap` is the capture status from /api/state, the others the status of
+    the RGB camera, the depth camera and the angle sensors."""
+    if cap is None and cam is None and dcam is None and angle is None:
+        return None
+    cap, dcam = cap or {}, dcam or {}
+    issues: list[tuple[str, str | None, str]] = []
+    rgb = _camera_state(cam)
+    if rgb == "missing":
+        issues.append(("fail", _TS_RGB, "RGB camera not detected"))
+    elif rgb == "starting":
+        issues.append(("warn", _TS_RGB, "RGB camera starting"))
+    label = dcam.get("label") or "Depth camera"
+    if dcam.get("error"):
+        issues.append(("fail", _TS_DEPTH, f"{label}: {dcam['error']}"))
+    elif _depth_camera_state(dcam or None) == "missing":
+        issues.append(("fail", _TS_DEPTH, f"{label} not detected"))
+    elif dcam.get("initializing"):
+        issues.append(("warn", _TS_DEPTH, f"{label} starting"))
+    if (angle or {}).get("error"):
+        issues.append(("fail", _TS_ANGLE, "Gripper angle sensors not working"))
+        if cap.get("needs_calibration"):
+            # Sensors that are down cannot be calibrated: that fault comes
+            # first, and this one waits for it.
+            issues.append(("warn", _TS_CALIB,
+                           "Calibrate the device once the angle sensors work"))
+    elif cap.get("needs_calibration"):
+        issues.append(("fail", _TS_CALIB, "Device not calibrated"))
+    blocked = cap.get("blocked_reason")
+    if blocked and not any(level == "fail" for level, _, _ in issues):
+        # Refused, and no part is at fault: the device is busy (an upload…),
+        # which clears on its own.
+        issues.append(("warn", None, f"Cannot record right now — {blocked}"))
+    return issues
+
+
+def _ov_checks_html(issues: list[tuple[str, str | None, str]] | None) -> str:
+    """The Overview's verdict on the checks; its class (gb-checks-<kind>) is
+    what colours the callout around it and the Troubleshooting button."""
+    if issues is None:
+        kind, icon, title = "unknown", "…", "Cannot reach the device"
+        hint = "The checks run again in a few seconds."
+    elif not issues:
+        kind, icon, title = "ok", "✓", "Ready to record"
+        hint = "Cameras, angle sensors and calibration all check out."
+    elif any(level == "fail" for level, _, _ in issues):
+        n = sum(level == "fail" for level, _, _ in issues)
+        kind, icon = "fail", "⛔"
+        title = (f"{n} problem{'s' if n > 1 else ''} to fix before recording")
+        hint = ""
+    else:
+        kind, icon, title, hint = "warn", "⏳", "Almost ready", ""
+    items = "".join(
+        '<li style="display:flex;gap:.5rem;align-items:baseline;">'
+        f'<span style="color:{_DIAG_MARKS[level][0]};font-weight:800;">'
+        f'{_DIAG_MARKS[level][1]}</span><span>{html.escape(text)}</span></li>'
+        for level, _, text in issues or ())
+    body = (f'<ul style="list-style:none;margin:.35rem 0 0;padding:0;'
+            f'display:grid;gap:.15rem;">{items}</ul>' if items else
+            f'<div style="font-size:.85rem;opacity:.75;">{html.escape(hint)}</div>')
+    return (
+        f'<div class="gb-checks-state gb-checks-{kind}">'
+        '<div style="display:flex;align-items:center;gap:.6rem;">'
+        f'<span style="font-size:1.1rem;line-height:1;">{icon}</span>'
+        '<span style="font-weight:700;font-size:1.02rem;'
+        f'color:var(--body-text-color);">{html.escape(title)}</span></div>'
+        f'{body}</div>')
+
+
+def _ts_first_section(issues: list[tuple[str, str | None, str]] | None) -> str:
+    """The section Troubleshooting opens on: the first part at fault."""
+    for wanted in ("fail", "warn"):
+        for level, section, _ in issues or ():
+            if level == wanted and section:
+                return section
+    return _TS_RGB
+
+
+def _ts_tab_label(section: str,
+                  issues: list[tuple[str, str | None, str]] | None) -> str:
+    name = dict(_TS_SECTIONS)[section]
+    if issues is None:
+        return name
+    levels = {level for level, s, _ in issues if s == section}
+    mark = "✗" if "fail" in levels else "!" if "warn" in levels else "✓"
+    return f"{mark} {name}"
+
+
+def _ts_unknown_html() -> str:
+    return ('<div style="opacity:.75;">Cannot reach the device — trying '
+            'again…</div>')
+
+
+def _ts_rgb_html(cam: dict | None) -> str:
+    state = _camera_state(cam)
+    if state == "unknown":
+        return _ts_unknown_html()
+    row = {
+        "connected": _diag_check_row("ok", "Camera detected"),
+        "starting": _diag_check_row(
+            "warn", "Camera detected",
+            "Restarting, as it does after each recording."),
+        "missing": _diag_check_row("fail", "Camera detected",
+                                   "The device does not see an RGB camera."),
+    }[state]
+    if state == "connected":
+        verdict = _diag_verdict_html("The RGB camera is working.", "#10b981")
+    elif state == "starting":
+        verdict = _diag_verdict_html(
+            "The RGB camera is restarting — wait a few seconds.", "#f59e0b")
+    else:
+        verdict = (_diag_verdict_html(
+            "The RGB camera is not detected: recording is disabled until it "
+            "is.", "#ef4444") + _tips_html(_RGB_TIPS))
+    return "<div>" + row + verdict + "</div>"
+
+
+def _ts_depth_html(dcam: dict | None) -> str:
+    if dcam is None:
+        return _ts_unknown_html()
+    label = dcam.get("label") or "Depth camera"
+    if not dcam.get("supported"):
+        return _diag_verdict_html("This grabette has no depth camera.",
+                                  "#94a3b8")
+    connected = dcam.get("connected")
+    rows = [_diag_check_row(
+        {True: "ok", False: "fail"}.get(connected, "skip"), "Plugged in",
+        "" if connected is not None else
+        "Cannot be checked without starting it.")]
+    if dcam.get("initialized"):
+        rows.append(_diag_check_row("ok", "Started"))
+    elif dcam.get("initializing"):
+        rows.append(_diag_check_row("warn", "Started", "Starting…"))
+    elif not dcam.get("enabled"):
+        rows.append(_diag_check_row(
+            "skip", "Started",
+            "Off: a recording starts it, or start it below to try it now."))
+    else:
+        rows.append(_diag_check_row("fail", "Started",
+                                    "Switched on, but it did not start."))
+    error = dcam.get("error") or ""
+    rows.append(_diag_check_row("fail" if error else "ok", "Ready to record",
+                                error))
+    if error:
+        verdict = _diag_verdict_html(f"{label}: {error}", "#ef4444")
+    elif connected is False:
+        verdict = (_diag_verdict_html(
+            f"The {label} is not detected: recording is disabled until it is.",
+            "#ef4444") + _tips_html(_DEPTH_TIPS))
+    elif dcam.get("initializing"):
+        verdict = _diag_verdict_html(f"The {label} is starting…", "#f59e0b")
+    else:
+        verdict = _diag_verdict_html(f"The {label} is ready to record.",
+                                     "#10b981")
+    return "<div>" + "".join(rows) + verdict + "</div>"
+
+
+def _ts_calib_html(calib: dict | None, angle: dict | None) -> str:
+    if calib is None:
+        return _ts_unknown_html()
+    if (angle or {}).get("error"):
+        return ("<div>" + _diag_check_row(
+                    "skip", "Calibrated",
+                    "The angle sensors cannot be read, so neither checked nor "
+                    "calibrated.")
+                + _diag_verdict_html("Fix the angle sensors first.", "#f59e0b")
+                + "</div>")
+    if calib.get("needs_calibration"):
+        return ("<div>" + _diag_check_row(
+                    "fail", "Calibrated",
+                    "The angle sensors have no saved zero: the recorded angles "
+                    "would mean nothing.")
+                + _diag_verdict_html(
+                    "Your device is not calibrated: recording is disabled "
+                    "until it is.", "#ef4444")
+                + "</div>")
+    return ("<div>" + _diag_check_row("ok", "Calibrated")
+            + _diag_verdict_html("Your device is calibrated.", "#10b981")
+            + "</div>")
 
 
 def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
@@ -1752,7 +2016,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Capture (Datasets page) ───────────────────────────────────────
 
-    # ── Angle-sensor diagnostic (Overview + Test Recording) ───────────
+    # ── Angle-sensor diagnostic (Test Recording + Troubleshooting) ────
 
     def _diag_fix_update(diag: dict | None):
         """The fix button, the id it applies, and the Close button (shown once
@@ -1774,13 +2038,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return gr.update(elem_classes=_DIAG_DONE_CLASSES + ([] if shown else
                                                             ["gb-diag-gone"]))
 
-    def on_diag_open():
-        """Open the popup on a clean slate, the walk about to run."""
-        return (gr.update(visible=True), _diag_report_html(None),
-                gr.update(interactive=False), None, _diag_done_btn(False), "",
-                gr.update(interactive=False))
-
     def on_diag_again():
+        """A clean slate, the walk about to run."""
         return (_diag_report_html(None), gr.update(interactive=False), None,
                 _diag_done_btn(False), "", gr.update(interactive=False))
 
@@ -1860,17 +2119,73 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (_diag_report_html(diag), *_diag_fix_update(diag),
                 f"✓ {res['done']}", box, diag, live, _diag_pw(False))
 
-    def _angle_diag_prompt(warning: str | None, elem_id: str | None = None):
-        """The "Diagnose" button (after `warning`, in one red callout, when
-        given) and the popup it opens. Returns the box holding the button,
-        hidden until the device reports an angle-sensor fault — the caller's
-        poll shows it.
+    def _angle_diag_body(box=None):
+        """The report, its fix buttons and its live refresh, built where it is
+        called: in the Diagnose popup, and in the Angle sensors section of
+        Troubleshooting. `box` is the page's Diagnose button, hidden as soon as
+        a fix brings the sensors back (None: there is none to hide).
+
+        Returns the parts the container wires: `reset` and `run` (the outputs
+        of on_diag_again and on_diag_run, which start a walk), the live
+        `timer`, the `done` button and the `password` field (both cleared on
+        close)."""
+        report = gr.HTML(_diag_report_html(None))
+        msg = gr.Markdown("")
+        # Shown when sudo asks for it (see on_diag_fix).
+        password = gr.Textbox(
+            type="password", label="Grabette password",
+            info=_DIAG_PW_HINT,
+            elem_classes=_DIAG_PW_CLASSES + ["gb-diag-gone"])
+        with gr.Row(elem_classes="gb-diag-actions"):
+            fix_btn = gr.Button(
+                "Fix it", variant="primary", scale=0, min_width=0,
+                elem_classes=_DIAG_FIX_CLASSES + ["gb-diag-gone"])
+            done_btn = gr.Button(
+                "Close", variant="primary", scale=0, min_width=0,
+                elem_classes=_DIAG_DONE_CLASSES + ["gb-diag-gone"])
+            again_btn = gr.Button("Run the diagnostic again",
+                                  scale=0, min_width=0)
+        fix_state = gr.State(None)
+        last_diag = gr.State(None)
+        # Live refresh, only while the report is on screen: each tick is a
+        # real walk down the I2C stack on the device.
+        live_timer = gr.Timer(2.0, active=False)
+        reset_outputs = [report, fix_btn, fix_state, done_btn, msg, again_btn]
+        run_outputs = [report, fix_btn, fix_state, done_btn, again_btn,
+                       last_diag, live_timer]
+        tick_outputs = [report, fix_btn, fix_state, done_btn, msg, last_diag]
+        fix_outputs = [report, fix_btn, fix_state, done_btn, msg, last_diag,
+                       live_timer, password]
+        tick_fn, fix_fn = on_diag_tick, on_diag_fix
+        if box is None:
+            tick_fn, fix_fn = _without(on_diag_tick, 6), _without(on_diag_fix, 5)
+        else:
+            tick_outputs.append(box)
+            fix_outputs.insert(5, box)
+
+        again_btn.click(fn=on_diag_again, outputs=reset_outputs,
+                        queue=False).then(fn=on_diag_run, outputs=run_outputs)
+        live_timer.tick(fn=tick_fn, inputs=[last_diag, fix_state],
+                        outputs=tick_outputs)
+        fix_btn.click(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
+                      queue=False).then(
+            fn=fix_fn, inputs=[fix_state, report, password],
+            outputs=fix_outputs)
+        # Enter in the field applies the fix, like the button.
+        password.submit(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
+                        queue=False).then(
+            fn=fix_fn, inputs=[fix_state, report, password],
+            outputs=fix_outputs)
+        return SimpleNamespace(reset=reset_outputs, run=run_outputs,
+                               timer=live_timer, done=done_btn,
+                               password=password)
+
+    def _angle_diag_prompt():
+        """The "Diagnose" button and the popup it opens. Returns the box
+        holding the button, hidden until the device reports an angle-sensor
+        fault — the caller's poll shows it.
         """
-        classes = ["gb-diag-box"] + (["gb-diag-callout"] if warning else [])
-        with gr.Row(visible=False, elem_id=elem_id,
-                    elem_classes=classes) as box:
-            if warning:
-                gr.HTML(_diag_warning_html(warning))
+        with gr.Row(visible=False, elem_classes="gb-diag-box") as box:
             open_btn = gr.Button("→ Diagnose the angle sensors",
                                  variant="primary", size="lg", scale=0,
                                  min_width=0, elem_classes="gb-diag-open")
@@ -1882,66 +2197,20 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                       elem_classes="gb-diag-close")
                 gr.HTML('<div style="font-weight:700;font-size:1.15rem;'
                         'padding-right:2rem;">Angle sensors diagnostic</div>')
-                report = gr.HTML(_diag_report_html(None))
-                msg = gr.Markdown("")
-                # Shown when sudo asks for it (see on_diag_fix).
-                password = gr.Textbox(
-                    type="password", label="Grabette password",
-                    info=_DIAG_PW_HINT,
-                    elem_classes=_DIAG_PW_CLASSES + ["gb-diag-gone"])
-                with gr.Row(elem_classes="gb-diag-actions"):
-                    fix_btn = gr.Button(
-                        "Fix it", variant="primary", scale=0, min_width=0,
-                        elem_classes=_DIAG_FIX_CLASSES + ["gb-diag-gone"])
-                    done_btn = gr.Button(
-                        "Close", variant="primary", scale=0, min_width=0,
-                        elem_classes=_DIAG_DONE_CLASSES + ["gb-diag-gone"])
-                    again_btn = gr.Button("Run the diagnostic again",
-                                          scale=0, min_width=0)
-        fix_state = gr.State(None)
-        last_diag = gr.State(None)
-        # Live refresh, only while the popup is open: each tick is a real walk
-        # down the I2C stack on the device.
-        live_timer = gr.Timer(2.0, active=False)
-        run_outputs = [report, fix_btn, fix_state, done_btn, again_btn,
-                       last_diag, live_timer]
+                body = _angle_diag_body(box)
 
         open_btn.click(
-            fn=on_diag_open,
-            outputs=[modal, report, fix_btn, fix_state, done_btn, msg,
-                     again_btn],
+            fn=lambda: (gr.update(visible=True), *on_diag_again()),
+            outputs=[modal, *body.reset],
             queue=False,
-        ).then(fn=on_diag_run, outputs=run_outputs)
-        again_btn.click(
-            fn=on_diag_again,
-            outputs=[report, fix_btn, fix_state, done_btn, msg, again_btn],
-            queue=False,
-        ).then(fn=on_diag_run, outputs=run_outputs)
-        live_timer.tick(fn=on_diag_tick, inputs=[last_diag, fix_state],
-                        outputs=[report, fix_btn, fix_state, done_btn, msg,
-                                 last_diag, box])
-        fix_btn.click(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
-                      queue=False).then(
-            fn=on_diag_fix, inputs=[fix_state, report, password],
-            outputs=[report, fix_btn, fix_state, done_btn, msg, box,
-                     last_diag, live_timer, password])
-        # Enter in the field applies the fix, like the button.
-        password.submit(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
-                        queue=False).then(
-            fn=on_diag_fix, inputs=[fix_state, report, password],
-            outputs=[report, fix_btn, fix_state, done_btn, msg, box,
-                     last_diag, live_timer, password])
+        ).then(fn=on_diag_run, outputs=body.run)
         # Closing forgets the password.
-        for _btn in (close_btn, done_btn):
+        for _btn in (close_btn, body.done):
             _btn.click(fn=lambda: (gr.update(visible=False),
                                    gr.Timer(active=False),
                                    _diag_pw(False, value="")),
-                       outputs=[modal, live_timer, password], queue=False)
+                       outputs=[modal, body.timer, body.password], queue=False)
         return box
-
-    def poll_angle_fault():
-        status = client.get_angle_status() or {}
-        return gr.update(visible=bool(status.get("error")))
 
     # ── Calibration prompt (Overview + Test Recording) ────────────────
 
@@ -1976,18 +2245,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(visible=bool(res.get("needs_calibration"))),
                 _calib_done_btn(True))
 
-    def _calibration_prompt(warning: str | None, elem_id: str | None = None):
-        """The "Calibrate my device" button (right after `warning`, in one
-        callout, when given) and the two-step popup it opens. Returns the box
+    def _calibration_prompt():
+        """The "Calibrate my device" button and the two-step popup it opens.
+        Returns the box
         holding the button, hidden until the device says it needs calibrating —
         the caller's poll shows it — and a function that makes any other button
         open the same popup (the Overview's "Recalibrate").
         """
-        classes = ["gb-calib-box"] + (["gb-calib-callout"] if warning else [])
-        with gr.Row(visible=False, elem_id=elem_id,
-                    elem_classes=classes) as box:
-            if warning:
-                gr.HTML(_calib_warning_html(warning))
+        with gr.Row(visible=False, elem_classes="gb-calib-box") as box:
             open_btn = gr.Button("→ Calibrate my device", variant="primary",
                                  size="lg", scale=0, min_width=0,
                                  elem_classes="gb-calib-open")
@@ -2028,9 +2293,178 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_calibrate, outputs=[run_btn, msg, box, done_btn])
         return box, bind_open
 
-    def poll_calibration():
-        st = client.get_calibration() or {}
-        return gr.update(visible=bool(st.get("needs_calibration")))
+    # ── Troubleshooting (Overview) ────────────────────────────────────
+
+    def _ts_read():
+        """Everything the checks look at, one call to each endpoint."""
+        return ((client.get_state() or {}).get("capture"),
+                client.get_camera_status(), client.get_oakd_status(),
+                client.get_angle_status())
+
+    def poll_ov_checks():
+        """The Overview's verdict, its Troubleshooting button (primary while
+        there is something to look at) and its Calibrate button (while that is
+        the fix: not while the sensors it reads are down)."""
+        issues = _ov_checks(*_ts_read())
+        return (_ov_checks_html(issues),
+                gr.update(variant="primary" if issues else "secondary"),
+                gr.update(visible=("fail", _TS_CALIB) in
+                          {(level, sec) for level, sec, _ in issues or ()}))
+
+    def _ts_gone(classes: list[str], shown: bool) -> dict:
+        """Shown and hidden with a class, for the same reason as the
+        diagnostic's fix button (_diag_fix_btn)."""
+        return {"elem_classes": classes + ([] if shown else ["gb-diag-gone"])}
+
+    def ts_sections():
+        """Every section but the angle sensors' (they have their own live
+        refresh), the four tab labels, and the checks themselves.
+
+        Outputs: RGB report and image, depth report, image and Start button,
+        calibration report and button, the four tabs, the issues."""
+        cap, cam, dcam, angle = _ts_read()
+        issues = _ov_checks(cap, cam, dcam, angle)
+        calib = client.get_calibration()
+        label = (dcam or {}).get("label") or "depth camera"
+        can_start = bool(dcam and dcam.get("supported")
+                         and not dcam.get("enabled"))
+        must_calib = bool((calib or {}).get("needs_calibration")
+                          and not (angle or {}).get("error"))
+        rgb_frame = get_camera_frame()
+        depth_frame = (get_depth_frame() if (dcam or {}).get("initialized")
+                       else None)
+        return (
+            _ts_rgb_html(cam),
+            gr.update(value=rgb_frame,
+                      **_ts_gone(["gb-ts-img"], rgb_frame is not None)),
+            _ts_depth_html(dcam),
+            gr.update(value=depth_frame,
+                      **_ts_gone(["gb-ts-img"], depth_frame is not None)),
+            gr.update(value=f"Start the {label}", interactive=True,
+                      elem_classes=["gb-ts-start"]
+                      + ([] if can_start else ["gb-diag-gone"])),
+            _ts_calib_html(calib, angle),
+            gr.update(**_ts_gone(["gb-ts-calib"], must_calib)),
+            *(gr.Tab(label=_ts_tab_label(sec, issues))
+              for sec, _ in _TS_SECTIONS),
+            issues,
+        )
+
+    def on_ts_open():
+        """Outputs: the popup, the part to show first (the first one at
+        fault), the refresh timer, the depth message, then ts_sections'."""
+        *sections, issues = ts_sections()
+        return (gr.update(visible=True), _ts_first_section(issues),
+                gr.Timer(active=True), "", *sections)
+
+    def on_ts_tick():
+        return ts_sections()[:-1]
+
+    def on_ts_angle_reset(section):
+        if section != _TS_ANGLE:
+            return (gr.update(),) * 6
+        return on_diag_again()
+
+    def on_ts_angle_run(section):
+        """Walk the I2C stack when the Angle sensors section is the one on
+        screen; leave it (and its live refresh) off otherwise."""
+        if section != _TS_ANGLE:
+            return (*(gr.update(),) * 6, gr.Timer(active=False))
+        status = client.get_angle_status()
+        if status is not None and not status.get("enabled"):
+            return (_diag_verdict_html("This grabette is built without angle "
+                                       "sensors.", "#94a3b8"),
+                    _diag_fix_btn(False), None, _diag_done_btn(False),
+                    gr.update(interactive=False), None,
+                    gr.Timer(active=False))
+        return on_diag_run()
+
+    def on_ts_depth_start():
+        res = client.set_oakd(True)
+        msg = f"⛔ {res['error']}" if "error" in res else ""
+        return (msg, *ts_sections()[:-1])
+
+    def _troubleshooting(open_btn: gr.Button, calib_bind) -> None:
+        """The Troubleshooting popup `open_btn` opens: one section per part of
+        the grabette, each with its checks and what to do about them. The
+        angle sensors' section is the Diagnose popup's report, fixes included;
+        the calibration's opens the calibration popup (`calib_bind`)."""
+        with gr.Column(visible=False,
+                       elem_classes=["gb-diag-modal", "gb-ts-modal"]) as modal:
+            with gr.Column(elem_classes=["gb-diag-card", "gb-ts-card"]):
+                close_btn = gr.Button("✕", size="sm", scale=0, min_width=0,
+                                      elem_classes="gb-diag-close")
+                gr.HTML('<div style="font-weight:700;font-size:1.15rem;'
+                        'padding-right:2rem;">Troubleshooting</div>'
+                        '<div style="font-size:.85rem;opacity:.75;">'
+                        'What each part of the grabette reports, and how to '
+                        'fix it.</div>')
+                with gr.Tabs():
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_RGB], id=_TS_RGB) as tab_rgb:
+                        rgb_html = gr.HTML(_ts_unknown_html())
+                        rgb_img = gr.Image(show_label=False, container=False,
+                                           height=180, interactive=False,
+                                           buttons=[], elem_classes=[
+                                               "gb-ts-img", "gb-diag-gone"])
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_DEPTH], id=_TS_DEPTH) as tab_depth:
+                        depth_html = gr.HTML(_ts_unknown_html())
+                        depth_img = gr.Image(show_label=False, container=False,
+                                             height=180, interactive=False,
+                                             buttons=[], elem_classes=[
+                                                 "gb-ts-img", "gb-diag-gone"])
+                        depth_msg = gr.Markdown("")
+                        with gr.Row(elem_classes="gb-diag-actions"):
+                            depth_btn = gr.Button(
+                                "Start the depth camera", variant="primary",
+                                scale=0, min_width=0,
+                                elem_classes=["gb-ts-start", "gb-diag-gone"])
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_ANGLE], id=_TS_ANGLE) as tab_angle:
+                        angle = _angle_diag_body()
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_CALIB], id=_TS_CALIB) as tab_calib:
+                        calib_html = gr.HTML(_ts_unknown_html())
+                        with gr.Row(elem_classes="gb-diag-actions"):
+                            calib_btn = gr.Button(
+                                "→ Calibrate my device", variant="primary",
+                                scale=0, min_width=0,
+                                elem_classes=["gb-ts-calib", "gb-diag-gone"])
+        section = gr.State(_TS_RGB)
+        # A textbox, not a State: the JS that clicks the tab reads it, and a
+        # State never reaches the browser.
+        first = gr.Textbox(_TS_RGB, visible=False)
+        # Cheap reads (statuses and two snapshots), only while it is open.
+        timer = gr.Timer(2.0, active=False)
+        tab_list = [tab_rgb, tab_depth, tab_angle, tab_calib]
+        outputs = [rgb_html, rgb_img, depth_html, depth_img, depth_btn,
+                   calib_html, calib_btn, *tab_list]
+
+        # The first part at fault is shown by clicking its tab, as a person
+        # would: setting the tabs' `selected` from here pins them to it, and
+        # the next clicks on the others bounce back. The click's select event
+        # then runs that part's checks like any other.
+        open_btn.click(
+            fn=on_ts_open,
+            outputs=[modal, first, timer, depth_msg, *outputs],
+        ).then(fn=None, inputs=first, js=_TS_SHOW_JS)
+        timer.tick(fn=on_ts_tick, outputs=outputs)
+        for tab, sec in zip(tab_list, (s for s, _ in _TS_SECTIONS)):
+            tab.select(fn=lambda sec=sec: sec, outputs=section, queue=False
+            ).then(fn=on_ts_angle_reset, inputs=section, outputs=angle.reset,
+                   queue=False
+            ).then(fn=on_ts_angle_run, inputs=section, outputs=angle.run)
+        depth_btn.click(fn=lambda: gr.update(value="Starting…",
+                                             interactive=False),
+                        outputs=depth_btn, queue=False
+        ).then(fn=on_ts_depth_start, outputs=[depth_msg, *outputs])
+        # The calibration has its own popup: this one makes way for it.
+        calib_bind(calib_btn)
+        # Closing stops both refreshes and forgets the password.
+        for _btn in (close_btn, angle.done, calib_btn):
+            _btn.click(fn=lambda: (gr.update(visible=False),
+                                   gr.Timer(active=False),
+                                   gr.Timer(active=False),
+                                   _diag_pw(False, value="")),
+                       outputs=[modal, timer, angle.timer, angle.password],
+                       queue=False)
 
     # ── Test Recording page ───────────────────────────────────────────
     #
@@ -2743,11 +3177,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     ov_sound_note = gr.Markdown("", elem_classes="ov-note")
             ov_sound_default = gr.State(_SOUND_DEFAULT)
 
-            # Before anything else on the device: it will not record until
-            # this is fixed.
-            ov_diag_box = _angle_diag_prompt(_ANGLE_FAULT, "ov-angle-fault")
-            ov_calib_box, ov_calib_bind = _calibration_prompt(_CALIB_REQUIRED,
-                                                              "ov-calib")
+            # Before anything else on the device: whether it can record, what
+            # stops it, and the way to the fix.
+            with gr.Row(elem_id="ov-checks", elem_classes="gb-checks"):
+                ov_checks_html = gr.HTML(_ov_checks_html(None))
+                with gr.Row(elem_classes="gb-checks-actions"):
+                    ov_calib_box, ov_calib_bind = _calibration_prompt()
+                    ov_ts_btn = gr.Button("Troubleshooting", size="lg",
+                                          scale=0, min_width=0,
+                                          elem_classes="gb-checks-open")
+            _troubleshooting(ov_ts_btn, ov_calib_bind)
 
             # ── Camera | 3D model | Device | Health ───────────────────
             # min_width is what makes this responsive: four columns on a
@@ -2843,13 +3282,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=None, js=_VOLUME_TIP_JS)
         demo.load(fn=None, js=_DIAG_POPUP_JS)
 
-        ov_diag_timer = gr.Timer(3.0)
-        ov_diag_timer.tick(fn=poll_angle_fault, outputs=ov_diag_box)
-        demo.load(fn=poll_angle_fault, outputs=ov_diag_box)
-
-        ov_calib_timer = gr.Timer(3.0)
-        ov_calib_timer.tick(fn=poll_calibration, outputs=ov_calib_box)
-        demo.load(fn=poll_calibration, outputs=ov_calib_box)
+        ov_checks_timer = gr.Timer(3.0)
+        ov_checks_outputs = [ov_checks_html, ov_ts_btn, ov_calib_box]
+        ov_checks_timer.tick(fn=poll_ov_checks, outputs=ov_checks_outputs)
+        demo.load(fn=poll_ov_checks, outputs=ov_checks_outputs)
 
         ov_info_timer = gr.Timer(10.0)
         ov_info_timer.tick(fn=refresh_overview,
@@ -2898,8 +3334,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                             "Press again to stop"))
                 tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
-                tr_diag_box = _angle_diag_prompt(None)
-                tr_calib_box, _ = _calibration_prompt(None)
+                tr_diag_box = _angle_diag_prompt()
+                tr_calib_box, _ = _calibration_prompt()
                 # 1 Hz against the daemon's cached state — the page has no other
                 # way to learn about a press that happened on the device.
                 tr_poll_timer = gr.Timer(1.0)

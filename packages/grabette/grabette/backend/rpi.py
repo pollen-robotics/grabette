@@ -1131,6 +1131,13 @@ class RpiBackend(Backend):
         self._hw_faults.pop(key, None)
 
     @property
+    def depth_camera_error(self) -> str:
+        """The depth camera's own fault, out of hardware_error ("" = none), so
+        the dashboard can put it under the depth camera rather than quote every
+        fault the device has."""
+        return self._hw_faults.get(_HW_OAKD, "")
+
+    @property
     def hardware_error(self) -> str:
         """Why this grabette must not record right now ("" = fine).
 
