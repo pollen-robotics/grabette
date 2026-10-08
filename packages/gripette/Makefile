@@ -4,6 +4,10 @@
 # lives at the workspace ROOT, not here. All venv ops target that root.
 WORKSPACE_ROOT := $(abspath $(CURDIR)/../..)
 
+# The services run as whoever owns the checkout (it owns the venv too), so no
+# recipe hardcodes a username. Override with `make SERVICE_USER=<name> ...`.
+SERVICE_USER ?= $(shell stat -c %U $(WORKSPACE_ROOT))
+
 help:
 	@echo "Targets:"
 	@echo "  install-rpi HAND=L|R   One-shot bring-up. HAND={left,right} REQUIRED — see notes."
@@ -253,13 +257,13 @@ ensure-ble-only:
 
 # Install both gripette services. Run after install-rpi has verified the
 # venv builds. The bluetooth service needs root (BlueZ DBus access); the
-# main service runs as rasp.
+# main service runs as $(SERVICE_USER).
 install-systemd: ensure-ble-only
-	@# Patch the units' hardcoded path to this device's actual workspace root
+	@# Patch the units' hardcoded path and User= to this device's workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
-	sed 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' systemd/gripette.service \
+	sed -e 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/gripette.service \
 	  | sudo tee /etc/systemd/system/gripette.service >/dev/null
-	sed 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' systemd/gripette-bluetooth.service \
+	sed -e 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/gripette-bluetooth.service \
 	  | sudo tee /etc/systemd/system/gripette-bluetooth.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now gripette
@@ -276,14 +280,14 @@ install-web:
 	@printf '%s\n' \
 	  '# Installed by gripette make install-web: lets the status page' \
 	  '# restart the gripette service and cleanly power off the device.' \
-	  'rasp ALL=(root) NOPASSWD: /usr/bin/systemctl restart gripette, /usr/bin/systemctl poweroff' \
+	  '$(SERVICE_USER) ALL=(root) NOPASSWD: /usr/bin/systemctl restart gripette, /usr/bin/systemctl poweroff' \
 	  | sudo tee /etc/sudoers.d/gripette-web.tmp >/dev/null
 	@sudo visudo -cf /etc/sudoers.d/gripette-web.tmp \
 	  || { echo "*** sudoers validation FAILED — not installing ***"; sudo rm -f /etc/sudoers.d/gripette-web.tmp; exit 1; }
 	@sudo chmod 0440 /etc/sudoers.d/gripette-web.tmp
 	@sudo mv /etc/sudoers.d/gripette-web.tmp /etc/sudoers.d/gripette-web
 	@echo "[sudoers] /etc/sudoers.d/gripette-web installed"
-	sed 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' systemd/gripette-web.service \
+	sed -e 's#/home/rasp/Project/Repo/gripette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/gripette-web.service \
 	  | sudo tee /etc/systemd/system/gripette-web.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now gripette-web
