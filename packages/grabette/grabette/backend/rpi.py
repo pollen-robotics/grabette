@@ -65,10 +65,11 @@ def _camera_metadata(model: str, cap) -> dict:
 # Keyed, not one string: the two are independent, and a single field would let
 # a successful OAK-D bring-up quietly clear a live angle-sensor fault. Listed in
 # report order so a device with both always words it the same way.
+_HW_CAMERA = "rgb_camera"
 _HW_OAKD = "oakd_calibration"
 _HW_ANGLE = "angle_sensors"
 _HW_CALIB = "angle_calibration"
-_HW_ORDER = (_HW_OAKD, _HW_ANGLE, _HW_CALIB)
+_HW_ORDER = (_HW_CAMERA, _HW_OAKD, _HW_ANGLE, _HW_CALIB)
 
 # How often the idle watch retries sensors that never came up.
 _ANGLE_RETRY_S = 3.0
@@ -79,6 +80,10 @@ _ANGLE_FAULT_MSG = (
 )
 # Kept short: the dashboard shows it as is, next to the button that fixes it.
 _CALIB_FAULT_MSG = "your device is not calibrated"
+# The ribbon is only looked for when the camera is opened (start-up, and after
+# each recording): reseating it needs the power off, and back on.
+_CAMERA_FAULT_MSG = ("the RGB camera is not detected ({what}) — power the "
+                     "grabette off, check its ribbon cable, power it back on")
 
 
 class RpiBackend(Backend):
@@ -149,13 +154,11 @@ class RpiBackend(Backend):
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
-        from grabette.hardware.camera import VideoCapture
 
         self._sync = SyncManager()
-        self._camera = VideoCapture(self._sync, fps=FPS)
 
         logger.info("Initializing camera...")
-        self._camera.init_camera()
+        self._init_camera()
 
         if self._enable_angle:
             self._init_angle_sensors()
@@ -173,6 +176,25 @@ class RpiBackend(Backend):
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
+
+    def _init_camera(self) -> None:
+        """Open the RGB camera, or latch a fault when it is not there.
+
+        A missing camera used to raise out of start(): the angle sensors and
+        the depth camera were never brought up, the daemon stayed in ERROR and
+        every API call answered 503 — a dashboard showing every part as
+        "unknown" instead of naming the one that is missing."""
+        from grabette.hardware.camera import VideoCapture
+        self._camera = VideoCapture(self._sync, fps=FPS)
+        try:
+            self._camera.init_camera()
+        except Exception as e:
+            self._camera.close()
+            self._set_hw_error(_HW_CAMERA, _CAMERA_FAULT_MSG.format(
+                what=_exc_text(e)))
+            logger.error("RGB camera unusable — recording disabled: %s", e)
+        else:
+            self._clear_hw_error(_HW_CAMERA)
 
     async def _watch_depth_camera_cable(self) -> None:
         """Clear a "did not start" fault once the cable is plugged back in.
@@ -1052,9 +1074,7 @@ class RpiBackend(Backend):
         fast-restart fallback. Idempotent — the flag guards against double-run."""
         if not self._needs_reinit:
             return
-        from grabette.hardware.camera import VideoCapture
-        self._camera = VideoCapture(self._sync, fps=FPS)
-        self._camera.init_camera()
+        self._init_camera()
         if self._enable_angle:
             self._init_angle_sensors()
         self._needs_reinit = False
@@ -1141,7 +1161,8 @@ class RpiBackend(Backend):
     def hardware_error(self) -> str:
         """Why this grabette must not record right now ("" = fine).
 
-        Set by _init_oakd (no OAK-D offline calibration), _init_angle_sensors
+        Set by _init_camera (no RGB camera), _init_oakd (no OAK-D offline
+        calibration), _init_angle_sensors
         / stop_capture (no gripper angle data) and _check_angle_calibration
         (angle sensors never zeroed). Read by start_capture and
         prepare_capture (which refuse) and by the button listener's LED monitor

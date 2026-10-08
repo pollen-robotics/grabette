@@ -82,6 +82,16 @@ class VideoCapture:
 
         self._picam2.start()
 
+    def close(self) -> None:
+        """Release a camera opened (or half-opened, when init_camera failed)
+        outside a recording; stop() does it after one."""
+        picam2, self._picam2, self._encoder = self._picam2, None, None
+        if picam2 is not None:
+            try:
+                picam2.close()
+            except Exception as e:
+                logger.debug("Closing picamera2: %s", e)
+
     def _on_frame(self, request) -> None:
         if self._recording:
             metadata = request.get_metadata()

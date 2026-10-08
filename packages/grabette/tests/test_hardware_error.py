@@ -562,3 +562,68 @@ def test_sensors_missing_at_boot_come_up_once_plugged(monkeypatch):
 
     assert b._angle is not None
     assert b.hardware_error == ""
+
+
+# --- the RGB camera: missing at boot ------------------------------------------
+# Picamera2() raises when no camera is on the ribbon. That used to escape
+# start(): nothing else was brought up, the daemon sat in ERROR and the
+# dashboard showed every part as "unknown" instead of naming the missing one.
+
+def _no_rgb_camera(monkeypatch):
+    from grabette.hardware import camera as camera_mod
+
+    class _NoCamera:
+        def __init__(self, sync, fps):
+            self.closed = False
+
+        def init_camera(self):
+            raise IndexError("list index out of range")
+
+        def close(self):
+            self.closed = True
+
+        is_open = False
+
+    monkeypatch.setattr(camera_mod, "VideoCapture", _NoCamera)
+
+
+def test_a_missing_rgb_camera_is_a_fault_not_a_crash(monkeypatch):
+    import asyncio
+    from grabette.backend import rpi
+    _no_rgb_camera(monkeypatch)
+    b = rpi.RpiBackend(enable_angle=True)
+    started = []
+    monkeypatch.setattr(b, "_init_angle_sensors", lambda: started.append("angle"))
+    monkeypatch.setattr(b, "_check_angle_calibration", lambda: None)
+    monkeypatch.setattr(b, "_init_oakd", lambda: started.append("depth"))
+    monkeypatch.setattr(b, "_init_speaker", lambda: None)
+
+    async def run():
+        await b.start()  # must not raise
+        b._depth_camera_watch_task.cancel()
+
+    asyncio.run(run())
+
+    assert started == ["angle", "depth"]  # the rest still comes up
+    assert not b.is_camera_connected
+    assert b._camera.closed
+    assert b.hardware_error.startswith("the RGB camera is not detected")
+    with pytest.raises(RuntimeError):
+        b.raise_if_capture_blocked()
+
+
+def test_the_rgb_camera_fault_clears_once_it_opens(monkeypatch):
+    from grabette.backend import rpi
+    from grabette.hardware import camera as camera_mod
+    _no_rgb_camera(monkeypatch)
+    b = rpi.RpiBackend(enable_oakd=False)
+    b._init_camera()
+    assert b.hardware_error
+
+    monkeypatch.setattr(camera_mod, "VideoCapture", lambda sync, fps:
+                        types.SimpleNamespace(init_camera=lambda: None,
+                                              is_open=True))
+    b._init_camera()
+
+    assert b.hardware_error == ""
+    assert b.is_camera_connected
