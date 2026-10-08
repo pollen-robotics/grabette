@@ -1818,7 +1818,6 @@
     // Nothing to check with (older firmware): calibrated all the same, so the
     // steps come back as the way to calibrate again, under the banner.
     function endCheck() {
-        stopCheck();
         reveal('card-check', false);
         reveal('card-calib', true);
         setCalibrated(true);

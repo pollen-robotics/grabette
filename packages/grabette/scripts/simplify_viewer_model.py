@@ -44,7 +44,7 @@ PART_MAX_FACES = 5000
 
 
 def _dropped(name: str) -> bool:
-    return any(name == d or name.startswith(d) for d in DROPPED)
+    return name.startswith(DROPPED)
 
 
 def _simplify(src: Path, dst: Path) -> tuple[int, int]:

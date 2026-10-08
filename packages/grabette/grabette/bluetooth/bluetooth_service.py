@@ -843,6 +843,14 @@ def _angles() -> str:
             f"p={angle['proximal']:.4f} d={angle['distal']:.4f}")
 
 
+# Need the PIN, without consuming it: calibrating again is harmless.
+_SENSOR_COMMANDS = {
+    "CALIB_STATUS": _calib_status,
+    "CALIBRATE": _calibrate,
+    "ANGLES": _angles,
+}
+
+
 # =====================================================================
 # Main service class
 # =====================================================================
@@ -967,13 +975,11 @@ class BluetoothWifiService:
             return self._refresh_status_after(_wifi_reset())
 
         # CALIB_STATUS / CALIBRATE / ANGLES — angle-sensor zeroing and its
-        # check, through the daemon (requires auth; does NOT consume it:
-        # calibrating again is harmless)
-        if upper in ("CALIB_STATUS", "CALIBRATE", "ANGLES"):
+        # check, through the daemon (requires auth; does NOT consume it)
+        if upper in _SENSOR_COMMANDS:
             if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
-            return {"CALIB_STATUS": _calib_status, "CALIBRATE": _calibrate,
-                    "ANGLES": _angles}[upper]()
+            return _SENSOR_COMMANDS[upper]()
 
         return f"ERROR: Unknown command: {command_str}"
 
