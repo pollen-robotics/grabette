@@ -56,11 +56,11 @@ jobs:
              docs/images/calibration-open-front.png docs/images/calibration-open-top.png \
              _site/images/
           # The calibration check: the dashboard's viewer, as is, with the
-          # light models it loads (scripts/simplify_viewer_model.py).
-          cp packages/grabette/grabette/app/viewer.html _site/
-          mkdir -p _site/urdf
-          cp -r packages/grabette/urdf/grabette_right_viewer \
-             packages/grabette/urdf/grabette_left_viewer _site/urdf/
+          # light models it loads (scripts/simplify_viewer_model.py). Both are
+          # symlinks in docs/, so serving docs/ locally works too; -L copies
+          # what they point to.
+          cp -L docs/viewer.html _site/
+          cp -rL docs/urdf _site/urdf
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

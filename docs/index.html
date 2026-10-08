@@ -540,9 +540,6 @@
             font-size: .76rem;
         }
         .calib-figure figcaption { margin-top: .5rem; font-size: .8rem; }
-        /* The emerald of .prereq and the success line: a state that is fine. */
-        .card.calib-done { background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.35); }
-        .calib-done-title { color: #a7f3d0; font-weight: 700; font-size: 1rem; margin-bottom: .35rem; }
         /* The calibration check's live model: the dashboard's own viewer,
            published next to this page, on the viewer's own backdrop. */
         .check-viewer {
@@ -554,7 +551,14 @@
             background: #1a1a2e;
             margin-bottom: .8rem;
         }
-        .check-viewer[hidden] { display: none; }
+        /* The emerald of .prereq and the success line: a state that is fine. */
+        .card.calib-done { background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.35); }
+        .calib-done-title { color: #a7f3d0; font-weight: 700; font-size: 1rem; }
+        /* The check's aside, after its instruction: an info mark, not a step. */
+        .check-note { display: flex; align-items: flex-start; gap: .4rem; }
+        .check-note svg { flex: none; width: 1em; height: 1em; margin-top: .1em; }
+        .check-viewer[hidden],
+        .step-num[hidden] { display: none; }
 
         /* Collapsible "available networks" disclosure */
         details#networkDetails { margin-bottom: .5rem; }
@@ -849,15 +853,6 @@
                     first — the calibration goes over the same Bluetooth link.</p>
             </div>
 
-            <!-- Already calibrated: said first, with the way out, so the steps
-                 below read as optional (calibrating again) rather than as the
-                 next thing to do. -->
-            <div class="card step-card calib-done" id="calibDone" hidden>
-                <div class="calib-done-title">✓ Your Grabette is already calibrated</div>
-                <p class="step-hint">You can go straight to the dashboard, or calibrate it again below.</p>
-                <button class="btn-primary" onclick="selectTab('dashboard')">Open the dashboard →</button>
-            </div>
-
             <div class="card step-card" id="card-calib" hidden>
                 <div class="step"><span class="step-num">1</span> Open the gripper fully</div>
                 <p class="step-hint">Open the fingers all the way, until they are against their stop.</p>
@@ -875,12 +870,23 @@
                 <div class="step-msg" id="msgCalib"></div>
             </div>
 
-            <!-- Step 3, once calibrated: the 3D model moving with the gripper,
-                 fed the angles over this same link (ANGLES), so the user sees
-                 the calibration is right. Same step as the dashboard's popup. -->
+            <!-- Calibrated, said first, above its check: on arrival ("already"),
+                 after a run, and on every return to this tab. -->
+            <div class="card step-card calib-done" id="calibDone" hidden>
+                <div class="calib-done-title" id="calibDoneTitle"></div>
+            </div>
+
+            <!-- The 3D model moving with the gripper, fed the angles over this
+                 same link (ANGLES), so the user sees the calibration is right.
+                 Step 3 after a calibration, as in the dashboard's popup; on its
+                 own, as "Check calibration", for a Grabette already calibrated. -->
             <div class="card step-card" id="card-check" hidden>
-                <div class="step"><span class="step-num">3</span> Check the result</div>
-                <p class="step-hint">Open and close the gripper: the 3D model should follow. It updates twice a second, so it moves in small jumps — that is normal. What matters is that its position matches your gripper.</p>
+                <div class="step"><span class="step-num" id="checkNum">3</span> <span id="checkTitle">Check the result</span></div>
+                <p class="step-hint">Move the moving parts of the gripper: the position of the 3D model should match your device.</p>
+                <p class="step-hint check-note">
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4.5M8 4.5v.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                    <span>The model only updates twice a second, so it moves in small jumps.</span>
+                </p>
                 <iframe class="check-viewer" id="checkViewer" title="3D model of your Grabette" hidden></iframe>
                 <div class="step-msg" id="msgCheck"></div>
                 <button class="btn-primary" onclick="confirmCheck()">All good, continue →</button>
@@ -1649,17 +1655,14 @@
         return /Unknown command/i.test(resp) ? CALIB_TOO_OLD : replyText(resp);
     }
 
-    // Done (or nothing to do): the dashboard is next. Calibrating again stays
-    // possible, as the secondary action. `already` (found calibrated on
-    // arrival) says so above the steps, with the dashboard button there;
-    // otherwise it follows the steps, under the result of the run.
-    function setCalibrated(on, already = false) {
+    // Done: the dashboard is next. Calibrating again stays possible, as the
+    // secondary action.
+    function setCalibrated(on) {
         const btn = document.getElementById('btnCalib');
         btn.textContent = on ? 'Calibrate again' : 'Start calibration';
         btn.className = on ? 'btn-secondary' : 'btn-primary';
         document.getElementById('calibDot').hidden = !on;
-        reveal('calibDone', on && already);
-        document.getElementById('btnCalibNext').hidden = !on || already;
+        document.getElementById('btnCalibNext').hidden = !on;
     }
 
     // Which of the panel's three faces fits the device on the other end.
@@ -1667,6 +1670,7 @@
         calibChecked = false;
         stopCheck();
         reveal('card-check', false);
+        reveal('calibDone', false);
         clearMsg('msgCalib');
         setCalibrated(false);
         const connected = !!(device && device.gatt.connected && commandChar);
@@ -1683,26 +1687,35 @@
     }
 
     // Asked once per connection, when the tab is opened: a Grabette that is
-    // already calibrated skips straight to the dashboard hand-off.
+    // already calibrated skips the steps and goes straight to checking it.
     async function checkCalibration() {
         if (calibChecked || calibBusy || connectedType !== 'Grabette'
             || !device || !device.gatt.connected) return;
         calibChecked = true;
         calibBusy = true;
+        // The steps stay out of sight until the answer: a calibrated Grabette
+        // never shows them. Errors land in them, with the way to calibrate.
+        let calibrated = false;
+        reveal('card-calib', false);
+        document.getElementById('calibWait').hidden = false;
+        document.getElementById('calibWaitText').textContent = 'Checking the calibration…';
         try {
-            stepMsg('msgCalib', 'Checking the calibration…');
             if (!await authenticate('msgCalib')) return;
             const resp = await sendCommand('CALIB_STATUS');
             if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
             if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
-            if (/NEEDS_CALIBRATION/.test(resp)) {
-                clearMsg('msgCalib');
-            } else {
-                clearMsg('msgCalib');
-                setCalibrated(true, true);
-            }
+            clearMsg('msgCalib');
+            calibrated = !/NEEDS_CALIBRATION/.test(resp);
         } finally {
             calibBusy = false;
+            document.getElementById('calibWait').hidden = true;
+            if (calibrated) {
+                showCalibrated('✓ Your Grabette is already calibrated');
+                setCheckHeading(true);
+                startCheck();
+            } else {
+                reveal('card-calib', true);
+            }
         }
     }
 
@@ -1718,7 +1731,8 @@
             if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
             if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
             clearMsg('msgCalib');
-            document.getElementById('calibDot').hidden = false;
+            showCalibrated('✓ Your Grabette is calibrated');
+            setCheckHeading(false);
             startCheck();
         } finally {
             calibBusy = false;
@@ -1736,6 +1750,20 @@
     let checkLoop = null;       // the running loop, to wait for its last command
     let checkHand = null;       // the model the viewer has loaded
 
+    function showCalibrated(title) {
+        document.getElementById('calibDoneTitle').textContent = title;
+        reveal('calibDone', true);
+        document.getElementById('calibDot').hidden = false;
+    }
+
+    // Step 3 right after a run; on its own ("Check calibration") when the
+    // steps are not on screen: found calibrated, or back on this tab later.
+    function setCheckHeading(standalone) {
+        document.getElementById('checkNum').hidden = standalone;
+        document.getElementById('checkTitle').textContent =
+            standalone ? 'Check calibration' : 'Check the result';
+    }
+
     function startCheck() {
         stopCheck();
         const run = ++checkRun;
@@ -1751,7 +1779,11 @@
                 if (resp === null) { stepMsg('msgCheck', 'No response from the device', 'err'); return; }
                 // Firmware from before this step: calibrated all the same,
                 // there is just nothing to show.
-                if (/Unknown command/i.test(resp)) { endCheck(); return; }
+                if (/Unknown command/i.test(resp)) {
+                    log('This device does not know ANGLES (older software): calibration check skipped', 'log-err');
+                    endCheck();
+                    return;
+                }
                 const m = /hand=(right|left) p=(\S+) d=(\S+)/.exec(resp);
                 if (m) {
                     clearMsg('msgCheck');
@@ -1783,22 +1815,25 @@
         frame.contentWindow.postMessage({ proximal, distal }, location.origin);
     }
 
-    // Back to the steps, as the calibrated device they now describe.
+    // Nothing to check with (older firmware): calibrated all the same, so the
+    // steps come back as the way to calibrate again, under the banner.
     function endCheck() {
         stopCheck();
         reveal('card-check', false);
         reveal('card-calib', true);
-        stepMsg('msgCalib', 'Your Grabette is calibrated.', 'ok');
         setCalibrated(true);
     }
 
+    // The check stays as it is, so coming back to this tab finds the banner
+    // and the live model again — leaving the tab stops the polling.
     function confirmCheck() {
-        endCheck();
+        setCheckHeading(true);
         selectTab('dashboard');
     }
 
     async function recalibrate() {
         await stopCheck();
+        reveal('calibDone', false);
         reveal('card-check', false);
         reveal('card-calib', true);
         clearMsg('msgCalib');
