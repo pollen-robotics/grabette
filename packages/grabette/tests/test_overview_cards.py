@@ -189,3 +189,10 @@ def test_a_missing_rgb_camera_shows_where_its_cable_runs():
     out = _ts_rgb_html({"connected": False, "reinitializing": False})
     assert "rgb-camera-cable.gif" in out
     assert "rgb-camera-cable.gif" not in _ts_rgb_html(CAM)
+
+
+def test_a_missing_rgb_camera_says_it_is_only_found_at_start_up():
+    out = _ts_rgb_html({"connected": False, "reinitializing": False})
+    assert "only looks for this camera when it starts" in out
+    assert "can damage the camera" in out
+    assert "Reboot it" in out

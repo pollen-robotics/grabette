@@ -1248,10 +1248,20 @@ _TS_SECTIONS = (
     (_TS_CALIB, "Calibration"),
 )
 
+# The RGB camera is found by the Pi's firmware at boot (camera_auto_detect=1
+# in config.txt), which loads its driver only if it is there: plugged back in
+# while running, it stays invisible until the next start-up. And a CSI ribbon
+# is not made to be plugged in under power.
 _RGB_TIPS = (
-    "Power the grabette off, then check the camera cable on both ends.",
-    "Power it back on and wait for the LED before looking again.",
+    "Power the grabette off before touching the ribbon cable: plugging it in "
+    "while powered can damage the camera or the Raspberry Pi.",
+    "Check the ribbon cable is seated on both ends.",
+    "Power the grabette back on: the camera is detected at start-up.",
 )
+_RGB_AT_BOOT = ("The grabette only looks for this camera when it starts: "
+                "plugging it back in while it is on does not bring it back.")
+_RGB_REBOOT_HINT = ("Already plugged back in with the grabette on? Reboot it "
+                    "so the camera is detected.")
 # The ribbon of the RGB camera is opened at start-up (and after each
 # recording) only, so it needs the power off and back on. The depth camera is
 # on USB: the backend watches the bus and clears its fault on an unplug and
@@ -1367,6 +1377,11 @@ def _ts_unknown_html() -> str:
             'again…</div>')
 
 
+def _ts_note_html(text: str) -> str:
+    return (f'<div style="margin-top:.7rem;font-size:.9rem;">'
+            f'{html.escape(text)}</div>')
+
+
 def _ts_rgb_html(cam: dict | None) -> str:
     state = _camera_state(cam)
     if state == "unknown":
@@ -1388,9 +1403,11 @@ def _ts_rgb_html(cam: dict | None) -> str:
         verdict = (_diag_verdict_html(
             "The RGB camera is not detected: recording is disabled until it "
             "is.", "#ef4444")
+            + _ts_note_html(_RGB_AT_BOOT)
             + _camera_cable_help_html("rgb-camera-cable.gif",
                                       "The RGB camera ribbon cable",
-                                      _RGB_TIPS))
+                                      _RGB_TIPS)
+            + _ts_note_html(_RGB_REBOOT_HINT))
     return "<div>" + row + verdict + "</div>"
 
 
@@ -2412,8 +2429,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """Every section but the angle sensors' (they have their own live
         refresh), the tabs' colours, and the checks themselves.
 
-        Outputs: RGB report and image, depth report, image and Start button,
-        calibration report and button, the tabs' style, the issues."""
+        Outputs: RGB report, image and Reboot button, depth report, image
+        and Start button, calibration report and button, the tabs' style, the
+        issues."""
         cap, cam, dcam, angle = _ts_read()
         issues = _ov_checks(cap, cam, dcam, angle)
         calib = client.get_calibration()
@@ -2431,6 +2449,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             _ts_rgb_html(cam),
             gr.update(value=rgb_frame,
                       **_ts_gone(["gb-ts-img"], rgb_frame is not None)),
+            # Its classes only: a refresh must not undo "Rebooting…".
+            gr.update(**_ts_gone(["gb-ts-reboot"],
+                                 _camera_state(cam) == "missing")),
             _ts_depth_html(dcam),
             gr.update(value=depth_frame,
                       **_ts_gone(["gb-ts-img"], depth_frame is not None)),
@@ -2477,6 +2498,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         msg = f"⛔ {res['error']}" if "error" in res else ""
         return (msg, *ts_sections()[:-1])
 
+    def _ts_pw(shown: bool, **kw):
+        return gr.update(**_ts_gone(["gb-ts-pw"], shown), **kw)
+
+    def on_ts_rgb_reboot(password):
+        """Reboot so the firmware looks for the RGB camera again. Through the
+        angle sensors' fix route: the same sudo rule (make install-i2c-fix)
+        and the same password prompt when there is none.
+
+        Outputs: message, Reboot button, password field."""
+        res = client.angle_fix(i2c_diag.FIX_REBOOT, password)
+        if res.get("needs_password"):
+            return (f"🔒 {res['error']}",
+                    gr.update(value="Reboot with this password",
+                              interactive=True),
+                    _ts_pw(True, value=""))
+        if "error" in res:
+            return (f"⛔ {res['error']}",
+                    gr.update(value="Reboot the grabette", interactive=True),
+                    gr.update())
+        return (f"🔄 {res['done']}",
+                gr.update(value="Rebooting…", interactive=False),
+                _ts_pw(False, value=""))
+
     def _troubleshooting(open_btn: gr.Button, calib_bind) -> None:
         """The Troubleshooting popup `open_btn` opens: one section per part of
         the grabette, each with its checks and what to do about them. The
@@ -2500,6 +2544,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                            height=180, interactive=False,
                                            buttons=[], elem_classes=[
                                                "gb-ts-img", "gb-diag-gone"])
+                        rgb_msg = gr.Markdown("")
+                        # Shown when sudo asks for it (see on_ts_rgb_reboot).
+                        rgb_pw = gr.Textbox(
+                            type="password", label="Grabette password",
+                            info=_DIAG_PW_HINT,
+                            elem_classes=["gb-ts-pw", "gb-diag-gone"])
+                        with gr.Row(elem_classes="gb-diag-actions"):
+                            rgb_reboot = gr.Button(
+                                "Reboot the grabette", variant="primary",
+                                scale=0, min_width=0,
+                                elem_classes=["gb-ts-reboot", "gb-diag-gone"])
                     with gr.Tab(dict(_TS_SECTIONS)[_TS_DEPTH], id=_TS_DEPTH) as tab_depth:
                         depth_html = gr.HTML(_ts_unknown_html())
                         depth_img = gr.Image(show_label=False, container=False,
@@ -2528,8 +2583,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # Cheap reads (statuses and two snapshots), only while it is open.
         timer = gr.Timer(2.0, active=False)
         tab_list = [tab_rgb, tab_depth, tab_angle, tab_calib]
-        outputs = [rgb_html, rgb_img, depth_html, depth_img, depth_btn,
-                   calib_html, calib_btn, tabs_css]
+        outputs = [rgb_html, rgb_img, rgb_reboot, depth_html, depth_img,
+                   depth_btn, calib_html, calib_btn, tabs_css]
 
         # The first part at fault is shown by clicking its tab, as a person
         # would: setting the tabs' `selected` from here pins them to it, and
@@ -2549,6 +2604,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                              interactive=False),
                         outputs=depth_btn, queue=False
         ).then(fn=on_ts_depth_start, outputs=[depth_msg, *outputs])
+        # Enter in the password field reboots, like the button.
+        for trigger in (rgb_reboot.click, rgb_pw.submit):
+            trigger(fn=lambda: gr.update(value="Working…", interactive=False),
+                    outputs=rgb_reboot, queue=False
+            ).then(fn=on_ts_rgb_reboot, inputs=rgb_pw,
+                   outputs=[rgb_msg, rgb_reboot, rgb_pw])
         # The calibration has its own popup: this one makes way for it.
         calib_bind(calib_btn)
         # Closing stops both refreshes and forgets the password.
@@ -2556,8 +2617,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             _btn.click(fn=lambda: (gr.update(visible=False),
                                    gr.Timer(active=False),
                                    gr.Timer(active=False),
-                                   _diag_pw(False, value="")),
-                       outputs=[modal, timer, angle.timer, angle.password],
+                                   _diag_pw(False, value=""),
+                                   _ts_pw(False, value=""), ""),
+                       outputs=[modal, timer, angle.timer, angle.password,
+                                rgb_pw, rgb_msg],
                        queue=False)
 
     # ── Test Recording page ───────────────────────────────────────────
