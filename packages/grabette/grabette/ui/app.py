@@ -740,6 +740,22 @@ def _step_header(number: int, title: str, hint: str = "") -> str:
     )
 
 
+_INFO_ICON = (
+    '<svg viewBox="0 0 16 16" aria-hidden="true" style="flex:none;width:1em;'
+    'height:1em;margin-top:.1em;"><circle cx="8" cy="8" r="7" fill="none" '
+    'stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4.5M8 4.5v.01" '
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+)
+
+
+def _step_note(text: str) -> str:
+    return (
+        '<div style="display:flex;align-items:flex-start;gap:.4rem;'
+        'margin:-.4rem 0 0 2.3rem;font-size:.88rem;opacity:.75;">'
+        f'{_INFO_ICON}<span>{html.escape(text)}</span></div>'
+    )
+
+
 # The one live control on the page: what the device is doing right now, polled
 # rather than set by a click, because the press happens on the grabette.
 _TR_PILL_STYLES = {
@@ -1619,11 +1635,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                              "gb-calib-gone"]) as check:
                     gr.HTML(_step_header(
                         3, "Check the result",
-                        "Open and close the gripper: the 3D model should "
-                        "follow. It updates twice a second, so it moves in "
-                        "small jumps — that is normal. What matters is that "
-                        "its position matches your gripper.",
+                        "Move the moving parts of the gripper: the position "
+                        "of the 3D model should match your device.",
                     ))
+                    gr.HTML(_step_note(
+                        "The model only updates twice a second, so it moves "
+                        "in small jumps."))
                     viewer = gr.HTML("")
                     with gr.Row(elem_classes="gb-calib-actions"):
                         done_btn = gr.Button("All good, close",
