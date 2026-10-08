@@ -63,3 +63,9 @@ def test_status_says_whether_a_test_is_playing(api):
     assert client.get("/api/sound").json()["testing"] is False
     speaker._testing = True
     assert client.get("/api/sound").json()["testing"] is True
+
+
+def test_test_of_an_unknown_cue_is_refused(api):
+    client, _ = api
+    r = client.post("/api/sound/test", json={"cue": "volume_preview"})
+    assert r.status_code == 422

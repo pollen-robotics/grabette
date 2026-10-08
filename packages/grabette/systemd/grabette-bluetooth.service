@@ -15,6 +15,9 @@ Environment=PYTHONUNBUFFERED=1
 # Runs as root: don't let it write root-owned .pyc caches into the
 # rasp-owned .venv, or `rm -rf .venv` in `make install-rpi` fails with EPERM.
 Environment=PYTHONDONTWRITEBYTECODE=1
+# Same per-device config as grabette.service, so CALIBRATE reaches the daemon
+# on its GRABETTE_PORT if that was ever changed there.
+EnvironmentFile=-/etc/grabette/env
 
 [Install]
 WantedBy=multi-user.target

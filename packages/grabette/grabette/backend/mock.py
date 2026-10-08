@@ -30,6 +30,11 @@ class MockBackend(Backend):
         self._frame_count = 0
         self._imu_sample_count = 0
         self._angle_sample_count = 0
+        # Starts as the device's real file says, so the dashboard's calibration
+        # flow can be tried on a workstation; calibrating only flips it — a mock
+        # has no zero to write into ~/.grabette.
+        from grabette.hardware.angle import load_calibration
+        self._calibrated = load_calibration() is not None
 
     async def start(self) -> None:
         self._running = True
@@ -118,12 +123,30 @@ class MockBackend(Backend):
         logger.info("MockBackend capture stopped")
         return status
 
+    @property
+    def needs_calibration(self) -> bool:
+        return not self._calibrated
+
+    @property
+    def hardware_error(self) -> str:
+        return "your device is not calibrated" if self.needs_calibration else ""
+
+    async def calibrate_angles(self) -> dict:
+        if self._capturing:
+            raise RuntimeError("Not during a recording.")
+        await asyncio.sleep(1.0)  # roughly what reading the sensors takes
+        self._calibrated = True
+        return {"sensor_1_offset_deg": 0.0, "sensor_2_offset_deg": 0.0,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")}
+
     def get_capture_status(self) -> CaptureStatus:
         duration = 0.0
         if self._capture_start:
             duration = time.time() - self._capture_start
         return CaptureStatus(
             is_capturing=self._capturing,
+            blocked_reason=self.hardware_error or self.busy_reason,
+            needs_calibration=self.needs_calibration,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=self._frame_count,
