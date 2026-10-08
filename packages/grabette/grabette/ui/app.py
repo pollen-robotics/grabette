@@ -503,8 +503,11 @@ html.gb-off .toast-wrap {
     width: auto !important;
     min-width: 0 !important;
 }
-.gb-calib-card button.gb-calib-gone {
+.gb-calib-card .gb-calib-gone {
     display: none !important;
+}
+.gb-calib-card .gb-calib-phase {
+    gap: .9rem !important;
 }
 @media (max-width: 560px) {
     #tr-page .gb-calib-box .gb-calib-open,
@@ -737,6 +740,22 @@ def _step_header(number: int, title: str, hint: str = "") -> str:
     )
 
 
+_INFO_ICON = (
+    '<svg viewBox="0 0 16 16" aria-hidden="true" style="flex:none;width:1em;'
+    'height:1em;margin-top:.1em;"><circle cx="8" cy="8" r="7" fill="none" '
+    'stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4.5M8 4.5v.01" '
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>'
+)
+
+
+def _step_note(text: str) -> str:
+    return (
+        '<div style="display:flex;align-items:flex-start;gap:.4rem;'
+        'margin:-.4rem 0 0 2.3rem;font-size:.88rem;opacity:.75;">'
+        f'{_INFO_ICON}<span>{html.escape(text)}</span></div>'
+    )
+
+
 # The one live control on the page: what the device is doing right now, polled
 # rather than set by a click, because the press happens on the grabette.
 _TR_PILL_STYLES = {
@@ -877,6 +896,14 @@ _OV_VIEWER_IFRAME = (
     '<iframe id="urdf-viewer" src="/viewer?yaw=180" '
     f'style="width:100%;height:{_OV_TILE_H}px;border:none;'
     'border-radius:8px;background:#1a1a2e;"></iframe>'
+)
+
+# The calibration popup's check step: the same view as the Overview's, only
+# put in the page while that step shows, so a closed popup polls nothing.
+_CALIB_VIEWER_IFRAME = (
+    '<iframe src="/viewer?yaw=180" '
+    'style="width:100%;height:260px;border:none;display:block;'
+    'border-radius:12px;background:#1a1a2e;"></iframe>'
 )
 
 # Row separator — a hairline in the theme's own border colour, not the dark
@@ -1528,40 +1555,46 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Calibration prompt (Overview + Test Recording) ────────────────
 
-    # The Close button is shown and hidden with a class, never with `visible`:
-    # gradio 6 drops a visible=False -> True update often enough that it would
-    # sometimes never appear.
-    def _calib_done_btn(shown: bool):
-        return gr.update(elem_classes=["gb-calib-done"]
+    # The popup's two phases (set up and run, then check) are shown and hidden
+    # with a class, never with `visible`: gradio 6 drops a visible=False -> True
+    # update often enough that one would sometimes never appear.
+    def _calib_phase(shown: bool):
+        return gr.update(elem_classes=["gb-calib-phase"]
                          + ([] if shown else ["gb-calib-gone"]))
 
+    def _calib_setup():
+        """The popup on a clean slate: steps 1-2, no message from a previous
+        run, no live model. Outputs: setup, check, run button, message, viewer."""
+        return (_calib_phase(True), _calib_phase(False),
+                gr.update(value="Start calibration", interactive=True),
+                "", "")
+
     def on_calibrate_open():
-        """Open the popup on a clean slate: no message from a previous run."""
-        return (gr.update(visible=True),
-                gr.update(value="Start calibration", variant="primary",
-                          interactive=True),
-                "", _calib_done_btn(False))
+        return (gr.update(visible=True),) + _calib_setup()
+
+    def on_calibrate_close():
+        return gr.update(visible=False), ""
 
     def on_calibrate_start():
         return gr.update(value="Calibrating…", interactive=False)
 
     def on_calibrate():
         """Run it, and drop the warning at once rather than on the next poll.
-        Once calibrated, Close takes over as the main button."""
+        Once calibrated, the popup moves on to checking the result live."""
         res = client.calibrate()
         if "error" in res:
-            return (gr.update(value="Start calibration", variant="primary",
-                              interactive=True),
-                    f"⛔ {res['error']}", gr.update(), _calib_done_btn(False))
-        return (gr.update(value="Calibrate again", variant="secondary",
-                          interactive=True),
-                "✓ **Your device is calibrated.**",
-                gr.update(visible=bool(res.get("needs_calibration"))),
-                _calib_done_btn(True))
+            return (gr.update(), gr.update(),
+                    gr.update(value="Start calibration", interactive=True),
+                    f"⛔ {res['error']}", gr.update(), gr.update())
+        return (_calib_phase(False), _calib_phase(True),
+                gr.update(value="Start calibration", interactive=True),
+                "", _CALIB_VIEWER_IFRAME,
+                gr.update(visible=bool(res.get("needs_calibration"))))
 
     def _calibration_prompt(warning: str | None, elem_id: str | None = None):
         """The "Calibrate my device" button (right after `warning`, in one
-        callout, when given) and the two-step popup it opens. Returns the box
+        callout, when given) and the popup it opens: two steps to calibrate,
+        then a third to check the 3D model follows the gripper. Returns the box
         holding the button, hidden until the device says it needs calibrating —
         the caller's poll shows it — and a function that makes any other button
         open the same popup (the Overview's "Recalibrate").
@@ -1581,34 +1614,55 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                             'Calibrate my device</div>')
                     close_btn = gr.Button("✕", size="sm", scale=0,
                                           elem_classes="gb-calib-close")
-                gr.HTML(_step_header(
-                    1, "Open the gripper fully",
-                    "Open the fingers all the way, until they are against "
-                    "their stop.",
-                ))
-                gr.HTML(_calibration_figure())
-                gr.HTML(_step_header(
-                    2, "Calibrate the sensors",
-                    "Keep the gripper fully open while it runs.",
-                ))
-                msg = gr.Markdown("")
-                with gr.Row(elem_classes="gb-calib-actions"):
-                    done_btn = gr.Button(
-                        "Close", variant="primary", scale=0, min_width=0,
-                        elem_classes=["gb-calib-done", "gb-calib-gone"])
-                    run_btn = gr.Button("Start calibration", variant="primary",
-                                        scale=0, min_width=0,
-                                        elem_classes="gb-calib-run")
+                with gr.Column(elem_classes="gb-calib-phase") as setup:
+                    gr.HTML(_step_header(
+                        1, "Open the gripper fully",
+                        "Open the fingers all the way, until they are against "
+                        "their stop.",
+                    ))
+                    gr.HTML(_calibration_figure())
+                    gr.HTML(_step_header(
+                        2, "Calibrate the sensors",
+                        "Keep the gripper fully open while it runs.",
+                    ))
+                    msg = gr.Markdown("")
+                    with gr.Row(elem_classes="gb-calib-actions"):
+                        run_btn = gr.Button("Start calibration",
+                                            variant="primary", scale=0,
+                                            min_width=0,
+                                            elem_classes="gb-calib-run")
+                with gr.Column(elem_classes=["gb-calib-phase",
+                                             "gb-calib-gone"]) as check:
+                    gr.HTML(_step_header(
+                        3, "Check the result",
+                        "Move the moving parts of the gripper: the position "
+                        "of the 3D model should match your device.",
+                    ))
+                    gr.HTML(_step_note(
+                        "The model only updates twice a second, so it moves "
+                        "in small jumps."))
+                    viewer = gr.HTML("")
+                    with gr.Row(elem_classes="gb-calib-actions"):
+                        done_btn = gr.Button("All good, close",
+                                             variant="primary", scale=0,
+                                             min_width=0)
+                        again_btn = gr.Button("Calibrate again", scale=0,
+                                              min_width=0)
+
         def bind_open(btn: gr.Button) -> None:
             btn.click(fn=on_calibrate_open,
-                      outputs=[modal, run_btn, msg, done_btn], queue=False)
+                      outputs=[modal, setup, check, run_btn, msg, viewer],
+                      queue=False)
 
         bind_open(open_btn)
         for _btn in (close_btn, done_btn):
-            _btn.click(fn=lambda: gr.update(visible=False), outputs=modal,
+            _btn.click(fn=on_calibrate_close, outputs=[modal, viewer],
                        queue=False)
+        again_btn.click(fn=_calib_setup,
+                        outputs=[setup, check, run_btn, msg, viewer],
+                        queue=False)
         run_btn.click(fn=on_calibrate_start, outputs=run_btn, queue=False).then(
-            fn=on_calibrate, outputs=[run_btn, msg, box, done_btn])
+            fn=on_calibrate, outputs=[setup, check, run_btn, msg, viewer, box])
         return box, bind_open
 
     def poll_calibration():

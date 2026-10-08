@@ -45,6 +45,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from gi.repository import GLib
 
+from grabette.config import settings
+
 logger = logging.getLogger(__name__)
 
 # ---- BLE UUIDs ----
@@ -779,23 +781,22 @@ def _wifi_reset() -> str:
 
 
 # =====================================================================
-# Angle-sensor calibration (first-run setup page)
+# Angle sensors: calibration and its live check (first-run setup page)
 # =====================================================================
 
-# The daemon owns the angle sensors, so calibration is not done here: these go
-# through the same /api/calibration route as the dashboard's "Calibrate my
-# device". Same port as the daemon (GRABETTE_PORT, see grabette/config.py).
-_CALIB_URL = f"http://127.0.0.1:{os.environ.get('GRABETTE_PORT', '8000')}/api/calibration"
+# The daemon owns the angle sensors, so nothing is read here: these go through
+# the same routes as the dashboard — /api/calibration behind "Calibrate my
+# device", /api/state behind its 3D model. Same port as the daemon.
+_DAEMON_URL = f"http://127.0.0.1:{settings.port}"
 # The BLE client gives up after 35s; the zeroing itself takes a second or two.
-_CALIB_TIMEOUT_S = 25
+_DAEMON_TIMEOUT_S = 25
 
 
-def _calibration_request(method: str) -> dict:
-    """Call the daemon's /api/calibration; raises RuntimeError with a message
-    worth showing as is."""
-    req = urllib.request.Request(_CALIB_URL, method=method)
+def _daemon_request(path: str, method: str = "GET") -> dict:
+    """Call the daemon; raises RuntimeError with a message worth showing as is."""
+    req = urllib.request.Request(_DAEMON_URL + path, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=_CALIB_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=_DAEMON_TIMEOUT_S) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         try:
@@ -810,7 +811,7 @@ def _calibration_request(method: str) -> dict:
 
 def _calib_status() -> str:
     try:
-        res = _calibration_request("GET")
+        res = _daemon_request("/api/calibration")
     except RuntimeError as e:
         return f"ERROR: {e}"
     return ("OK: NEEDS_CALIBRATION" if res.get("needs_calibration")
@@ -819,12 +820,35 @@ def _calib_status() -> str:
 
 def _calibrate() -> str:
     try:
-        res = _calibration_request("POST")
+        res = _daemon_request("/api/calibration", "POST")
     except RuntimeError as e:
         return f"ERROR: {e}"
     if res.get("needs_calibration"):
         return "ERROR: Calibration saved, but the device still reports it is not calibrated"
     return "OK: Calibrated"
+
+
+def _angles() -> str:
+    """The fingers' angles (rad, 0 = fully open) and the hand, so the setup
+    page can show the matching model. Polled about twice a second while the
+    page checks a calibration: /api/state is the daemon's cached reading, no
+    sensor read per call."""
+    try:
+        angle = _daemon_request("/api/state").get("angle")
+    except RuntimeError as e:
+        return f"ERROR: {e}"
+    if not angle:
+        return "ERROR: The gripper sensors are not answering"
+    return (f"OK: hand={settings.hand} "
+            f"p={angle['proximal']:.4f} d={angle['distal']:.4f}")
+
+
+# Need the PIN, without consuming it: calibrating again is harmless.
+_SENSOR_COMMANDS = {
+    "CALIB_STATUS": _calib_status,
+    "CALIBRATE": _calibrate,
+    "ANGLES": _angles,
+}
 
 
 # =====================================================================
@@ -843,14 +867,15 @@ class BluetoothWifiService:
         WIFI_RESET            → OK: WiFi connections cleared / ERROR: ...
         CALIB_STATUS          → OK: CALIBRATED / OK: NEEDS_CALIBRATION / ERROR: ...
         CALIBRATE             → OK: Calibrated / ERROR: ...
+        ANGLES                → OK: hand=<right|left> p=<rad> d=<rad> / ERROR: ...
 
     The WiFi password is sealed client-side (see _wifi_connect_enc) and never
     sent in clear — there is no plaintext connect command.
 
     PIN authentication is required before WIFI_SCAN/WIFI_CONNECT_ENC/WIFI_RESET.
     Auth is consumed by WIFI_CONNECT_ENC/WIFI_RESET (re-PIN for each) but NOT by
-    WIFI_SCAN, so a client can scan then connect with a single PIN. CALIB_STATUS
-    and CALIBRATE need it too, without consuming it either. WIFI_KEYEX
+    WIFI_SCAN, so a client can scan then connect with a single PIN. CALIB_STATUS,
+    CALIBRATE and ANGLES need it too, without consuming it either. WIFI_KEYEX
     is public (it returns only a public key). Auth is reset when the BLE central
     disconnects. Network status is readable from the STATUS service (every 10s).
     """
@@ -901,14 +926,16 @@ class BluetoothWifiService:
     def _handle_command(self, value: bytes) -> str:
         """Dispatch a BLE command and return response string."""
         command_str = value.decode("utf-8").strip()
-        logger.info("Received command: %s", command_str)
+        upper = command_str.upper()
+        # ANGLES comes twice a second while the setup page checks a
+        # calibration: kept out of the journal.
+        (logger.debug if upper == "ANGLES" else logger.info)(
+            "Received command: %s", command_str)
 
         # Proves the link is usable, so this is a real session and not a
         # stale-bond flap. Racing the mainloop's reset is fail-safe: a lost
         # update can only add a strike, never purge a healthy bond.
         self._saw_gatt_traffic = True
-
-        upper = command_str.upper()
 
         # PING — always allowed
         if upper == "PING":
@@ -947,12 +974,12 @@ class BluetoothWifiService:
             self.authenticated = False  # one-shot auth
             return self._refresh_status_after(_wifi_reset())
 
-        # CALIB_STATUS / CALIBRATE — angle-sensor zeroing, through the daemon
-        # (requires auth; does NOT consume it: calibrating again is harmless)
-        if upper in ("CALIB_STATUS", "CALIBRATE"):
+        # CALIB_STATUS / CALIBRATE / ANGLES — angle-sensor zeroing and its
+        # check, through the daemon (requires auth; does NOT consume it)
+        if upper in _SENSOR_COMMANDS:
             if not self.authenticated:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
-            return _calib_status() if upper == "CALIB_STATUS" else _calibrate()
+            return _SENSOR_COMMANDS[upper]()
 
         return f"ERROR: Unknown command: {command_str}"
 

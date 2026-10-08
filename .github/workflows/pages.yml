@@ -1,6 +1,7 @@
 name: Deploy getting-started page to Pages
 
-# Publishes the Grabette getting-started page (docs/index.html + docs/media/) to
+# Publishes the Grabette getting-started page (docs/index.html + docs/media/,
+# plus the dashboard's 3D viewer and its light models for the calibration check) to
 # https://pollen-robotics.github.io/grabette/ — the first-run walkthrough and
 # the Bluetooth WiFi-provisioning client it leads into. The client has a device
 # chooser, so the one site also provisions a Gripette or a Casquette. The
@@ -12,6 +13,8 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'packages/grabette/grabette/app/viewer.html'
+      - 'packages/grabette/urdf/*_viewer/**'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 
@@ -36,6 +39,9 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      # The meshes are in LFS, and only the viewer's light models are published:
+      # `lfs: true` would download every LFS object (full CAD, PDFs) on each run.
+      - run: git lfs pull --include="packages/grabette/urdf/*_viewer/**"
       - uses: actions/configure-pages@v5
       # Stage only the getting-started page and its media. `docs/` also holds
       # the doc-builder sources for the Hugging Face documentation site, which
@@ -49,6 +55,12 @@ jobs:
           cp docs/images/grabette_logo_small.png docs/images/turn_on.gif \
              docs/images/calibration-open-front.png docs/images/calibration-open-top.png \
              _site/images/
+          # The calibration check: the dashboard's viewer, as is, with the
+          # light models it loads (scripts/simplify_viewer_model.py). Both are
+          # symlinks in docs/, so serving docs/ locally works too; -L copies
+          # what they point to.
+          cp -L docs/viewer.html _site/
+          cp -rL docs/urdf _site/urdf
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
