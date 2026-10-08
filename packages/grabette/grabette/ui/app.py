@@ -1387,7 +1387,10 @@ def _ts_rgb_html(cam: dict | None) -> str:
     else:
         verdict = (_diag_verdict_html(
             "The RGB camera is not detected: recording is disabled until it "
-            "is.", "#ef4444") + _tips_html(_RGB_TIPS))
+            "is.", "#ef4444")
+            + _camera_cable_help_html("rgb-camera-cable.gif",
+                                      "The RGB camera ribbon cable",
+                                      _RGB_TIPS))
     return "<div>" + row + verdict + "</div>"
 
 
@@ -1431,7 +1434,9 @@ def _ts_depth_html(dcam: dict | None) -> str:
     if connected is False:
         verdict = (_diag_verdict_html(
             f"The {label} is not detected: recording is disabled until it is.",
-            "#ef4444") + _depth_cable_help_html(label))
+            "#ef4444")
+            + _camera_cable_help_html("depth-camera-cable.gif",
+                                      f"The {label} USB cable", _DEPTH_TIPS))
     elif error:
         verdict = _diag_verdict_html(f"{label}: {error}", "#ef4444")
     elif dcam.get("initializing"):
@@ -1442,15 +1447,15 @@ def _ts_depth_html(dcam: dict | None) -> str:
     return "<div>" + "".join(rows) + verdict + "</div>"
 
 
-def _depth_cable_help_html(label: str) -> str:
-    """Where the depth camera's cable runs, like the angle sensors' gifs."""
+def _camera_cable_help_html(gif: str, alt: str, tips: tuple[str, ...]) -> str:
+    """Where a camera's cable runs (a gif in grabette/ui/assets, like the
+    angle sensors'), then what to check."""
     return (
         '<div style="margin-top:.8rem;">'
-        '<img src="/ui-assets/depth-camera-cable.gif" '
-        f'alt="The {html.escape(label)} USB cable" '
+        f'<img src="/ui-assets/{gif}" alt="{html.escape(alt)}" '
         'style="width:100%;display:block;border-radius:10px;background:#fff;" '
         'onerror="this.style.display=\'none\';">'
-        + _tips_html(_DEPTH_TIPS) + '</div>')
+        + _tips_html(tips) + '</div>')
 
 
 def _ts_calib_html(calib: dict | None, angle: dict | None) -> str:

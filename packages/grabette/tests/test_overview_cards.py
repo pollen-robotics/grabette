@@ -99,7 +99,7 @@ def test_other_skins_are_untouched():
 
 from grabette.ui.app import (  # noqa: E402
     _ov_checks, _ov_checks_html, _ts_calib_html, _ts_depth_html,
-    _ts_first_section, _ts_tabs_css,
+    _ts_first_section, _ts_rgb_html, _ts_tabs_css,
 )
 
 CAP = {"is_capturing": False, "blocked_reason": "", "needs_calibration": False}
@@ -183,3 +183,9 @@ def test_calibration_waits_for_the_angle_sensors():
     assert "Fix the angle sensors first" in out
     assert "not calibrated" in _ts_calib_html({"needs_calibration": True},
                                               ANGLE)
+
+
+def test_a_missing_rgb_camera_shows_where_its_cable_runs():
+    out = _ts_rgb_html({"connected": False, "reinitializing": False})
+    assert "rgb-camera-cable.gif" in out
+    assert "rgb-camera-cable.gif" not in _ts_rgb_html(CAM)
