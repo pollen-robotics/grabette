@@ -543,6 +543,18 @@
         /* The emerald of .prereq and the success line: a state that is fine. */
         .card.calib-done { background: rgba(16,185,129,.08); border: 1px solid rgba(16,185,129,.35); }
         .calib-done-title { color: #a7f3d0; font-weight: 700; font-size: 1rem; margin-bottom: .35rem; }
+        /* The calibration check's live model: the dashboard's own viewer,
+           published next to this page, on the viewer's own backdrop. */
+        .check-viewer {
+            display: block;
+            width: 100%;
+            height: 260px;
+            border: 0;
+            border-radius: 12px;
+            background: #1a1a2e;
+            margin-bottom: .8rem;
+        }
+        .check-viewer[hidden] { display: none; }
 
         /* Collapsible "available networks" disclosure */
         details#networkDetails { margin-bottom: .5rem; }
@@ -863,6 +875,18 @@
                 <div class="step-msg" id="msgCalib"></div>
             </div>
 
+            <!-- Step 3, once calibrated: the 3D model moving with the gripper,
+                 fed the angles over this same link (ANGLES), so the user sees
+                 the calibration is right. Same step as the dashboard's popup. -->
+            <div class="card step-card" id="card-check" hidden>
+                <div class="step"><span class="step-num">3</span> Check the result</div>
+                <p class="step-hint">Open and close the gripper: the 3D model should follow. It updates twice a second, so it moves in small jumps — that is normal. What matters is that its position matches your gripper.</p>
+                <iframe class="check-viewer" id="checkViewer" title="3D model of your Grabette" hidden></iframe>
+                <div class="step-msg" id="msgCheck"></div>
+                <button class="btn-primary" onclick="confirmCheck()">All good, continue →</button>
+                <button class="btn-secondary" onclick="recalibrate()">Calibrate again</button>
+            </div>
+
             <button class="btn-primary next-btn" id="btnCalibNext" hidden
                     onclick="selectTab('dashboard')">Open the dashboard →</button>
         </div>
@@ -952,7 +976,12 @@
         // into view — on a tall panel that lands the reader mid-page.
         history.replaceState(null, '', '#' + name);
         if (moveFocus) document.getElementById(TAB_ID[name]).focus();
-        if (name === 'calibration') checkCalibration();
+        if (name === 'calibration') {
+            checkCalibration();
+            if (!document.getElementById('card-check').hidden) startCheck();
+        } else {
+            stopCheck();
+        }
     }
 
     document.querySelector('.tabs').addEventListener('keydown', (e) => {
@@ -1206,7 +1235,18 @@
     // quiet=true suppresses the raw >/< echo (for plumbing like WIFI_KEYEX or
     // long blobs/lists); the caller logs its own friendly line. Only "ERROR…"
     // responses are red — everything else is a success.
-    async function sendCommand(cmd, quiet = false) {
+    // One command at a time on the link: the reply is whatever notification
+    // comes next, so two commands in flight would swap their replies. The
+    // calibration check polls ANGLES in a loop, so every command queues here.
+    let commandQueue = Promise.resolve();
+
+    function sendCommand(cmd, quiet = false) {
+        const run = commandQueue.then(() => sendCommandNow(cmd, quiet));
+        commandQueue = run;
+        return run;
+    }
+
+    async function sendCommandNow(cmd, quiet) {
         if (!commandChar || !responseChar) {
             log('Not connected', 'log-err');
             return null;
@@ -1600,7 +1640,7 @@
     // dashboard's "Calibrate my device" does. Both need the PIN, neither
     // consumes it. Firmware older than this step answers "Unknown command".
     let calibChecked = false;   // CALIB_STATUS asked for the device now connected
-    let calibBusy = false;      // one BLE command at a time (see sendCommand)
+    let calibBusy = false;      // a calibration step is running (its button is busy)
 
     const CALIB_TOO_OLD = "This Grabette's software is too old to calibrate from here — " +
         'use "Calibrate my device" in its dashboard instead.';
@@ -1625,6 +1665,8 @@
     // Which of the panel's three faces fits the device on the other end.
     function resetCalibration() {
         calibChecked = false;
+        stopCheck();
+        reveal('card-check', false);
         clearMsg('msgCalib');
         setCalibrated(false);
         const connected = !!(device && device.gatt.connected && commandChar);
@@ -1675,12 +1717,91 @@
             const resp = await sendCommand('CALIBRATE');
             if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
             if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
-            stepMsg('msgCalib', 'Your Grabette is calibrated.', 'ok');
-            setCalibrated(true);
+            clearMsg('msgCalib');
+            document.getElementById('calibDot').hidden = false;
+            startCheck();
         } finally {
             calibBusy = false;
             btn.disabled = false;
         }
+    }
+
+    // ---- Calibration check (step 3) ----
+    //
+    // ANGLES is polled while the step shows, and only then: leaving the tab,
+    // either button or a disconnect stops it. Twice a second, like the
+    // dashboard's own viewer; the reply names the hand, so the model matches.
+    const CHECK_PERIOD_MS = 500;
+    let checkRun = 0;           // bumped to stop the loop
+    let checkLoop = null;       // the running loop, to wait for its last command
+    let checkHand = null;       // the model the viewer has loaded
+
+    function startCheck() {
+        stopCheck();
+        const run = ++checkRun;
+        reveal('card-calib', false);
+        reveal('card-check', true);
+        stepMsg('msgCheck', 'Reading the gripper sensors…');
+        checkLoop = (async () => {
+            if (!await authenticate('msgCheck')) return;
+            while (run === checkRun) {
+                const t0 = Date.now();
+                const resp = await sendCommand('ANGLES', true);
+                if (run !== checkRun) return;
+                if (resp === null) { stepMsg('msgCheck', 'No response from the device', 'err'); return; }
+                // Firmware from before this step: calibrated all the same,
+                // there is just nothing to show.
+                if (/Unknown command/i.test(resp)) { endCheck(); return; }
+                const m = /hand=(right|left) p=(\S+) d=(\S+)/.exec(resp);
+                if (m) {
+                    clearMsg('msgCheck');
+                    showAngles(m[1], Number(m[2]), Number(m[3]));
+                } else {
+                    stepMsg('msgCheck', replyText(resp), 'err');
+                }
+                await new Promise(r => setTimeout(r, CHECK_PERIOD_MS - (Date.now() - t0)));
+            }
+        })();
+    }
+
+    // Resolves once the loop's last command has been answered.
+    function stopCheck() {
+        checkRun++;
+        const loop = checkLoop;
+        checkLoop = null;
+        return loop || Promise.resolve();
+    }
+
+    function showAngles(hand, proximal, distal) {
+        const frame = document.getElementById('checkViewer');
+        if (hand !== checkHand) {
+            checkHand = hand;
+            frame.src = 'viewer.html?feed=message&yaw=180&urdf='
+                + encodeURIComponent('urdf/grabette_' + hand + '_viewer/robot.urdf');
+            frame.hidden = false;
+        }
+        frame.contentWindow.postMessage({ proximal, distal }, location.origin);
+    }
+
+    // Back to the steps, as the calibrated device they now describe.
+    function endCheck() {
+        stopCheck();
+        reveal('card-check', false);
+        reveal('card-calib', true);
+        stepMsg('msgCalib', 'Your Grabette is calibrated.', 'ok');
+        setCalibrated(true);
+    }
+
+    function confirmCheck() {
+        endCheck();
+        selectTab('dashboard');
+    }
+
+    async function recalibrate() {
+        await stopCheck();
+        reveal('card-check', false);
+        reveal('card-calib', true);
+        clearMsg('msgCalib');
     }
 
     resetCalibration();
