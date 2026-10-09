@@ -1,0 +1,19 @@
+{
+  "image_width": 1296,
+  "image_height": 972,
+  "intrinsic_type": "FISHEYE",
+  "intrinsics": {
+    "aspect_ratio": 0.9976483545753855,
+    "focal_length": 521.9610490124776,
+    "principal_pt_x": 636.4108743675959,
+    "principal_pt_y": 491.04329967651046,
+    "radial_distortion_1": -0.02132004299687096,
+    "radial_distortion_2": 0.0013133563449610566,
+    "radial_distortion_3": -0.005103988486217498,
+    "radial_distortion_4": 0.0009762585614137065,
+    "skew": 0.0
+  },
+  "calibration_source": "OpenCV cv2.fisheye.calibrate (ChArUco 7x10, 25mm/18.75mm, DICT_4X4_50), casquette live calibration",
+  "camera_reproj_error": 0.4922015706220289,
+  "nr_calib_images": 36
+}
