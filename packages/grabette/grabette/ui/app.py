@@ -1099,11 +1099,32 @@ _STOP_SIGNAL_SVG = (
     "<circle cx='60' cy='10' r='3.5'/></svg>"
 )
 _TR_SIGNAL_CSS = f"""
-#tr-page .tr-signal {{
+/* Sits right under its caption: no stretched column pushing it down. */
+#tr-page .tr-gif-col {{
+    gap: .5rem !important;
+    justify-content: flex-start !important;
+}}
+#tr-page .tr-gif-col > * {{
+    flex-grow: 0 !important;
+}}
+/* Grey, and shaped like the camera chips below it. */
+#tr-page button.tr-signal {{
     align-self: center !important;
     width: auto !important;
+    min-width: 0 !important;
     flex: none !important;
     gap: .4rem !important;
+    padding: .3rem .7rem !important;
+    border-radius: 999px !important;
+    border: 1px solid #94a3b855 !important;
+    background: #94a3b822 !important;
+    color: var(--body-text-color) !important;
+    font-size: .82rem !important;
+    font-weight: 600 !important;
+    box-shadow: none !important;
+}}
+#tr-page button.tr-signal:hover {{
+    background: #94a3b844 !important;
 }}
 #tr-page .tr-signal::before,
 #tr-page .tr-signal::after {{
@@ -2609,7 +2630,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # side in the narrow card, high enough that a phone wraps
                 # them onto two rows instead of shrinking them to thumbnails.
                 with gr.Row(equal_height=True):
-                    with gr.Column(scale=1, min_width=200):
+                    with gr.Column(scale=1, min_width=200,
+                                   elem_classes="tr-gif-col"):
                         gr.HTML(_button_gif(
                             "start-recording.gif", "Start signal",
                             "Press to start, wait for the rising beep and for "
@@ -2617,7 +2639,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         tr_start_signal_btn = gr.Button(
                             "Signal:", size="sm",
                             elem_classes=["tr-signal", "tr-signal-start"])
-                    with gr.Column(scale=1, min_width=200):
+                    with gr.Column(scale=1, min_width=200,
+                                   elem_classes="tr-gif-col"):
                         gr.HTML(_button_gif(
                             "stop-recording.gif", "Stop signal",
                             "Press again to stop, and wait for the last beep "
