@@ -6,6 +6,7 @@ import html
 import io
 import logging
 import math
+import re
 import time
 from functools import partial
 from urllib.parse import quote
@@ -657,12 +658,15 @@ def _hf_login_only_html(label: str) -> str:
 # is made in the field, and this is the page whose job is to teach that.
 # Served from grabette/ui/assets, mounted at /ui-assets (NOT /assets, which is
 # Gradio's own bundle); onerror keeps the step readable without the file.
-def _button_gif(filename: str, title: str, caption: str) -> str:
+def _button_gif(filename: str, title: str, caption_html: str) -> str:
+    """caption_html is trusted markup (<b> for the words to catch); the alt
+    text is the same caption with its tags stripped."""
+    alt = html.escape(re.sub(r"<[^>]+>", "", caption_html))
     return (
         '<figure style="margin:0 auto;width:100%;">'
         '<div class="tr-gif-title">'
         f'{html.escape(title)}</div>'
-        f'<img src="/ui-assets/{filename}" alt="{html.escape(caption)}"'
+        f'<img src="/ui-assets/{filename}" alt="{alt}"'
         ' style="width:100%;aspect-ratio:1;object-fit:cover;display:block;'
         'border-radius:14px;background:#0f172a;"'
         ' onerror="this.style.display=\'none\';'
@@ -674,7 +678,7 @@ def _button_gif(filename: str, title: str, caption: str) -> str:
         'Animation coming soon</div>'
         '<figcaption style="margin-top:.5rem;text-align:center;font-size:.85rem;'
         'color:var(--body-text-color);">'
-        f'{html.escape(caption)}</figcaption></figure>'
+        f'{caption_html}</figcaption></figure>'
     )
 
 
@@ -1095,34 +1099,11 @@ _STOP_SIGNAL_SVG = (
     "<circle cx='60' cy='10' r='3.5'/></svg>"
 )
 _TR_SIGNAL_CSS = f"""
-/* The one line to take away from the step: a banner in the accent colour,
-   with the same ear as the buttons it points to. */
 #tr-page .tr-howto-title {{
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: .6rem;
-    width: fit-content;
-    max-width: 100%;
-    margin: .25rem auto .5rem;
-    padding: .55rem 1.2rem;
-    border-radius: 999px;
-    background: var(--color-accent-soft);
-    border: 1px solid var(--color-accent);
-    color: var(--color-accent);
+    margin: .25rem 0 .25rem;
+    text-align: center;
     font-size: 1.05rem;
     font-weight: 700;
-    letter-spacing: .01em;
-    text-align: center;
-}}
-#tr-page .tr-howto-title::before {{
-    content: "";
-    flex: none;
-    width: 1.3em;
-    height: 1.3em;
-    background-color: currentColor;
-    -webkit-mask: {_css_mask(_EAR_SVG)} no-repeat center / contain;
-    mask: {_css_mask(_EAR_SVG)} no-repeat center / contain;
 }}
 /* Sits right under its caption: no stretched column pushing it down. */
 #tr-page .tr-gif-col {{
