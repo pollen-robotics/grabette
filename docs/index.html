@@ -332,10 +332,9 @@
         }
         .network-list button:hover,
         .network-list button:focus { background: rgba(255,255,255,.1); opacity: 1; outline: none; }
-        /* Foot of the WiFi card: the rare, destructive reset as a quiet link,
-           the hand-off to the next tab on the right. */
-        .wifi-foot { display: flex; align-items: center; gap: 1rem; margin-top: 1.2rem; }
-        .wifi-foot .next-btn { margin: 0 0 0 auto; }
+        /* Foot of the WiFi card: the rare, destructive reset as a quiet link. */
+        .wifi-foot { display: flex; margin-top: 1.2rem; }
+        #btnToDash { margin-top: 0; }
         .link-danger {
             width: auto;
             margin: 0;
@@ -846,21 +845,22 @@
             </button>
             <div class="step-msg" id="msgWifi"></div>
 
-            <!-- Shown, greyed out, from the moment WiFi can be configured, so the
-                 next step is in sight; usable once the device reports an
-                 address. It closes the step it depends on, and leads to the
-                 calibration, the last step before the dashboard. The reset is
-                 rare and destructive, so it stays a quiet link beside it. -->
+            <!-- Rare and destructive, so a quiet link rather than a button. -->
             <div class="wifi-foot">
                 <button type="button" class="link-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled
                         title="Delete every WiFi profile saved on the device (the Hotspot profile is kept)">
                     Forget saved networks
                 </button>
-                <button class="btn-primary next-btn" id="btnToDash" hidden disabled
-                        title="Available once your device is on WiFi"
-                        onclick="selectTab('calibration')">Next: calibrate →</button>
             </div>
         </div>
+
+        <!-- Shown, greyed out, from the moment WiFi can be configured, so the
+             next step is in sight; usable once the device reports an address.
+             Right under the step it depends on, and leads to the calibration,
+             the last step before the dashboard. -->
+        <button class="btn-primary next-btn" id="btnToDash" hidden disabled
+                title="Available once your device is on WiFi"
+                onclick="selectTab('calibration')">Next: calibrate →</button>
 
         <!-- Not a step: ping and network status are usable at any point once
              connected, so this panel sits outside the numbered flow — and
@@ -1684,7 +1684,7 @@
             log('Network: ' + status);
             if (joinedWifi(status, ssid)) {
                 const ip = /\[wlan0\]\s+(\S+)/.exec(status);
-                stepMsg('msgWifi', 'Connected to "' + ssid + '"' + (ip ? ' — ' + ip[1] : ''), 'ok');
+                stepMsg('msgWifi', 'Connected to "' + ssid + '"', 'ok');
                 log('Connected to ' + ssid, 'log-ok');
                 offerDashboard(status);
                 return;
