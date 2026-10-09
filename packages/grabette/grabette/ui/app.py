@@ -677,7 +677,9 @@ def _button_gif(filename: str, title: str, caption_html: str) -> str:
         'text-align:center;padding:.5rem;'
         'border:1px dashed var(--border-color-primary,#cbd5e1);">'
         'Animation coming soon</div>'
-        '<figcaption style="margin-top:.5rem;text-align:center;font-size:.85rem;'
+        # Spills into the gap between the two columns, so a caption takes two
+        # lines on a PC instead of three.
+        '<figcaption style="margin:.5rem -.4rem 0;text-align:center;font-size:.82rem;'
         'color:var(--body-text-color);">'
         f'{caption_html}</figcaption></figure>'
     )
