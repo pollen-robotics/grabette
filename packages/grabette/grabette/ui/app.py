@@ -552,10 +552,6 @@ html.gb-off .toast-wrap {
 #tr-page .grabette-step .row {
     justify-content: flex-start !important;
 }
-#tr-page .tr-howto-title {
-    font-weight: 600;
-    font-size: .95rem;
-}
 #tr-page .tr-gif-title {
     margin-bottom: .4rem;
     text-align: center;
@@ -1099,6 +1095,35 @@ _STOP_SIGNAL_SVG = (
     "<circle cx='60' cy='10' r='3.5'/></svg>"
 )
 _TR_SIGNAL_CSS = f"""
+/* The one line to take away from the step: a banner in the accent colour,
+   with the same ear as the buttons it points to. */
+#tr-page .tr-howto-title {{
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: .6rem;
+    width: fit-content;
+    max-width: 100%;
+    margin: .25rem auto .5rem;
+    padding: .55rem 1.2rem;
+    border-radius: 999px;
+    background: var(--color-accent-soft);
+    border: 1px solid var(--color-accent);
+    color: var(--color-accent);
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: .01em;
+    text-align: center;
+}}
+#tr-page .tr-howto-title::before {{
+    content: "";
+    flex: none;
+    width: 1.3em;
+    height: 1.3em;
+    background-color: currentColor;
+    -webkit-mask: {_css_mask(_EAR_SVG)} no-repeat center / contain;
+    mask: {_css_mask(_EAR_SVG)} no-repeat center / contain;
+}}
 /* Sits right under its caption: no stretched column pushing it down. */
 #tr-page .tr-gif-col {{
     gap: .5rem !important;
