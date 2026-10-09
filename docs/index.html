@@ -300,9 +300,53 @@
             border: 1px solid rgba(255,255,255,.18);
         }
         .btn-secondary:hover { background: rgba(255,255,255,.14); opacity: 1; }
-        #networkList { max-height: 220px; overflow-y: auto; }
-        #networkList:not(:empty) { margin-bottom: .5rem; }
-        #networkList button { text-align: left; font-weight: 400; }
+        /* SSID field with its scan button; the scan results drop down from
+           the field, over the content below, like an autocomplete. */
+        .ssid-field { position: relative; display: flex; gap: .4rem; margin-bottom: .5rem; }
+        .ssid-field input { flex: 1; min-width: 0; margin-bottom: 0; }
+        .scan-btn { width: auto; flex: none; margin: 0; padding: .5rem .9rem; font-size: .88rem; }
+        .network-list {
+            position: absolute;
+            top: calc(100% + .25rem);
+            left: 0;
+            right: 0;
+            z-index: 10;
+            max-height: 220px;
+            overflow-y: auto;
+            padding: .25rem;
+            background: #1e2433;
+            border: 1px solid rgba(255,255,255,.18);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0,0,0,.45);
+        }
+        .network-list[hidden] { display: none; }
+        .network-list button {
+            margin: 0;
+            padding: .45rem .6rem;
+            background: none;
+            color: #e2e8f0;
+            text-align: left;
+            font-weight: 400;
+            font-size: .9rem;
+            border-radius: 6px;
+        }
+        .network-list button:hover,
+        .network-list button:focus { background: rgba(255,255,255,.1); opacity: 1; outline: none; }
+        /* Foot of the WiFi card: the rare, destructive reset as a quiet link. */
+        .wifi-foot { display: flex; margin-top: 1.2rem; }
+        #btnToDash { margin-top: 0; }
+        .link-danger {
+            width: auto;
+            margin: 0;
+            padding: .2rem 0;
+            background: none;
+            color: #8b98ad;
+            font-size: .78rem;
+            font-weight: 400;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+        }
+        .link-danger:hover:not(:disabled) { color: #fca5a5; opacity: 1; }
         select, input {
             display: block;
             width: 100%;
@@ -560,8 +604,6 @@
         .check-viewer[hidden],
         .step-num[hidden] { display: none; }
 
-        /* Collapsible "available networks" disclosure */
-        details#networkDetails { margin-bottom: .5rem; }
         summary {
             cursor: pointer;
             list-style: none;
@@ -781,15 +823,17 @@
         <!-- WiFi Configuration — revealed once the BLE link is up. -->
         <div class="card step-card" id="card-wifi" hidden>
             <div class="step"><span class="step-num">2</span> Configure WiFi</div>
-            <button class="btn-secondary" id="btnScan" onclick="scanWifi()" disabled
-                    title="List the WiFi networks the device can currently see">
-                Scan networks
-            </button>
-            <details id="networkDetails" hidden>
-                <summary id="networkSummary">Available networks</summary>
-                <div id="networkList"></div>
-            </details>
-            <input type="text" id="ssidInput" placeholder="WiFi SSID">
+            <!-- The scan only ever serves the SSID field, so it sits beside it and
+                 its results drop down from it. -->
+            <div class="ssid-field">
+                <input type="text" id="ssidInput" placeholder="WiFi SSID" autocomplete="off"
+                       onfocus="showNetworkList(true)" oninput="showNetworkList(true)">
+                <button type="button" class="btn-secondary scan-btn" id="btnScan" onclick="scanWifi()" disabled
+                        title="List the WiFi networks the device can currently see">
+                    Scan
+                </button>
+                <div class="network-list" id="networkList" role="listbox" hidden></div>
+            </div>
             <div class="pw-field">
                 <input type="password" id="passwordInput" placeholder="WiFi Password">
                 <button type="button" class="pw-toggle" id="pwToggle" onclick="togglePassword()"
@@ -799,12 +843,24 @@
                     title="Send this SSID and password to the device, encrypted">
                 Connect WiFi
             </button>
-            <button class="btn-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled
-                    title="Delete every WiFi profile saved on the device (the Hotspot profile is kept)">
-                Forget all saved WiFi networks
-            </button>
             <div class="step-msg" id="msgWifi"></div>
+
+            <!-- Rare and destructive, so a quiet link rather than a button. -->
+            <div class="wifi-foot">
+                <button type="button" class="link-danger" id="btnWifiReset" onclick="sendWifiReset()" disabled
+                        title="Delete every WiFi profile saved on the device (the Hotspot profile is kept)">
+                    Forget saved networks
+                </button>
+            </div>
         </div>
+
+        <!-- Shown, greyed out, from the moment WiFi can be configured, so the
+             next step is in sight; usable once the device reports an address.
+             Right under the step it depends on, and leads to the calibration,
+             the last step before the dashboard. -->
+        <button class="btn-primary next-btn" id="btnToDash" hidden disabled
+                title="Available once your device is on WiFi"
+                onclick="selectTab('calibration')">Next: calibrate →</button>
 
         <!-- Not a step: ping and network status are usable at any point once
              connected, so this panel sits outside the numbered flow — and
@@ -827,15 +883,6 @@
                 <summary>Show detailed log</summary>
                 <div id="log"></div>
             </details>
-
-            <!-- Shown, greyed out, from the moment WiFi can be configured, so the
-                 next step is in sight; usable once the device reports an
-                 address. The reader is on this tab when it does, so the hand-off
-                 has to come to them rather than wait on the other tab. It leads
-                 to the calibration, the last step before the dashboard. -->
-            <button class="btn-primary next-btn" id="btnToDash" hidden disabled
-                    title="Available once your device is on WiFi"
-                    onclick="selectTab('calibration')">Next: calibrate →</button>
         </div>
 
         <!-- Tab 4 — angle-sensor calibration, over the same Bluetooth link: the
@@ -1095,7 +1142,7 @@
     // The button does not just connect: it opens the browser's chooser after a
     // BLE scan filtered on the selected type. Name that, and name the type, so
     // the control describes what actually happens. Deliberately "Search" and not
-    // "Scan" — step 2 already owns "Scan networks", for WiFi.
+    // "Scan" — step 2 already owns "Scan", for WiFi.
     function updateConnectLabel() {
         document.getElementById('btnConnectLabel').textContent =
             'Search for a ' + document.getElementById('deviceSelect').value + ' nearby';
@@ -1406,9 +1453,11 @@
         if (resp === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
         const failed = resp.startsWith('ERROR');
         log(resp, failed ? 'log-err' : 'log-ok');
-        stepMsg('msgWifi', failed ? wifiErrorText(resp, ssid) : replyText(resp),
-                failed ? 'err' : 'ok');
-        if (!failed) awaitDashboard();
+        if (failed) { stepMsg('msgWifi', wifiErrorText(resp, ssid), 'err'); return; }
+        // "OK: Connecting to …" only means the credentials were taken; the step
+        // ends on the device's own word that it is on the network.
+        stepMsg('msgWifi', 'Connecting to "' + ssid + '"…');
+        awaitDashboard(ssid);
     }
 
     // Destructive and irreversible from here: nmcli deletes the profiles, so the
@@ -1431,19 +1480,65 @@
         stepMsg('msgWifi', replyText(resp), resp.startsWith('ERROR') ? 'err' : 'ok');
     }
 
-    async function scanWifi() {
-        const details = document.getElementById('networkDetails');
-        const summary = document.getElementById('networkSummary');
+    // SSIDs from the last scan, offered under the SSID field and narrowed to
+    // what has been typed so far (all of them right after a scan).
+    let scannedSsids = [];
+
+    function showNetworkList(on, all = false) {
         const listEl = document.getElementById('networkList');
+        const typed = all ? '' : document.getElementById('ssidInput').value.trim().toLowerCase();
+        const shown = scannedSsids.filter(ssid => !typed ||
+            (ssid.toLowerCase().includes(typed) && ssid.toLowerCase() !== typed));
+        listEl.innerHTML = '';
+        for (const ssid of shown) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.setAttribute('role', 'option');
+            btn.textContent = ssid;
+            btn.onclick = () => {
+                document.getElementById('ssidInput').value = ssid;
+                showNetworkList(false);
+                document.getElementById('passwordInput').focus();
+            };
+            listEl.appendChild(btn);
+        }
+        listEl.hidden = !on || !shown.length;
+    }
+
+    // Close the list on a click anywhere else, or on Escape.
+    document.addEventListener('click', e => {
+        if (!e.target.closest('.ssid-field')) showNetworkList(false);
+    });
+    document.getElementById('ssidInput').addEventListener('keydown', e => {
+        if (e.key === 'Escape') showNetworkList(false);
+        if (e.key === 'ArrowDown') {
+            const first = document.querySelector('#networkList button');
+            if (first) { e.preventDefault(); first.focus(); }
+        }
+    });
+    document.getElementById('networkList').addEventListener('keydown', e => {
+        const items = [...document.querySelectorAll('#networkList button')];
+        const i = items.indexOf(document.activeElement);
+        if (e.key === 'ArrowDown' && i < items.length - 1) { e.preventDefault(); items[i + 1].focus(); }
+        else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            (i > 0 ? items[i - 1] : document.getElementById('ssidInput')).focus();
+        } else if (e.key === 'Escape') {
+            showNetworkList(false);
+            document.getElementById('ssidInput').focus();
+        }
+    });
+
+    async function scanWifi() {
         stepMsg('msgWifi', 'Scanning for networks…');
         log('Scanning for networks…', 'log-cmd');
         if (!await authenticate('msgWifi')) return;
-        // Quiet: the SSID list is shown in the collapsible panel, not the log.
+        // Quiet: the SSID list is shown in the dropdown, not the log.
         const response = await sendCommand('WIFI_SCAN', true);
         if (response === null) { stepMsg('msgWifi', 'No response from the device', 'err'); return; }
         if (response.startsWith('ERROR')) {
             stepMsg('msgWifi', replyText(response), 'err');
-            log(response, 'log-err'); details.hidden = true; return;
+            log(response, 'log-err'); return;
         }
 
         let ssids;
@@ -1452,35 +1547,22 @@
         } catch (e) {
             stepMsg('msgWifi', 'Could not parse the scan result', 'err');
             log('Could not parse scan result', 'log-err');
-            details.hidden = true;
             return;
         }
+        scannedSsids = ssids;
         if (!ssids.length) {
             stepMsg('msgWifi', 'No networks found', 'err');
             log('No networks found', 'log-ok');
-            details.hidden = true;
+            showNetworkList(false);
             return;
         }
-        stepMsg('msgWifi', ssids.length + ' network(s) found', 'ok');
         log(ssids.length + ' network(s) found', 'log-ok');
+        // The open list says it all; the step line would only repeat it.
+        clearMsg('msgWifi');
 
-        // Render each SSID as a button that fills the SSID field, then collapses
-        // the panel so the list isn't permanently taking up space.
-        listEl.innerHTML = '';
-        for (const ssid of ssids) {
-            const btn = document.createElement('button');
-            btn.className = 'btn-secondary';
-            btn.textContent = ssid;
-            btn.onclick = () => {
-                document.getElementById('ssidInput').value = ssid;
-                document.getElementById('passwordInput').focus();
-                details.open = false;
-            };
-            listEl.appendChild(btn);
-        }
-        summary.textContent = 'Available networks (' + ssids.length + ')';
-        details.hidden = false;
-        details.open = true;
+        // The full list, whatever is already typed: a reader who scans is
+        // looking for what is there.
+        showNetworkList(true, true);
     }
 
     // A chrome:// URL cannot be navigated to from web content — Chrome blocks it
@@ -1575,8 +1657,21 @@
     const DASH_POLL_MS = 2500;
     const DASH_POLL_TRIES = 10;
 
-    async function awaitDashboard() {
-        if (!networkStatusChar) return;
+    // True once the status says the device is on `ssid`. Older firmware leaves
+    // the "(ssid)" out; then any non-hotspot address on wlan0 is taken as it.
+    function joinedWifi(status, ssid) {
+        if (!status.startsWith('CONNECTED')) return false;
+        const m = /^\w+\s+\((.*)\)\s+\[/.exec(status);
+        return m ? m[1] === ssid : /\[wlan0\]/.test(status);
+    }
+
+    // Polls the network status after WIFI_CONNECT_ENC until the device reports
+    // being on `ssid`, then confirms the step and offers the dashboard.
+    async function awaitDashboard(ssid) {
+        if (!networkStatusChar) {
+            stepMsg('msgWifi', 'Credentials sent to the device', 'ok');
+            return;
+        }
         for (let i = 0; i < DASH_POLL_TRIES; i++) {
             if (i) await new Promise(r => setTimeout(r, DASH_POLL_MS));
             if (!device || !device.gatt.connected) return;
@@ -1587,8 +1682,16 @@
                 return;  // link dropped mid-poll; nothing useful to report
             }
             log('Network: ' + status);
-            if (offerDashboard(status)) return;
+            if (joinedWifi(status, ssid)) {
+                const ip = /\[wlan0\]\s+(\S+)/.exec(status);
+                stepMsg('msgWifi', 'Connected to "' + ssid + '"', 'ok');
+                log('Connected to ' + ssid, 'log-ok');
+                offerDashboard(status);
+                return;
+            }
         }
+        stepMsg('msgWifi', 'The device has not reported joining "' + ssid + '" yet. '
+                + 'Check with Read Network Status in Diagnostics, or try again.', 'err');
     }
 
     // Web Bluetooth is Chromium-only AND secure-context-only. Detect both up
