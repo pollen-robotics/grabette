@@ -552,21 +552,27 @@ html.gb-off .toast-wrap {
 #tr-page .grabette-step .row {
     justify-content: flex-start !important;
 }
-#tr-page .tr-howto {
-    background: var(--color-accent-soft);
-    border-left: 4px solid var(--color-accent);
-    border-radius: 10px;
-    padding: .8rem 1rem;
-    font-size: .9rem;
+#tr-page .tr-howto-title {
+    font-weight: 600;
+    font-size: .95rem;
 }
-#tr-page .tr-howto .ov-cues {
+#tr-page .tr-gif-title {
+    margin-bottom: .4rem;
+    text-align: center;
+    font-size: .85rem;
+    font-weight: 600;
+    color: var(--body-text-color);
+}
+#tr-page .tr-cues {
     display: grid;
     grid-template-columns: 32px 1fr;
-    gap: .5rem .75rem;
+    gap: .4rem .6rem;
     align-items: center;
     margin-top: .5rem;
+    font-size: .85rem;
+    color: var(--body-text-color);
 }
-#tr-page .tr-howto svg {
+#tr-page .tr-cues svg {
     width: 32px;
     height: 16px;
     color: var(--body-text-color);
@@ -669,10 +675,13 @@ def _hf_login_only_html(label: str) -> str:
 # is made in the field, and this is the page whose job is to teach that.
 # Served from grabette/ui/assets, mounted at /ui-assets (NOT /assets, which is
 # Gradio's own bundle); onerror keeps the step readable without the file.
-def _button_gif(filename: str, caption: str) -> str:
+def _button_gif(filename: str, title: str, alt: str, caption_html: str) -> str:
+    """caption_html is trusted markup (the cue icons and their text)."""
     return (
         '<figure style="margin:0 auto;width:100%;">'
-        f'<img src="/ui-assets/{filename}" alt="{html.escape(caption)}"'
+        '<div class="tr-gif-title">'
+        f'{html.escape(title)}</div>'
+        f'<img src="/ui-assets/{filename}" alt="{html.escape(alt)}"'
         ' style="width:100%;aspect-ratio:1;object-fit:cover;display:block;'
         'border-radius:14px;background:#0f172a;"'
         ' onerror="this.style.display=\'none\';'
@@ -682,9 +691,7 @@ def _button_gif(filename: str, caption: str) -> str:
         'text-align:center;padding:.5rem;'
         'border:1px dashed var(--border-color-primary,#cbd5e1);">'
         'Animation coming soon</div>'
-        '<figcaption style="margin-top:.5rem;text-align:center;font-size:.85rem;'
-        'font-weight:600;color:var(--body-text-color);">'
-        f'{html.escape(caption)}</figcaption></figure>'
+        f'<figcaption class="tr-cues">{caption_html}</figcaption></figure>'
     )
 
 
@@ -1076,15 +1083,17 @@ _SOUND_CUES = (
      f"{_cue_icon((10, 10, 10))}<div><b>Three beeps</b>: something went wrong with the recording.</div>"),
 )
 
-# Above the button animations on Test Recording: what the LED and the beeps mean.
-_TR_HOWTO_HTML = (
-    "<div class='tr-howto'>"
-    "<b>Wait for the start and stop signals:</b>"
-    "<div class='ov-cues'>"
-    f"{_ramp_icon(True)}<div>Rising beep after the first press, LED stops blinking: <b>recording started</b>.</div>"
-    f"{_ramp_icon(False)}<div>Falling beep after the second press: <b>recording stopped</b>.</div>"
-    f"{_cue_icon((10,))}<div>Last beep, LED stops blinking: muxing done, <b>ready</b> for another episode.</div>"
-    "</div></div>"
+# Test Recording: the title above the button animations, and under each one
+# what the LED and the beeps say.
+_TR_HOWTO_HTML = "<div class='tr-howto-title'>Wait for the start and stop signals</div>"
+_TR_START_CUES = (
+    f"{_ramp_icon(True)}<div>Press to start, wait for the <b>rising beep</b>"
+    " and for the LED to stop blinking.</div>"
+)
+_TR_STOP_CUES = (
+    f"{_ramp_icon(False)}<div>Press again to stop: <b>falling beep</b>.</div>"
+    f"{_cue_icon((10,))}<div><b>Last beep</b>, LED stops blinking:"
+    " ready for another episode.</div>"
 )
 
 
@@ -2548,11 +2557,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # them onto two rows instead of shrinking them to thumbnails.
                 with gr.Row(equal_height=True):
                     with gr.Column(scale=1, min_width=200):
-                        gr.HTML(_button_gif("start-recording.gif",
-                                            "Press to start and wait\n for the LED to stop blinking"))
+                        gr.HTML(_button_gif("start-recording.gif", "Start signal",
+                                            "Press to start", _TR_START_CUES))
                     with gr.Column(scale=1, min_width=200):
-                        gr.HTML(_button_gif("stop-recording.gif",
-                                            "Press again to stop"))
+                        gr.HTML(_button_gif("stop-recording.gif", "Stop signal",
+                                            "Press again to stop", _TR_STOP_CUES))
                 tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
                 tr_calib_box, _ = _calibration_prompt(None)
