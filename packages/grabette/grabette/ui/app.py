@@ -2481,8 +2481,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             ov_calib_box, ov_calib_bind = _calibration_prompt(_CALIB_REQUIRED,
                                                               "ov-calib")
 
-            # ── Camera | 3D model | Device | Health ───────────────────
-            # min_width is what makes this responsive: four columns on a
+            # ── Camera | 3D model | Tactile | Device | Health ─────────
+            # min_width is what makes this responsive: five columns on a
             # laptop, two on a tablet, one on a phone, decided by gradio from
             # the width each column says it needs.
             with gr.Row(equal_height=False, elem_classes="ov-tiles"):
@@ -2507,6 +2507,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     # popup as the "not calibrated" warning.
                     with gr.Row(elem_classes="ov-tile-btn"):
                         ov_calib_bind(gr.Button("Recalibrate", size="sm"))
+                with gr.Column(scale=1, min_width=230):
+                    gr.HTML(_section_label("Tactile sensors"))
+                    ov_tactile_img = gr.Image(
+                        label=None, show_label=False, height=_OV_TILE_H,
+                        container=False,
+                    )
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Device"))
                     ov_device_card = gr.HTML(_ov_device_card(None, None))
@@ -2562,6 +2568,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         cn_camera_timer = gr.Timer(0.2)
         cn_camera_timer.tick(fn=ov_frame, inputs=ov_mode_state,
                              outputs=ov_camera_img)
+
+        ov_tactile_timer = gr.Timer(0.2)
+        ov_tactile_timer.tick(fn=get_tactile_frame, outputs=ov_tactile_img)
 
         ov_volume.release(fn=on_volume_release, inputs=ov_volume,
                           outputs=[ov_mute_btn, ov_sound_note])
