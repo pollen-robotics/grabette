@@ -563,20 +563,6 @@ html.gb-off .toast-wrap {
     font-weight: 600;
     color: var(--body-text-color);
 }
-#tr-page .tr-cues {
-    display: grid;
-    grid-template-columns: 32px 1fr;
-    gap: .4rem .6rem;
-    align-items: center;
-    margin-top: .5rem;
-    font-size: .85rem;
-    color: var(--body-text-color);
-}
-#tr-page .tr-cues svg {
-    width: 32px;
-    height: 16px;
-    color: var(--body-text-color);
-}
 /* Only the action row is centred: its two controls must sit on one line even
    when one of them wraps. Rows of figures stay top-aligned, so the animations
    line up whatever their captions do. */
@@ -675,13 +661,12 @@ def _hf_login_only_html(label: str) -> str:
 # is made in the field, and this is the page whose job is to teach that.
 # Served from grabette/ui/assets, mounted at /ui-assets (NOT /assets, which is
 # Gradio's own bundle); onerror keeps the step readable without the file.
-def _button_gif(filename: str, title: str, alt: str, caption_html: str) -> str:
-    """caption_html is trusted markup (the cue icons and their text)."""
+def _button_gif(filename: str, title: str, caption: str) -> str:
     return (
         '<figure style="margin:0 auto;width:100%;">'
         '<div class="tr-gif-title">'
         f'{html.escape(title)}</div>'
-        f'<img src="/ui-assets/{filename}" alt="{html.escape(alt)}"'
+        f'<img src="/ui-assets/{filename}" alt="{html.escape(caption)}"'
         ' style="width:100%;aspect-ratio:1;object-fit:cover;display:block;'
         'border-radius:14px;background:#0f172a;"'
         ' onerror="this.style.display=\'none\';'
@@ -691,7 +676,9 @@ def _button_gif(filename: str, title: str, alt: str, caption_html: str) -> str:
         'text-align:center;padding:.5rem;'
         'border:1px dashed var(--border-color-primary,#cbd5e1);">'
         'Animation coming soon</div>'
-        f'<figcaption class="tr-cues">{caption_html}</figcaption></figure>'
+        '<figcaption style="margin-top:.5rem;text-align:center;font-size:.85rem;'
+        'color:var(--body-text-color);">'
+        f'{html.escape(caption)}</figcaption></figure>'
     )
 
 
@@ -1086,15 +1073,65 @@ _SOUND_CUES = (
 # Test Recording: the title above the button animations, and under each one
 # what the LED and the beeps say.
 _TR_HOWTO_HTML = "<div class='tr-howto-title'>Wait for the start and stop signals</div>"
-_TR_START_CUES = (
-    f"{_ramp_icon(True)}<div>Press to start, wait for the <b>rising beep</b>"
-    " and for the LED to stop blinking.</div>"
+
+# The "Signal" buttons under the animations play the cue the device will make.
+# A gradio button holds text only, so the ear and the cue are CSS masks, drawn
+# like _ramp_icon/_cue_icon and painted in the button's own text colour.
+def _css_mask(svg: str) -> str:
+    return f'url("data:image/svg+xml,{quote(svg)}")'
+
+
+_EAR_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'"
+    " stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
+    "<path d='M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0'/>"
+    "<path d='M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4'/></svg>"
 )
-_TR_STOP_CUES = (
-    f"{_ramp_icon(False)}<div>Press again to stop: <b>falling beep</b>.</div>"
-    f"{_cue_icon((10,))}<div><b>Last beep</b>, LED stops blinking:"
-    " ready for another episode.</div>"
+_START_SIGNAL_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'>"
+    "<polygon points='4,18 28,18 28,2'/></svg>"
 )
+# Falling + one beep, the "+" and the dot sized like the ramp beside them.
+_STOP_SIGNAL_SVG = (
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 20'>"
+    "<polygon points='4,2 4,18 28,18'/>"
+    "<rect x='37' y='9' width='10' height='2'/><rect x='41' y='5' width='2' height='10'/>"
+    "<circle cx='60' cy='10' r='3.5'/></svg>"
+)
+_TR_SIGNAL_CSS = f"""
+#tr-page .tr-signal {{
+    align-self: center !important;
+    width: auto !important;
+    flex: none !important;
+    gap: .4rem !important;
+}}
+#tr-page .tr-signal::before,
+#tr-page .tr-signal::after {{
+    content: "";
+    display: inline-block;
+    height: 1.1em;
+    background-color: currentColor;
+    -webkit-mask: var(--tr-icon) no-repeat center / contain;
+    mask: var(--tr-icon) no-repeat center / contain;
+}}
+#tr-page .tr-signal::before {{
+    width: 1.1em;
+    --tr-icon: {_css_mask(_EAR_SVG)};
+}}
+#tr-page .tr-signal-start::after {{
+    width: 1.76em;
+    --tr-icon: {_css_mask(_START_SIGNAL_SVG)};
+}}
+#tr-page .tr-signal-stop::after {{
+    width: 3.96em;
+    --tr-icon: {_css_mask(_STOP_SIGNAL_SVG)};
+}}
+"""
+# Built from the icons above, so it joins MODAL_CSS only here (the app mounts
+# MODAL_CSS on its own, see app/main.py).
+MODAL_CSS += _TR_SIGNAL_CSS
+# How long the stop button waits between the falling cue and the beep.
+_TR_STOP_SIGNAL_GAP_S = 1.0
 
 
 def _mute_classes(level: int) -> list[str]:
@@ -2353,6 +2390,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         res = client.test_sound(cue)
         return _sound_note(res) if "error" in res else ""
 
+    def _wait_sound_done():
+        deadline = time.monotonic() + _SOUND_TEST_TIMEOUT_S
+        while time.monotonic() < deadline:
+            time.sleep(0.1)
+            st = client.get_sound()
+            if st is None or not st.get("testing"):
+                return
+
+    def on_stop_signal_play():
+        """The stop as a take makes it: the falling cue, then the saved beep."""
+        if "error" in client.test_sound("capture_stop"):
+            return
+        _wait_sound_done()
+        time.sleep(_TR_STOP_SIGNAL_GAP_S)
+        client.test_sound("capture_saved")
+
     with gr.Blocks(title="Grabette", css=MODAL_CSS, head=NAV_HEAD) as demo:
         gr.Navbar(main_page_name="Overview", elem_id="grabette-nav")
         _title_bar()
@@ -2557,11 +2610,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # them onto two rows instead of shrinking them to thumbnails.
                 with gr.Row(equal_height=True):
                     with gr.Column(scale=1, min_width=200):
-                        gr.HTML(_button_gif("start-recording.gif", "Start signal",
-                                            "Press to start", _TR_START_CUES))
+                        gr.HTML(_button_gif(
+                            "start-recording.gif", "Start signal",
+                            "Press to start, wait for the rising beep and for "
+                            "the LED to stop blinking."))
+                        tr_start_signal_btn = gr.Button(
+                            "Signal:", size="sm",
+                            elem_classes=["tr-signal", "tr-signal-start"])
                     with gr.Column(scale=1, min_width=200):
-                        gr.HTML(_button_gif("stop-recording.gif", "Stop signal",
-                                            "Press again to stop", _TR_STOP_CUES))
+                        gr.HTML(_button_gif(
+                            "stop-recording.gif", "Stop signal",
+                            "Press again to stop, and wait for the last beep "
+                            "and the LED to stop blinking."))
+                        tr_stop_signal_btn = gr.Button(
+                            "Signal:", size="sm",
+                            elem_classes=["tr-signal", "tr-signal-stop"])
                 tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
                 tr_calib_box, _ = _calibration_prompt(None)
@@ -2630,6 +2693,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         + _FLEET_BUTTON_HTML.format(url=settings.relay_url))
 
         # ── Wire events ───────────────────────────────────────────────
+        tr_start_signal_btn.click(fn=lambda: client.test_sound("capture_start"),
+                                  outputs=None)
+        tr_stop_signal_btn.click(fn=on_stop_signal_play, outputs=None)
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
             outputs=[tr_state, tr_cameras, tr_summary, tr_check_btn,
