@@ -2659,8 +2659,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                    elem_classes="tr-gif-col"):
                         gr.HTML(_button_gif(
                             "start-recording.gif", "Start signal",
-                            "Press to start, wait for the rising beep and for "
-                            "the LED to stop blinking."))
+                            "<b>Press</b> to start, wait for the <b>rising beep</b> and for "
+                            "the LED to <b>stop blinking</b>."))
                         tr_start_signal_btn = gr.Button(
                             "Signal:", size="sm",
                             elem_classes=["tr-signal", "tr-signal-start"])
@@ -2668,8 +2668,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                    elem_classes="tr-gif-col"):
                         gr.HTML(_button_gif(
                             "stop-recording.gif", "Stop signal",
-                            "Press again to stop, and wait for the last beep "
-                            "and the LED to stop blinking."))
+                            "<b>Press</b> again to stop, and wait for the <b>last</b> beep "
+                            "and the LED to be <b>off</b>."))
                         tr_stop_signal_btn = gr.Button(
                             "Signal:", size="sm",
                             elem_classes=["tr-signal", "tr-signal-stop"])
