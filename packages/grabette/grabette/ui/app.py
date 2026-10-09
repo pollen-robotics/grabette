@@ -556,8 +556,9 @@ html.gb-off .toast-wrap {
 #tr-page .tr-gif-title {
     margin-bottom: .4rem;
     text-align: center;
-    font-size: .85rem;
-    font-weight: 600;
+    font-size: .95rem;
+    /* 700, not 600: phones without a 600 face fall back to regular. */
+    font-weight: 700;
     color: var(--body-text-color);
 }
 /* Only the action row is centred: its two controls must sit on one line even
@@ -1107,7 +1108,7 @@ _TR_SIGNAL_CSS = f"""
 }}
 /* Sits right under its caption: no stretched column pushing it down. */
 #tr-page .tr-gif-col {{
-    gap: .5rem !important;
+    gap: 0 !important;
     justify-content: flex-start !important;
 }}
 #tr-page .tr-gif-col > * {{
@@ -1120,6 +1121,9 @@ _TR_SIGNAL_CSS = f"""
     min-width: 0 !important;
     flex: none !important;
     gap: .4rem !important;
+    /* Close to its caption, clear of what follows (the chips on a PC, the
+       stop animation on a phone). */
+    margin: .35rem 0 1.25rem !important;
     padding: .3rem .7rem !important;
     border-radius: 999px !important;
     border: 1px solid #94a3b855 !important;
