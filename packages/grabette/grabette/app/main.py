@@ -110,6 +110,13 @@ _SPACE_WAKE_PROBE_TIMEOUT_S = 20.0  # one liveness probe
 _SPACE_WAKE_RETRY_S = 5.0           # between probes
 _SPACE_POST_TIMEOUT_S = 120.0       # /api/process, on a Space known to be awake
 _SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
+# The conversion is bounded by SILENCE, never by elapsed time — same reasoning as
+# the upload watchdog below: a total cap encodes an assumed speed, and a big
+# dataset then dies at the deadline while the Space is still working through it.
+# Progress = the Space's status record changed (its cumulative log grew, or
+# another per-episode verdict landed). Generous on purpose: the log is coarse, and
+# SLAM on one long take can run for many minutes between two lines.
+_SPACE_STALL_TIMEOUT_S = 1800.0     # no change in the Space's status for this long = wedged
 
 # --- episode upload (raw dataset) ---------------------------------------------
 # Three layers, because each catches what the one below it cannot:
@@ -822,10 +829,14 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     space_jid = (await r.json()).get("job_id")
                 if not space_jid:
                     return {"status": "error", "message": "Space returned no job_id"}
-                deadline = time.monotonic() + 3600.0  # 60-min cap
+                last_progress = time.monotonic()
+                last_mark = None
                 while True:
-                    if time.monotonic() > deadline:
-                        return {"status": "error", "message": "processing timed out"}
+                    stalled = time.monotonic() - last_progress
+                    if stalled >= _SPACE_STALL_TIMEOUT_S:
+                        return {"status": "error", "message": (
+                            f"processing stalled — no progress from the Space for "
+                            f"{stalled / 60:.0f} min (job {space_jid})")}
                     await asyncio.sleep(5.0)
                     # Stop waiting on the Space as soon as the build is cancelled.
                     # NB: this releases the device, it does not stop the Space —
@@ -842,6 +853,11 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                             st = await r.json()
                     except Exception:  # noqa: BLE001 — transient poll error, retry
                         continue
+                    # A failed poll above is not progress: an unreachable Space
+                    # counts toward the stall like a silent one.
+                    mark = (len(str(st.get("log") or "")), len(st.get("quality") or []))
+                    if mark != last_mark:
+                        last_mark, last_progress = mark, time.monotonic()
                     sstatus = st.get("status", "running")
                     if sstatus == "done":
                         result_url = st.get("result")

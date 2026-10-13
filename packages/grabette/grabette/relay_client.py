@@ -51,6 +51,11 @@ _BATTERY_INTERVAL_S = 30.0
 # are dispatched immediately, concurrently with whatever is running. Only put
 # command types here that do no hardware work and return fast.
 _FAST_PATH_TYPES = frozenset({"cancel_dataset"})
+# Reporting a result is retried before giving up on it. A result that is lost
+# anyway is not a hang: the command then drops off the heartbeat's `running` list
+# and the fleet closes it as failed.
+_REPORT_ATTEMPTS = 3
+_REPORT_RETRY_S = 5.0
 
 # Hardware-fault text is reported on the heartbeat, i.e. in a query string. The
 # messages name the fault, the consequence and the fix, so they are a sentence or
@@ -248,12 +253,21 @@ class RelayClient:
                         res = await handler(cmd)
                     except Exception as e:  # noqa: BLE001
                         res = {"status": "error", "message": str(e)}
-                    token = self.token_provider()
-                    if token:
-                        try:
-                            await self._report(session, token, cmd["id"], res)
-                        except Exception:
-                            logger.warning("relay report failed for %s", cmd.get("id"), exc_info=True)
+                    # Retried: this result can close a 30-minute upload, and the
+                    # fleet only learns of it here. The command stays in `inflight`
+                    # meanwhile, so the fleet keeps reading it as in progress.
+                    for attempt in range(_REPORT_ATTEMPTS):
+                        token = self.token_provider()
+                        if token:
+                            try:
+                                await self._report(session, token, cmd["id"], res)
+                                break
+                            except Exception:
+                                logger.warning("relay report failed for %s (attempt %d/%d)",
+                                               cmd.get("id"), attempt + 1, _REPORT_ATTEMPTS,
+                                               exc_info=True)
+                        if attempt + 1 < _REPORT_ATTEMPTS:
+                            await asyncio.sleep(_REPORT_RETRY_S)
                 finally:
                     # Nothing can act on this command any more, so stop remembering
                     # a cancel for it.
@@ -298,6 +312,12 @@ class RelayClient:
                         # a field that only appears when broken can never say
                         # "fixed". Truncated because it rides in a query string.
                         params["error"] = (fault or "")[:_FAULT_MAX_CHARS]
+                    # The commands this process still holds (queued or running),
+                    # sent on EVERY beat, empty included: it is how the fleet tells
+                    # a long upload apart from one this device forgot — after a
+                    # restart quick enough to never look offline, or a lost result
+                    # — which it would otherwise wait on forever.
+                    params["running"] = ",".join(sorted(inflight))
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",
