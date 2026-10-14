@@ -14,7 +14,7 @@ from grabette.config import settings
 from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.hardware.episode_files import DCAM_LEFT, resolve
-from grabette.task import TaskManager, episode_id_for
+from grabette.task import TaskManager, group_episode_id
 
 router = APIRouter(tags=["tasks"])
 
@@ -193,7 +193,7 @@ async def start_capture(
     # one actually creates its directory at a different real-world moment.
     episode_id = tm.create_episode(
         target_task_id,
-        episode_id=episode_id_for(target) if target else None,
+        episode_id=group_episode_id(sync.get("episode_id"), target) if target else None,
         members=sync.get("members"),
         signature=sync.get("signature"),
     )

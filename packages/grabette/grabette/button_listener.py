@@ -308,7 +308,7 @@ class ButtonListener:
         the caller's LED feedback reflects reality."""
         from grabette.capture_scheduler import get_capture_scheduler
         from grabette.fleet_sync import request_group_start
-        from grabette.task import episode_id_for
+        from grabette.task import group_episode_id
 
         sm = self._task_manager
         # When this device is grouped, a button press must behave exactly like
@@ -342,7 +342,7 @@ class ButtonListener:
         # so this device's episode folder matches its peers' exactly.
         episode_id = sm.create_episode(
             task_id,
-            episode_id=episode_id_for(target) if target else None,
+            episode_id=group_episode_id(sync.get("episode_id"), target) if target else None,
             members=members,
             signature=signature,
         )

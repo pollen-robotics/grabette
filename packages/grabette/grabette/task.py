@@ -20,6 +20,7 @@ import json
 
 from grabette.hardware.episode_files import DCAM_IMU, metadata_stats, resolve
 import logging
+import re
 import shutil
 import tarfile
 import tempfile
@@ -73,6 +74,16 @@ def episode_id_for(ts: datetime) -> str:
     took to actually receive and process the start command.
     """
     return ts.astimezone(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+
+_EPISODE_ID_RE = re.compile(r"\d{8}_\d{6}(_[0-9a-f]{4,16})?")
+
+
+def group_episode_id(given: object, target: datetime) -> str:
+    """The fleet-assigned id if valid, else episode_id_for(T0) (older fleet)."""
+    if isinstance(given, str) and _EPISODE_ID_RE.fullmatch(given):
+        return given
+    return episode_id_for(target)
 
 
 # ── Models ────────────────────────────────────────────────────────────

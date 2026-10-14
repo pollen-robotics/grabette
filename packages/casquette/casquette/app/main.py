@@ -102,7 +102,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
     """
     from casquette.fleet.cancel import get_cancel_registry
     from casquette.fleet.capture_scheduler import get_capture_scheduler
-    from casquette.task import episode_id_for, get_task_manager
+    from casquette.task import get_task_manager, group_episode_id
 
     ctype = cmd.get("type")
     cmd_id = cmd.get("id")
@@ -243,7 +243,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
         signature = args.get("signature")
 
         # Resolve T0 BEFORE creating the episode: a group-synchronized start
-        # derives the episode id from the shared T0 (episode_id_for), so every
+        # derives the episode id from the shared T0 (group_episode_id), so every
         # device's episode folder for this recording has the same name.
         target = None
         if start_at_utc:
@@ -262,7 +262,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
 
         episode_id = tm.create_episode(
             task_id,
-            episode_id=episode_id_for(target) if target else None,
+            episode_id=group_episode_id(args.get("episode_id"), target) if target else None,
             members=members,
             signature=signature,
         )
@@ -395,7 +395,7 @@ async def lifespan(app: FastAPI):
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "prepare_capture",
                           "cancel_dataset", "delete_episode", "edit_task", "delete_task",
-                          "upload_episodes", "logout"],
+                          "upload_episodes", "logout", "episode_id"],
             tasks_provider=tm.report_tasks,
             tasks_rev_provider=tm.revision,
             activity_provider=_device_activity,

@@ -592,3 +592,26 @@ def test_delete_all_episodes_refuses_mid_capture(tmp_path):
     with pytest.raises(RuntimeError):
         tm.delete_all_episodes()
     assert (tm.episodes_dir / "ep_live").exists()
+
+
+# ── group_episode_id ─────────────────────────────────────────────────────
+
+from datetime import datetime, timezone  # noqa: E402
+
+from grabette.task import group_episode_id  # noqa: E402
+
+_T0 = datetime(2026, 8, 17, 14, 0, 0, tzinfo=timezone.utc)
+
+
+def test_group_episode_id_takes_the_fleet_suffixed_id():
+    assert group_episode_id("20260817_140000_a3f9c2", _T0) == "20260817_140000_a3f9c2"
+
+
+def test_group_episode_id_falls_back_to_t0_on_an_older_fleet():
+    assert group_episode_id(None, _T0) == "20260817_140000"
+
+
+@pytest.mark.parametrize("bad", ["", "..", "../20260817_140000", "20260817_140000/x",
+                                 "20260817_140000_ZZ", "anything", 42])
+def test_group_episode_id_never_turns_a_bad_id_into_a_path(bad):
+    assert group_episode_id(bad, _T0) == "20260817_140000"

@@ -609,7 +609,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
     from grabette.cancel import get_cancel_registry
     from grabette.capture_scheduler import get_capture_scheduler
     from grabette.daemon import DaemonState
-    from grabette.task import episode_id_for
+    from grabette.task import group_episode_id
     from grabette.app.routers.tasks import get_task_manager
 
     ctype = cmd.get("type")
@@ -1019,7 +1019,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         signature = args.get("signature")
 
         # Resolve T0 BEFORE creating the episode: a group-synchronized start
-        # derives the episode id from the shared T0 (see episode_id_for), not
+        # derives the episode id from the shared T0 (see group_episode_id), not
         # from local wall-clock creation time, so every device's episode
         # folder for this recording has the same name — even though each one
         # actually creates its directory whenever it happens to process this
@@ -1045,7 +1045,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
 
         episode_id = tm.create_episode(
             task_id,
-            episode_id=episode_id_for(target) if target else None,
+            episode_id=group_episode_id(args.get("episode_id"), target) if target else None,
             members=members,
             signature=signature,
         )
@@ -1169,7 +1169,8 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
                           "delete_episode", "edit_task", "delete_task",
-                          "assign_episodes", "prepare_capture", "shutdown"],
+                          "assign_episodes", "prepare_capture", "shutdown",
+                          "episode_id"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
