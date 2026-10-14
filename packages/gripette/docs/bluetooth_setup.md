@@ -13,7 +13,7 @@ The gripette (Pi Zero 2W) is enclosed in the gripper with no physical access. A 
 
 ### 1. Install system dependencies
 
-These are usually pre-installed on Raspberry Pi OS:
+Already installed by `make install-rpi`. If you skipped it, or they were removed:
 
 ```bash
 sudo apt install python3-dbus python3-gi bluez
