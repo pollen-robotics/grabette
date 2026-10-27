@@ -2255,6 +2255,8 @@ def _episode_status(ep: dict) -> str:
         return "✗ camera"
     if not ep.get("angle_sample_count"):
         return "✗ angles"
+    if ep.get("frame_drops"):
+        return f"✗ {', '.join(ep['frame_drops'])} frames dropped"
     if float(ep.get("duration_seconds") or 0) < _EP_MIN_SECONDS:
         return "⚠ very short"
     return "✓ ok"
