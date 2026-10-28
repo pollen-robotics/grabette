@@ -327,6 +327,26 @@ async def _wake_space(session, space_url: str, headers: dict,
             f"Open it once in a browser, then retry.")
 
 
+# Kept referenced so the event loop never drops a pre-wake mid-flight.
+_prewakes: set[asyncio.Task] = set()
+
+
+async def _prewake_space(space_url: str) -> None:
+    """Best-effort wake of the Space during the upload, so its cold start doesn't
+    delay the conversion."""
+    import aiohttp
+    from huggingface_hub import get_token
+
+    token = get_token()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with aiohttp.ClientSession() as s:
+            await _wake_space(s, space_url, headers, probe_timeout=aiohttp.ClientTimeout(
+                total=_SPACE_WAKE_PROBE_TIMEOUT_S))
+    except Exception as e:  # noqa: BLE001
+        logger.info("processing Space pre-wake failed: %s", _exc_text(e))
+
+
 def _space_excluded_episodes(quality) -> list[dict]:
     """The episodes the Space left out, one entry each, with its reason.
 
@@ -512,6 +532,20 @@ _DATASET_WORK_KINDS = {"upload_episodes": "uploading", "process_dataset": "proce
 # flag so a lost entry can never wedge the device as permanently busy.
 _active_dataset_work: dict[str, str] = {}
 
+# command id -> (phase, done, total) of the running dataset work: "upload" for
+# this device's push, else the Space's conversion phase. The fleet cannot poll
+# the Space itself (its anonymous requests get rate-limited).
+_work_progress: dict[str, tuple[str, int | None, int | None]] = {}
+
+
+def _dataset_progress() -> str:
+    """"<command id>:<phase>[:<done>/<total>]" for the heartbeat, "" when idle."""
+    if not _work_progress:
+        return ""
+    cmd_id, (phase, done, total) = next(iter(_work_progress.items()))
+    count = f":{done}/{total}" if isinstance(done, int) and isinstance(total, int) else ""
+    return f"{cmd_id}:{phase}{count}"
+
 
 async def _handle_relay_command(cmd: dict) -> dict:
     """Relay entry point: record what this device is busy with, then dispatch.
@@ -529,6 +563,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
         return await _dispatch_relay_command(cmd)
     finally:
         _active_dataset_work.pop(cmd_id, None)
+        _work_progress.pop(cmd_id, None)
 
 
 def _device_activity() -> str:
@@ -736,6 +771,10 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         private = bool(args.get("private", False))
         if not raw_repo or not role:
             return {"status": "error", "message": "raw_repo and role are required"}
+        if args.get("wake_space"):
+            t = asyncio.create_task(_prewake_space(str(args["wake_space"]).rstrip("/")))
+            _prewakes.add(t)
+            t.add_done_callback(_prewakes.discard)
         from grabette.episode_check import missing_files
 
         tm = get_task_manager()
@@ -776,6 +815,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                                 f"episode(s) can be converted"),
                     "uploaded": uploaded, "missing": missing, "incomplete": incomplete}
 
+        _work_progress[cmd_id] = ("upload", 0, len(present))
         for eid, ep_dir in present:
             # Cancellation checkpoint, once per episode. Checked BEFORE the first
             # upload too: the cancel may have landed while this command was still
@@ -792,6 +832,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                 await _upload_one_episode(hf, ep_dir, raw_repo, f"{eid}/{role}", private,
                                           lambda: cancels.is_cancelled(cmd_id))
                 uploaded.append(eid)
+                _work_progress[cmd_id] = ("upload", len(uploaded), len(present))
             except _CommandCancelled:
                 return {"status": "cancelled", "role": role, "uploaded": uploaded,
                         "missing": missing, "incomplete": incomplete}
@@ -905,6 +946,10 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                             st = await r.json()
                     except Exception:  # noqa: BLE001 — transient poll error, retry
                         continue
+                    prog = st.get("progress") if isinstance(st.get("progress"), dict) else {}
+                    if prog.get("phase"):
+                        _work_progress[cmd_id] = (str(prog["phase"]), prog.get("done"),
+                                                  prog.get("total"))
                     mark = (len(str(st.get("log") or "")), len(st.get("quality") or []))
                     if mark != last_mark:
                         last_mark, last_progress = mark, time.monotonic()
@@ -912,6 +957,14 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     if sstatus == "done":
                         result_url = st.get("result")
                         excluded = _space_excluded_episodes(st.get("quality"))
+                        res = {"status": "ok"}
+                        if excluded:
+                            res["excluded"] = excluded
+                        if check_only:
+                            # A check's answer IS its report: hand it over, so the
+                            # fleet needn't fetch it from the Space (which rate-
+                            # limits its token-less requests). Minus the long log.
+                            res["report"] = {k: v for k, v in st.items() if k != "log"}
                         if not result_url and check_only:
                             # A clean check pushes NOTHING by design, so "done" with
                             # no dataset is the GOOD outcome here — the answer is the
@@ -919,9 +972,6 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                             # and words the verdict from it (including the case where
                             # every take was rejected, which also lands here), so this
                             # must not pre-empt it with a failure.
-                            res = {"status": "ok"}
-                            if excluded:
-                                res["excluded"] = excluded
                             return res
                         if not result_url:
                             # "done" with no dataset is NOT a success. The Space
@@ -944,9 +994,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                         # Succeeded, though episodes may still have been dropped:
                         # `excluded` names them, and that is the only place they
                         # need naming.
-                        res = {"status": "ok", "result_url": result_url}
-                        if excluded:
-                            res["excluded"] = excluded
+                        res["result_url"] = result_url
                         return res
                     if sstatus in ("error", "not_found"):
                         # not_found = the Space forgot the job. Its job list lives in
@@ -1245,6 +1293,7 @@ async def lifespan(app: FastAPI):
             unassigned_provider=get_task_manager().report_unassigned,
             tasks_rev_provider=get_task_manager().revision,  # re-report when tasks change
             activity_provider=_device_activity,  # device state, reported via heartbeat
+            progress_provider=_dataset_progress,  # how far the running dataset work is
             # Hardware faults (no OAK-D calibration, no angle sensors) — the
             # device refuses to record in these states, and an operator who can
             # only find that out by walking up to the grabette and reading its

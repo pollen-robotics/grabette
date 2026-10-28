@@ -1,4 +1,4 @@
-"""A depth_warm change cuts the heartbeat wait short: the fleet holds starts on it."""
+"""A depth_warm or progress change cuts the heartbeat wait short."""
 import asyncio
 
 from grabette import relay_client
@@ -37,3 +37,14 @@ def test_no_change_waits_the_full_interval(monkeypatch):
     c._sent_depth_warm = True
 
     assert _elapsed(c._sleep_until_beat()) >= 0.3
+
+
+def test_a_progress_change_sends_the_heartbeat_early(monkeypatch):
+    # The fleet's progress bar would otherwise miss the short steps.
+    monkeypatch.setattr(relay_client, "_HEARTBEAT_INTERVAL_S", 1.0)
+    monkeypatch.setattr(relay_client, "_DEPTH_WARM_CHECK_S", 0.05)
+    c = RelayClient("http://fleet", lambda: "t", "dev-1",
+                    progress_provider=lambda: "cmd1:slam:1/3")
+    c._sent_progress = "cmd1:check:3/3"
+
+    assert _elapsed(c._sleep_until_beat()) < 0.5

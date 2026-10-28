@@ -218,6 +218,42 @@ def test_a_clean_check_reports_ok_even_though_nothing_was_pushed(monkeypatch):
     assert "excluded" not in res
 
 
+def test_a_check_hands_the_space_report_back_with_its_result(monkeypatch):
+    # The fleet words the verdict from this report and cannot fetch it from the
+    # Space itself: its anonymous requests get rate-limited by Hugging Face.
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+    quality = [{"name": "20250101_120000/left", "kind": "trajectory", "verdict": "BAD"}]
+
+    st = {"status": "done", "result": "https://hf.co/datasets/u/ds",
+          "visualizer": "https://viz", "flagged": ["x"], "quality": quality}
+
+    res = _process_result({**st, "log": "long log"}, extra_args={"check_only": True})
+
+    assert res["report"] == st  # everything but the (long) log
+    # A build has nothing to word from it, so it does not carry it.
+    assert "report" not in _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"})
+
+
+def test_the_heartbeat_reports_the_conversion_phase(monkeypatch):
+    # What the fleet draws its bar from during the conversion.
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+    polls = iter([{"status": "running", "progress": {"phase": "slam", "done": 1, "total": 3}},
+                  {"status": "running", "progress": {"phase": "push", "done": None, "total": None}},
+                  {"status": "done", "result": "https://hf.co/datasets/u/ds"}])
+    seen = []
+
+    def status():
+        seen.append(main._dataset_progress())
+        return next(polls)
+
+    _process_result(status)
+
+    assert seen == ["", "cmd1:slam:1/3", "cmd1:push"]
+    assert main._dataset_progress() == ""  # nothing left behind once it is over
+
+
 def test_a_check_forwards_check_only_to_the_space(monkeypatch):
     # The Space also infers a check from the target repo's name, but that fallback
     # only exists for devices too old to send the flag. The relay must send it, or
@@ -545,7 +581,7 @@ def _make_episode(root, eid, *, complete=True):
     return ep
 
 
-def _run_upload(tmp_path, episode_ids, hf, monkeypatch):
+def _run_upload(tmp_path, episode_ids, hf, monkeypatch, **extra_args):
     monkeypatch.setattr("grabette.app.routers.tasks.get_task_manager",
                         lambda: _Tm(tmp_path))
     monkeypatch.setattr("grabette.app.routers.huggingface.get_hf_client", lambda: hf)
@@ -553,8 +589,25 @@ def _run_upload(tmp_path, episode_ids, hf, monkeypatch):
     monkeypatch.setattr(main, "_UPLOAD_RETRY_BASE_S", 0.0)
     return asyncio.run(main._handle_relay_command({
         "id": "cmd1", "type": "upload_episodes",
-        "args": {"raw_repo": "u/raw", "role": "left", "episode_ids": episode_ids},
+        "args": {"raw_repo": "u/raw", "role": "left", "episode_ids": episode_ids,
+                 **extra_args},
     }))
+
+
+def test_the_device_that_converts_wakes_the_space_while_it_uploads(tmp_path, monkeypatch):
+    # A cold start is about a minute: under the upload rather than in front of the
+    # conversion. Only when asked — the fleet sends it to the converting device.
+    _make_episode(tmp_path, "ep1")
+    woken = []
+
+    async def prewake(url):
+        woken.append(url)
+    monkeypatch.setattr(main, "_prewake_space", prewake)
+
+    _run_upload(tmp_path, ["ep1"], _Hf(), monkeypatch)
+    assert woken == []
+    _run_upload(tmp_path, ["ep1"], _Hf(), monkeypatch, wake_space="https://space.test/")
+    assert woken == ["https://space.test"]
 
 
 def test_an_episode_missing_its_calibration_is_never_uploaded(tmp_path, monkeypatch):
@@ -600,6 +653,28 @@ def test_a_complete_batch_uploads_untouched(tmp_path, monkeypatch):
     assert res["status"] == "ok"
     assert hf.calls == ["ep1/left", "ep2/left"]
     assert res["incomplete"] == [] and "message" not in res
+
+
+def test_the_heartbeat_reports_how_far_the_upload_is(tmp_path, monkeypatch):
+    # The command only reports once it is over; until then this is all the fleet
+    # has to draw a progress bar and estimate the time left with.
+    _make_episode(tmp_path, "ep1")
+    _make_episode(tmp_path, "ep2")
+    _make_episode(tmp_path, "ep_bad", complete=False)
+    seen = []
+
+    class _Watching(_Hf):
+        def upload_episode(self, *a):
+            seen.append(main._dataset_progress())
+            return super().upload_episode(*a)
+
+    res = _run_upload(tmp_path, ["ep1", "ep_bad", "ep2"], _Watching(), monkeypatch)
+
+    assert res["status"] == "ok"
+    # Counted against what will actually be pushed: the screened-out take is not
+    # part of the total, or the bar would never reach the end.
+    assert seen == ["cmd1:upload:0/2", "cmd1:upload:1/2"]
+    assert main._dataset_progress() == ""  # nothing left behind once it is over
 
 
 def test_an_absent_episode_is_still_reported_as_missing(tmp_path, monkeypatch):
