@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
 import shutil
 import subprocess
 import threading
@@ -70,6 +71,54 @@ _MAX_VALID_DEPTH_MM = 10_000
 # ~15 fps and nobody is watching most of the time, so convert one frame in six
 # (5 fps) when idle. Recording converts every frame, as it must.
 _IDLE_PREVIEW_EVERY = 6
+
+# Frames buffered per encoder while its ffmpeg is still starting up. Writing a
+# 250-500 KB frame into a 64 KB pipe blocks until ffmpeg reads it, and ffmpeg
+# takes ~0.3 s to start on a Pi 4 (3.5 s from a cold SD card). Done from the
+# capture loop, that stall made the SDK drop every frame in between: each episode
+# had one frame, then a 0.3-3.5 s hole. 90 frames is 3 s, ~67 MB at worst.
+_ENCODER_QUEUE_FRAMES = 90
+
+
+class _EncoderFeeder:
+    """Feeds one encoder's stdin from its own thread, so a slow or still-starting
+    ffmpeg never stalls the capture loop. A frame's timestamp is appended to
+    `timestamps` only once the frame is written, keeping the two in step."""
+
+    def __init__(self, proc: subprocess.Popen, timestamps: list, label: str):
+        self.proc = proc
+        self._timestamps = timestamps
+        self._label = label
+        self._queue: queue.Queue = queue.Queue(maxsize=_ENCODER_QUEUE_FRAMES)
+        self._thread = threading.Thread(target=self._run, name=f"orbbec-{label}-feeder",
+                                        daemon=True)
+        self._thread.start()
+
+    def full(self) -> bool:
+        return self._queue.full()
+
+    def put(self, data: bytes, ts: dict) -> None:
+        self._queue.put_nowait((data, ts))
+
+    def _run(self) -> None:
+        broken = False
+        while (item := self._queue.get()) is not None:
+            if broken:
+                continue
+            data, ts = item
+            try:
+                self.proc.stdin.write(data)
+            except (BrokenPipeError, ValueError, OSError):
+                logger.error("%s encoder pipe closed unexpectedly", self._label)
+                broken = True
+                continue
+            self._timestamps.append(ts)
+
+    def close(self) -> None:
+        """Flush the queued frames into the encoder, then return."""
+        self._queue.put(None)
+        self._thread.join()
+
 
 # One Context for the process, created lazily and never torn down.
 #
@@ -147,9 +196,10 @@ class OrbbecCapture:
         self._depth_ts: list[dict] = []
         self._clock_pairs: list[dict] = []
 
-        self._encoder: subprocess.Popen | None = None
-        self._depth_encoder: subprocess.Popen | None = None
+        self._encoder: _EncoderFeeder | None = None
+        self._depth_encoder: _EncoderFeeder | None = None
         self._files_lock = threading.Lock()
+        self._dropped_frames = 0
 
         self._latest_depth: np.ndarray | None = None
         self._depth_scale = 1.0
@@ -199,6 +249,7 @@ class OrbbecCapture:
                     info.get_firmware_version(), info.get_connection_type())
 
         self._load_mask()
+        self._warm_ffmpeg()
 
         self._pipeline = ob.Pipeline(self._device)
         config = ob.Config()
@@ -227,6 +278,16 @@ class OrbbecCapture:
         self._thread.start()
 
         logger.info("OrbbecCapture pipeline running (idle, awaiting start_recording)")
+
+    @staticmethod
+    def _warm_ffmpeg() -> None:
+        """Load the ffmpeg binary and its libraries into the page cache, so the
+        encoders spawned by start_recording start warm instead of from the SD card."""
+        try:
+            subprocess.run(["ffmpeg", "-hide_banner", "-version"], timeout=30,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as e:
+            logger.warning("ffmpeg warm-up failed: %s", e)
 
     def _apply_exposure(self) -> None:
         """Optionally pin IR exposure/gain instead of letting auto-exposure run.
@@ -391,12 +452,16 @@ class OrbbecCapture:
         self._left_ts.clear()
         self._depth_ts.clear()
         self._clock_pairs.clear()
+        self._dropped_frames = 0
 
         with self._files_lock:
-            self._encoder = self._spawn_encoder(self._output_dir / "dcam_left.mp4")
+            self._encoder = _EncoderFeeder(
+                self._spawn_encoder(self._output_dir / "dcam_left.mp4"),
+                self._left_ts, "left")
             if self.enable_depth:
-                self._depth_encoder = self._spawn_depth_encoder(
-                    self._output_dir / "dcam_depth.mkv")
+                self._depth_encoder = _EncoderFeeder(
+                    self._spawn_depth_encoder(self._output_dir / "dcam_depth.mkv"),
+                    self._depth_ts, "depth")
             self._recording = True
 
         logger.info("OrbbecCapture recording → %s", self._output_dir)
@@ -458,10 +523,18 @@ class OrbbecCapture:
             enc, self._encoder = self._encoder, None
             denc, self._depth_encoder = self._depth_encoder, None
 
+        for feeder in (enc, denc):
+            if feeder is not None:
+                feeder.close()
+        if self._dropped_frames:
+            logger.warning("OrbbecCapture dropped %d frame(s): encoder queue full",
+                           self._dropped_frames)
+
         # Both encoders finalise in parallel; each is an independent process.
-        for proc, label in ((enc, "left"), (denc, "depth")):
-            if proc is None:
+        for feeder, label in ((enc, "left"), (denc, "depth")):
+            if feeder is None:
                 continue
+            proc = feeder.proc
             try:
                 proc.stdin.close()
                 proc.wait(timeout=60)
@@ -484,6 +557,7 @@ class OrbbecCapture:
         stats = {
             "left_frames": len(self._left_ts),
             "depth_frames": len(self._depth_ts) if self.enable_depth else None,
+            "dropped_frames": self._dropped_frames,
             # No IMU on this device. The key is always present because rpi.py
             # reads oakd_stats.get("imu_samples", 0) into metadata.json.
             "imu_samples": 0,
@@ -497,7 +571,7 @@ class OrbbecCapture:
         """Drain frames continuously; cache for preview; write only while recording.
 
         Per-frame work is kept deliberately small — an integer depth conversion
-        and two pipe writes. Anything heavier here (a float conversion, a PNG
+        and two queue puts (the pipe writes happen in _EncoderFeeder). Anything heavier here (a float conversion, a PNG
         encode) stalls the loop past the 33 ms frame interval and the SDK drops
         frames, which is exactly what happened in the first on-device recordings.
         """
@@ -557,17 +631,15 @@ class OrbbecCapture:
             with self._files_lock:
                 if not self._recording or self._encoder is None:
                     continue
-                try:
-                    self._encoder.stdin.write(gray.tobytes())
-                    self._left_ts.append(
-                        {"seq": seq, "device_us": device_us, "host_ms": host_ms})
-                    if self._depth_encoder is not None:
-                        self._depth_encoder.stdin.write(depth_mm.tobytes())
-                        self._depth_ts.append(
-                            {"seq": seq, "device_us": device_us, "host_ms": host_ms})
-                except (BrokenPipeError, ValueError):
-                    logger.error("encoder pipe closed unexpectedly")
+                feeders = [f for f in (self._encoder, self._depth_encoder) if f is not None]
+                # Left and depth are dropped together so the streams stay paired.
+                if any(f.full() for f in feeders):
+                    self._dropped_frames += 1
                     continue
+                ts = {"seq": seq, "device_us": device_us, "host_ms": host_ms}
+                self._encoder.put(gray.tobytes(), ts)
+                if self._depth_encoder is not None:
+                    self._depth_encoder.put(depth_mm.tobytes(), dict(ts))
                 n += 1
         logger.info("orbbec writer: %d frames recorded", n)
 
