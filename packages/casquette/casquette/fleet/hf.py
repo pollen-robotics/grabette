@@ -7,10 +7,14 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Must match RAW_DOWNLOAD_NAME_RE in grabette-fleet app.py.
+RAW_DOWNLOAD_NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*-rawdl-\d{8}-\d{6}-[0-9a-f]{8}")
 
 
 class HuggingFaceClient:
@@ -77,6 +81,27 @@ class HuggingFaceClient:
         url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{dest}"
         logger.info("Episode %s uploaded to %s", episode_dir.name, url)
         return url
+
+    def delete_raw_download_repos(self, repos: list[str]) -> dict:
+        """Delete the fleet's raw-download repos — only this user's, with the exact
+        download name shape, whatever the fleet asks."""
+        api = self._get_api()
+        user = api.whoami().get("name", "")
+        out: dict = {"deleted": [], "refused": [], "failed": []}
+        for repo in repos:
+            ns, _, name = str(repo).partition("/")
+            if ns != user or not RAW_DOWNLOAD_NAME_RE.fullmatch(name):
+                out["refused"].append(repo)
+                logger.warning("Refusing to delete %s: not a raw download of %s", repo, user)
+                continue
+            try:
+                api.delete_repo(repo, repo_type="dataset", missing_ok=True)
+                out["deleted"].append(repo)
+                logger.info("Deleted raw download %s", repo)
+            except Exception as e:  # noqa: BLE001
+                out["failed"].append({"repo": repo, "error": str(e)})
+                logger.warning("Could not delete raw download %s: %s", repo, e)
+        return out
 
 
 _hf_client: Optional[HuggingFaceClient] = None

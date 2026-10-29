@@ -115,6 +115,20 @@ async def _handle_relay_command(cmd: dict) -> dict:
         marked = cancels.cancel(args.get("command_ids") or [])
         return {"status": "ok", "cancelled": marked, "job_id": args.get("job_id", "")}
 
+    if ctype == "delete_raw_repos":
+        # Raw-download cleanup (the fleet can't delete). Needs no daemon.
+        from casquette.fleet.hf import get_hf_client
+
+        repos = (cmd.get("args") or {}).get("repos") or []
+        try:
+            res = await asyncio.to_thread(get_hf_client().delete_raw_download_repos, repos)
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": _exc_text(e)}
+        if res["refused"] or res["failed"]:
+            return {"status": "error", **res,
+                    "message": f"{len(res['refused'])} refused, {len(res['failed'])} failed"}
+        return {"status": "ok", **res}
+
     daemon = get_daemon_instance()
     if daemon is None:
         return {"status": "error", "message": "daemon not running"}
@@ -395,7 +409,7 @@ async def lifespan(app: FastAPI):
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "prepare_capture",
                           "cancel_dataset", "delete_episode", "edit_task", "delete_task",
-                          "upload_episodes", "logout"],
+                          "upload_episodes", "delete_raw_repos", "logout"],
             tasks_provider=tm.report_tasks,
             tasks_rev_provider=tm.revision,
             activity_provider=_device_activity,

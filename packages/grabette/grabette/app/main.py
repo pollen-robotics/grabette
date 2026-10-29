@@ -671,6 +671,21 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         marked = cancels.cancel(args.get("command_ids") or [])
         return {"status": "ok", "cancelled": marked, "job_id": args.get("job_id", "")}
 
+    if ctype == "delete_raw_repos":
+        # Raw-download cleanup (the fleet can't delete). Needs no daemon.
+        from grabette.app.routers.huggingface import get_hf_client
+
+        repos = (cmd.get("args") or {}).get("repos") or []
+        try:
+            res = await asyncio.get_running_loop().run_in_executor(
+                _get_upload_executor(), get_hf_client().delete_raw_download_repos, repos)
+        except Exception as e:  # noqa: BLE001
+            return {"status": "error", "message": _exc_text(e)}
+        if res["refused"] or res["failed"]:
+            return {"status": "error", **res,
+                    "message": f"{len(res['refused'])} refused, {len(res['failed'])} failed"}
+        return {"status": "ok", **res}
+
     daemon = get_daemon_instance()
     if daemon is None:
         return {"status": "error", "message": "daemon not running"}
@@ -1234,6 +1249,7 @@ async def lifespan(app: FastAPI):
             name=settings.device_name,
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
+                          "delete_raw_repos",
                           "delete_episode", "edit_task", "delete_task",
                           "assign_episodes", "prepare_capture", "shutdown",
                           "play_sound", "test_sound"],
