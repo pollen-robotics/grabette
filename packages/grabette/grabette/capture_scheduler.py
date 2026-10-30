@@ -22,11 +22,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from grabette.hardware.sound import cue_error
+from grabette.hardware.camera import FrameAlignmentError
 
 logger = logging.getLogger(__name__)
 
 # Fleet's camera wait cap (20s) + margin.
 FLEET_WAIT_MAX_S = 30.0
+
+
+async def stop_capture_and_register(backend, task_manager):
+    """File a stopped take even when its retained video fails alignment.
+
+    Only a FrameAlignmentError carrying the completed take's ID permits this
+    failure registration. Generic stop/mux errors may still leave producers
+    active, so their existing behaviour is intentionally unchanged.
+    """
+    try:
+        result = await backend.stop_capture()
+    except FrameAlignmentError as exc:
+        if exc.episode_id is not None and not backend.is_capturing:
+            task_manager.register_episode(exc.episode_id)
+        raise
+    task_manager.register_episode(getattr(result, "episode_id", None))
+    return result
 
 
 class CaptureScheduler:
@@ -143,8 +161,7 @@ class CaptureScheduler:
             if wait_s > 0:
                 await asyncio.sleep(wait_s)
             if backend.is_capturing:
-                result = await backend.stop_capture()
-                sm.register_episode(getattr(result, "episode_id", None))
+                await stop_capture_and_register(backend, sm)
                 logger.info("Scheduled stop fired (target %s)", stop_at_utc.isoformat())
         except asyncio.CancelledError:
             raise

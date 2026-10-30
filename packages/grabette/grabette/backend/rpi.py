@@ -17,6 +17,7 @@ from grabette.backend.base import Backend
 from grabette.config import settings
 from grabette.errors import exc_text as _exc_text
 from grabette.hardware.frames import build_frames_payload
+from grabette.hardware.camera import FrameAlignmentError
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 from grabette.output import write_json_atomic
 
@@ -447,8 +448,14 @@ class RpiBackend(Backend):
         if self._depth_camera_watch_task is not None:
             self._depth_camera_watch_task.cancel()
             self._depth_camera_watch_task = None
+        alignment_error = None
         if self._capturing:
-            await self.stop_capture()
+            try:
+                await self.stop_capture()
+            except FrameAlignmentError as exc:
+                # The take is stopped, but shutdown still owns the remaining
+                # peripherals. Release them before surfacing its validation error.
+                alignment_error = exc
         # After any stop_capture (which may re-arm the keep-alive), drop the
         # pending power-down — we're shutting the OAK down directly below.
         self._cancel_oakd_keepalive()
@@ -472,6 +479,8 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
+        if alignment_error is not None:
+            raise alignment_error
 
     @property
     def is_camera_connected(self) -> bool:
@@ -934,7 +943,15 @@ class RpiBackend(Backend):
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         _t_cam = time.monotonic()
-        frame_timestamps = self._camera.stop()
+        alignment_error = None
+        try:
+            frame_timestamps = self._camera.stop()
+        except FrameAlignmentError as exc:
+            # The camera has stopped. Finish the other streams and retain their
+            # sidecars before returning a failed video/timestamp alignment.
+            alignment_error = exc
+            frame_timestamps = self._camera.frame_timestamps
+            logger.error("Video timestamp alignment failed: %s", exc)
         t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
         self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
@@ -980,6 +997,7 @@ class RpiBackend(Backend):
             "imu_sample_count": status.imu_sample_count,
             "angle_sample_count": status.angle_sample_count,
             "fps": actual_fps,
+            "video_timestamp_alignment": self._camera.timestamp_alignment,
             "backend": "rpi",
             # Identity + convention tags — let downstream readers know which
             # device + handedness recorded this episode and which sign
@@ -994,6 +1012,8 @@ class RpiBackend(Backend):
             # explicit for downstream traceability).
             "urdf": urdf_name,
         }
+        if alignment_error is not None:
+            meta["valid"] = False
         if oakd_stats:
             # Per-stream capture stats. Key is "dcam" since the camera may be an
             # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
@@ -1031,6 +1051,9 @@ class RpiBackend(Backend):
             " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
             total_ms,
         )
+        if alignment_error is not None:
+            alignment_error.episode_id = status.episode_id
+            raise alignment_error
         return status
 
     def _finalize_and_reinit(
@@ -1099,7 +1122,7 @@ class RpiBackend(Backend):
         # instead — an episode that didn't persist is exactly what an operator
         # must not learn about later from the journal.
         if self._speaker is not None:
-            if writes_ok:
+            if writes_ok and meta.get("valid", True):
                 self._speaker.play_saved()
             else:
                 self._speaker.play_error()

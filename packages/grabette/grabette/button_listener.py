@@ -381,7 +381,7 @@ class ButtonListener:
             cue_error()
 
     async def _stop_capture_coro(self) -> None:
-        from grabette.capture_scheduler import get_capture_scheduler
+        from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
         from grabette.fleet_sync import notify_group_stop
 
         scheduler = get_capture_scheduler()
@@ -423,8 +423,7 @@ class ButtonListener:
         await notify_group_stop(
             should_abort=lambda: self._backend.is_capturing or scheduler.is_scheduled(),
         )
-        status = await self._backend.stop_capture()
-        sm.register_episode(getattr(status, "episode_id", None))
+        status = await stop_capture_and_register(self._backend, sm)
         logger.info(
             "Button capture stopped: %.1fs, %d frames",
             status.duration_seconds, status.frame_count,
