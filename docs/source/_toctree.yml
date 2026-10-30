@@ -9,6 +9,8 @@
       title: Training
     - local: build_your_own
       title: Build your own
+    - local: cooling
+      title: Cooling a Grabette
   title: Grabette
 - local: gripette
   title: Gripette

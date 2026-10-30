@@ -10,6 +10,10 @@ Grabette is built from off-the-shelf parts, 3D-printed components and a Raspberr
 - 🧩 <a href="https://cad.onshape.com/documents/0c6175c392788391992ff2ec/w/9f773e5f0eeae1577ae36a05/e/13a89fef2591d863bb0bf186" target="_blank" rel="noopener"><strong>CAD on Onshape</strong></a> — the full assembly.
 - 🔩 <a href="https://github.com/pollen-robotics/grabette/blob/develop/packages/grabette/assembly/Grabette_Assembly.pdf" target="_blank" rel="noopener"><strong>Assembly guide</strong></a>, with the matching 3D-print guide in the same folder.
 
+For sustained capture in an enclosure, see [Cooling a Grabette](./cooling.md)
+for an optional fan/heatsink retrofit, installation photographs and a way to
+check temperature alongside recording and saving.
+
 ## Flash the Raspberry Pi
 
 Download `image_<date>-grabetteos-<version>.zip` from the [latest grabette-os release](https://github.com/pollen-robotics/grabette-os/releases/latest). It is Raspberry Pi OS Lite (64-bit) with everything the manual install below does already baked in: dependencies, virtualenv, hardware overlays, speaker, udev rules for both depth cameras, and the `grabette` + `grabette-bluetooth` services enabled.
