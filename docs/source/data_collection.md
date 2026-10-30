@@ -1,6 +1,10 @@
 # Data collection
 
-Real data is recorded through the **Grabette Fleet** Space: it organizes recordings into tasks and sessions, drives several devices at once, and turns the episodes into a LeRobot dataset. The device has to be [signed in to Hugging Face](./get_started.md#signing-in-to-hugging-face) first.
+Record through the **Grabette Fleet** Space for coordinated tasks, sessions and
+dataset export, or use [local terminal control](./dual_hand_control.md) to
+operate one or two recorders directly on a trusted LAN. The Fleet workflow
+requires the device to be [signed in to Hugging Face](./get_started.md#signing-in-to-hugging-face);
+the local terminal controller does not require a Hugging Face login.
 
 ## Grabette Fleet
 

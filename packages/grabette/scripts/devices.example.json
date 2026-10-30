@@ -1,0 +1,10 @@
+{
+  "left": {
+    "api": "http://grabette-left.local:8000",
+    "expected_hand": "left"
+  },
+  "right": {
+    "api": "http://grabette-right.local:8000",
+    "expected_hand": "right"
+  }
+}

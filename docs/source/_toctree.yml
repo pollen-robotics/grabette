@@ -5,6 +5,8 @@
       title: Getting started
     - local: data_collection
       title: Data collection
+    - local: dual_hand_control
+      title: Local terminal control
     - local: training
       title: Training
     - local: build_your_own

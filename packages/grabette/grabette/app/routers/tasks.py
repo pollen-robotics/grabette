@@ -6,11 +6,12 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StrictBool
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
 from grabette.capture_scheduler import get_capture_scheduler
+from grabette.config import settings
 from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.hardware.episode_files import DCAM_LEFT, resolve
@@ -146,6 +147,45 @@ class MoveEpisodesRequest(BaseModel):
 
 class StartCaptureRequest(BaseModel):
     task_id: str | None = None
+    # LAN controllers explicitly address one device. Existing callers retain
+    # the fleet's group-start behavior unless they opt out here.
+    local_only: StrictBool = False
+
+
+class StopCaptureRequest(BaseModel):
+    local_only: StrictBool = False
+    expected_episode_id: str | None = Field(default=None, min_length=1)
+
+
+@router.get("/api/capture/control-info")
+def capture_control_info():
+    """Identify a device and advertise control flags that older servers ignore."""
+    counters = ["frame_count"]
+    if settings.angle_sensors:
+        counters.append("angle_sample_count")
+    if settings.depth_camera == "oakd":
+        counters.append("imu_sample_count")
+    return {
+        "local_only_control_version": 1,
+        "expected_episode_stop_version": 1,
+        "hand": settings.hand,
+        "device_id": settings.device_id,
+        "required_capture_counters": counters,
+    }
+
+
+def _check_expected_episode(expected: str | None, backend: Backend, tm: TaskManager,
+                            *, pending: bool = False) -> None:
+    """Refuse a delayed stop rather than stopping or cancelling another take."""
+    if expected is None:
+        return
+    capture = backend.get_capture_status()
+    current = capture.episode_id if backend.is_capturing or capture.is_starting else None
+    if current is None and pending:
+        created = tm._pending_episode
+        current = created[0] if created is not None else None
+    if current != expected:
+        raise HTTPException(status_code=409, detail="The active episode does not match expected_episode_id")
 
 
 @router.post("/api/episodes/start")
@@ -171,7 +211,7 @@ async def start_capture(
     # synchronized at the shared T0 — so we don't impose the locally-selected
     # task. Solo (no group) → the requested/active local task, immediately.
     target_task_id = req.task_id or tm.active_task_id
-    sync = await request_group_start("")
+    sync = {"status": "solo"} if req.local_only else await request_group_start("")
     status = sync.get("status")
     if status == "refused":
         # Fleet knows this device is in a group session but declined (e.g. a
@@ -229,20 +269,27 @@ async def start_capture(
 
 @router.post("/api/episodes/stop")
 async def stop_capture(
+    req: StopCaptureRequest = StopCaptureRequest(),
     backend: Backend = Depends(get_backend),
     tm: TaskManager = Depends(get_task_manager),
 ):
     scheduler = get_capture_scheduler()
+    _check_expected_episode(req.expected_episode_id, backend, tm, pending=scheduler.is_pending())
     try:
         outcome = await scheduler.cancel_or_wait(backend)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
     if outcome == "cancelled":
+        # cancel_or_wait yields while the old scheduler task unwinds. Another
+        # request may have created a different pending episode in that time.
+        _check_expected_episode(req.expected_episode_id, backend, tm, pending=True)
         tm.discard_pending_episode()
         return {"status": "cancelled"}
     if outcome == "cancelled_wait":
-        await notify_group_stop(should_abort=scheduler.is_pending)
+        if not req.local_only:
+            await notify_group_stop(should_abort=scheduler.is_pending)
         return {"status": "cancelled"}
+    _check_expected_episode(req.expected_episode_id, backend, tm)
     if not backend.is_capturing:
         raise HTTPException(status_code=409, detail="Not capturing")
     # Notify BEFORE stopping locally, exactly like the physical-button path:
@@ -251,9 +298,11 @@ async def stop_capture(
     # peers would keep recording for its whole duration. This used to be fired
     # afterwards through a bare create_task, whose task asyncio only referenced
     # weakly: the GC could cancel it in flight and the peers were never told.
-    await notify_group_stop(
-        should_abort=lambda: backend.is_capturing or scheduler.is_scheduled(),
-    )
+    if not req.local_only:
+        await notify_group_stop(
+            should_abort=lambda: backend.is_capturing or scheduler.is_scheduled(),
+        )
+    _check_expected_episode(req.expected_episode_id, backend, tm)
     status = await backend.stop_capture()
     # File the episode into its task only now that its data is written.
     tm.register_episode(getattr(status, "episode_id", None))
