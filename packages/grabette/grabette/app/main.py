@@ -920,6 +920,14 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     if sstatus == "done":
                         result_url = st.get("result")
                         excluded = _space_excluded_episodes(st.get("quality"))
+                        res = {"status": "ok"}
+                        if excluded:
+                            res["excluded"] = excluded
+                        if check_only:
+                            # A check's answer IS its report: hand it over, so the
+                            # fleet needn't fetch it from the Space (which rate-
+                            # limits its token-less requests). Minus the long log.
+                            res["report"] = {k: v for k, v in st.items() if k != "log"}
                         if not result_url and check_only:
                             # A clean check pushes NOTHING by design, so "done" with
                             # no dataset is the GOOD outcome here — the answer is the
@@ -927,9 +935,6 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                             # and words the verdict from it (including the case where
                             # every take was rejected, which also lands here), so this
                             # must not pre-empt it with a failure.
-                            res = {"status": "ok"}
-                            if excluded:
-                                res["excluded"] = excluded
                             return res
                         if not result_url:
                             # "done" with no dataset is NOT a success. The Space
@@ -952,9 +957,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                         # Succeeded, though episodes may still have been dropped:
                         # `excluded` names them, and that is the only place they
                         # need naming.
-                        res = {"status": "ok", "result_url": result_url}
-                        if excluded:
-                            res["excluded"] = excluded
+                        res["result_url"] = result_url
                         return res
                     if sstatus in ("error", "not_found"):
                         # not_found = the Space forgot the job. Its job list lives in
