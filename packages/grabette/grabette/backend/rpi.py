@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import time
+from datetime import datetime
 from pathlib import Path
 
 from grabette.backend.base import Backend
@@ -472,6 +473,10 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
+
+    @property
+    def recording_started_utc(self) -> datetime | None:
+        return self._sync.start_utc
 
     @property
     def is_camera_connected(self) -> bool:

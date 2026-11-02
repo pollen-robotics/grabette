@@ -4,6 +4,7 @@ Ported from grabette-capture/grabette_capture/sync.py.
 """
 
 import time
+from datetime import datetime, timezone
 
 # Linux clock id for CLOCK_BOOTTIME. Some Python builds don't expose the
 # symbolic constant (e.g. it's absent on the dev machine), but clock_gettime
@@ -29,6 +30,13 @@ class SyncManager:
     def __init__(self):
         self._start_time: float | None = None
         self._start_boottime: float | None = None
+        self._start_utc: datetime | None = None
+
+    @property
+    def start_utc(self) -> datetime | None:
+        """Wall-clock instant of t=0, read with the other start() clocks — what
+        places this device's streams on the UTC timeline shared with its peers."""
+        return self._start_utc
 
     @property
     def is_started(self) -> bool:
@@ -41,6 +49,7 @@ class SyncManager:
         # terms — so the offset must be captured, not assumed to be 0.
         self._start_time = time.monotonic()
         self._start_boottime = time.clock_gettime(_CLOCK_BOOTTIME)
+        self._start_utc = datetime.now(timezone.utc)
 
     def get_timestamp_ms(self) -> float:
         if self._start_time is None:
@@ -75,3 +84,4 @@ class SyncManager:
     def reset(self) -> None:
         self._start_time = None
         self._start_boottime = None
+        self._start_utc = None
