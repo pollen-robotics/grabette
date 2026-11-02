@@ -17,7 +17,7 @@ sudo hostnamectl set-hostname gripette-right-1f9a2b   # or gripette-left-…
 sudo systemctl restart gripette
 ```
 
-The [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) provisions a Gripette's WiFi the same way as a Grabette's — pick Gripette in its device chooser.
+The [Bluetooth tool](https://pollen-robotics.github.io/grabette/?device=gripette#wifi) provisions a Gripette's WiFi the same way as a Grabette's; this link has Gripette already selected (otherwise, pick it on the first tab).
 
 Before first use, calibrate the encoders' zero offset: see [calibration](https://github.com/pollen-robotics/grabette/blob/develop/packages/gripette/docs/calibration.md).
 

@@ -104,7 +104,7 @@ Where you review what is on the device.
 
 ### Network
 
-The device card again, and **Change WiFi network** to see the current connection and switch networks. The [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi) is the fallback when the device isn't reachable at all.
+The device card again, and **Change WiFi network** to see the current connection and switch networks. The [Bluetooth tool](https://pollen-robotics.github.io/grabette/?device=grabette#wifi) is the fallback when the device isn't reachable at all.
 
 ## Ready to record your first dataset?
 
