@@ -126,6 +126,10 @@ class RpiBackend(Backend):
 
         logger.info("RpiBackend capture started → %s", session_dir)
 
+    @property
+    def recording_started_utc(self) -> datetime | None:
+        return self._sync.start_utc
+
     async def stop_capture(self) -> CaptureStatus:
         if not self._capturing:
             raise RuntimeError("Not capturing")
