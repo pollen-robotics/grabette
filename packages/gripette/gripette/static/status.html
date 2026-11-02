@@ -3,86 +3,136 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gripette status</title>
+<title>Gripette</title>
 <style>
-  :root { --ok:#2e7d32; --bad:#c62828; --warn:#f9a825; --bg:#14171a; --card:#1e2328; --fg:#e8eaed; --dim:#9aa0a6; }
+  /* Same look as the grabette dashboard's Overview page. */
+  :root { --fg:#1f2937; --dim:#6b7280; --label:#8a94a6; --line:#e5e7eb; --card:#fafafa;
+          --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --viewer:#1a1a2e; --tile-h:200px; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.45 system-ui,sans-serif; }
-  .wrap { max-width:760px; margin:0 auto; padding:12px; }
-  #banner { padding:14px 16px; border-radius:10px; font-size:20px; font-weight:700; text-align:center; margin-bottom:12px; }
-  .ok  { background:var(--ok); }  .bad { background:var(--bad); }  .warn { background:var(--warn); color:#14171a; }
-  .card { background:var(--card); border-radius:10px; padding:12px 14px; margin-bottom:12px; }
-  .card h2 { margin:0 0 8px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px 16px; }
-  .kv b { display:block; font-size:12px; color:var(--dim); font-weight:500; }
-  #cam { width:100%; border-radius:8px; display:block; background:#000; min-height:120px; }
-  #camerr { color:var(--bad); font-family:monospace; font-size:13px; white-space:pre-wrap; }
-  pre { margin:0; font-size:11.5px; overflow-x:auto; color:var(--dim); max-height:260px; overflow-y:auto; }
-  pre .err { color:#ef9a9a; }
-  .btns { display:flex; gap:10px; }
-  button { flex:1; padding:12px; border:0; border-radius:8px; font-size:15px; font-weight:600; cursor:pointer; color:#fff; }
-  #restart { background:#37474f; } #shutdown { background:var(--bad); }
-  button:disabled { opacity:.5; }
+  body { margin:0; background:#fff; color:var(--fg); font:15px/1.45 system-ui,sans-serif; }
+  .wrap { max-width:1400px; margin:0 auto; padding:24px 32px 48px; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:24px; }
+  h1 { margin:0; font-size:28px; font-weight:800; letter-spacing:.01em; }
+  h2 { margin:0; font-size:18px; font-weight:700; }
+  .sub { color:var(--dim); font-size:13px; margin:2px 0 0; }
+  .section { padding:8px 0 28px; }
+  .section + .section { border-top:1px solid var(--line); padding-top:28px; }
+  .sechead { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; }
+  .tile > .label, .label { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--label); margin-bottom:10px; }
+  .media { height:var(--tile-h); border-radius:8px; overflow:hidden; position:relative; }
+  #cam { width:100%; height:100%; object-fit:contain; display:block; background:#000; transition:opacity .2s; }
+  #camerr { position:absolute; inset:auto 8px 8px 8px; color:#fecaca; font:12px/1.3 monospace; white-space:pre-wrap; }
+  #viewer { width:100%; height:100%; border:0; display:block; background:var(--viewer); }
+  .card { height:var(--tile-h); background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; overflow:hidden; }
+  .kv { margin-bottom:8px; }
+  .kv b { display:block; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--label); font-weight:500; }
+  .kv span { font-weight:600; }
+  .good { color:var(--ok); } .badtxt { color:var(--bad); } .warntxt { color:var(--warn); }
+  .pill { display:inline-block; padding:6px 14px; border-radius:999px; font-weight:700; font-size:14px; color:#fff; }
+  .pill.ok { background:var(--ok); } .pill.bad { background:var(--bad); } .pill.warn { background:var(--warn); }
+  .grid4 { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:6px 24px; }
+  button { border:0; border-radius:8px; font:600 14px system-ui,sans-serif; cursor:pointer; padding:10px 18px; }
+  button:disabled { opacity:.5; cursor:default; }
+  #shutdown { background:#000; color:#fff; font-size:17px; padding:12px 20px; display:flex; align-items:center; gap:8px; }
+  #restart { background:#e5e7eb; color:var(--fg); }
   #actionmsg { color:var(--dim); font-size:13px; margin-top:8px; min-height:1em; }
+  details { margin-top:20px; }
+  summary { cursor:pointer; color:var(--dim); font-size:13px; }
+  pre { margin:8px 0 0; font-size:11.5px; overflow:auto; max-height:260px; background:#f3f4f6; border-radius:8px; padding:10px; }
+  pre .err { color:var(--bad); }
+  @media (max-width:600px) { .wrap { padding:16px; } h1 { font-size:22px; } }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div id="banner" class="warn">connecting…</div>
-
-  <div class="card">
-    <h2>Camera <span id="camage" style="text-transform:none;font-weight:400"></span></h2>
-    <img id="cam" alt="camera">
-    <div id="camerr"></div>
+  <div class="titlebar">
+    <h1>GRIPETTE</h1>
+    <button id="shutdown">⛔ Power off</button>
   </div>
+  <div id="actionmsg"></div>
 
-  <div class="card">
-    <h2>Gripette service</h2>
-    <div class="grid">
-      <div class="kv"><b>state</b><span id="svc"></span></div>
-      <div class="kv"><b>auto-restarts since boot</b><span id="nrestarts"></span></div>
-      <div class="kv"><b>gRPC uptime</b><span id="uptime"></span></div>
-      <div class="kv"><b>motor 1 / 2 (rad)</b><span id="motors"></span></div>
+  <div class="section">
+    <div class="sechead">
+      <div>
+        <h2>Gripette status</h2>
+        <p class="sub">What your Gripette sees and how it is doing right now.</p>
+      </div>
+      <span id="banner" class="pill warn">connecting…</span>
+    </div>
+
+    <div class="tiles">
+      <div class="tile">
+        <div class="label">Camera <span id="camage" style="text-transform:none;letter-spacing:0"></span></div>
+        <div class="media"><img id="cam" alt="camera"><div id="camerr"></div></div>
+      </div>
+      <div class="tile">
+        <div class="label">3D model</div>
+        <!-- yaw=180 shows the gripette from the front, as on the grabette. -->
+        <div class="media"><iframe id="viewer" src="/viewer?yaw=180" title="3D model"></iframe></div>
+      </div>
+      <div class="tile">
+        <div class="label">Device</div>
+        <div class="card">
+          <div class="kv"><b>Hostname</b><span id="host">—</span></div>
+          <div class="kv"><b>Side</b><span id="side">—</span></div>
+          <div class="kv"><b>IP address</b><span id="ip">—</span></div>
+          <div class="kv"><b>Network</b><span id="network">—</span></div>
+        </div>
+      </div>
+      <div class="tile">
+        <div class="label">Health</div>
+        <div class="card">
+          <div class="kv"><b>Temperature</b><span id="temp">—</span></div>
+          <div class="kv"><b>Power</b><span id="throttled">—</span></div>
+          <div class="kv"><b>WiFi signal</b><span id="wifi">—</span></div>
+          <div class="kv"><b>Storage</b><span id="disk">—</span></div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="card">
-    <h2>System</h2>
-    <div class="grid">
-      <div class="kv"><b>host</b><span id="host"></span></div>
-      <div class="kv"><b>CPU temp</b><span id="temp"></span></div>
-      <div class="kv"><b>throttled</b><span id="throttled"></span></div>
-      <div class="kv"><b>WiFi</b><span id="wifi"></span></div>
-      <div class="kv"><b>disk free</b><span id="disk"></span></div>
-    </div>
-  </div>
-
-  <div class="card">
-    <h2>Journal (gripette, last lines)</h2>
-    <pre id="journal"></pre>
-  </div>
-
-  <div class="card">
-    <div class="btns">
+  <div class="section">
+    <div class="sechead">
+      <div>
+        <h2>Gripette service</h2>
+        <p class="sub">The gRPC service the robot talks to: motors and camera.</p>
+      </div>
       <button id="restart">Restart service</button>
-      <button id="shutdown">Shut down device</button>
     </div>
-    <div id="actionmsg"></div>
+    <div class="grid4">
+      <div class="kv"><b>State</b><span id="svc">—</span></div>
+      <div class="kv"><b>Auto-restarts since boot</b><span id="nrestarts">—</span></div>
+      <div class="kv"><b>gRPC uptime</b><span id="uptime">—</span></div>
+      <div class="kv"><b>Motor 1 / 2</b><span id="motors">—</span></div>
+    </div>
+    <details>
+      <summary>Journal (gripette, last lines)</summary>
+      <pre id="journal"></pre>
+    </details>
   </div>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
 const fmt = (v, suffix="") => v === null || v === undefined ? "—" : v + suffix;
+const deg = rad => (rad * 180 / Math.PI).toFixed(1) + "°";
 
-function setBanner(cls, text) { const b = $("banner"); b.className = cls; b.textContent = text; }
+function setBanner(cls, text) { const b = $("banner"); b.className = "pill " + cls; b.textContent = text; }
+function setText(id, text, cls="") { const el = $(id); el.textContent = text; el.className = cls; }
+
+function uptime(s) {
+  if (s === null || s === undefined) return "—";
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return h ? h + " h " + m + " min" : m ? m + " min " + Math.floor(s % 60) + " s" : Math.floor(s) + " s";
+}
 
 async function poll() {
   let s;
   try {
     s = await (await fetch("/api/status")).json();
   } catch (e) {
-    setBanner("bad", "status page unreachable");
+    setBanner("bad", "Status page unreachable");
     return;
   }
   // Missing systemd info (dev machine / manual run) doesn't block a green
@@ -90,20 +140,35 @@ async function poll() {
   const svcOk = s.service.active_state === "active" || s.service.active_state == null;
   const camOk = s.camera.ok;
   const grpcOk = s.grpc.ok;
-  if (svcOk && grpcOk && camOk) setBanner("ok", "GRIPETTE OK");
-  else if (!svcOk)  setBanner("bad", "SERVICE " + (s.service.active_state || "unknown").toUpperCase());
-  else if (!grpcOk) setBanner("bad", "SERVICE UP, gRPC UNREACHABLE");
-  else              setBanner("bad", "CAMERA FAILURE");
+  if (svcOk && grpcOk && camOk) setBanner("ok", "Gripette OK");
+  else if (!svcOk)  setBanner("bad", "Service " + (s.service.active_state || "unknown"));
+  else if (!grpcOk) setBanner("bad", "Service up, gRPC unreachable");
+  else              setBanner("bad", "Camera failure");
 
-  $("svc").textContent = fmt(s.service.active_state) + " (" + fmt(s.service.sub_state) + ")";
-  $("nrestarts").textContent = fmt(s.service.n_restarts);
-  $("uptime").textContent = s.grpc.uptime_s === null ? "—" : s.grpc.uptime_s + " s";
-  $("motors").textContent = s.motors.ok ? s.motors.motor1 + " / " + s.motors.motor2 : "—";
-  $("host").textContent = fmt(s.system.hostname) + (s.system.ip ? " (" + s.system.ip + ")" : "");
-  $("temp").textContent = fmt(s.system.cpu_temp_c, " °C");
-  $("throttled").textContent = fmt(s.system.throttled);
-  $("wifi").textContent = fmt(s.system.wifi_signal_dbm, " dBm");
-  $("disk").textContent = fmt(s.system.disk_free_gb, " GB");
+  const sys = s.system;
+  setText("host", fmt(sys.hostname));
+  setText("side", sys.hand ? sys.hand[0].toUpperCase() + sys.hand.slice(1) : "—");
+  setText("ip", fmt(sys.ip));
+  setText("network", fmt(sys.network));
+  const t = sys.cpu_temp_c;
+  setText("temp", fmt(t, " °C"), t === null ? "" : t >= 80 ? "badtxt" : t >= 70 ? "warntxt" : "");
+  // vcgencmd get_throttled: 0x0 = healthy; low bits = happening now,
+  // bits 16+ = happened since boot (under-voltage, throttling).
+  const th = sys.throttled === null ? null : parseInt(sys.throttled, 16);
+  if (th === null || isNaN(th)) setText("throttled", "—");
+  else if (th === 0) setText("throttled", "OK", "good");
+  else if (th & 0xf) setText("throttled", "Throttled now (" + sys.throttled + ")", "badtxt");
+  else setText("throttled", "Throttled since boot (" + sys.throttled + ")", "warntxt");
+  const w = sys.wifi_signal_dbm;
+  setText("wifi", fmt(w, " dBm"), w === null ? "" : w <= -75 ? "badtxt" : w <= -67 ? "warntxt" : "");
+  setText("disk", sys.disk_total_gb == null ? "—"
+    : (sys.disk_total_gb - sys.disk_free_gb).toFixed(1) + " / " + sys.disk_total_gb + " GB used");
+
+  setText("svc", fmt(s.service.active_state) + " (" + fmt(s.service.sub_state) + ")",
+          svcOk ? "" : "badtxt");
+  setText("nrestarts", fmt(s.service.n_restarts));
+  setText("uptime", uptime(s.grpc.uptime_s));
+  setText("motors", s.motors.ok ? deg(s.motors.motor1) + " / " + deg(s.motors.motor2) : "—");
   $("camerr").textContent = s.camera.error || "";
   $("journal").innerHTML = s.journal.map(l => {
     const esc = l.replace(/&/g,"&amp;").replace(/</g,"&lt;");
@@ -137,9 +202,11 @@ async function action(path, confirmMsg, btn) {
 $("restart").onclick  = () => action("/api/restart-service", "Restart the gripette service?", $("restart"));
 $("shutdown").onclick = () => action("/api/shutdown", "Shut down the gripette device?", $("shutdown"));
 
+// A hidden tab polls nothing: the page costs the Pi nothing while no one looks.
+function tick(fn) { return () => { if (!document.hidden) fn(); }; }
 poll(); refreshImage();
-setInterval(poll, 1500);
-setInterval(refreshImage, 1000);
+setInterval(tick(poll), 1500);
+setInterval(tick(refreshImage), 1000);
 </script>
 </body>
 </html>

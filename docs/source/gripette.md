@@ -41,7 +41,7 @@ make install-systemd             # start the service and Bluetooth WiFi setup on
 
 ## Status page
 
-Gripette has no dashboard, but it has a small status page on port **8080**, installed with `make install-web` (on the image it is already installed: `sudo systemctl enable --now gripette-web`). It reports whether the service is healthy, shows the live camera at about 1 Hz, and gives you **Restart service** and **Shut down device** buttons. That shutdown button is the clean way to power off a Gripette, which has no power switch.
+Gripette has a dashboard on port **8080**, laid out like the Grabette dashboard's Overview and installed with the services by `make install-systemd` (`make install-web` alone on a device set up before; on the image: `sudo systemctl enable --now gripette-web`). It reports whether the service is healthy, shows the live camera at about 1 Hz and a 3D model that follows the motors, the device and health cards, and gives you **Restart service** and **Power off** buttons. That power-off button is the clean way to shut down a Gripette, which has no power switch.
 
 <Tip warning={true}>
 

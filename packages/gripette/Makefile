@@ -13,8 +13,8 @@ help:
 	@echo "  install-rpi HAND=L|R   One-shot bring-up. HAND={left,right} REQUIRED — see notes."
 	@echo "  enable-uart            Disable serial console + enable hardware UART (/dev/serial0)"
 	@echo "  harden-rpi             Persistent journal + fsck.mode=force (hard-shutdown safety)"
-	@echo "  install-systemd        Install + enable gripette.service and gripette-bluetooth.service"
-	@echo "  install-web            Install + enable the status web UI (gripette-web.service, port 8080)"
+	@echo "  install-systemd        Install + enable gripette, gripette-bluetooth and the dashboard (install-web)"
+	@echo "  install-web            Install + enable the dashboard only (gripette-web.service, port 8080)"
 	@echo "  ensure-ble-only        Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  check                  Run scripts/check_hardware.py against current install"
 	@echo ""
@@ -255,9 +255,10 @@ ensure-ble-only:
 	sudo systemctl restart bluetooth
 	@echo "BlueZ set to BLE-only (ControllerMode = le)"
 
-# Install both gripette services. Run after install-rpi has verified the
+# Install the gripette services. Run after install-rpi has verified the
 # venv builds. The bluetooth service needs root (BlueZ DBus access); the
-# main service runs as $(SERVICE_USER).
+# main service runs as $(SERVICE_USER). The dashboard comes with them, as on
+# the grabette: it costs nothing while no browser has it open.
 install-systemd: ensure-ble-only
 	@# Patch the units' hardcoded path and User= to this device's workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
@@ -268,11 +269,13 @@ install-systemd: ensure-ble-only
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now gripette
 	sudo systemctl enable --now gripette-bluetooth
+	@$(MAKE) --no-print-directory install-web
 	@echo "Logs:"
 	@echo "  journalctl -u gripette -f"
 	@echo "  journalctl -u gripette-bluetooth -f"
+	@echo "  journalctl -u gripette-web -f"
 
-# Install the status web UI: sudoers drop-in (restart/poweroff only — the
+# Install the dashboard: sudoers drop-in (restart/poweroff only — the
 # exact command strings webui.py pre-checks and dispatches) + systemd unit.
 # The drop-in is validated with visudo before install: a bad sudoers file
 # can lock sudo out entirely.
