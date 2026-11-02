@@ -19,7 +19,7 @@ sudo systemctl restart gripette
 
 The [Bluetooth tool](https://pollen-robotics.github.io/grabette/?device=gripette#wifi) provisions a Gripette's WiFi the same way as a Grabette's; this link has Gripette already selected (otherwise, pick it on the first tab).
 
-Before first use, calibrate the encoders' zero offset: see [calibration](https://github.com/pollen-robotics/grabette/blob/develop/packages/gripette/docs/calibration.md).
+Before first use, calibrate the motors' zero (fully open) in the **Calibration** tab of the [Bluetooth tool](https://pollen-robotics.github.io/grabette/?device=gripette#calibration): release the motors, open the fingers fully by hand, start the calibration, then check the 3D model. The other ways are in [calibration](https://github.com/pollen-robotics/grabette/blob/develop/packages/gripette/docs/calibration.md).
 
 The [Gripette README](https://github.com/pollen-robotics/grabette/tree/develop/packages/gripette) covers the gRPC client, the CLI scripts and the motor setup.
 

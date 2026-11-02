@@ -197,8 +197,8 @@
         }
         /* A step that exists for another device type but not yet for this one. */
         .wip-title { color: #fcd34d; font-weight: 700; font-size: .95rem; margin: 0 0 .3rem; }
-        /* Shell commands to copy, one per button, each on its own line. */
-        .cmd-list .copy-url { display: flex; margin: 0 0 .5rem; }
+        /* A step header that follows another step's text in the same card. */
+        .step-gap { margin-top: 1.2rem; }
 
         /* Steps beside the animation rather than under it: it halves the gif's
            width without shrinking the text, and the two read together. */
@@ -950,48 +950,16 @@
                 <p class="wait-note">The calibration steps for a Casquette are coming soon.</p>
             </div>
 
-            <!-- Gripette: its Bluetooth service has no calibration commands, so
-                 this is packages/gripette/docs/calibration.md ("On the Pi"):
-                 commands to paste over SSH, then the dashboard's 3D model as the
-                 check. -->
-            <div class="card" data-only="Gripette">
-                <div class="step"><span class="step-num">1</span> Open a terminal on your Gripette</div>
-                <p class="step-hint">Your Gripette must be on WiFi (previous step), and your computer on the same network. The password is <code>root</code>.</p>
-                <div class="cmd-list">
-                    <button type="button" class="copy-url" onclick="copyCode(this)" title="Copy to clipboard">
-                        <code id="sshCmd">ssh pollen@&lt;hostname&gt;.local</code>
-                        <span class="copy-hint">Copy</span>
-                    </button>
-                </div>
-
-                <div class="step"><span class="step-num">2</span> Record the fully open position</div>
-                <p class="step-hint">This stops the gripper service and turns the motors off. When asked, open the fingers fully by hand, against their stop, press <b>Enter</b>, then answer <b>y</b> to save.</p>
-                <div class="cmd-list">
-                    <button type="button" class="copy-url" onclick="copyCode(this)" title="Copy to clipboard">
-                        <code>sudo systemctl stop gripette &amp;&amp; cd "$(systemctl show -p WorkingDirectory --value gripette)" &amp;&amp; .venv/bin/python packages/gripette/scripts/calibrate_zero_local.py</code>
-                        <span class="copy-hint">Copy</span>
-                    </button>
-                </div>
-
-                <div class="step"><span class="step-num">3</span> Restart the gripper service</div>
-                <div class="cmd-list">
-                    <button type="button" class="copy-url" onclick="copyCode(this)" title="Copy to clipboard">
-                        <code>sudo systemctl start gripette</code>
-                        <span class="copy-hint">Copy</span>
-                    </button>
-                </div>
-
-                <div class="step"><span class="step-num">4</span> Check the result</div>
-                <p class="step-hint">In the dashboard (next tab), the 3D model should match the position of your Gripette.</p>
-            </div>
-
-            <div data-only="Grabette">
+            <!-- Grabette and Gripette calibrate over the Bluetooth link, with the
+                 same cards: only their steps differ (data-only below). -->
+            <div data-only="Grabette Gripette">
             <div class="card" id="calibWait">
-                <p class="wait-note" id="calibWaitText">Connect to your Grabette in <b>WiFi setup</b>
+                <p class="wait-note" id="calibWaitText">Connect to your device in <b>WiFi setup</b>
                     first — the calibration goes over the same Bluetooth link.</p>
             </div>
 
             <div class="card step-card" id="card-calib" hidden>
+                <div data-only="Grabette">
                 <div class="step"><span class="step-num">1</span> Open the gripper fully</div>
                 <p class="step-hint">Open the fingers all the way, until they are against their stop.</p>
                 <figure class="calib-figure">
@@ -1004,6 +972,23 @@
 
                 <div class="step"><span class="step-num">2</span> Calibrate the sensors</div>
                 <p class="step-hint">Keep the gripper fully open while it runs.</p>
+                </div>
+
+                <!-- A Gripette's fingers are held by their motors: they only
+                     move by hand once the motors are released (RELEASE). -->
+                <div data-only="Gripette">
+                <div class="step"><span class="step-num">1</span> Release the motors</div>
+                <p class="step-hint">The motors stop holding the fingers, so you can move them by hand. Hold the gripper if it hangs on a robot arm.</p>
+                <button class="btn-secondary" id="btnRelease" onclick="releaseMotors()">Release the motors</button>
+                <div class="step-msg" id="msgRelease"></div>
+
+                <div class="step step-gap"><span class="step-num">2</span> Open the gripper fully</div>
+                <p class="step-hint">Open both fingers by hand, all the way, until they are against their stop.</p>
+
+                <div class="step step-gap"><span class="step-num">3</span> Calibrate the motors</div>
+                <p class="step-hint">Keep the gripper fully open while it runs. The Gripette restarts its service: it takes a few seconds.</p>
+                </div>
+
                 <button class="btn-primary" id="btnCalib" onclick="runCalibration()">Start calibration</button>
                 <div class="step-msg" id="msgCalib"></div>
             </div>
@@ -1021,6 +1006,7 @@
             <div class="card step-card" id="card-check" hidden>
                 <div class="step"><span class="step-num" id="checkNum">3</span> <span id="checkTitle">Check the result</span></div>
                 <p class="step-hint">Move the moving parts of the gripper: the position of the 3D model should match your device.</p>
+                <p class="step-hint" data-only="Gripette">The motors are released while you check: move the fingers by hand. They hold again once the robot's program turns them on.</p>
                 <p class="step-hint check-note">
                     <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4.5M8 4.5v.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
                     <span>The model only updates twice a second, so it moves in small jumps.</span>
@@ -1784,9 +1770,6 @@
         const a = document.getElementById('dashMdns');
         const port = DASHBOARD_PORTS[connectedType || selectedType];
         if (!port) return;
-        // The Gripette calibration's SSH step names the same host.
-        document.getElementById('sshCmd').textContent =
-            'ssh pollen@' + (connectedHost || '<hostname>') + '.local';
         if (!connectedHost) { a.textContent = 'http://<hostname>.local:' + port + '/'; return; }
         const url = 'http://' + connectedHost + '.local:' + port + '/';
         a.href = url;
@@ -1942,18 +1925,25 @@
 
     // ---- Angle-sensor calibration (tab 4) ----
     //
-    // CALIB_STATUS / CALIBRATE are forwarded by the device's BLE service to the
-    // dashboard's own /api/calibration, so this runs the very zeroing the
-    // dashboard's "Calibrate my device" does. Both need the PIN, neither
+    // On a Grabette, CALIB_STATUS / CALIBRATE are forwarded by the device's BLE
+    // service to the dashboard's own /api/calibration, so this runs the very
+    // zeroing the dashboard's "Calibrate my device" does. A Gripette's BLE
+    // service answers the same commands through its gRPC service, plus RELEASE
+    // (motors off, so the fingers move by hand). All need the PIN, none
     // consumes it. Firmware older than this step answers "Unknown command".
+    const BLE_CALIB_TYPES = ['Grabette', 'Gripette'];
     let calibChecked = false;   // CALIB_STATUS asked for the device now connected
     let calibBusy = false;      // a calibration step is running (its button is busy)
 
-    const CALIB_TOO_OLD = "This Grabette's software is too old to calibrate from here — " +
-        'use "Calibrate my device" in its dashboard instead.';
+    const CALIB_TOO_OLD = {
+        Grabette: "This Grabette's software is too old to calibrate from here — "
+            + 'use "Calibrate my device" in its dashboard instead.',
+        Gripette: "This Gripette's software is too old to calibrate from here — "
+            + 'update it, or follow the calibration page of the Gripette docs.',
+    };
 
     function calibReplyText(resp) {
-        return /Unknown command/i.test(resp) ? CALIB_TOO_OLD : replyText(resp);
+        return /Unknown command/i.test(resp) ? CALIB_TOO_OLD[connectedType] : replyText(resp);
     }
 
     // Done: the dashboard is next. Calibrating again stays possible, as the
@@ -1972,28 +1962,30 @@
         stopCheck();
         reveal('card-check', false);
         reveal('calibDone', false);
-        clearMsg('msgCalib');
+        clearMsg('msgCalib', 'msgRelease');
         setCalibrated(false);
-        // Only the Grabette calibrates over Bluetooth: the other types' steps
-        // (data-only) need no link, so the way on is always open there.
-        if (selectedType !== 'Grabette') {
+        // Types that don't calibrate over Bluetooth have nothing to wait for
+        // here (data-only steps), so the way on is always open.
+        if (!BLE_CALIB_TYPES.includes(selectedType)) {
             document.getElementById('btnCalibNext').hidden = false;
             return;
         }
         const connected = !!(device && device.gatt.connected && commandChar)
-            && connectedType === 'Grabette';
+            && connectedType === selectedType;
         reveal('card-calib', connected);
         document.getElementById('calibWait').hidden = connected;
         document.getElementById('calibWaitText').innerHTML =
-            'Connect to your Grabette in <b>WiFi setup</b> first — the calibration goes over '
-            + 'the same Bluetooth link.';
+            'Connect to your ' + selectedType + ' in <b>WiFi setup</b> first — the calibration '
+            + 'goes over the same Bluetooth link.';
+        // The check comes after the steps: 3rd on a Grabette, 4th on a Gripette.
+        document.getElementById('checkNum').textContent = selectedType === 'Gripette' ? '4' : '3';
         if (currentTab === 'calibration') checkCalibration();
     }
 
     // Asked once per connection, when the tab is opened: a Grabette that is
     // already calibrated skips the steps and goes straight to checking it.
     async function checkCalibration() {
-        if (calibChecked || calibBusy || connectedType !== 'Grabette'
+        if (calibChecked || calibBusy || !BLE_CALIB_TYPES.includes(connectedType)
             || !device || !device.gatt.connected) return;
         calibChecked = true;
         calibBusy = true;
@@ -2014,7 +2006,7 @@
             calibBusy = false;
             document.getElementById('calibWait').hidden = true;
             if (calibrated) {
-                showCalibrated('✓ Your Grabette is already calibrated');
+                showCalibrated('✓ Your ' + connectedType + ' is already calibrated');
                 setCheckHeading(true);
                 startCheck();
             } else {
@@ -2035,11 +2027,28 @@
             if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
             if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
             clearMsg('msgCalib');
-            showCalibrated('✓ Your Grabette is calibrated');
+            showCalibrated('✓ Your ' + connectedType + ' is calibrated');
             setCheckHeading(false);
             startCheck();
         } finally {
             calibBusy = false;
+            btn.disabled = false;
+        }
+    }
+
+    // Gripette, step 1: the fingers only move by hand with the motors off.
+    async function releaseMotors() {
+        const btn = document.getElementById('btnRelease');
+        btn.disabled = true;
+        try {
+            stepMsg('msgRelease', 'Releasing the motors…');
+            if (!await authenticate('msgRelease')) return;
+            const resp = await sendCommand('RELEASE');
+            if (resp === null) { stepMsg('msgRelease', 'No response from the device', 'err'); return; }
+            stepMsg('msgRelease', resp.startsWith('ERROR') ? calibReplyText(resp)
+                    : 'Motors released: you can move the fingers by hand.',
+                    resp.startsWith('ERROR') ? 'err' : 'ok');
+        } finally {
             btn.disabled = false;
         }
     }
@@ -2052,7 +2061,7 @@
     const CHECK_PERIOD_MS = 500;
     let checkRun = 0;           // bumped to stop the loop
     let checkLoop = null;       // the running loop, to wait for its last command
-    let checkHand = null;       // the model the viewer has loaded
+    let checkModel = null;      // the model the viewer has loaded ("<type>_<hand>")
 
     function showCalibrated(title) {
         document.getElementById('calibDoneTitle').textContent = title;
@@ -2076,6 +2085,12 @@
         stepMsg('msgCheck', 'Reading the gripper sensors…');
         checkLoop = (async () => {
             if (!await authenticate('msgCheck')) return;
+            // A Gripette is checked by moving its fingers by hand, so the
+            // motors are released for it, calibrated just now or long ago.
+            if (connectedType === 'Gripette') {
+                const resp = await sendCommand('RELEASE', true);
+                if (resp && resp.startsWith('ERROR')) { stepMsg('msgCheck', calibReplyText(resp), 'err'); return; }
+            }
             while (run === checkRun) {
                 const t0 = Date.now();
                 const resp = await sendCommand('ANGLES', true);
@@ -2108,12 +2123,17 @@
         return loop || Promise.resolve();
     }
 
+    // Each product's own viewer, as its dashboard has it: the Gripette's
+    // frames its model to the view, which the Grabette's fixed camera crops.
+    const CHECK_VIEWERS = { Grabette: 'viewer.html', Gripette: 'gripette-viewer.html' };
+
     function showAngles(hand, proximal, distal) {
         const frame = document.getElementById('checkViewer');
-        if (hand !== checkHand) {
-            checkHand = hand;
-            frame.src = 'viewer.html?feed=message&yaw=180&urdf='
-                + encodeURIComponent('urdf/grabette_' + hand + '_viewer/robot.urdf');
+        const model = connectedType.toLowerCase() + '_' + hand;
+        if (model !== checkModel) {
+            checkModel = model;
+            frame.src = CHECK_VIEWERS[connectedType] + '?feed=message&yaw=180&urdf='
+                + encodeURIComponent('urdf/' + model + '_viewer/robot.urdf');
             frame.hidden = false;
         }
         frame.contentWindow.postMessage({ proximal, distal }, location.origin);

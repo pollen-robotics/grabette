@@ -24,10 +24,12 @@ import base64
 import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Callable
 
 import dbus
@@ -42,6 +44,9 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from gi.repository import GLib
+import grpc
+
+from ..proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
@@ -777,6 +782,186 @@ def _wifi_reset() -> str:
 
 
 # =====================================================================
+# Motors: zero calibration and its live check (first-run setup page)
+# =====================================================================
+
+# The gripette service owns the motor bus, so the motors are reached through
+# its gRPC API on this device (SetTorque / ReadMotors answer from in-memory
+# slots, never blocking the bus). Same math as scripts/calibrate_zero.py; this
+# service runs as root, so it writes the env file and restarts the service
+# itself, as scripts/calibrate_zero_local.py asks the user to.
+_ENV_FILE = Path("/etc/gripette/env")
+_GRPC_TARGET = f"127.0.0.1:{os.environ.get('GRIPPER_PORT', '50051')}"
+_GRPC_TIMEOUT_S = 3.0
+_OFFSET_KEYS = ("GRIPPER_MOTOR1_OFFSET", "GRIPPER_MOTOR2_OFFSET")
+_CALIB_SAMPLES = 10  # averaged, to suppress encoder jitter
+# The BLE client gives up after 35s; the restarted service is usually back
+# (camera self-check included) well within this.
+_RESTART_WAIT_S = 25.0
+_SERVICE_DOWN = ("ERROR: The Gripette service is not running yet — "
+                 "wait a moment and try again.")
+
+_motor_stub = None
+
+
+def _motors():
+    """gRPC stub to the local gripette service (channels reconnect on their
+    own when the service restarts)."""
+    global _motor_stub
+    if _motor_stub is None:
+        _motor_stub = gripper_pb2_grpc.GripperServiceStub(
+            grpc.insecure_channel(_GRPC_TARGET))
+    return _motor_stub
+
+
+def _read_env() -> dict[str, str]:
+    """KEY=value lines of the per-device env file the service runs with."""
+    env = {}
+    try:
+        for line in _ENV_FILE.read_text().splitlines():
+            m = re.match(r"^\s*([A-Z_][A-Z0-9_]*)=(.*)$", line)
+            if m:
+                env[m.group(1)] = m.group(2).strip()
+    except OSError:
+        pass
+    return env
+
+
+def _service_env() -> dict[str, str]:
+    """The GRIPPER_* settings the running service was started with.
+
+    What the calibration math needs is the hand (sign) and the offsets the
+    service is applying right now, wherever they came from (env file, unit
+    drop-in, image setup) and even if the file was edited since. This service
+    runs as root, so it can read them from the process; the env file is the
+    fallback when the service is not running."""
+    out = subprocess.run(["systemctl", "show", "-p", "MainPID", "--value", "gripette"],
+                         capture_output=True, text=True)
+    try:
+        raw = Path(f"/proc/{int(out.stdout.strip())}/environ").read_bytes()
+    except (ValueError, OSError):
+        return _read_env()
+    env = dict(item.split("=", 1) for item in raw.decode(errors="replace").split("\0")
+               if item.startswith("GRIPPER_") and "=" in item)
+    return env or _read_env()
+
+
+def _hand(env: dict[str, str]) -> str:
+    return env.get("GRIPPER_HAND", "right")
+
+
+def _signs(env: dict[str, str]) -> tuple[int, int]:
+    """Robot <-> encoder signs, derived from the hand as in config.py."""
+    default = (+1, +1) if _hand(env) == "right" else (-1, -1)
+    return (int(env.get("GRIPPER_MOTOR1_SIGN", default[0])),
+            int(env.get("GRIPPER_MOTOR2_SIGN", default[1])))
+
+
+def _write_offsets(offsets: dict[str, str]) -> None:
+    """Merge the offsets into the env file, keeping every other line, then
+    swap it in atomically: a power cut must never leave it half-written."""
+    lines, seen = [], set()
+    try:
+        current = _ENV_FILE.read_text().splitlines()
+    except OSError:
+        current = []
+    for line in current:
+        m = re.match(r"^\s*([A-Z_][A-Z0-9_]*)=", line)
+        if m and m.group(1) in offsets:
+            lines.append(f"{m.group(1)}={offsets[m.group(1)]}")
+            seen.add(m.group(1))
+        else:
+            lines.append(line)
+    lines += [f"{k}={v}" for k, v in offsets.items() if k not in seen]
+    _ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = _ENV_FILE.with_suffix(".new")
+    tmp.write_text("\n".join(lines) + "\n")
+    os.replace(tmp, _ENV_FILE)
+
+
+def _calib_status() -> str:
+    env = _read_env()
+    return ("OK: CALIBRATED" if all(k in env for k in _OFFSET_KEYS)
+            else "OK: NEEDS_CALIBRATION")
+
+
+def _release() -> str:
+    """Torque off, so the fingers can be moved by hand. It stays off until a
+    client turns it back on (the robot's own client does when it starts)."""
+    try:
+        _motors().SetTorque(gripper_pb2.TorqueCommand(enable=False),
+                            timeout=_GRPC_TIMEOUT_S)
+    except grpc.RpcError:
+        return _SERVICE_DOWN
+    return "OK: Motors released"
+
+
+def _calibrate() -> str:
+    """Take the current pose (fully open, by hand) as the robot-frame zero.
+
+    robot = (encoder - offset) * sign, so the encoder reading at this pose,
+    the new offset, is offset + robot * sign, with the service's own sign
+    and offset."""
+    env = _service_env()
+    try:
+        samples = []
+        for _ in range(_CALIB_SAMPLES):
+            r = _motors().ReadMotors(gripper_pb2.ReadMotorsRequest(),
+                                     timeout=_GRPC_TIMEOUT_S)
+            samples.append((r.motor1_position, r.motor2_position))
+            time.sleep(0.05)
+    except grpc.RpcError:
+        return _SERVICE_DOWN
+    offsets = {}
+    for i, (key, sign) in enumerate(zip(_OFFSET_KEYS, _signs(env))):
+        robot = sum(s[i] for s in samples) / len(samples)
+        offsets[key] = f"{float(env.get(key, 0.0)) + robot * sign:.6f}"
+    try:
+        _write_offsets(offsets)
+    except OSError as e:
+        return f"ERROR: Could not save the calibration: {e}"
+    logger.info("Calibration saved: %s — restarting gripette", offsets)
+
+    # The service reads the offsets at startup. Wait for it to answer again,
+    # so the page's check (ANGLES) reads the new zero straight away.
+    if subprocess.run(["systemctl", "restart", "gripette"],
+                      capture_output=True).returncode != 0:
+        return "ERROR: Calibration saved, but the Gripette service did not restart"
+    deadline = time.monotonic() + _RESTART_WAIT_S
+    while time.monotonic() < deadline:
+        try:
+            _motors().Ping(gripper_pb2.PingRequest(), timeout=1.0)
+            return "OK: Calibrated"
+        except grpc.RpcError:
+            time.sleep(0.5)
+    return "ERROR: Calibration saved, but the Gripette service is not back yet"
+
+
+def _angles() -> str:
+    """The fingers' angles (rad, 0 = fully open) and the hand, so the setup
+    page can show the matching model. Polled about twice a second while the
+    page checks a calibration: ReadMotors answers from the service's cache."""
+    try:
+        r = _motors().ReadMotors(gripper_pb2.ReadMotorsRequest(),
+                                 timeout=_GRPC_TIMEOUT_S)
+    except grpc.RpcError:
+        return _SERVICE_DOWN
+    return (f"OK: hand={_hand(_service_env())} "
+            f"p={r.motor1_position:.4f} d={r.motor2_position:.4f}")
+
+
+# Need the PIN, without consuming it: calibrating again is harmless. Same
+# names and replies as the grabette's, plus RELEASE, since a gripette's
+# fingers only move by hand once the motors are off.
+_MOTOR_COMMANDS = {
+    "CALIB_STATUS": _calib_status,
+    "RELEASE": _release,
+    "CALIBRATE": _calibrate,
+    "ANGLES": _angles,
+}
+
+
+# =====================================================================
 # Main service class
 # =====================================================================
 
@@ -790,13 +975,18 @@ class BluetoothWifiService:
         WIFI_KEYEX            → {"kid","pk","alg"} ephemeral pubkey for sealing
         WIFI_CONNECT_ENC json → OK: Connecting to <ssid> / ERROR: ...
         WIFI_RESET            → OK: WiFi connections cleared / ERROR: ...
+        CALIB_STATUS          → OK: CALIBRATED / OK: NEEDS_CALIBRATION / ERROR: ...
+        RELEASE               → OK: Motors released / ERROR: ...
+        CALIBRATE             → OK: Calibrated / ERROR: ...
+        ANGLES                → OK: hand=<right|left> p=<rad> d=<rad> / ERROR: ...
 
     The WiFi password is sealed client-side (see _wifi_connect_enc) and never
     sent in clear — there is no plaintext connect command.
 
     PIN authentication is required before WIFI_SCAN/WIFI_CONNECT_ENC/WIFI_RESET.
     Auth is consumed by WIFI_CONNECT_ENC/WIFI_RESET (re-PIN for each) but NOT by
-    WIFI_SCAN, so a client can scan then connect with a single PIN. WIFI_KEYEX
+    WIFI_SCAN, so a client can scan then connect with a single PIN. CALIB_STATUS,
+    RELEASE, CALIBRATE and ANGLES need it too, without consuming it. WIFI_KEYEX
     is public (it returns only a public key). Auth is reset when the BLE central
     disconnects. Network status is readable from the STATUS service (every 10s).
     """
@@ -892,6 +1082,13 @@ class BluetoothWifiService:
                 return "ERROR: Not authenticated. Send PIN_xxxxx first."
             self.authenticated = False  # one-shot auth
             return _wifi_reset()
+
+        # CALIB_STATUS / RELEASE / CALIBRATE / ANGLES — motor zeroing and its
+        # check, through the gripette service (requires auth; does NOT consume it)
+        if upper in _MOTOR_COMMANDS:
+            if not self.authenticated:
+                return "ERROR: Not authenticated. Send PIN_xxxxx first."
+            return _MOTOR_COMMANDS[upper]()
 
         return f"ERROR: Unknown command: {command_str}"
 
