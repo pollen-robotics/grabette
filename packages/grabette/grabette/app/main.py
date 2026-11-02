@@ -651,7 +651,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
     behaves identically to one triggered locally on this device.
     """
     from grabette.cancel import get_cancel_registry
-    from grabette.capture_scheduler import get_capture_scheduler
+    from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
     from grabette.daemon import DaemonState
     from grabette.task import episode_id_for
     from grabette.app.routers.tasks import get_task_manager
@@ -1166,8 +1166,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             await scheduler.schedule_stop(backend, tm, stop_target)
             return {"status": "scheduled_stop", "stop_at_utc": stop_target.isoformat()}
 
-        result = await backend.stop_capture()
-        tm.register_episode(getattr(result, "episode_id", None))
+        result = await stop_capture_and_register(backend, tm)
         # Return a plain dict, not the CaptureStatus model: the relay POSTs this
         # result as JSON, and json.dumps can't serialize a pydantic object — the
         # TypeError would escape the relay loop and kill it (the device then

@@ -14,6 +14,7 @@ Two-level hierarchy: **sessions** (named groups) containing **episodes** (indivi
     └── 20260310_143052/                # One episode
         ├── raw_video.mp4               # Primary RPi cam, H.264 (1296x972 @ 46fps)
         ├── frame_timestamps.json       # Per-frame timestamps for raw_video
+        ├── raw_video.frames.json       # Primary-video frame provenance and alignment checks
         ├── dcam_imu.json               # depth-cam IMU: accel + gyro + rotation (200Hz, OAK-D only)
         ├── angle_data.json             # AS5600L joint angles (~85–100Hz)
         ├── rpi_camera_intrinsics.json  # Fisheye KB8 calibration for the primary cam
@@ -79,6 +80,37 @@ All sensor streams share a common `SyncManager` clock based on `time.monotonic()
 - **Contention prevention**: `_capturing` flag blocks daemon I2C reads during recording
 - **Stop order**: IMU/depth first, then camera (camera stop includes ffmpeg muxing)
 - **IMU brackets video**: IMU starts before first frame, stops before last — required by the downstream SLAM/VIO pipeline
+
+### Primary-camera frame timestamps
+
+`frame_timestamps.json` remains a list of capture times in milliseconds on the
+shared episode clock. Each entry corresponds to a picture written to
+`raw_video.mp4`, in presentation order. It is not a list of preview callbacks:
+a callback may precede encoder startup, or the encoder may still drain pictures
+after capture stops.
+
+The recorder associates each encoder input PTS with its original picamera2
+`SensorTimestamp`, then publishes that capture time only after the matching
+encoded picture is written. Output delivery time is never substituted for a
+missing capture time, and missing pictures are not filled or resampled.
+
+`raw_video.frames.json` stores `frames` with `frame_index`,
+`sensor_timestamp_ns`, `encoder_pts_us`, and `timestamp_ms`, plus an `alignment`
+summary also available as `metadata.json.video_timestamp_alignment`.
+The summary compares the video picture count, written-output count, and mapped
+timestamp count, and records inputs for which the encoder emitted no picture
+as `unwritten_input_count`. Such inputs do not add timestamps to the saved list.
+
+An unknown output PTS, non-increasing mapped times, failed output writes, or a
+count/order mismatch makes alignment invalid. The raw `.h264` is retained for
+diagnosis, other sensor streams are stopped, and diagnostic metadata is saved
+by the deferred finalizer with `valid: false`. The stop caller receives the
+error after stream teardown and capture-state cleanup have completed.
+REST, physical-button, fleet, and scheduled stops retain that failed episode
+in its task's registry while still reporting the alignment error, so starting
+the next take does not hide the retained files.
+This checks frame-to-timestamp correspondence; it does not prevent capture
+gaps or turn the MP4 into a variable-frame-rate recording.
 
 ## Data pipeline
 
