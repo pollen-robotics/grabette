@@ -999,6 +999,27 @@ class RpiBackend(Backend):
             # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
             meta["dcam"] = oakd_stats
 
+        # A stalled writer loop drops frames and has come with a >1 s
+        # Arducam/depth desync — flag it so the take gets redone. The rate is
+        # taken over each stream's own first→last frame span, not the take's
+        # duration: a camera's start latency is not a drop and would flag every
+        # short take. A depth camera that reports no span (stereo UVC) is skipped.
+        streams = [("rgb", len(frame_timestamps), video_span_ms, FPS)]
+        if oakd_stats and oakd_stats.get("left_span_ms") is not None:
+            streams.append(("depth", oakd_stats.get("left_frames", 0),
+                            oakd_stats["left_span_ms"], self._oakd.fps))
+        frame_drops = []
+        for name, n_frames, span_ms, expected_fps in streams:
+            recorded_fps = ((n_frames - 1) / (span_ms / 1000.0)
+                            if n_frames >= 2 and span_ms > 0 else 0.0)
+            if recorded_fps < 0.8 * expected_fps:
+                logger.warning("%s camera recorded at %.1f fps (expected %d): "
+                               "frames dropped, episode likely out of sync",
+                               name, recorded_fps, expected_fps)
+                frame_drops.append(name)
+        if frame_drops:
+            meta["frame_drops"] = frame_drops
+
         meta["depth_camera"] = _camera_metadata(self._depth_camera, self._oakd)
 
         # Drain the sync metadata while state is still live — _take_sync_metadata
@@ -1099,7 +1120,7 @@ class RpiBackend(Backend):
         # instead — an episode that didn't persist is exactly what an operator
         # must not learn about later from the journal.
         if self._speaker is not None:
-            if writes_ok:
+            if writes_ok and not meta.get("frame_drops"):
                 self._speaker.play_saved()
             else:
                 self._speaker.play_error()
