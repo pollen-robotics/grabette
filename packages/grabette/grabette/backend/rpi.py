@@ -985,13 +985,18 @@ class RpiBackend(Backend):
             meta["dcam"] = oakd_stats
 
         # A stalled writer loop drops frames and has come with a >1 s
-        # Arducam/depth desync — flag it so the take gets redone.
-        streams = [("rgb", len(frame_timestamps), FPS)]
-        if oakd_stats:
-            streams.append(("depth", oakd_stats.get("left_frames", 0), self._oakd.fps))
+        # Arducam/depth desync — flag it so the take gets redone. The rate is
+        # taken over each stream's own first→last frame span, not the take's
+        # duration: a camera's start latency is not a drop and would flag every
+        # short take. A depth camera that reports no span (stereo UVC) is skipped.
+        streams = [("rgb", len(frame_timestamps), video_span_ms, FPS)]
+        if oakd_stats and oakd_stats.get("left_span_ms") is not None:
+            streams.append(("depth", oakd_stats.get("left_frames", 0),
+                            oakd_stats["left_span_ms"], self._oakd.fps))
         frame_drops = []
-        for name, n_frames, expected_fps in streams:
-            recorded_fps = n_frames / max(duration, 1e-6)
+        for name, n_frames, span_ms, expected_fps in streams:
+            recorded_fps = ((n_frames - 1) / (span_ms / 1000.0)
+                            if n_frames >= 2 and span_ms > 0 else 0.0)
             if recorded_fps < 0.8 * expected_fps:
                 logger.warning("%s camera recorded at %.1f fps (expected %d): "
                                "frames dropped, episode likely out of sync",

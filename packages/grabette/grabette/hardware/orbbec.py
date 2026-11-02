@@ -262,9 +262,6 @@ class OrbbecCapture:
         # Hardware frame sync — depth and LEFT_IR then carry an identical device
         # timestamp and frame index (measured: 0 us skew).
         self._pipeline.enable_frame_sync()
-        # First ffmpeg launch after boot loads it from the SD card for seconds,
-        # blocking the writer loop: the first recording loses or misdates frames.
-        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL)
         self._pipeline.start(config)
 
         self._apply_exposure()
@@ -559,6 +556,9 @@ class OrbbecCapture:
 
         stats = {
             "left_frames": len(self._left_ts),
+            # First→last frame span, for rpi.py's frame-drop check.
+            "left_span_ms": (self._left_ts[-1]["host_ms"] - self._left_ts[0]["host_ms"]
+                             if len(self._left_ts) >= 2 else 0.0),
             "depth_frames": len(self._depth_ts) if self.enable_depth else None,
             "dropped_frames": self._dropped_frames,
             # No IMU on this device. The key is always present because rpi.py
