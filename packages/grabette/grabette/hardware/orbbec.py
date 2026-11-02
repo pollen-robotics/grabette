@@ -559,6 +559,9 @@ class OrbbecCapture:
             # First→last frame span, for rpi.py's frame-drop check.
             "left_span_ms": (self._left_ts[-1]["host_ms"] - self._left_ts[0]["host_ms"]
                              if len(self._left_ts) >= 2 else 0.0),
+            "left_max_gap_ms": max((b["host_ms"] - a["host_ms"]
+                                    for a, b in zip(self._left_ts, self._left_ts[1:])),
+                                   default=0.0),
             "depth_frames": len(self._depth_ts) if self.enable_depth else None,
             "dropped_frames": self._dropped_frames,
             # No IMU on this device. The key is always present because rpi.py
