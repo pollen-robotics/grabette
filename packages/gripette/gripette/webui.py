@@ -40,7 +40,7 @@ from .proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-WEB_PORT = int(os.environ.get("GRIPPER_WEB_PORT", "8080"))
+WEB_PORT = int(os.environ.get("GRIPPER_WEB_PORT", "8000"))
 # The gripette gRPC service on this same device.
 GRPC_TARGET = f"127.0.0.1:{os.environ.get('GRIPPER_PORT', '50051')}"
 GRPC_TIMEOUT_S = 2.0

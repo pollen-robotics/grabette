@@ -157,7 +157,7 @@ set up before that, install it alone:
 make install-web      # once per device: sudoers drop-in + gripette-web.service
 ```
 
-Then browse to `http://<gripette-hostname>.local:8080` (the install prints
+Then browse to `http://<gripette-hostname>.local:8000` (the install prints
 this device's exact URL; the device IP works too). The page shows:
 
 - an **OK / failure badge** — green means service up, gRPC answering, and a

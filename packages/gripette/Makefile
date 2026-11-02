@@ -14,7 +14,7 @@ help:
 	@echo "  enable-uart            Disable serial console + enable hardware UART (/dev/serial0)"
 	@echo "  harden-rpi             Persistent journal + fsck.mode=force (hard-shutdown safety)"
 	@echo "  install-systemd        Install + enable gripette, gripette-bluetooth and the dashboard (install-web)"
-	@echo "  install-web            Install + enable the dashboard only (gripette-web.service, port 8080)"
+	@echo "  install-web            Install + enable the dashboard only (gripette-web.service, port 8000, as on the grabette)"
 	@echo "  ensure-ble-only        Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  check                  Run scripts/check_hardware.py against current install"
 	@echo ""
@@ -294,7 +294,7 @@ install-web:
 	  | sudo tee /etc/systemd/system/gripette-web.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now gripette-web
-	@echo "Status page: http://$$(hostname).local:8080  (logs: journalctl -u gripette-web -f)"
+	@echo "Status page: http://$$(hostname).local:8000  (logs: journalctl -u gripette-web -f)"
 
 check:
 	@if [ ! -x $(WORKSPACE_ROOT)/.venv/bin/python ]; then \
