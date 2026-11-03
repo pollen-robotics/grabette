@@ -2300,11 +2300,13 @@ def _last_recording_popup(last: dict | None):
         "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
         "padding:16px 20px;max-width:260px;"
         "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
-        "<span class='gb-lastrec-close' role='button' title='Dismiss' "
-        "style='position:absolute;top:6px;right:10px;cursor:pointer;"
-        "color:#7f1d1d;font-size:1.1rem;line-height:1;'>×</span>"
+        "<button type='button' class='gb-lastrec-close' aria-label='Dismiss' "
+        "style='position:absolute;top:2px;right:2px;width:36px;height:36px;"
+        "padding:0;border:none;background:transparent;cursor:pointer;"
+        "touch-action:manipulation;color:#7f1d1d;font-size:1.3rem;"
+        "line-height:1;'>×</button>"
         "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
-        "margin:0 16px 4px 0;'>Last recording failed</div>"
+        "margin:0 24px 4px 0;'>Last recording failed</div>"
         "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
         f"padding-left:18px;'>{items}</ul>"
         "<div style='font-size:0.8rem;color:#7f1d1d;'>"
@@ -2352,14 +2354,19 @@ _LAST_REC_INIT_JS = """
       lastBottom = bottom;
     }
   }, 300);
-  document.addEventListener('click', function (e) {
-    var x = e.target.closest && e.target.closest('.gb-lastrec-close');
+  // pointerup as well as click: some mobile browsers drop the synthesized
+  // click after a tap. Dismissing twice is harmless (ids are deduplicated).
+  function dismiss(e) {
+    var t = e.target && e.target.nodeType === 3 ? e.target.parentElement : e.target;
+    var x = t && t.closest && t.closest('.gb-lastrec-close');
     var box = x && x.closest('.gb-lastrec');
     if (!box || !box.dataset.ep) { return; }
     if (ids.indexOf(box.dataset.ep) < 0) { ids = ids.concat([box.dataset.ep]).slice(-20); }
-    try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch (e) {}
+    try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch (err) {}
     render();
-  }, true);
+  }
+  document.addEventListener('click', dismiss, true);
+  document.addEventListener('pointerup', dismiss, true);
 }
 """
 
