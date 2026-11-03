@@ -17,6 +17,7 @@ import gradio as gr
 from PIL import Image, ImageSequence
 
 from grabette.config import settings
+from grabette.task import episode_issues
 from grabette.hardware import i2c_diag
 from grabette.ui.api_client import GrabetteClient
 from grabette.ui.summary import recording_summary
@@ -2247,19 +2248,136 @@ _LIVE_VIEW_ENABLED = False
 _EP_MIN_SECONDS = 2.0
 
 
+_DROP_SUFFIX = "_frames_dropped"
+
+
 def _episode_status(ep: dict) -> str:
     """One cell: the worst thing this episode's own counters admit to."""
-    if not ep.get("metadata_ok", True):
-        return "✗ metadata"
-    if not ep.get("has_video", True) or not ep.get("frame_count"):
-        return "✗ camera"
-    if not ep.get("angle_sample_count"):
-        return "✗ angles"
-    if ep.get("frame_drops"):
-        return f"✗ {', '.join(ep['frame_drops'])} frames dropped"
+    issues = episode_issues(ep)
+    if issues and not issues[0].endswith(_DROP_SUFFIX):
+        return f"✗ {issues[0]}"
+    if issues:
+        return f"✗ {', '.join(i.removesuffix(_DROP_SUFFIX) for i in issues)} frames dropped"
     if float(ep.get("duration_seconds") or 0) < _EP_MIN_SECONDS:
         return "⚠ very short"
     return "✓ ok"
+
+
+_ISSUE_TEXT = {
+    "metadata": "Its metadata.json is missing or unreadable.",
+    "camera": "The camera recorded no video.",
+    "angles": "No gripper angles were recorded.",
+}
+
+
+def _issue_text(issue: str) -> str:
+    if issue.endswith(_DROP_SUFFIX):
+        stream = issue.removesuffix(_DROP_SUFFIX)
+        return f"The {stream} camera dropped frames: the videos are likely out of sync."
+    return _ISSUE_TEXT.get(issue, issue)
+
+
+def _last_recording_popup(last: dict | None):
+    """Popup for the last recording's issues, from /api/episodes/last."""
+    last = last or {}
+    ep = last.get("episode") if last.get("settled") else None
+    issues = episode_issues(ep) if ep else []
+    if not issues:
+        return gr.update(visible=False)
+    items = "".join(f"<li>{html.escape(_issue_text(i))}</li>" for i in issues)
+    eid = html.escape(str(ep.get("episode_id", "?")))
+    body = (
+        f"<div class='gb-lastrec' data-ep='{eid}' "
+        "style='position:fixed;bottom:24px;right:24px;z-index:9999;"
+        "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
+        "padding:16px 20px;max-width:260px;"
+        "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
+        "<button type='button' class='gb-lastrec-close' aria-label='Dismiss' "
+        "style='position:absolute;top:2px;right:2px;width:36px;height:36px;"
+        "padding:0;border:none;background:transparent;cursor:pointer;"
+        "touch-action:manipulation;color:#7f1d1d;font-size:1.3rem;"
+        "line-height:1;'>×</button>"
+        "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
+        "margin:0 24px 4px 0;'>Last recording failed</div>"
+        "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
+        f"padding-left:18px;'>{items}</ul>"
+        "<div style='font-size:0.8rem;color:#7f1d1d;'>"
+        f"Episode {eid}.</div>"
+        "<button type='button' class='gb-lastrec-delete' "
+        "style='margin-top:10px;padding:6px 12px;border-radius:8px;"
+        "border:1px solid #dc2626;background:#dc2626;color:#fff;"
+        "font-size:0.85rem;font-weight:600;cursor:pointer;"
+        "touch-action:manipulation;'>Delete this episode</button>"
+        "</div>"
+    )
+    return gr.update(visible=True, value=body)
+
+
+# Popup buttons and stacking above the battery popup. The popup is re-rendered
+# every few seconds, so state goes through CSS rules, not the element itself.
+_LAST_REC_INIT_JS = """
+() => {
+  if (window.__grabetteLastRec) { return; }
+  window.__grabetteLastRec = true;
+  var KEY = 'grabette-dismissed-episodes';
+  var ids = [];
+  try { ids = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { ids = []; }
+  var style = document.createElement('style');
+  document.head.appendChild(style);
+  function render() {
+    style.textContent = '.gb-lastrec{bottom:var(--gb-lastrec-bottom,24px)!important}\\n'
+      + ids.map(function (id) {
+        return '.gb-lastrec[data-ep="' + CSS.escape(id) + '"]{display:none!important}';
+      }).join('\\n');
+  }
+  render();
+  var lastBottom = '';
+  setInterval(function () {
+    var batt = document.querySelector('.gb-batt');
+    var h = batt ? batt.getBoundingClientRect().height : 0;
+    var bottom = (h > 0 ? 24 + h + 12 : 24) + 'px';
+    if (bottom !== lastBottom) {
+      document.documentElement.style.setProperty('--gb-lastrec-bottom', bottom);
+      lastBottom = bottom;
+    }
+  }, 300);
+  function hide(id) {
+    if (ids.indexOf(id) < 0) { ids = ids.concat([id]).slice(-20); }
+    try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch (err) {}
+    render();
+  }
+  function popupButton(e, cls) {
+    var t = e.target && e.target.nodeType === 3 ? e.target.parentElement : e.target;
+    var x = t && t.closest && t.closest(cls);
+    var box = x && x.closest('.gb-lastrec');
+    return box && box.dataset.ep ? box.dataset.ep : null;
+  }
+  // pointerup too: some mobile browsers drop the click after a tap.
+  function dismiss(e) {
+    var id = popupButton(e, '.gb-lastrec-close');
+    if (id) { hide(id); }
+  }
+  document.addEventListener('click', dismiss, true);
+  document.addEventListener('pointerup', dismiss, true);
+  // One tap fires both: ignore the second, right after the dialog closes.
+  var lastDelete = 0;
+  function onDelete(e) {
+    var id = popupButton(e, '.gb-lastrec-delete');
+    if (!id || Date.now() - lastDelete < 1000) { return; }
+    var ok = window.confirm('Delete episode ' + id + '? This cannot be undone.');
+    lastDelete = Date.now();
+    if (!ok) { return; }
+    fetch('/api/episodes/' + encodeURIComponent(id), {method: 'DELETE'})
+      .then(function (r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        hide(id);
+      })
+      .catch(function (err) { window.alert('Could not delete episode ' + id + ': ' + err.message); });
+  }
+  document.addEventListener('click', onDelete, true);
+  document.addEventListener('pointerup', onDelete, true);
+}
+"""
 
 
 def _ep_header_html(description: str = "", api_down: bool = False) -> str:
@@ -3460,6 +3578,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """(popup_update, beep_signal) — bound to the battery timers/loads."""
         return _battery_popup_html(client.get_system_info())
 
+    def check_last_recording():
+        """Popup update — bound to the last-recording timers/loads."""
+        return _last_recording_popup(client.get_last_episode())
+
     # ── System bar ────────────────────────────────────────────────────
 
     def _battery_popup_html(info: dict | None):
@@ -3479,7 +3601,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pct = info["battery_pct"]
             _batt_beep["n"] += 1
             html = (
-                "<div style='position:fixed;bottom:24px;right:24px;z-index:9999;"
+                "<div class='gb-batt' style='position:fixed;bottom:24px;right:24px;z-index:9999;"
                 "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
                 "padding:16px 20px;max-width:260px;"
                 "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
@@ -3922,6 +4044,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
         demo.load(fn=None, js=_BATTERY_INIT_JS)
 
+        last_rec_popup_cn = gr.HTML(visible=False)
+        last_rec_timer_cn = gr.Timer(3.0)
+        last_rec_timer_cn.tick(fn=check_last_recording, outputs=last_rec_popup_cn)
+        demo.load(fn=check_last_recording, outputs=last_rec_popup_cn)
+        demo.load(fn=None, js=_LAST_REC_INIT_JS)
+
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Test Recording
     # ══════════════════════════════════════════════════════════════════
@@ -4073,6 +4201,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_tr.change(fn=None, inputs=batt_beep_tr, outputs=None, js=_BATTERY_BEEP_JS)
         test_demo.load(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
         test_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_tr = gr.HTML(visible=False)
+        last_rec_timer_tr = gr.Timer(3.0)
+        last_rec_timer_tr.tick(fn=check_last_recording, outputs=last_rec_popup_tr)
+        test_demo.load(fn=check_last_recording, outputs=last_rec_popup_tr)
+        test_demo.load(fn=None, js=_LAST_REC_INIT_JS)
         test_demo.load(fn=None, js=_GIF_CYCLE_JS)
         test_demo.load(fn=None, js=_DIAG_POPUP_JS)
 
@@ -4220,6 +4354,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
         episodes_demo.load(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
         episodes_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_ep = gr.HTML(visible=False)
+        last_rec_timer_ep = gr.Timer(3.0)
+        last_rec_timer_ep.tick(fn=check_last_recording, outputs=last_rec_popup_ep)
+        episodes_demo.load(fn=check_last_recording, outputs=last_rec_popup_ep)
+        episodes_demo.load(fn=None, js=_LAST_REC_INIT_JS)
         episodes_demo.load(fn=None, js=_EP_DRAG_SELECT_JS)
 
         episodes_demo.load(
@@ -4344,5 +4484,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
         settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
         settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_st = gr.HTML(visible=False)
+        last_rec_timer_st = gr.Timer(3.0)
+        last_rec_timer_st.tick(fn=check_last_recording, outputs=last_rec_popup_st)
+        settings_demo.load(fn=check_last_recording, outputs=last_rec_popup_st)
+        settings_demo.load(fn=None, js=_LAST_REC_INIT_JS)
 
     return demo

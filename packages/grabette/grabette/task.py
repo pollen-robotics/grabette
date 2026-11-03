@@ -92,6 +92,22 @@ class EpisodeInfo(BaseModel):
     metadata_ok: bool = True
     # Streams that recorded well under their frame rate ("rgb", "depth").
     frame_drops: list[str] = []
+    issues: list[str] = []  # see episode_issues()
+
+
+def episode_issues(ep: dict) -> list[str]:
+    """Episode faults, worst first: "metadata", "camera", "angles",
+    "<stream>_frames_dropped". Unreadable metadata stands alone (the other
+    counters are then zeros)."""
+    if not ep.get("metadata_ok", True):
+        return ["metadata"]
+    issues = []
+    if not ep.get("has_video", True) or not ep.get("frame_count"):
+        issues.append("camera")
+    if not ep.get("angle_sample_count"):
+        issues.append("angles")
+    issues += [f"{stream}_frames_dropped" for stream in ep.get("frame_drops") or []]
+    return issues
 
 
 class TaskInfo(BaseModel):
@@ -132,6 +148,7 @@ class TaskManager:
         # Bumped on every _save (i.e. every mutation). The relay watches it to
         # know when to re-report this device's tasks to the fleet.
         self._revision: int = 0
+        self._last_episode_id: str | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -318,7 +335,15 @@ class TaskManager:
         # of leaving it in Unassigned, where an untriaged recording belongs.
         if self._session_active:
             self._session_count += 1
+        self._last_episode_id = eid
         self._save()
+
+    def last_episode(self) -> EpisodeInfo | None:
+        """Last episode recorded since startup, or None (none, or deleted)."""
+        eid = self._last_episode_id
+        if eid is None or not self.episode_dir(eid).exists():
+            return None
+        return self._get_episode_info(eid)
 
     def discard_pending_episode(self) -> None:
         """Drop a pending (created-but-never-registered) episode, removing its
@@ -517,7 +542,7 @@ class TaskManager:
         else:
             metadata_ok = False
 
-        return EpisodeInfo(
+        info = EpisodeInfo(
             episode_id=episode_id,
             created_at=episode_id,
             duration_seconds=duration,
@@ -529,6 +554,8 @@ class TaskManager:
             metadata_ok=metadata_ok,
             frame_drops=frame_drops,
         )
+        info.issues = episode_issues(info.model_dump())
+        return info
 
     def revision(self) -> int:
         """Monotonic counter bumped on every task-registry change. The relay

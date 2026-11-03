@@ -592,3 +592,41 @@ def test_delete_all_episodes_refuses_mid_capture(tmp_path):
     with pytest.raises(RuntimeError):
         tm.delete_all_episodes()
     assert (tm.episodes_dir / "ep_live").exists()
+
+
+# ── last recording (dashboard popup) and episode_issues ──────────────
+
+_GOOD_META = {"duration_seconds": 10.0, "frame_count": 460, "angle_sample_count": 900}
+
+
+def test_last_episode_is_none_before_any_recording(tmp_path):
+    assert TaskManager(data_dir=tmp_path).last_episode() is None
+
+
+def test_last_episode_reports_its_issues(tmp_path):
+    tm = TaskManager(data_dir=tmp_path)
+    _record(tm, UNASSIGNED_ID, "ep_first")
+    _record(tm, UNASSIGNED_ID, "ep_last")
+    ep = tm.episodes_dir / "ep_last"
+    (ep / "raw_video.mp4").write_text("")
+    (ep / "metadata.json").write_text(json.dumps({**_GOOD_META, "frame_drops": ["depth"]}))
+    info = tm.last_episode()
+    assert info.episode_id == "ep_last"
+    assert info.issues == ["depth_frames_dropped"]
+
+
+def test_last_episode_forgets_a_deleted_episode(tmp_path):
+    tm = TaskManager(data_dir=tmp_path)
+    _record(tm, UNASSIGNED_ID, "ep_bad")
+    tm.delete_episode("ep_bad")
+    assert tm.last_episode() is None
+
+
+def test_episode_issues():
+    from grabette.task import episode_issues
+    good = {**_GOOD_META, "has_video": True, "metadata_ok": True}
+    assert episode_issues(good) == []
+    assert episode_issues({"metadata_ok": False}) == ["metadata"]
+    assert episode_issues({**good, "angle_sample_count": 0,
+                           "frame_drops": ["rgb", "depth"]}) == [
+        "angles", "rgb_frames_dropped", "depth_frames_dropped"]
