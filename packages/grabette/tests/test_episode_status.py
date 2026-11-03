@@ -94,3 +94,10 @@ def test_popup_waits_until_the_recording_is_written():
 def test_popup_hidden_when_nothing_to_say():
     assert _last_recording_popup(None)["visible"] is False
     assert _last_recording_popup(_last(None))["visible"] is False
+
+
+def test_popup_carries_its_episode_for_the_close_button():
+    # The × hides the popup per episode id, so the id must be on the box.
+    up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
+    assert f"data-ep='{GOOD['episode_id']}'" in up["value"]
+    assert "gb-lastrec-close" in up["value"]

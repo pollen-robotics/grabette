@@ -2283,8 +2283,9 @@ def _last_recording_popup(last: dict | None):
     `last` is /api/episodes/last. Hidden when the API could not be asked, while
     a recording is running or being written (`settled` False), when there is no
     last recording, and when it has no issue — so it clears by itself on the
-    next take or when the faulty episode is deleted. Bottom-left, so it never
-    covers the battery popup in the bottom-right corner.
+    next take or when the faulty episode is deleted (or dismissed with its ×,
+    see _LAST_REC_INIT_JS). Bottom-right like the battery popup, and lifted
+    above it when both show (also _LAST_REC_INIT_JS).
     """
     last = last or {}
     ep = last.get("episode") if last.get("settled") else None
@@ -2292,20 +2293,75 @@ def _last_recording_popup(last: dict | None):
     if not issues:
         return gr.update(visible=False)
     items = "".join(f"<li>{html.escape(_issue_text(i))}</li>" for i in issues)
+    eid = html.escape(str(ep.get("episode_id", "?")))
     body = (
-        "<div style='position:fixed;bottom:24px;left:24px;z-index:9999;"
+        f"<div class='gb-lastrec' data-ep='{eid}' "
+        "style='position:fixed;bottom:24px;right:24px;z-index:9999;"
         "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
-        "padding:16px 20px;max-width:320px;"
+        "padding:16px 20px;max-width:260px;"
         "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
+        "<span class='gb-lastrec-close' role='button' title='Dismiss' "
+        "style='position:absolute;top:6px;right:10px;cursor:pointer;"
+        "color:#7f1d1d;font-size:1.1rem;line-height:1;'>×</span>"
         "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
-        "margin-bottom:4px;'>Last recording failed</div>"
+        "margin:0 16px 4px 0;'>Last recording failed</div>"
         "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
         f"padding-left:18px;'>{items}</ul>"
         "<div style='font-size:0.8rem;color:#7f1d1d;'>"
-        f"Episode {html.escape(str(ep.get('episode_id', '?')))} — redo the take.</div>"
+        f"Episode {eid} — redo the take.</div>"
         "</div>"
     )
     return gr.update(visible=True, value=body)
+
+
+# The popup's ×. The popup is re-rendered from the server every few seconds, so
+# hiding the element would not stick: instead a dismissed episode id becomes a
+# CSS rule hiding the popup for THAT episode, and the next faulty recording
+# (another id) shows again. Remembered per browser in localStorage so it holds
+# across the dashboard's pages; a click handler on the document because
+# <script> in gr.HTML is injected via innerHTML and never runs.
+#
+# Also stacks it above the battery popup (same corner) when both show. The two
+# are separate components the server re-renders independently, so the browser
+# measures the battery popup and feeds the offset through a CSS variable — an
+# inline style set here would be wiped by the next re-render. Browser-side
+# only: costs the Pi nothing.
+_LAST_REC_INIT_JS = """
+() => {
+  if (window.__grabetteLastRec) { return; }
+  window.__grabetteLastRec = true;
+  var KEY = 'grabette-dismissed-episodes';
+  var ids = [];
+  try { ids = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { ids = []; }
+  var style = document.createElement('style');
+  document.head.appendChild(style);
+  function render() {
+    style.textContent = '.gb-lastrec{bottom:var(--gb-lastrec-bottom,24px)!important}\\n'
+      + ids.map(function (id) {
+        return '.gb-lastrec[data-ep="' + CSS.escape(id) + '"]{display:none!important}';
+      }).join('\\n');
+  }
+  render();
+  var lastBottom = '';
+  setInterval(function () {
+    var batt = document.querySelector('.gb-batt');
+    var h = batt ? batt.getBoundingClientRect().height : 0;
+    var bottom = (h > 0 ? 24 + h + 12 : 24) + 'px';
+    if (bottom !== lastBottom) {
+      document.documentElement.style.setProperty('--gb-lastrec-bottom', bottom);
+      lastBottom = bottom;
+    }
+  }, 300);
+  document.addEventListener('click', function (e) {
+    var x = e.target.closest && e.target.closest('.gb-lastrec-close');
+    var box = x && x.closest('.gb-lastrec');
+    if (!box || !box.dataset.ep) { return; }
+    if (ids.indexOf(box.dataset.ep) < 0) { ids = ids.concat([box.dataset.ep]).slice(-20); }
+    try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch (e) {}
+    render();
+  }, true);
+}
+"""
 
 
 def _ep_header_html(description: str = "", api_down: bool = False) -> str:
@@ -3529,7 +3585,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pct = info["battery_pct"]
             _batt_beep["n"] += 1
             html = (
-                "<div style='position:fixed;bottom:24px;right:24px;z-index:9999;"
+                "<div class='gb-batt' style='position:fixed;bottom:24px;right:24px;z-index:9999;"
                 "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
                 "padding:16px 20px;max-width:260px;"
                 "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
@@ -3976,6 +4032,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         last_rec_timer_cn = gr.Timer(3.0)
         last_rec_timer_cn.tick(fn=check_last_recording, outputs=last_rec_popup_cn)
         demo.load(fn=check_last_recording, outputs=last_rec_popup_cn)
+        demo.load(fn=None, js=_LAST_REC_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Test Recording
@@ -4133,6 +4190,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         last_rec_timer_tr = gr.Timer(3.0)
         last_rec_timer_tr.tick(fn=check_last_recording, outputs=last_rec_popup_tr)
         test_demo.load(fn=check_last_recording, outputs=last_rec_popup_tr)
+        test_demo.load(fn=None, js=_LAST_REC_INIT_JS)
         test_demo.load(fn=None, js=_GIF_CYCLE_JS)
         test_demo.load(fn=None, js=_DIAG_POPUP_JS)
 
@@ -4285,6 +4343,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         last_rec_timer_ep = gr.Timer(3.0)
         last_rec_timer_ep.tick(fn=check_last_recording, outputs=last_rec_popup_ep)
         episodes_demo.load(fn=check_last_recording, outputs=last_rec_popup_ep)
+        episodes_demo.load(fn=None, js=_LAST_REC_INIT_JS)
         episodes_demo.load(fn=None, js=_EP_DRAG_SELECT_JS)
 
         episodes_demo.load(
@@ -4414,5 +4473,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         last_rec_timer_st = gr.Timer(3.0)
         last_rec_timer_st.tick(fn=check_last_recording, outputs=last_rec_popup_st)
         settings_demo.load(fn=check_last_recording, outputs=last_rec_popup_st)
+        settings_demo.load(fn=None, js=_LAST_REC_INIT_JS)
 
     return demo
