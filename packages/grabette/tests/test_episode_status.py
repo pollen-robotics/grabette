@@ -101,3 +101,8 @@ def test_popup_carries_its_episode_for_the_close_button():
     up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
     assert f"data-ep='{GOOD['episode_id']}'" in up["value"]
     assert "gb-lastrec-close" in up["value"]
+
+
+def test_popup_offers_to_delete_the_episode():
+    up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
+    assert "gb-lastrec-delete" in up["value"]

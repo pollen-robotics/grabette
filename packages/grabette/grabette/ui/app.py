@@ -2310,7 +2310,12 @@ def _last_recording_popup(last: dict | None):
         "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
         f"padding-left:18px;'>{items}</ul>"
         "<div style='font-size:0.8rem;color:#7f1d1d;'>"
-        f"Episode {eid}. Redo the take.</div>"
+        f"Episode {eid}.</div>"
+        "<button type='button' class='gb-lastrec-delete' "
+        "style='margin-top:10px;padding:6px 12px;border-radius:8px;"
+        "border:1px solid #dc2626;background:#dc2626;color:#fff;"
+        "font-size:0.85rem;font-weight:600;cursor:pointer;"
+        "touch-action:manipulation;'>Delete this episode</button>"
         "</div>"
     )
     return gr.update(visible=True, value=body)
@@ -2354,19 +2359,36 @@ _LAST_REC_INIT_JS = """
       lastBottom = bottom;
     }
   }, 300);
-  // pointerup as well as click: some mobile browsers drop the synthesized
-  // click after a tap. Dismissing twice is harmless (ids are deduplicated).
-  function dismiss(e) {
-    var t = e.target && e.target.nodeType === 3 ? e.target.parentElement : e.target;
-    var x = t && t.closest && t.closest('.gb-lastrec-close');
-    var box = x && x.closest('.gb-lastrec');
-    if (!box || !box.dataset.ep) { return; }
-    if (ids.indexOf(box.dataset.ep) < 0) { ids = ids.concat([box.dataset.ep]).slice(-20); }
+  function hide(id) {
+    if (ids.indexOf(id) < 0) { ids = ids.concat([id]).slice(-20); }
     try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch (err) {}
     render();
   }
+  function popupButton(e, cls) {
+    var t = e.target && e.target.nodeType === 3 ? e.target.parentElement : e.target;
+    var x = t && t.closest && t.closest(cls);
+    var box = x && x.closest('.gb-lastrec');
+    return box && box.dataset.ep ? box.dataset.ep : null;
+  }
+  // pointerup too: some mobile browsers drop the click after a tap.
+  function dismiss(e) {
+    var id = popupButton(e, '.gb-lastrec-close');
+    if (id) { hide(id); }
+  }
   document.addEventListener('click', dismiss, true);
   document.addEventListener('pointerup', dismiss, true);
+  // click only: pointerup as well would ask for confirmation twice.
+  document.addEventListener('click', function (e) {
+    var id = popupButton(e, '.gb-lastrec-delete');
+    if (!id) { return; }
+    if (!window.confirm('Delete episode ' + id + '? This cannot be undone.')) { return; }
+    fetch('/api/episodes/' + encodeURIComponent(id), {method: 'DELETE'})
+      .then(function (r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        hide(id);
+      })
+      .catch(function (err) { window.alert('Could not delete episode ' + id + ': ' + err.message); });
+  }, true);
 }
 """
 
