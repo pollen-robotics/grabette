@@ -92,6 +92,32 @@ class EpisodeInfo(BaseModel):
     metadata_ok: bool = True
     # Streams that recorded well under their frame rate ("rgb", "depth").
     frame_drops: list[str] = []
+    # What makes this episode unusable, as stable codes — see episode_issues().
+    # Empty means nothing is known to be wrong.
+    issues: list[str] = []
+
+
+def episode_issues(ep: dict) -> list[str]:
+    """Faults an episode's own counters admit to, worst first, as stable codes:
+    "metadata", "camera", "angles", "<stream>_frames_dropped".
+
+    The one place these rules live: the dashboard's Status column and
+    last-recording popup render them, and the fleet report can carry them as is.
+    Takes a dict (EpisodeInfo.model_dump() or the API's JSON) so either side can
+    call it.
+
+    Unreadable metadata stands alone: the other counters are then zeros, not
+    measurements, and reporting "no camera" from them would invent a fault.
+    """
+    if not ep.get("metadata_ok", True):
+        return ["metadata"]
+    issues = []
+    if not ep.get("has_video", True) or not ep.get("frame_count"):
+        issues.append("camera")
+    if not ep.get("angle_sample_count"):
+        issues.append("angles")
+    issues += [f"{stream}_frames_dropped" for stream in ep.get("frame_drops") or []]
+    return issues
 
 
 class TaskInfo(BaseModel):
@@ -132,6 +158,9 @@ class TaskManager:
         # Bumped on every _save (i.e. every mutation). The relay watches it to
         # know when to re-report this device's tasks to the fleet.
         self._revision: int = 0
+        # Last episode registered by this process — the "last recording" the
+        # dashboard warns about. See last_episode().
+        self._last_episode_id: str | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -318,7 +347,17 @@ class TaskManager:
         # of leaving it in Unassigned, where an untriaged recording belongs.
         if self._session_active:
             self._session_count += 1
+        self._last_episode_id = eid
         self._save()
+
+    def last_episode(self) -> EpisodeInfo | None:
+        """The episode this process last recorded, or None if there is none or
+        it has since been deleted. In memory only: after a restart there is no
+        "last recording" to warn about, rather than one from a previous boot."""
+        eid = self._last_episode_id
+        if eid is None or not self.episode_dir(eid).exists():
+            return None
+        return self._get_episode_info(eid)
 
     def discard_pending_episode(self) -> None:
         """Drop a pending (created-but-never-registered) episode, removing its
@@ -517,7 +556,7 @@ class TaskManager:
         else:
             metadata_ok = False
 
-        return EpisodeInfo(
+        info = EpisodeInfo(
             episode_id=episode_id,
             created_at=episode_id,
             duration_seconds=duration,
@@ -529,6 +568,8 @@ class TaskManager:
             metadata_ok=metadata_ok,
             frame_drops=frame_drops,
         )
+        info.issues = episode_issues(info.model_dump())
+        return info
 
     def revision(self) -> int:
         """Monotonic counter bumped on every task-registry change. The relay

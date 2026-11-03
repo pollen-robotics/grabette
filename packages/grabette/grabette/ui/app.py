@@ -17,6 +17,7 @@ import gradio as gr
 from PIL import Image, ImageSequence
 
 from grabette.config import settings
+from grabette.task import episode_issues
 from grabette.hardware import i2c_diag
 from grabette.ui.api_client import GrabetteClient
 from grabette.ui.summary import recording_summary
@@ -2247,19 +2248,64 @@ _LIVE_VIEW_ENABLED = False
 _EP_MIN_SECONDS = 2.0
 
 
+_DROP_SUFFIX = "_frames_dropped"
+
+
 def _episode_status(ep: dict) -> str:
     """One cell: the worst thing this episode's own counters admit to."""
-    if not ep.get("metadata_ok", True):
-        return "✗ metadata"
-    if not ep.get("has_video", True) or not ep.get("frame_count"):
-        return "✗ camera"
-    if not ep.get("angle_sample_count"):
-        return "✗ angles"
-    if ep.get("frame_drops"):
-        return f"✗ {', '.join(ep['frame_drops'])} frames dropped"
+    issues = episode_issues(ep)
+    if issues and not issues[0].endswith(_DROP_SUFFIX):
+        return f"✗ {issues[0]}"
+    if issues:
+        return f"✗ {', '.join(i.removesuffix(_DROP_SUFFIX) for i in issues)} frames dropped"
     if float(ep.get("duration_seconds") or 0) < _EP_MIN_SECONDS:
         return "⚠ very short"
     return "✓ ok"
+
+
+_ISSUE_TEXT = {
+    "metadata": "Its metadata.json is missing or unreadable.",
+    "camera": "The camera recorded no video.",
+    "angles": "No gripper angles were recorded.",
+}
+
+
+def _issue_text(issue: str) -> str:
+    if issue.endswith(_DROP_SUFFIX):
+        stream = issue.removesuffix(_DROP_SUFFIX)
+        return f"The {stream} camera dropped frames: the videos are likely out of sync."
+    return _ISSUE_TEXT.get(issue, issue)
+
+
+def _last_recording_popup(last: dict | None):
+    """gr.update for the popup that says what went wrong with the last recording.
+
+    `last` is /api/episodes/last. Hidden when the API could not be asked, while
+    a recording is running or being written (`settled` False), when there is no
+    last recording, and when it has no issue — so it clears by itself on the
+    next take or when the faulty episode is deleted. Bottom-left, so it never
+    covers the battery popup in the bottom-right corner.
+    """
+    last = last or {}
+    ep = last.get("episode") if last.get("settled") else None
+    issues = episode_issues(ep) if ep else []
+    if not issues:
+        return gr.update(visible=False)
+    items = "".join(f"<li>{html.escape(_issue_text(i))}</li>" for i in issues)
+    body = (
+        "<div style='position:fixed;bottom:24px;left:24px;z-index:9999;"
+        "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
+        "padding:16px 20px;max-width:320px;"
+        "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
+        "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
+        "margin-bottom:4px;'>Last recording failed</div>"
+        "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
+        f"padding-left:18px;'>{items}</ul>"
+        "<div style='font-size:0.8rem;color:#7f1d1d;'>"
+        f"Episode {html.escape(str(ep.get('episode_id', '?')))} — redo the take.</div>"
+        "</div>"
+    )
+    return gr.update(visible=True, value=body)
 
 
 def _ep_header_html(description: str = "", api_down: bool = False) -> str:
@@ -3460,6 +3506,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """(popup_update, beep_signal) — bound to the battery timers/loads."""
         return _battery_popup_html(client.get_system_info())
 
+    def check_last_recording():
+        """Popup update — bound to the last-recording timers/loads."""
+        return _last_recording_popup(client.get_last_episode())
+
     # ── System bar ────────────────────────────────────────────────────
 
     def _battery_popup_html(info: dict | None):
@@ -3922,6 +3972,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
         demo.load(fn=None, js=_BATTERY_INIT_JS)
 
+        last_rec_popup_cn = gr.HTML(visible=False)
+        last_rec_timer_cn = gr.Timer(3.0)
+        last_rec_timer_cn.tick(fn=check_last_recording, outputs=last_rec_popup_cn)
+        demo.load(fn=check_last_recording, outputs=last_rec_popup_cn)
+
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Test Recording
     # ══════════════════════════════════════════════════════════════════
@@ -4073,6 +4128,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_tr.change(fn=None, inputs=batt_beep_tr, outputs=None, js=_BATTERY_BEEP_JS)
         test_demo.load(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
         test_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_tr = gr.HTML(visible=False)
+        last_rec_timer_tr = gr.Timer(3.0)
+        last_rec_timer_tr.tick(fn=check_last_recording, outputs=last_rec_popup_tr)
+        test_demo.load(fn=check_last_recording, outputs=last_rec_popup_tr)
         test_demo.load(fn=None, js=_GIF_CYCLE_JS)
         test_demo.load(fn=None, js=_DIAG_POPUP_JS)
 
@@ -4220,6 +4280,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
         episodes_demo.load(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
         episodes_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_ep = gr.HTML(visible=False)
+        last_rec_timer_ep = gr.Timer(3.0)
+        last_rec_timer_ep.tick(fn=check_last_recording, outputs=last_rec_popup_ep)
+        episodes_demo.load(fn=check_last_recording, outputs=last_rec_popup_ep)
         episodes_demo.load(fn=None, js=_EP_DRAG_SELECT_JS)
 
         episodes_demo.load(
@@ -4344,5 +4409,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
         settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
         settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_st = gr.HTML(visible=False)
+        last_rec_timer_st = gr.Timer(3.0)
+        last_rec_timer_st.tick(fn=check_last_recording, outputs=last_rec_popup_st)
+        settings_demo.load(fn=check_last_recording, outputs=last_rec_popup_st)
 
     return demo

@@ -64,3 +64,33 @@ def test_header_says_when_the_api_is_down():
     # recorded" — that is the reading that gets an episode re-recorded.
     out = _ep_header_html(api_down=True)
     assert "Could not reach" in out
+
+
+# ── the last-recording popup ─────────────────────────────────────────
+
+from grabette.ui.app import _last_recording_popup  # noqa: E402
+
+
+def _last(ep, settled=True):
+    return {"settled": settled, "episode": ep}
+
+
+def test_popup_hidden_for_a_good_recording():
+    assert _last_recording_popup(_last(GOOD))["visible"] is False
+
+
+def test_popup_shows_dropped_frames():
+    up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
+    assert up["visible"] is True
+    assert "depth camera dropped frames" in up["value"]
+    assert GOOD["episode_id"] in up["value"]
+
+
+def test_popup_waits_until_the_recording_is_written():
+    # metadata.json does not exist yet while finalizing: not a fault.
+    assert _last_recording_popup(_last({"metadata_ok": False}, settled=False))["visible"] is False
+
+
+def test_popup_hidden_when_nothing_to_say():
+    assert _last_recording_popup(None)["visible"] is False
+    assert _last_recording_popup(_last(None))["visible"] is False
