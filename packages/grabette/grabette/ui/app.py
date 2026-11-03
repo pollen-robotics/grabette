@@ -2377,18 +2377,24 @@ _LAST_REC_INIT_JS = """
   }
   document.addEventListener('click', dismiss, true);
   document.addEventListener('pointerup', dismiss, true);
-  // click only: pointerup as well would ask for confirmation twice.
-  document.addEventListener('click', function (e) {
+  // pointerup and click both come from one tap: ignore the second, which
+  // arrives right after the dialog closes.
+  var lastDelete = 0;
+  function onDelete(e) {
     var id = popupButton(e, '.gb-lastrec-delete');
-    if (!id) { return; }
-    if (!window.confirm('Delete episode ' + id + '? This cannot be undone.')) { return; }
+    if (!id || Date.now() - lastDelete < 1000) { return; }
+    var ok = window.confirm('Delete episode ' + id + '? This cannot be undone.');
+    lastDelete = Date.now();
+    if (!ok) { return; }
     fetch('/api/episodes/' + encodeURIComponent(id), {method: 'DELETE'})
       .then(function (r) {
         if (!r.ok) { throw new Error('HTTP ' + r.status); }
         hide(id);
       })
       .catch(function (err) { window.alert('Could not delete episode ' + id + ': ' + err.message); });
-  }, true);
+  }
+  document.addEventListener('click', onDelete, true);
+  document.addEventListener('pointerup', onDelete, true);
 }
 """
 
