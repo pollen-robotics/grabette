@@ -34,17 +34,12 @@ _URDF_ROOT = _PACKAGE_ROOT / "urdf"
 
 FPS = 46
 
-# Longest tolerated hole between two consecutive frames of a stream. Startup
-# routinely loses 2-4 Arducam frames (up to ~80 ms) and that is harmless; a
-# 563 ms hole was not, yet barely moved the episode's average rate. Well above
-# the former, well below the latter.
+# Above harmless startup losses (~80 ms), below a real desync hole (563 ms seen).
 MAX_FRAME_GAP_MS = 250.0
 
 
 def _dropped_streams(streams) -> list[str]:
-    """Names of the streams that lost frames: (name, n_frames, span_ms,
-    max_gap_ms, expected_fps) each. A stream fails on a low average rate (a
-    stalled writer loop) or on a single long hole, which the average hides."""
+    """Streams with a low average rate or one long hole between frames."""
     dropped = []
     for name, n_frames, span_ms, max_gap_ms, expected_fps in streams:
         recorded_fps = ((n_frames - 1) / (span_ms / 1000.0)
@@ -1027,10 +1022,7 @@ class RpiBackend(Backend):
             meta["dcam"] = oakd_stats
 
         # A stalled writer loop drops frames and has come with a >1 s
-        # Arducam/depth desync — flag it so the take gets redone. The rate is
-        # taken over each stream's own first→last frame span, not the take's
-        # duration: a camera's start latency is not a drop and would flag every
-        # short take. A depth camera that reports no span (stereo UVC) is skipped.
+        # Arducam/depth desync — flag it so the take gets redone.
         rgb_max_gap_ms = max((b - a for a, b in zip(frame_timestamps, frame_timestamps[1:])),
                              default=0.0)
         streams = [("rgb", len(frame_timestamps), video_span_ms, rgb_max_gap_ms, FPS)]

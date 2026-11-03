@@ -1,10 +1,4 @@
-"""An encoder slow to start must not punch a hole in the recording.
-
-On the Pi, ffmpeg takes 0.3-3.5 s before it reads its stdin. When the capture
-loop wrote to the pipe itself, it blocked for that long and the SDK dropped every
-frame in between: each Orbbec episode had one frame, then a gap. Here a fake
-camera produces frames at 30 fps and fake encoders wait 1 s before reading.
-"""
+"""An encoder slow to start must not punch a hole in the recording."""
 import subprocess
 import sys
 import threading

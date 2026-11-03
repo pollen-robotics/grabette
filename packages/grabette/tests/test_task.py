@@ -626,7 +626,6 @@ def test_episode_issues():
     from grabette.task import episode_issues
     good = {**_GOOD_META, "has_video": True, "metadata_ok": True}
     assert episode_issues(good) == []
-    # Unreadable metadata stands alone: the zeros beside it are not measurements.
     assert episode_issues({"metadata_ok": False}) == ["metadata"]
     assert episode_issues({**good, "angle_sample_count": 0,
                            "frame_drops": ["rgb", "depth"]}) == [

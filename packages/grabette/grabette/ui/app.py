@@ -2278,15 +2278,7 @@ def _issue_text(issue: str) -> str:
 
 
 def _last_recording_popup(last: dict | None):
-    """gr.update for the popup that says what went wrong with the last recording.
-
-    `last` is /api/episodes/last. Hidden when the API could not be asked, while
-    a recording is running or being written (`settled` False), when there is no
-    last recording, and when it has no issue — so it clears by itself on the
-    next take or when the faulty episode is deleted (or dismissed with its ×,
-    see _LAST_REC_INIT_JS). Bottom-right like the battery popup, and lifted
-    above it when both show (also _LAST_REC_INIT_JS).
-    """
+    """Popup for the last recording's issues, from /api/episodes/last."""
     last = last or {}
     ep = last.get("episode") if last.get("settled") else None
     issues = episode_issues(ep) if ep else []
@@ -2321,18 +2313,8 @@ def _last_recording_popup(last: dict | None):
     return gr.update(visible=True, value=body)
 
 
-# The popup's ×. The popup is re-rendered from the server every few seconds, so
-# hiding the element would not stick: instead a dismissed episode id becomes a
-# CSS rule hiding the popup for THAT episode, and the next faulty recording
-# (another id) shows again. Remembered per browser in localStorage so it holds
-# across the dashboard's pages; a click handler on the document because
-# <script> in gr.HTML is injected via innerHTML and never runs.
-#
-# Also stacks it above the battery popup (same corner) when both show. The two
-# are separate components the server re-renders independently, so the browser
-# measures the battery popup and feeds the offset through a CSS variable — an
-# inline style set here would be wiped by the next re-render. Browser-side
-# only: costs the Pi nothing.
+# Popup buttons and stacking above the battery popup. The popup is re-rendered
+# every few seconds, so state goes through CSS rules, not the element itself.
 _LAST_REC_INIT_JS = """
 () => {
   if (window.__grabetteLastRec) { return; }
@@ -2377,8 +2359,7 @@ _LAST_REC_INIT_JS = """
   }
   document.addEventListener('click', dismiss, true);
   document.addEventListener('pointerup', dismiss, true);
-  // pointerup and click both come from one tap: ignore the second, which
-  // arrives right after the dialog closes.
+  // One tap fires both: ignore the second, right after the dialog closes.
   var lastDelete = 0;
   function onDelete(e) {
     var id = popupButton(e, '.gb-lastrec-delete');

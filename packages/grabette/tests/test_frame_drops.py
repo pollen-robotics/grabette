@@ -1,16 +1,10 @@
-"""Which streams of a stopped take get flagged as having lost frames.
-
-The cases come from a bimanual test recording filmed against a stopwatch: the
-Arducam routinely loses a few frames at startup (harmless), and once lost 27 in
-a row (563 ms) while its average rate still looked fine at 43 fps.
-"""
+"""Which streams of a stopped take get flagged as having lost frames."""
 
 from grabette.backend.rpi import FPS, _dropped_streams
 
 
 def _stream(name, period_ms, n, holes=(), fps=FPS):
-    """(name, n_frames, span_ms, max_gap_ms, fps) for n frames at period_ms,
-    with each hole widening one interval to that many milliseconds."""
+    """n frames at period_ms, each hole widening one interval to that many ms."""
     gaps = [period_ms] * (n - 1)
     for i, hole in enumerate(holes):
         gaps[10 + i] = hole

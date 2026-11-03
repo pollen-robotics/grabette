@@ -92,23 +92,13 @@ class EpisodeInfo(BaseModel):
     metadata_ok: bool = True
     # Streams that recorded well under their frame rate ("rgb", "depth").
     frame_drops: list[str] = []
-    # What makes this episode unusable, as stable codes — see episode_issues().
-    # Empty means nothing is known to be wrong.
-    issues: list[str] = []
+    issues: list[str] = []  # see episode_issues()
 
 
 def episode_issues(ep: dict) -> list[str]:
-    """Faults an episode's own counters admit to, worst first, as stable codes:
-    "metadata", "camera", "angles", "<stream>_frames_dropped".
-
-    The one place these rules live: the dashboard's Status column and
-    last-recording popup render them, and the fleet report can carry them as is.
-    Takes a dict (EpisodeInfo.model_dump() or the API's JSON) so either side can
-    call it.
-
-    Unreadable metadata stands alone: the other counters are then zeros, not
-    measurements, and reporting "no camera" from them would invent a fault.
-    """
+    """Episode faults, worst first: "metadata", "camera", "angles",
+    "<stream>_frames_dropped". Unreadable metadata stands alone (the other
+    counters are then zeros)."""
     if not ep.get("metadata_ok", True):
         return ["metadata"]
     issues = []
@@ -158,8 +148,6 @@ class TaskManager:
         # Bumped on every _save (i.e. every mutation). The relay watches it to
         # know when to re-report this device's tasks to the fleet.
         self._revision: int = 0
-        # Last episode registered by this process — the "last recording" the
-        # dashboard warns about. See last_episode().
         self._last_episode_id: str | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -351,9 +339,7 @@ class TaskManager:
         self._save()
 
     def last_episode(self) -> EpisodeInfo | None:
-        """The episode this process last recorded, or None if there is none or
-        it has since been deleted. In memory only: after a restart there is no
-        "last recording" to warn about, rather than one from a previous boot."""
+        """Last episode recorded since startup, or None (none, or deleted)."""
         eid = self._last_episode_id
         if eid is None or not self.episode_dir(eid).exists():
             return None

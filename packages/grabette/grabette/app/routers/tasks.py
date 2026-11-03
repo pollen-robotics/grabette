@@ -292,12 +292,8 @@ def download_episodes(episode_ids: list[str] = Query(), tm: TaskManager = Depend
 @router.get("/api/episodes/last")
 def get_last_episode(tm: TaskManager = Depends(get_task_manager),
                      backend: Backend = Depends(get_backend)):
-    """The last recording's facts and issues, for the dashboard's popup.
-
-    `settled` is False while a capture runs or its files are still being
-    written: the episode's metadata.json may not exist yet, and reading that as
-    "✗ metadata" would warn about a recording that is fine.
-    """
+    """Last recording, for the dashboard popup. Not `settled` while capturing or
+    finalizing: metadata.json may not be written yet."""
     settled = not (backend.is_capturing or backend.is_finalizing)
     return {"settled": settled, "episode": tm.last_episode() if settled else None}
 

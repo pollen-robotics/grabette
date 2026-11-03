@@ -520,7 +520,6 @@ class OakdCapture:
 
         stats = {
             "left_frames": len(self._left_ts),
-            # First→last frame span, for rpi.py's frame-drop check.
             "left_span_ms": (self._left_ts[-1]["host_ms"] - self._left_ts[0]["host_ms"]
                              if len(self._left_ts) >= 2 else 0.0),
             "left_max_gap_ms": max((b["host_ms"] - a["host_ms"]

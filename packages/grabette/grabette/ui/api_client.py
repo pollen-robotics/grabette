@@ -217,8 +217,7 @@ class GrabetteClient:
             return None
 
     def get_last_episode(self) -> dict | None:
-        """{"settled": bool, "episode": EpisodeInfo | None} for the last
-        recording, or None if the API could not be asked."""
+        """/api/episodes/last, or None if the API could not be asked."""
         try:
             r = self._http.get("/api/episodes/last")
             r.raise_for_status()

@@ -72,18 +72,12 @@ _MAX_VALID_DEPTH_MM = 10_000
 # (5 fps) when idle. Recording converts every frame, as it must.
 _IDLE_PREVIEW_EVERY = 6
 
-# Frames buffered per encoder while its ffmpeg is still starting up. Writing a
-# 250-500 KB frame into a 64 KB pipe blocks until ffmpeg reads it, and ffmpeg
-# takes ~0.3 s to start on a Pi 4 (3.5 s from a cold SD card). Done from the
-# capture loop, that stall made the SDK drop every frame in between: each episode
-# had one frame, then a 0.3-3.5 s hole. 90 frames is 3 s, ~67 MB at worst.
+# Frames buffered per encoder while ffmpeg starts (~0.3 s, 3.5 s cold): 3 s.
 _ENCODER_QUEUE_FRAMES = 90
 
 
 class _EncoderFeeder:
-    """Feeds one encoder's stdin from its own thread, so a slow or still-starting
-    ffmpeg never stalls the capture loop. A frame's timestamp is appended to
-    `timestamps` only once the frame is written, keeping the two in step."""
+    """Writes to one encoder from its own thread, so ffmpeg never stalls capture."""
 
     def __init__(self, proc: subprocess.Popen, timestamps: list, label: str):
         self.proc = proc
@@ -281,8 +275,7 @@ class OrbbecCapture:
 
     @staticmethod
     def _warm_ffmpeg() -> None:
-        """Load the ffmpeg binary and its libraries into the page cache, so the
-        encoders spawned by start_recording start warm instead of from the SD card."""
+        """Load ffmpeg into the page cache so the first recording starts fast."""
         try:
             subprocess.run(["ffmpeg", "-hide_banner", "-version"], timeout=30,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -556,7 +549,6 @@ class OrbbecCapture:
 
         stats = {
             "left_frames": len(self._left_ts),
-            # First→last frame span, for rpi.py's frame-drop check.
             "left_span_ms": (self._left_ts[-1]["host_ms"] - self._left_ts[0]["host_ms"]
                              if len(self._left_ts) >= 2 else 0.0),
             "left_max_gap_ms": max((b["host_ms"] - a["host_ms"]
@@ -577,7 +569,7 @@ class OrbbecCapture:
         """Drain frames continuously; cache for preview; write only while recording.
 
         Per-frame work is kept deliberately small — an integer depth conversion
-        and two queue puts (the pipe writes happen in _EncoderFeeder). Anything heavier here (a float conversion, a PNG
+        and two queue puts. Anything heavier here (a float conversion, a PNG
         encode) stalls the loop past the 33 ms frame interval and the SDK drops
         frames, which is exactly what happened in the first on-device recordings.
         """
@@ -638,7 +630,7 @@ class OrbbecCapture:
                 if not self._recording or self._encoder is None:
                     continue
                 feeders = [f for f in (self._encoder, self._depth_encoder) if f is not None]
-                # Left and depth are dropped together so the streams stay paired.
+                # Drop left and depth together to keep them paired.
                 if any(f.full() for f in feeders):
                     self._dropped_frames += 1
                     continue
