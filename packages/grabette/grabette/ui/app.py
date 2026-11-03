@@ -2310,7 +2310,7 @@ def _last_recording_popup(last: dict | None):
         "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
         f"padding-left:18px;'>{items}</ul>"
         "<div style='font-size:0.8rem;color:#7f1d1d;'>"
-        f"Episode {eid} — redo the take.</div>"
+        f"Episode {eid}. Redo the take.</div>"
         "</div>"
     )
     return gr.update(visible=True, value=body)
