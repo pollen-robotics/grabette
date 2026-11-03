@@ -90,6 +90,8 @@ class EpisodeInfo(BaseModel):
     # listed (its files are on disk and may be recoverable), but its counters
     # are zeros rather than facts, and the UI must not present them as facts.
     metadata_ok: bool = True
+    # Streams that recorded well under their frame rate ("rgb", "depth").
+    frame_drops: list[str] = []
 
 
 class TaskInfo(BaseModel):
@@ -489,6 +491,7 @@ class TaskManager:
         frame_count = 0
         imu_sample_count = 0
         angle_sample_count = 0
+        frame_drops = []
         metadata_ok = True
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
@@ -510,6 +513,7 @@ class TaskManager:
             imu_sample_count = (meta.get("imu_sample_count")
                                 or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
+            frame_drops = meta.get("frame_drops", [])
         else:
             metadata_ok = False
 
@@ -523,6 +527,7 @@ class TaskManager:
             has_video=video_path.exists(),
             has_imu=imu_present,
             metadata_ok=metadata_ok,
+            frame_drops=frame_drops,
         )
 
     def revision(self) -> int:

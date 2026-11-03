@@ -211,6 +211,9 @@ class OrbbecCapture:
         # Hardware frame sync — depth and LEFT_IR then carry an identical device
         # timestamp and frame index (measured: 0 us skew).
         self._pipeline.enable_frame_sync()
+        # First ffmpeg launch after boot loads it from the SD card for seconds,
+        # blocking the writer loop: the first recording loses or misdates frames.
+        subprocess.run(["ffmpeg", "-version"], stdout=subprocess.DEVNULL)
         self._pipeline.start(config)
 
         self._apply_exposure()
