@@ -4,13 +4,27 @@ Ported from grabette-capture/grabette_capture/video.py.
 """
 
 import gc
+import json
 import logging
 import subprocess
 from pathlib import Path
 
+from grabette.output import write_json_atomic
+
+from .frame_timing import FrameTiming
 from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
+
+
+class FrameAlignmentError(RuntimeError):
+    """The saved video cannot safely be paired with its capture timestamps."""
+
+    def __init__(self, message: str, *, episode_id: str | None = None):
+        super().__init__(message)
+        # Set by the backend only after all streams and capture state are down.
+        # Stop consumers can then retain this exact failed take in the registry.
+        self.episode_id = episode_id
 
 
 class VideoCapture:
@@ -47,6 +61,9 @@ class VideoCapture:
         self._frame_timestamps: list[float] = []
         self._recording = False
         self._frame_count: int = 0
+        self._timing = FrameTiming(self.sync)
+        self.timestamp_alignment: dict = {}
+        self._has_b_frames = None
 
     def init_camera(self) -> None:
         """Initialize picamera2 with CFR configuration."""
@@ -69,7 +86,21 @@ class VideoCapture:
                 controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
             )
         self._picam2.configure(video_config)
-        self._encoder = H264Encoder(bitrate=self.bitrate)
+        owner = self
+
+        class SensorTimestampEncoder(H264Encoder):
+            def _timestamp(self, request):
+                try:
+                    pts_us = super()._timestamp(request)
+                    owner._timing.submitted(pts_us, request.get_metadata()["SensorTimestamp"])
+                    return pts_us
+                except Exception as exc:
+                    # An exception in an encoder worker must not make a saved,
+                    # matching prefix look like a complete successful capture.
+                    owner._timing.record_error(f"Cannot timestamp encoder input: {exc}")
+                    raise
+
+        self._encoder = SensorTimestampEncoder(bitrate=self.bitrate)
 
         if self.preview:
             try:
@@ -92,18 +123,6 @@ class VideoCapture:
             except Exception as e:
                 logger.debug("Closing picamera2: %s", e)
 
-    def _on_frame(self, request) -> None:
-        if self._recording:
-            metadata = request.get_metadata()
-            sensor_ts_ns = metadata.get("SensorTimestamp")
-
-            if sensor_ts_ns is not None:
-                ts = self.sync.boottime_ns_to_ms(sensor_ts_ns)
-            else:
-                ts = self.sync.get_timestamp_ms()
-
-            self._frame_timestamps.append(ts)
-
     def start_recording(self, output_path: Path) -> None:
         if self._recording:
             raise RuntimeError("Video capture already running")
@@ -114,21 +133,52 @@ class VideoCapture:
 
         self._output_path = Path(output_path)
         self._h264_path = self._output_path.with_suffix(".h264")
-        self._frame_timestamps = []
+        from picamera2.outputs import FileOutput
+
+        self._timing = FrameTiming(self.sync)
+        self._frame_timestamps = self._timing.timestamps
+        self.timestamp_alignment = {}
         self._frame_count = 0
-        self._picam2.pre_callback = self._on_frame
+        self._has_b_frames = None
+        timing = self._timing
+
+        class TimestampedFileOutput(FileOutput):
+            def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+                try:
+                    super().outputframe(frame, keyframe, timestamp, packet, audio)
+                except Exception as exc:
+                    # Surface worker-thread I/O failures in stop(), after the
+                    # encoder has released its buffers and other streams stop.
+                    timing.record_error(f"Video output write failed: {exc}")
+                if self.dead:
+                    timing.record_error("Video output reported a failed write")
+
+            def outputtimestamp(self, timestamp):
+                # FileOutput calls this after writing/flushing a video picture,
+                # including pictures drained during stop_encoder().
+                timing.written(timestamp)
+
+        output = TimestampedFileOutput(str(self._h264_path))
 
         self._recording = True
         gc.disable()  # Prevent GC pauses from dropping frames during recording
-        self._picam2.start_encoder(self._encoder, str(self._h264_path))
+        try:
+            self._picam2.start_encoder(self._encoder, output)
+        except Exception:
+            self._recording = False
+            gc.enable()
+            output.close()
+            raise
 
     def stop(self) -> list[float]:
         if not self._recording:
             return self._frame_timestamps
 
         self._recording = False
-        self._picam2.stop_encoder()
-        gc.enable()
+        try:
+            self._picam2.stop_encoder()
+        finally:
+            gc.enable()
         if self.preview:
             try:
                 self._picam2.stop_preview()
@@ -140,6 +190,22 @@ class VideoCapture:
         self._encoder = None
 
         self._mux_to_mp4()
+        self.timestamp_alignment = self._timing.result(self._frame_count)
+        if self._has_b_frames != 0:
+            self.timestamp_alignment["valid"] = False
+            self.timestamp_alignment["errors"].append(
+                f"Cannot verify video presentation order: has_b_frames={self._has_b_frames}")
+        try:
+            write_json_atomic(self._output_path.with_suffix(".frames.json"), {
+                "alignment": self.timestamp_alignment, "frames": self._timing.frames,
+            })
+        except OSError as exc:
+            self.timestamp_alignment["valid"] = False
+            self.timestamp_alignment["errors"].append(f"Cannot save frame provenance: {exc}")
+        if not self.timestamp_alignment["valid"]:
+            raise FrameAlignmentError(str(self.timestamp_alignment["errors"]))
+        # Only discard the intermediate stream after successful validation.
+        self._h264_path.unlink()
         return self._frame_timestamps
 
     def _mux_to_mp4(self) -> None:
@@ -163,7 +229,6 @@ class VideoCapture:
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg muxing failed: {result.stderr}")
-        self._h264_path.unlink()
         self._frame_count = self._count_frames_ffprobe()
 
     def _count_frames_ffprobe(self) -> int:
@@ -175,16 +240,23 @@ class VideoCapture:
                     "ffprobe", "-v", "error",
                     "-select_streams", "v:0",
                     "-count_packets",
-                    "-show_entries", "stream=nb_read_packets",
-                    "-of", "csv=p=0",
+                    "-show_entries", "stream=nb_read_packets,has_b_frames",
+                    "-of", "json",
                     str(self._output_path),
                 ],
                 capture_output=True, text=True, timeout=30,
             )
-            val = result.stdout.strip()
-            return int(val) if val.isdigit() else 0
+            result.check_returncode()
+            stream = json.loads(result.stdout)["streams"][0]
+            self._has_b_frames = stream.get("has_b_frames")
+            return int(stream["nb_read_packets"])
         except Exception:
             return 0
+
+    @property
+    def frame_timestamps(self) -> list[float]:
+        """Finalized timestamps; available for diagnostics if validation fails."""
+        return list(self._frame_timestamps)
 
     @property
     def frame_count(self) -> int:
