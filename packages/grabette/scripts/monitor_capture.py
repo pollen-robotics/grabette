@@ -160,6 +160,10 @@ def main() -> int:
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
 
+    if not os.path.exists("/proc/pressure/io"):
+        print("warning: /proc/pressure is absent, the psi_* columns will stay at 0. "
+              "Enable PSI with psi=1 in /boot/firmware/cmdline.txt and reboot.")
+
     pids = find_pids(args.process)
     print(f"Writing {out}/monitor.csv every {args.period * 1000:.0f} ms "
           f"(disk {disk}, {args.process} pids {pids or 'not found yet'}). Ctrl-C to stop.")

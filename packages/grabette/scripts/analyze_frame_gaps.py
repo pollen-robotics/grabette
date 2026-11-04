@@ -158,16 +158,12 @@ class Monitor:
         s["temp"] = sorted({r["temp"] for r in rows if r["temp"]})
         return s
 
-    @staticmethod
-    def typical(rows: list[dict]) -> dict:
-        """95th percentile per sample over the episode: 'usual' load."""
-        if not rows:
-            return {}
-        out = {}
-        for k in Monitor.NUM:
-            v = sorted(r[k] for r in rows)
-            out[k] = v[int(0.95 * (len(v) - 1))]
-        return out
+
+def chance(ep_rows: list[dict], n: int, test) -> float | None:
+    """Fraction of the episode's n-sample windows for which test(window) holds:
+    how often the hole's reading turns up by chance, anywhere in the take."""
+    wins = [ep_rows[i:i + n] for i in range(0, max(len(ep_rows) - n + 1, 0))]
+    return sum(map(test, wins)) / len(wins) if wins else None
 
 
 def print_monitor(mon: Monitor, b_start: float, b_end: float, a: float, b: float, t0b: float):
@@ -176,8 +172,10 @@ def print_monitor(mon: Monitor, b_start: float, b_end: float, a: float, b: float
         print("      monitor: no sample at that time (was it running?)")
         return
     s = mon.summary(hole)
-    base = mon.typical(mon.window(b_start, b_end))
-    print(f"      monitor ({s['n']} samples, hole ±{MARGIN_MS:.0f} ms)   max during hole | p95 episode")
+    ep_rows = mon.window(b_start, b_end)
+    n = len(hole)
+    print(f"      monitor ({n} samples, hole ±{MARGIN_MS:.0f} ms)    max in hole | episode mean | "
+          f"same max elsewhere")
     labels = [("psi_io_full_ms", "I/O stall, all tasks (ms/sample)"),
               ("psi_io_some_ms", "I/O stall, some task (ms/sample)"),
               ("psi_cpu_some_ms", "CPU stall (ms/sample)"),
@@ -187,11 +185,23 @@ def print_monitor(mon: Monitor, b_start: float, b_end: float, a: float, b: float
               ("disk_write_ms", "disk busy writing (ms/sample)"),
               ("disk_inflight", "disk requests in flight")]
     for k, label in labels:
-        flag = "  <<<" if base and s[k] > 2 * base.get(k, 0) + 1 else ""
-        print(f"        {label:36s} {s[k]:10.1f} | {base.get(k, 0):8.1f}{flag}")
-    print(f"        {'kB written to disk':36s} {s['disk_write_kb']:10.0f}")
-    if s["d_threads"]:
-        print(f"        blocked (D) threads: {', '.join(s['d_threads'])}")
+        mean = statistics.fmean(r[k] for r in ep_rows) if ep_rows else 0.0
+        if s[k] > 0:
+            c = chance(ep_rows, n, lambda w, k=k, m=s[k]: max(r[k] for r in w) >= m)
+            # Rarely reached elsewhere → the hole's reading is unusual.
+            cs = "-" if c is None else f"{100 * c:.0f}% of windows" + ("  <<<" if c < 0.1 else "")
+        else:
+            cs = ""
+        print(f"        {label:36s} {s[k]:9.1f} | {mean:12.1f} | {cs}")
+    c = chance(ep_rows, n, lambda w: sum(r["disk_write_kb"] for r in w) >= s["disk_write_kb"])
+    print(f"        {'kB written to disk (sum)':36s} {s['disk_write_kb']:9.0f} | {'':12s} | "
+          + ("" if c is None or not s["disk_write_kb"] else f"{100 * c:.0f}% of windows"
+             + ("  <<<" if c < 0.1 else "")))
+    for t in s["d_threads"]:
+        c = chance(ep_rows, n, lambda w, t=t: any(t in r["d_threads"].split("|") for r in w))
+        share = sum(t in r["d_threads"].split("|") for r in hole) / n
+        print(f"        blocked (D) thread {t!r}: {100 * share:.0f}% of hole samples, "
+              f"present in {'-' if c is None else f'{100 * c:.0f}%'} of episode windows")
     if s["throttled"] and s["throttled"] != ["0x0"]:
         print(f"        throttled: {s['throttled']}  temp: {s['temp']}")
     u0 = datetime.fromtimestamp(t0b + mon.utc_minus_boot + (a - MARGIN_MS) / 1000, timezone.utc)
@@ -280,7 +290,9 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float]:
             fmt = "%Y-%m-%d %H:%M:%S"
             out = journal(["--utc", "--since", since.strftime(fmt) + " UTC",
                            "--until", until.strftime(fmt) + " UTC"])
-            lines = [l for l in out.splitlines() if l and not l.startswith("--")]
+            # Dashboard/API access lines are just noise here.
+            lines = [l for l in out.splitlines()
+                     if l and not l.startswith("--") and "HTTP/1.1" not in l]
             print(f"      journal {since:%H:%M:%S}-{until:%H:%M:%S} UTC: {len(lines)} lines")
             for l in lines[-40:]:
                 print(f"        {l}")
@@ -290,10 +302,17 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float]:
 def find_episodes(paths: list[Path]) -> list[Path]:
     eps = []
     for p in paths:
+        if not p.exists():
+            # An unmatched shell glob arrives here verbatim.
+            print(f"warning: {p} does not exist")
+            continue
         if (p / "frame_timestamps.json").exists():
             eps.append(p)
         else:
-            eps += sorted(f.parent for f in p.rglob("frame_timestamps.json"))
+            found = sorted(f.parent for f in p.rglob("frame_timestamps.json"))
+            if not found:
+                print(f"warning: no episode (frame_timestamps.json) under {p}")
+            eps += found
     return eps
 
 
