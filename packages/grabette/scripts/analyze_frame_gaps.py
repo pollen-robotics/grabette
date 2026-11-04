@@ -280,28 +280,33 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
         print("    t=0 unknown: cannot place the holes on the monitor/journal clock "
               "(needs PR 239, a group start, or --journal on the Pi)")
 
-    for name, hs in all_holes.items():
-        if name != "rgb":
-            for a, b in hs:
-                print(f"    {name} hole {b - a:.0f} ms at {a / 1000:.2f}-{b / 1000:.2f} s")
-
     sizes = []
-    for a, b in all_holes.get("rgb", []):
-        sizes.append(b - a)
+    # Typical interval per stream, for the "≈N samples lost" estimate.
+    steps = {n: statistics.median(y - x for x, y in zip(ts, ts[1:]))
+             for n, ts in st.items() if len(ts) > 1}
+    for name, a, b in sorted(((n, a, b) for n, hs in all_holes.items() for a, b in hs),
+                             key=lambda h: h[1]):
+        if name == "rgb":
+            sizes.append(b - a)
         pos = a / rgb[-1] if rgb[-1] else 0
         where = "start" if pos < 0.1 else "end" if pos > 0.9 else "middle"
-        mark = " (flagged by daemon)" if b - a > DAEMON_THRESHOLD_MS else ""
-        print(f"  ▶ rgb hole {b - a:.0f} ms at {a / 1000:.2f}-{b / 1000:.2f} s ({where}), "
-              f"≈{round((b - a) / step) - 1} frames lost{mark}")
-        for other in ("depth", "angle"):
+        mark = " (flagged by daemon)" if name != "angle" and b - a > DAEMON_THRESHOLD_MS else ""
+        print(f"  ▶ {name} hole {b - a:.0f} ms at {a / 1000:.2f}-{b / 1000:.2f} s ({where}), "
+              f"≈{round((b - a) / steps[name]) - 1} samples lost{mark}")
+        for other in ("rgb", "depth", "angle"):
             ts = st.get(other)
-            if not ts:
+            if other == name or not ts:
                 continue
             g = worst_gap(ts, a, b)
             inside = sum(a < t < b for t in ts)
             verdict = "kept going" if g is not None and g < (b - a) / 2 else "STOPPED TOO"
             print(f"      {other:5s}: {verdict:11s} (largest interval {g:.0f} ms, {inside} samples in the hole)")
-        if align is not None:
+        if name == "depth":
+            dcam = meta.get("dcam") or {}
+            if "dropped_frames" in dcam:
+                print(f"      depth queue: dropped_frames={dcam['dropped_frames']} "
+                      "(> 0: the 3 s encoder queue overflowed; 0: frames never arrived from the camera)")
+        if name == "rgb" and align is not None:
             d = load_json(ep / "raw_video.frames.json") or {}
             frames = d.get("frames") or []
             k = next((i for i, f in enumerate(frames) if f.get("timestamp_ms", 0) > a), None)
