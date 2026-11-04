@@ -2,6 +2,8 @@
 import gc
 import json
 import sys
+import threading
+import time
 import types
 
 import pytest
@@ -29,10 +31,14 @@ class FakeFileOutput:
         self.have_keyframe = False
         self.written = []
         self.closed = False
+        self.recording = True
+        self.gate = None  # threading.Event: writes wait on it, like a stalled SD card
 
     def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
-        if audio or (not self.have_keyframe and not keyframe):
+        if not self.recording or audio or (not self.have_keyframe and not keyframe):
             return
+        if self.gate is not None:
+            self.gate.wait()
         self.have_keyframe = True
         if self.fail_next:
             self.fail_next = False
@@ -43,6 +49,11 @@ class FakeFileOutput:
             return
         self.written.append(frame)
         self.outputtimestamp(timestamp)
+
+    def stop(self):
+        # As picamera2's Output.stop: stop recording, then close.
+        self.recording = False
+        self.close()
 
     def close(self):
         self.closed = True
@@ -72,7 +83,7 @@ class FakeCamera:
     def stop_encoder(self):
         if hasattr(self, "drain"):
             self.drain()
-        self.output.close()
+        self.output.stop()
 
     def stop(self):
         pass
@@ -115,6 +126,9 @@ def frame(camera, hardware, pts, sensor_ns, *, keyframe=True):
     # Exercise the actual encoder override installed by init_camera().
     assert camera._encoder._timestamp(request) == pts
     hardware.output.outputframe(b"picture", keyframe=keyframe, timestamp=pts)
+    # Writes run on the output's own thread: wait for this one, so a test can
+    # inject a failure into the NEXT write.
+    hardware.output._queue.join()
 
 
 def test_written_frames_retain_sensor_times_and_existing_fps_default(capture):
@@ -151,6 +165,26 @@ def test_encoder_drain_records_a_frame_after_recording_flag_is_cleared(capture):
 
     hardware.drain = drain
     assert camera.stop() == [10.000123, 35.000456]
+
+
+def test_a_stalled_write_neither_blocks_the_encoder_nor_loses_pictures(capture):
+    camera, hardware, _ = capture
+    hardware.output.gate = threading.Event()
+    start = time.monotonic()
+    for i in range(20):
+        request = types.SimpleNamespace(
+            pts_us=i * 20_000, get_metadata=lambda i=i: {"SensorTimestamp": 1_000_000_000 + i * 20_000_000})
+        camera._encoder._timestamp(request)
+        hardware.output.outputframe(b"picture", keyframe=i == 0, timestamp=i * 20_000)
+    # The encoder thread handed every picture over without waiting for the disk.
+    assert time.monotonic() - start < 0.5
+    assert hardware.output.written == []
+    # The disk recovers only once stop() is under way: what was queued must
+    # still be written, although stopping clears the output's `recording`.
+    threading.Timer(0.2, hardware.output.gate.set).start()
+    assert camera.stop() == [i * 20.0 for i in range(20)]
+    assert camera.timestamp_alignment["valid"]
+    assert camera.timestamp_alignment["writer_queue_peak"] >= 19
 
 
 @pytest.mark.parametrize("failure", ["exception", "dead"])

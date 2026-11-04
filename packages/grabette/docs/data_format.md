@@ -100,6 +100,10 @@ summary also available as `metadata.json.video_timestamp_alignment`.
 The summary compares the video picture count, written-output count, and mapped
 timestamp count, and records inputs for which the encoder emitted no picture
 as `unwritten_input_count`. Such inputs do not add timestamps to the saved list.
+`writer_queue_peak` is the most encoded pictures that waited at once to be
+written to disk. Writes go through a queue of 150 pictures (~3 s) so that an
+SD-card stall doesn't hold up the camera; a peak at 150 means the queue filled
+and the camera may have dropped frames again.
 
 An unknown output PTS, non-increasing mapped times, failed output writes, or a
 count/order mismatch makes alignment invalid. The raw `.h264` is retained for

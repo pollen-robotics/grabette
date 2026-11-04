@@ -6,7 +6,9 @@ Ported from grabette-capture/grabette_capture/video.py.
 import gc
 import json
 import logging
+import queue
 import subprocess
+import threading
 from pathlib import Path
 
 from grabette.output import write_json_atomic
@@ -15,6 +17,12 @@ from .frame_timing import FrameTiming
 from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
+
+# Encoded pictures waiting to be written: ~3 s at 50 fps, ~2 MB of H.264.
+# picamera2's encoder thread both writes the output and releases the camera
+# buffers, so an SD-card write stall used to starve libcamera (6 buffers,
+# ~120 ms) and drop frames; the writes now happen on a thread of their own.
+OUTPUT_QUEUE_FRAMES = 150
 
 
 class FrameAlignmentError(RuntimeError):
@@ -64,6 +72,7 @@ class VideoCapture:
         self._timing = FrameTiming(self.sync)
         self.timestamp_alignment: dict = {}
         self._has_b_frames = None
+        self._output = None
 
     def init_camera(self) -> None:
         """Initialize picamera2 with CFR configuration."""
@@ -143,15 +152,47 @@ class VideoCapture:
         timing = self._timing
 
         class TimestampedFileOutput(FileOutput):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.queue_peak = 0
+                self._queue = queue.Queue(maxsize=OUTPUT_QUEUE_FRAMES)
+                self._writer = threading.Thread(
+                    target=self._write_queued, name="h264-writer", daemon=True)
+                self._writer.start()
+
             def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
-                try:
-                    super().outputframe(frame, keyframe, timestamp, packet, audio)
-                except Exception as exc:
-                    # Surface worker-thread I/O failures in stop(), after the
-                    # encoder has released its buffers and other streams stop.
-                    timing.record_error(f"Video output write failed: {exc}")
-                if self.dead:
-                    timing.record_error("Video output reported a failed write")
+                # Encoder thread: hand over and return at once. A full queue
+                # blocks, which drops at the camera as before rather than
+                # losing an encoded picture mid-stream.
+                self._queue.put((frame, keyframe, timestamp, packet, audio))
+                self.queue_peak = max(self.queue_peak, self._queue.qsize())
+
+            def _write_queued(self):
+                while (item := self._queue.get()) is not None:
+                    try:
+                        super().outputframe(*item)
+                    except Exception as exc:
+                        # Surface writer-thread I/O failures in stop(), after the
+                        # encoder has released its buffers and other streams stop.
+                        timing.record_error(f"Video output write failed: {exc}")
+                    if self.dead:
+                        timing.record_error("Video output reported a failed write")
+                    self._queue.task_done()
+
+            def _finish_writes(self):
+                if self._writer.is_alive():
+                    self._queue.put(None)
+                    self._writer.join()
+
+            def stop(self):
+                # Before FileOutput.stop clears `recording`, which would make
+                # it discard the pictures still queued.
+                self._finish_writes()
+                super().stop()
+
+            def close(self):
+                self._finish_writes()
+                super().close()
 
             def outputtimestamp(self, timestamp):
                 # FileOutput calls this after writing/flushing a video picture,
@@ -159,6 +200,7 @@ class VideoCapture:
                 timing.written(timestamp)
 
         output = TimestampedFileOutput(str(self._h264_path))
+        self._output = output
 
         self._recording = True
         gc.disable()  # Prevent GC pauses from dropping frames during recording
@@ -191,6 +233,8 @@ class VideoCapture:
 
         self._mux_to_mp4()
         self.timestamp_alignment = self._timing.result(self._frame_count)
+        # How close the SD card came to stalling the camera (OUTPUT_QUEUE_FRAMES = full).
+        self.timestamp_alignment["writer_queue_peak"] = getattr(self._output, "queue_peak", None)
         if self._has_b_frames != 0:
             self.timestamp_alignment["valid"] = False
             self.timestamp_alignment["errors"].append(
