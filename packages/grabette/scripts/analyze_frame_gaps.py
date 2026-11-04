@@ -213,7 +213,32 @@ def print_monitor(mon: Monitor, b_start: float, b_end: float, a: float, b: float
 
 # ── report ──────────────────────────────────────────────────────────────
 
-def analyze(ep: Path, args, mon: Monitor | None) -> list[float]:
+def episode_time(ep: Path) -> datetime | None:
+    """Creation time from the episode id (YYYYMMDD_HHMMSS, device local time).
+    The parent folder holds it for a left/right download layout."""
+    for name in (ep.name, ep.parent.name):
+        try:
+            return datetime.strptime(name, "%Y%m%d_%H%M%S").astimezone()
+        except ValueError:
+            continue
+    return None
+
+
+def outside_monitor(ep: Path, mon: Monitor) -> bool:
+    """True when the episode was recorded while the monitor wasn't running.
+    By wall clock: CLOCK_BOOTTIME restarts at every reboot, so an older
+    episode's sensor times could fall in the monitor's range by coincidence."""
+    t = episode_time(ep)
+    if t is None or not mon.rows:
+        return False
+    margin = timedelta(minutes=2)
+    return not (mon.rows[0]["utc"] - margin <= t <= mon.rows[-1]["utc"] + margin)
+
+
+def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
+    """RGB hole sizes; None when skipped (outside the monitor's session)."""
+    if mon is not None and outside_monitor(ep, mon):
+        return None
     meta = load_json(ep / "metadata.json") or {}
     st = streams_of(ep)
     rgb = st.get("rgb") or []
@@ -224,12 +249,15 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float]:
     flagged = meta.get("frame_drops")
     align = meta.get("video_timestamp_alignment")
     found = any(all_holes.values())
-    if not found and not args.all:
+    # With a monitor, every episode of its session is listed, hole or not.
+    if not found and not args.all and mon is None:
         return []
 
+    peak = (align or {}).get("writer_queue_peak")
     print(f"\n{ep}  ({meta.get('duration_seconds', '?')} s, rgb every {step:.1f} ms"
           f"{', frame_drops=' + str(flagged) if flagged else ''}"
-          f"{', alignment valid=' + str(align.get('valid')) if align else ''})")
+          f"{', alignment valid=' + str(align.get('valid')) if align else ''}"
+          f"{', writer_queue_peak=' + str(peak) if peak is not None else ''})")
     if not found:
         print("    no hole")
         return []
@@ -329,12 +357,17 @@ def main() -> int:
 
     mon = Monitor(args.monitor) if args.monitor else None
     eps = find_episodes(args.paths)
-    sizes, with_hole = [], 0
+    sizes, with_hole, skipped = [], 0, 0
     for ep in eps:
         s = analyze(ep, args, mon)
+        if s is None:
+            skipped += 1
+            continue
         sizes += s
         with_hole += bool(s)
-    print(f"\n{len(eps)} episode streams, {with_hole} with an rgb hole > {args.threshold:.0f} ms, "
+    if skipped:
+        print(f"\n{skipped} episode streams skipped: recorded while the monitor wasn't running")
+    print(f"\n{len(eps) - skipped} episode streams, {with_hole} with an rgb hole > {args.threshold:.0f} ms, "
           f"{sum(x > DAEMON_THRESHOLD_MS for x in sizes)} holes > {DAEMON_THRESHOLD_MS:.0f} ms"
           + (f" (sizes: {', '.join(f'{x:.0f}' for x in sorted(sizes))} ms)" if sizes else ""))
     return 0
