@@ -38,6 +38,7 @@ from typing import Protocol, runtime_checkable
 DISPLAY_NAMES = {
     "oakd": "OAK-D",
     "gemini305": "Gemini 305",
+    "stereo_uvc": "UVC stereo",
 }
 
 # Shown when the backend cannot say which camera it has (the mock backend, or a

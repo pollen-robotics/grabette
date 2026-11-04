@@ -34,6 +34,28 @@ _URDF_ROOT = _PACKAGE_ROOT / "urdf"
 
 FPS = 46
 
+# Above harmless startup losses (~80 ms), below a real desync hole (563 ms seen).
+MAX_FRAME_GAP_MS = 250.0
+
+
+def _dropped_streams(streams) -> list[str]:
+    """Streams with a low average rate or one long hole between frames."""
+    dropped = []
+    for name, n_frames, span_ms, max_gap_ms, expected_fps in streams:
+        recorded_fps = ((n_frames - 1) / (span_ms / 1000.0)
+                        if n_frames >= 2 and span_ms > 0 else 0.0)
+        if recorded_fps < 0.8 * expected_fps:
+            logger.warning("%s camera recorded at %.1f fps (expected %d): "
+                           "frames dropped, episode likely out of sync",
+                           name, recorded_fps, expected_fps)
+            dropped.append(name)
+        elif max_gap_ms > MAX_FRAME_GAP_MS:
+            logger.warning("%s camera has a %.0f ms hole between two frames: "
+                           "frames dropped, episode likely out of sync",
+                           name, max_gap_ms)
+            dropped.append(name)
+    return dropped
+
 # How long start_capture waits for the OAK-D to produce valid (post-warmup)
 # frames before starting the recording clock. Safety fallback only — the OAK-D
 # normally becomes ready well within this.
@@ -99,6 +121,8 @@ class RpiBackend(Backend):
         oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
         orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
         orbbec_rotate_180: bool = False,
+        stereo_profile: str = "skl2mp220", stereo_mode: str = "3040x1080",
+        stereo_exposure: int = 300, stereo_gamma: int = 0,
     ) -> None:
         super().__init__()
         self._running = False
@@ -131,6 +155,10 @@ class RpiBackend(Backend):
         self._orbbec_ir_exposure_us = orbbec_ir_exposure_us
         self._orbbec_ir_gain = orbbec_ir_gain
         self._orbbec_rotate_180 = orbbec_rotate_180
+        self._stereo_profile = stereo_profile
+        self._stereo_mode = stereo_mode
+        self._stereo_exposure = stereo_exposure
+        self._stereo_gamma = stereo_gamma
 
         self._sync = None
         self._camera = None
@@ -262,6 +290,15 @@ class RpiBackend(Backend):
                     ir_exposure_us=self._orbbec_ir_exposure_us,
                     ir_gain=self._orbbec_ir_gain,
                     rotate_180=self._orbbec_rotate_180,
+                )
+            elif self._depth_camera == "stereo_uvc":
+                from grabette.hardware.stereo_uvc import StereoUvcCapture
+                self._oakd = StereoUvcCapture(
+                    self._sync,
+                    profile=self._stereo_profile,
+                    mode=self._stereo_mode,
+                    exposure=self._stereo_exposure,
+                    gamma=self._stereo_gamma,
                 )
             else:
                 self._oakd = OakdCapture(self._sync)
@@ -984,6 +1021,19 @@ class RpiBackend(Backend):
             # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
             meta["dcam"] = oakd_stats
 
+        # A stalled writer loop drops frames and has come with a >1 s
+        # Arducam/depth desync — flag it so the take gets redone.
+        rgb_max_gap_ms = max((b - a for a, b in zip(frame_timestamps, frame_timestamps[1:])),
+                             default=0.0)
+        streams = [("rgb", len(frame_timestamps), video_span_ms, rgb_max_gap_ms, FPS)]
+        if oakd_stats and oakd_stats.get("left_span_ms") is not None:
+            streams.append(("depth", oakd_stats.get("left_frames", 0),
+                            oakd_stats["left_span_ms"],
+                            oakd_stats.get("left_max_gap_ms", 0.0), self._oakd.fps))
+        frame_drops = _dropped_streams(streams)
+        if frame_drops:
+            meta["frame_drops"] = frame_drops
+
         meta["depth_camera"] = _camera_metadata(self._depth_camera, self._oakd)
 
         # Drain the sync metadata while state is still live — _take_sync_metadata
@@ -1084,7 +1134,7 @@ class RpiBackend(Backend):
         # instead — an episode that didn't persist is exactly what an operator
         # must not learn about later from the journal.
         if self._speaker is not None:
-            if writes_ok:
+            if writes_ok and not meta.get("frame_drops"):
                 self._speaker.play_saved()
             else:
                 self._speaker.play_error()

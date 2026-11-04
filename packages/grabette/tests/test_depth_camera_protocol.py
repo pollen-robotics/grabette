@@ -22,10 +22,12 @@ oakd = pytest.importorskip("grabette.hardware.oakd")
 OakdCapture = oakd.OakdCapture
 orbbec = pytest.importorskip("grabette.hardware.orbbec")
 OrbbecCapture = orbbec.OrbbecCapture
+stereo_uvc = pytest.importorskip("grabette.hardware.stereo_uvc")
+StereoUvcCapture = stereo_uvc.StereoUvcCapture
 
-# Both implementations must satisfy the same contract; RpiBackend picks between
+# All implementations must satisfy the same contract; RpiBackend picks between
 # them at runtime from the `depth_camera` setting and cannot tell them apart.
-IMPLS = [OakdCapture, OrbbecCapture]
+IMPLS = [OakdCapture, OrbbecCapture, StereoUvcCapture]
 
 
 # Members RpiBackend actually calls, with the arity it calls them at.
