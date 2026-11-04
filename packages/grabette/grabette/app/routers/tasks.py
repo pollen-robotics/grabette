@@ -287,6 +287,15 @@ def download_episodes(episode_ids: list[str] = Query(), tm: TaskManager = Depend
     return _archive_response(archive_path, filename)
 
 
+@router.get("/api/episodes/last")
+def get_last_episode(tm: TaskManager = Depends(get_task_manager),
+                     backend: Backend = Depends(get_backend)):
+    """Last recording, for the dashboard popup. Not `settled` while capturing or
+    finalizing: metadata.json may not be written yet."""
+    settled = not (backend.is_capturing or backend.is_finalizing)
+    return {"settled": settled, "episode": tm.last_episode() if settled else None}
+
+
 @router.get("/api/episodes/{episode_id}")
 def get_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
     try:
