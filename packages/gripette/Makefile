@@ -13,9 +13,9 @@ help:
 	@echo "  install-rpi HAND=L|R   One-shot bring-up. HAND={left,right} REQUIRED — see notes."
 	@echo "  enable-uart            Disable serial console + enable hardware UART (/dev/serial0)"
 	@echo "  harden-rpi             Persistent journal + fsck.mode=force (hard-shutdown safety)"
-	@echo "  install-systemd        Install + enable gripette.service and gripette-bluetooth.service"
-	@echo "  install-web            Install + enable the status web UI (gripette-web.service, port 8080)"
-	@echo "  ensure-ble-only        Force BlueZ into BLE-only mode (ControllerMode = le)"
+	@echo "  install-systemd        Install + enable gripette, gripette-bluetooth and the dashboard (install-web)"
+	@echo "  install-web            Install + enable the dashboard only (gripette-web.service, port 8000, as on the grabette)"
+	@echo "  ensure-ble-only        Force BlueZ into BLE-only mode (ControllerMode = le), BLE MIDI off"
 	@echo "  check                  Run scripts/check_hardware.py against current install"
 	@echo ""
 	@echo "Prereqs before 'install-rpi':"
@@ -243,7 +243,19 @@ harden-rpi:
 		echo "  reboot required for fsck-on-boot to take effect."; \
 	fi
 
-# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly
+# Force BlueZ into BLE-only mode so the bluetooth WiFi service advertises cleanly,
+# and keep BLE MIDI off the link.
+#
+# On a Raspberry Pi OS image with a desktop, the auto-login session runs
+# PipeWire/WirePlumber, which publish a BLE MIDI service and read the MIDI
+# service of whatever connects (a PC runs the same stack); bluetoothd's own
+# midi plugin does the latter too. That characteristic needs encryption, so the
+# gripette asks the browser to pair, Chrome refuses, and the kernel drops the
+# link ("Authentication Failure") before the setup page can do anything — it
+# shows "Link unstable" then "GATT Server is disconnected". The image
+# (Lite) has none of this; both fixes are harmless where it is absent.
+BLUETOOTHD := $(firstword $(wildcard /usr/libexec/bluetooth/bluetoothd /usr/lib/bluetooth/bluetoothd))
+
 ensure-ble-only:
 	@CONF=/etc/bluetooth/main.conf; \
 	sudo grep -q '^\[General\]' "$$CONF" || echo '[General]' | sudo tee -a "$$CONF" >/dev/null; \
@@ -252,12 +264,33 @@ ensure-ble-only:
 	else \
 	  sudo sed -i '/^\[General\]/a ControllerMode = le' "$$CONF"; \
 	fi
+	@# bluetoothd without its midi plugin (drop-in: the first ExecStart= clears the unit's).
+	@if [ -z "$(BLUETOOTHD)" ]; then echo "bluetoothd not found — skipping the no-MIDI drop-in"; else \
+	  sudo mkdir -p /etc/systemd/system/bluetooth.service.d; \
+	  printf '%s\n' \
+	    '# Installed by gripette make ensure-ble-only: no BLE MIDI client (see Makefile).' \
+	    '[Service]' 'ExecStart=' 'ExecStart=$(BLUETOOTHD) --noplugin=midi' \
+	    | sudo tee /etc/systemd/system/bluetooth.service.d/no-midi.conf >/dev/null; \
+	  sudo systemctl daemon-reload; \
+	  echo "[bluetoothd] midi plugin disabled"; \
+	fi
+	@# WirePlumber without Bluetooth, for every user (the gripette needs neither BT audio nor MIDI).
+	@sudo mkdir -p /etc/wireplumber/wireplumber.conf.d
+	@printf '%s\n' \
+	  '# Installed by gripette make ensure-ble-only: no Bluetooth audio/MIDI (see Makefile).' \
+	  'wireplumber.profiles = {' '  main = {' '    monitor.bluez = disabled' '    monitor.bluez-midi = disabled' '  }' '}' \
+	  | sudo tee /etc/wireplumber/wireplumber.conf.d/80-no-bluetooth.conf >/dev/null
+	@echo "[wireplumber] Bluetooth monitors disabled"
 	sudo systemctl restart bluetooth
-	@echo "BlueZ set to BLE-only (ControllerMode = le)"
+	@# A running session keeps its old WirePlumber config until restarted.
+	@sudo -u $(SERVICE_USER) XDG_RUNTIME_DIR=/run/user/$$(id -u $(SERVICE_USER)) \
+	  systemctl --user try-restart pipewire pipewire-pulse wireplumber 2>/dev/null || true
+	@echo "BlueZ set to BLE-only (ControllerMode = le), BLE MIDI off"
 
-# Install both gripette services. Run after install-rpi has verified the
+# Install the gripette services. Run after install-rpi has verified the
 # venv builds. The bluetooth service needs root (BlueZ DBus access); the
-# main service runs as $(SERVICE_USER).
+# main service runs as $(SERVICE_USER). The dashboard comes with them, as on
+# the grabette: it costs nothing while no browser has it open.
 install-systemd: ensure-ble-only
 	@# Patch the units' hardcoded path and User= to this device's workspace root
 	@# (where the venv lives) so boot-time start uses the right interpreter.
@@ -268,11 +301,13 @@ install-systemd: ensure-ble-only
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now gripette
 	sudo systemctl enable --now gripette-bluetooth
+	@$(MAKE) --no-print-directory install-web
 	@echo "Logs:"
 	@echo "  journalctl -u gripette -f"
 	@echo "  journalctl -u gripette-bluetooth -f"
+	@echo "  journalctl -u gripette-web -f"
 
-# Install the status web UI: sudoers drop-in (restart/poweroff only — the
+# Install the dashboard: sudoers drop-in (restart/poweroff only — the
 # exact command strings webui.py pre-checks and dispatches) + systemd unit.
 # The drop-in is validated with visudo before install: a bad sudoers file
 # can lock sudo out entirely.
@@ -291,7 +326,7 @@ install-web:
 	  | sudo tee /etc/systemd/system/gripette-web.service >/dev/null
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now gripette-web
-	@echo "Status page: http://$$(hostname).local:8080  (logs: journalctl -u gripette-web -f)"
+	@echo "Status page: http://$$(hostname).local:8000  (logs: journalctl -u gripette-web -f)"
 
 check:
 	@if [ ! -x $(WORKSPACE_ROOT)/.venv/bin/python ]; then \
