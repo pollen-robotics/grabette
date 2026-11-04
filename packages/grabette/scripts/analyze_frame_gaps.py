@@ -214,11 +214,12 @@ def print_monitor(mon: Monitor, b_start: float, b_end: float, a: float, b: float
 # ── report ──────────────────────────────────────────────────────────────
 
 def episode_time(ep: Path) -> datetime | None:
-    """Creation time from the episode id (YYYYMMDD_HHMMSS, device local time).
-    The parent folder holds it for a left/right download layout."""
+    """Creation time from the episode id (YYYYMMDD_HHMMSS in UTC, see
+    grabette.task.episode_id_for). The parent folder holds it for a
+    left/right download layout."""
     for name in (ep.name, ep.parent.name):
         try:
-            return datetime.strptime(name, "%Y%m%d_%H%M%S").astimezone()
+            return datetime.strptime(name, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
         except ValueError:
             continue
     return None
