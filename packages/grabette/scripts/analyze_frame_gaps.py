@@ -298,6 +298,8 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
             if other == name or not ts:
                 continue
             g = worst_gap(ts, a, b)
+                print(f"      {other:5s}: no samples around the hole (not started yet / already stopped)")
+                continue
             inside = sum(a < t < b for t in ts)
             verdict = "kept going" if g is not None and g < (b - a) / 2 else "STOPPED TOO"
             print(f"      {other:5s}: {verdict:11s} (largest interval {g:.0f} ms, {inside} samples in the hole)")
