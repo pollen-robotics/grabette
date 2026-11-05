@@ -246,7 +246,13 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
     if len(rgb) < 2:
         return []
     step = statistics.median(b - a for a, b in zip(rgb, rgb[1:]))
-    all_holes = {name: holes(ts, args.threshold) for name, ts in st.items()}
+    # One threshold for every stream would flag each normal interval of a slow
+    # one (the depth camera's 33 ms at 30 fps is above a 30 ms rgb threshold):
+    # a stream's hole must also exceed 1.5x its own median interval.
+    steps = {n: statistics.median(y - x for x, y in zip(ts, ts[1:]))
+             for n, ts in st.items() if len(ts) > 1}
+    all_holes = {name: holes(ts, max(args.threshold, 1.5 * steps.get(name, 0)))
+                 for name, ts in st.items()}
     flagged = meta.get("frame_drops")
     align = meta.get("video_timestamp_alignment")
     found = any(all_holes.values())
@@ -282,8 +288,6 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
 
     sizes = []
     # Typical interval per stream, for the "≈N samples lost" estimate.
-    steps = {n: statistics.median(y - x for x, y in zip(ts, ts[1:]))
-             for n, ts in st.items() if len(ts) > 1}
     for name, a, b in sorted(((n, a, b) for n, hs in all_holes.items() for a, b in hs),
                              key=lambda h: h[1]):
         if name == "rgb":
@@ -302,7 +306,10 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
                 print(f"      {other:5s}: no samples around the hole (not started yet / already stopped)")
                 continue
             inside = sum(a < t < b for t in ts)
-            verdict = "kept going" if g is not None and g < (b - a) / 2 else "STOPPED TOO"
+            # A short hole can be shorter than another stream's own interval:
+            # that stream kept going unless it too skipped at least one sample.
+            kept = g < max((b - a) / 2, 1.5 * steps.get(other, 0))
+            verdict = "kept going" if kept else "STOPPED TOO"
             print(f"      {other:5s}: {verdict:11s} (largest interval {g:.0f} ms, {inside} samples in the hole)")
         if name == "depth":
             dcam = meta.get("dcam") or {}
