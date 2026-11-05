@@ -123,6 +123,9 @@ class VideoCapture:
     DEFAULT_RESOLUTION = (1296, 972)
     DEFAULT_FPS = 46
     DEFAULT_BITRATE = 5_000_000
+    # picamera2's default is 6, with one more held back for capture_* (queue=True).
+    # A short stall of the thread that returns them then drops frames at libcamera.
+    DEFAULT_BUFFER_COUNT = 10
 
     def __init__(
         self,
@@ -131,12 +134,14 @@ class VideoCapture:
         fps: int = DEFAULT_FPS,
         bitrate: int = DEFAULT_BITRATE,
         preview: bool = False,
+        buffer_count: int = DEFAULT_BUFFER_COUNT,
     ):
         self.sync = sync_manager
         self.resolution = resolution
         self.fps = fps
         self.bitrate = bitrate
         self.preview = preview
+        self.buffer_count = buffer_count
 
         self._picam2 = None
         self._encoder = None
@@ -163,13 +168,18 @@ class VideoCapture:
                 lores={"size": (640, 480), "format": "YUV420"},
                 display="lores",
                 controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+                buffer_count=self.buffer_count,
+                queue=False,
             )
         else:
             video_config = self._picam2.create_video_configuration(
                 main={"size": self.resolution, "format": "YUV420"},
                 controls={"FrameDurationLimits": (frame_duration_us, frame_duration_us)},
+                buffer_count=self.buffer_count,
+                queue=False,
             )
         self._picam2.configure(video_config)
+        logger.info("Camera configured with %d buffers", self.buffer_count)
         owner = self
 
         class SensorTimestampEncoder(H264Encoder):
@@ -258,6 +268,7 @@ class VideoCapture:
         self.timestamp_alignment = self._timing.result(self._frame_count)
         # How close the SD card came to stalling the camera (OUTPUT_QUEUE_FRAMES = full).
         self.timestamp_alignment["writer_queue_peak"] = getattr(self._output, "queue_peak", None)
+        self.timestamp_alignment["camera_buffer_count"] = self.buffer_count
         try:
             write_json_atomic(self._output_path.with_suffix(".frames.json"), {
                 "alignment": self.timestamp_alignment, "frames": self._timing.frames,

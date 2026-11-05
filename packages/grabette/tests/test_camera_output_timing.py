@@ -155,6 +155,15 @@ def test_written_frames_retain_sensor_times_and_existing_fps_default(capture):
         1_010_000_123, 1_035_000_456]
 
 
+def test_camera_keeps_every_buffer_for_the_pipeline(capture):
+    camera, hardware, _ = capture
+    assert hardware.configuration["buffer_count"] == VideoCapture.DEFAULT_BUFFER_COUNT
+    assert hardware.configuration["queue"] is False
+    frame(camera, hardware, 0, 1_010_000_123)
+    camera.stop()
+    assert camera.timestamp_alignment["camera_buffer_count"] == VideoCapture.DEFAULT_BUFFER_COUNT
+
+
 def test_initial_nonkeyframe_does_not_shift_the_next_timestamp(capture):
     camera, hardware, _ = capture
     frame(camera, hardware, 0, 1_010_000_123, keyframe=False)
