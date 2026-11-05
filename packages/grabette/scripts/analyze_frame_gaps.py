@@ -298,6 +298,7 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
             if other == name or not ts:
                 continue
             g = worst_gap(ts, a, b)
+            if g is None:
                 print(f"      {other:5s}: no samples around the hole (not started yet / already stopped)")
                 continue
             inside = sum(a < t < b for t in ts)
