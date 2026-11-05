@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 CALIBRATION_FILE = Path.home() / ".grabette" / "angle_calibration.json"
 # Reads averaged per sensor when calibrating, for a stable zero.
 CALIBRATION_SAMPLES = 20
+# A capture iteration longer than this is logged with its timing breakdown:
+# well above the ~10 ms period, well below the 593 ms hole seen on 2026-11-04.
+SLOW_ITERATION_S = 0.1
 
 
 def load_calibration() -> dict | None:
@@ -199,14 +202,34 @@ class AngleCapture:
         read_count = 0
         sample_interval = 1.0 / self.sample_rate_hz
 
+        prev_start = None
+        t_read1 = t_read2 = None
         while self._running:
             loop_start = time.monotonic()
             read_count += 1
+            # An iteration takes ~10 ms; a long one is a hole in angle_data.
+            # Say where the time went: the two I2C reads, or the rest of the
+            # previous iteration (its sleep, or the GIL).
+            if prev_start is not None and loop_start - prev_start > SLOW_ITERATION_S:
+                logger.warning(
+                    "Angle loop stalled %.0f ms (distal read %s, proximal read %s, "
+                    "%d errors so far)",
+                    (loop_start - prev_start) * 1000,
+                    "-" if t_read1 is None else f"{t_read1 * 1000:.0f} ms",
+                    "-" if t_read2 is None else f"{t_read2 * 1000:.0f} ms",
+                    error_count,
+                )
+            prev_start = loop_start
+            t_read1 = t_read2 = None
 
             try:
                 ts = self.sync.get_timestamp_ms()
+                t = time.monotonic()
                 raw1 = self._read_angle_raw(self._i2c_1)
+                t_read1 = time.monotonic() - t
+                t = time.monotonic()
                 raw2 = self._read_angle_raw(self._i2c_2)
+                t_read2 = time.monotonic() - t
                 # i2c_bus_1 is the DISTAL sensor, _2 is PROXIMAL — see init.
                 cal1 = self._normalize_angle(raw1 - self._offset_1_deg) * settings.distal_sign
                 cal2 = self._normalize_angle(raw2 - self._offset_2_deg) * settings.proximal_sign

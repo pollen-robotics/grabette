@@ -18,11 +18,12 @@ from .sync import SyncManager
 
 logger = logging.getLogger(__name__)
 
-# Encoded pictures waiting to be written: ~3 s at 50 fps, ~2 MB of H.264.
+# Encoded pictures waiting to be written: ~6 s at 50 fps, ~4 MB of H.264
+# (a 2 s SD stall, 102 pictures, was seen on 2026-11-04).
 # picamera2's encoder thread both writes the output and releases the camera
 # buffers, so an SD-card write stall used to starve libcamera (6 buffers,
 # ~120 ms) and drop frames; the writes now happen on a thread of their own.
-OUTPUT_QUEUE_FRAMES = 150
+OUTPUT_QUEUE_FRAMES = 300
 
 
 class FrameAlignmentError(RuntimeError):

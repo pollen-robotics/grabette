@@ -306,6 +306,20 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
             if "dropped_frames" in dcam:
                 print(f"      depth queue: dropped_frames={dcam['dropped_frames']} "
                       "(> 0: the 3 s encoder queue overflowed; 0: frames never arrived from the camera)")
+            # The camera numbers its frames: a jump in seq means it kept
+            # producing frames that the host never received.
+            for fname in ("dcam_left_timestamps.json", "oakd_left_timestamps.json"):
+                samples = (load_json(ep / fname) or {}).get("samples") or []
+                pair = next(((s0, s1) for s0, s1 in zip(samples, samples[1:])
+                             if s0.get("host_ms") == a and s1.get("host_ms") == b), None)
+                if pair and "seq" in pair[0] and "device_us" in pair[0]:
+                    s0, s1 = pair
+                    print(f"      camera: seq {s0['seq']}->{s1['seq']} "
+                          f"({s1['seq'] - s0['seq'] - 1} frames numbered in between), device clock "
+                          f"{(s1['device_us'] - s0['device_us']) / 1000:.0f} ms apart → "
+                          + ("the camera produced them, the host didn't get them"
+                             if s1["seq"] - s0["seq"] > 1 else "the camera itself paused"))
+                    break
         if name == "rgb" and align is not None:
             d = load_json(ep / "raw_video.frames.json") or {}
             frames = d.get("frames") or []
