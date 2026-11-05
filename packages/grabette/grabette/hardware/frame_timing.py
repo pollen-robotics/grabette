@@ -38,7 +38,7 @@ class FrameTiming:
             self._pending[pts_us] = sensor_ns
 
     def written(self, pts_us):
-        # FileOutput invokes this only after a picture has been written/flushed.
+        # The H.264 output invokes this only after a picture has been written/flushed.
         # It also runs while stop_encoder drains its outstanding output.
         with self._lock:
             index = self.written_count

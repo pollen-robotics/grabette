@@ -22,41 +22,51 @@ class FakeSync:
         raise AssertionError("Do not replace missing capture times with delivery time")
 
 
-class FakeFileOutput:
-    """Model FileOutput's keyframe gate and write-before-outputtimestamp order."""
-    def __init__(self, path):
-        self.dead = False
-        self.fail_next = False
-        self.dead_next = False
-        self.have_keyframe = False
-        self.written = []
-        self.closed = False
-        self.recording = True
-        self.gate = None  # threading.Event: writes wait on it, like a stalled SD card
+class FakeOutput:
+    """picamera2's public Output base: the only part of picamera2 it relies on."""
+    def __init__(self, pts=None):
+        self.recording = False
 
-    def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
-        if not self.recording or audio or (not self.have_keyframe and not keyframe):
-            return
-        if self.gate is not None:
-            self.gate.wait()
-        self.have_keyframe = True
-        if self.fail_next:
-            self.fail_next = False
-            raise OSError("injected write/flush failure")
-        if self.dead_next:
-            self.dead_next = False
-            self.dead = True
-            return
-        self.written.append(frame)
-        self.outputtimestamp(timestamp)
+    def start(self):
+        self.recording = True
 
     def stop(self):
-        # As picamera2's Output.stop: stop recording, then close.
         self.recording = False
-        self.close()
+
+
+class FaultyFile:
+    """Wraps the real .h264 file to stall or fail writes, like an SD card."""
+    def __init__(self, file):
+        self._file = file
+        self.writes = 0
+        self.gate = None  # threading.Event: writes wait on it, like a stalled SD card
+        self.fail_write = False
+        self.fail_flush = False
+        self.fail_close = False
+
+    @property
+    def closed(self):
+        return self._file.closed
+
+    def write(self, frame):
+        if self.gate is not None:
+            self.gate.wait()
+        if self.fail_write:
+            self.fail_write = False
+            raise OSError("injected write failure")
+        self._file.write(frame)
+        self.writes += 1
+
+    def flush(self):
+        if self.fail_flush:
+            self.fail_flush = False
+            raise OSError("injected flush failure")
+        self._file.flush()
 
     def close(self):
-        self.closed = True
+        self._file.close()
+        if self.fail_close:
+            raise OSError("injected close failure")
 
 
 class FakeEncoder:
@@ -78,7 +88,9 @@ class FakeCamera:
         pass
 
     def start_encoder(self, encoder, output):
+        # As picamera2's Encoder.start: outputs are started before any frame.
         self.output = output
+        output.start()
 
     def stop_encoder(self):
         if hasattr(self, "drain"):
@@ -97,7 +109,7 @@ def capture(monkeypatch, tmp_path):
     modules = {
         "picamera2": types.SimpleNamespace(Picamera2=FakeCamera, Preview=object()),
         "picamera2.encoders": types.SimpleNamespace(H264Encoder=FakeEncoder),
-        "picamera2.outputs": types.SimpleNamespace(FileOutput=FakeFileOutput),
+        "picamera2.outputs": types.SimpleNamespace(Output=FakeOutput),
     }
     for name, module in modules.items():
         monkeypatch.setitem(sys.modules, name, module)
@@ -107,10 +119,10 @@ def capture(monkeypatch, tmp_path):
     hardware = camera._picam2
     path = tmp_path / "raw_video.mp4"
     camera.start_recording(path)
-    path.with_suffix(".h264").write_bytes(b"recoverable original bitstream")
+    hardware.output._file = FaultyFile(hardware.output._file)
 
     def mux():
-        camera._frame_count = len(hardware.output.written)
+        camera._frame_count = hardware.output._file.writes
 
     monkeypatch.setattr(camera, "_mux_to_mp4", mux)
     try:
@@ -168,7 +180,7 @@ def test_encoder_drain_records_a_frame_after_recording_flag_is_cleared(capture):
 
 def test_a_stalled_write_neither_blocks_the_encoder_nor_loses_pictures(capture):
     camera, hardware, _ = capture
-    hardware.output.gate = threading.Event()
+    hardware.output._file.gate = threading.Event()
     start = time.monotonic()
     for i in range(20):
         request = types.SimpleNamespace(
@@ -177,33 +189,67 @@ def test_a_stalled_write_neither_blocks_the_encoder_nor_loses_pictures(capture):
         hardware.output.outputframe(b"picture", keyframe=i == 0, timestamp=i * 20_000)
     # The encoder thread handed every picture over without waiting for the disk.
     assert time.monotonic() - start < 0.5
-    assert hardware.output.written == []
+    assert hardware.output._file.writes == 0
     # The disk recovers only once stop() is under way: what was queued must
     # still be written, although stopping clears the output's `recording`.
-    threading.Timer(0.2, hardware.output.gate.set).start()
+    threading.Timer(0.2, hardware.output._file.gate.set).start()
     assert camera.stop() == [i * 20.0 for i in range(20)]
     assert camera.timestamp_alignment["valid"]
     assert camera.timestamp_alignment["writer_queue_peak"] >= 19
 
 
-@pytest.mark.parametrize("failure", ["exception", "dead"])
+@pytest.mark.parametrize("failure", ["write", "flush"])
 def test_write_failure_is_reported_even_when_partial_prefix_counts_match(capture, failure):
     camera, hardware, path = capture
     frame(camera, hardware, 0, 1_010_000_123)
-    if failure == "exception":
-        hardware.output.fail_next = True
-    else:
-        hardware.output.dead_next = True
+    setattr(hardware.output._file, f"fail_{failure}", True)
     # Returning from the callback lets the encoder release its buffers.
     frame(camera, hardware, 25_000, 1_035_000_456, keyframe=False)
     with pytest.raises(FrameAlignmentError):
         camera.stop()
     assert not camera.is_open
     assert camera.frame_timestamps == [10.000123]
-    assert camera.timestamp_alignment["video_frame_count"] == 1
+    if failure == "write":
+        # Nothing reached the file: counts match, only the error can tell.
+        assert camera.timestamp_alignment["video_frame_count"] == 1
     assert camera.timestamp_alignment["timestamp_count"] == 1
+    assert any("write failed" in e for e in camera.timestamp_alignment["errors"])
     assert not camera.timestamp_alignment["valid"]
     assert path.with_suffix(".h264").exists()
+
+
+def test_close_failure_invalidates_the_recording(capture):
+    # A full SD card may only show up when the last buffered bytes are flushed.
+    camera, hardware, path = capture
+    frame(camera, hardware, 0, 1_010_000_123)
+    hardware.output._file.fail_close = True
+    with pytest.raises(FrameAlignmentError, match="close failed"):
+        camera.stop()
+    assert path.with_suffix(".h264").exists()
+
+
+def test_the_h264_file_holds_exactly_the_written_pictures(capture):
+    camera, hardware, path = capture
+    frame(camera, hardware, 0, 1_010_000_123, keyframe=False)  # dropped: no keyframe yet
+    frame(camera, hardware, 25_000, 1_035_000_456)
+    frame(camera, hardware, 50_000, 1_060_000_789, keyframe=False)
+    hardware.output.close()  # flush to disk before reading it back
+    assert path.with_suffix(".h264").read_bytes() == b"picture" * 2
+
+
+@pytest.mark.parametrize("call", ["old_three_args", "new_five_args"])
+def test_output_accepts_both_picamera2_outputframe_signatures(capture, call):
+    camera, hardware, _ = capture
+    request = types.SimpleNamespace(
+        pts_us=0, get_metadata=lambda: {"SensorTimestamp": 1_010_000_123})
+    camera._encoder._timestamp(request)
+    if call == "old_three_args":
+        hardware.output.outputframe(b"picture", True, 0)
+    else:
+        hardware.output.outputframe(b"picture", True, 0, None, False)
+    # An audio packet (never configured here) must not reach the H.264 file.
+    hardware.output.outputframe(None, True, 0, object(), True)
+    assert camera.stop() == [10.000123]
 
 
 def test_failed_provenance_write_preserves_source_and_reports_alignment_failure(capture, monkeypatch):
@@ -234,7 +280,7 @@ def test_failed_encoder_start_restores_gc_and_closes_output(capture):
     with pytest.raises(RuntimeError, match="encoder start"):
         camera.start_recording(path)
     assert not camera._recording
-    assert hardware.failed_output.closed
+    assert hardware.failed_output._file.closed
     assert gc.isenabled()
 
 

@@ -18,11 +18,87 @@ from .sync import SyncManager
 logger = logging.getLogger(__name__)
 
 # Encoded pictures waiting to be written: ~6 s at 50 fps, ~4 MB of H.264
-# (a 2 s SD stall, 102 pictures, was seen on 2026-11-04).
-# picamera2's encoder thread both writes the output and releases the camera
-# buffers, so an SD-card write stall used to starve libcamera (6 buffers,
-# ~120 ms) and drop frames; the writes now happen on a thread of their own.
+# (a 2 s SD stall, 102 pictures, was seen on 2026-11-04). See _h264_file_output.
 OUTPUT_QUEUE_FRAMES = 300
+
+
+def _h264_file_output(path: Path, timing: FrameTiming):
+    """An H.264 file output that reports each written picture to `timing`.
+
+    It derives from picamera2's public `Output` base (start/stop/outputframe)
+    rather than from `FileOutput`, so it does not depend on FileOutput's
+    internals (`outputtimestamp`, `dead`, `recording`, `_write`), which vary
+    between picamera2 versions. It writes the file itself, on a thread of its
+    own: picamera2's encoder thread both writes the output and releases the
+    camera buffers, so an SD-card write stall used to starve libcamera
+    (6 buffers, ~120 ms) and drop frames.
+    """
+    from picamera2.outputs import Output
+
+    class H264FileOutput(Output):
+        def __init__(self):
+            super().__init__()
+            self.queue_peak = 0
+            self._file = open(path, "wb")
+            self._have_keyframe = False
+            self._queue = queue.Queue(maxsize=OUTPUT_QUEUE_FRAMES)
+            self._writer = threading.Thread(
+                target=self._write_queued, name="h264-writer", daemon=True)
+            self._writer.start()
+
+        # Older picamera2 versions call this with (frame, keyframe, timestamp)
+        # only; newer ones add packet and audio. Accept both.
+        def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
+            if audio:
+                return  # No audio is configured; never write it into the H.264.
+            # Encoder thread: hand over and return at once. A full queue
+            # blocks, which drops at the camera as before rather than
+            # losing an encoded picture mid-stream.
+            self._queue.put((frame, keyframe, timestamp))
+            self.queue_peak = max(self.queue_peak, self._queue.qsize())
+
+        def _write_queued(self):
+            while (item := self._queue.get()) is not None:
+                try:
+                    self._write(*item)
+                except Exception as exc:
+                    # Surface writer-thread I/O failures in stop(), after the
+                    # encoder has released its buffers and other streams stop.
+                    timing.record_error(f"Video output write failed: {exc}")
+                finally:
+                    self._queue.task_done()
+
+        def _write(self, frame, keyframe, timestamp):
+            # A stream must start on a keyframe: earlier pictures can't be decoded.
+            if not self._have_keyframe:
+                if not keyframe:
+                    return
+                self._have_keyframe = True
+            self._file.write(frame)
+            self._file.flush()
+            # Only now is the picture in the file: give it its capture time.
+            timing.written(timestamp)
+
+        def _finish_writes(self):
+            if self._writer.is_alive():
+                self._queue.put(None)
+                self._writer.join()
+
+        def stop(self):
+            # The encoder calls this after draining its last pictures.
+            self._finish_writes()
+            super().stop()
+            self.close()
+
+        def close(self):
+            self._finish_writes()
+            if not self._file.closed:
+                try:
+                    self._file.close()
+                except OSError as exc:
+                    timing.record_error(f"Video output close failed: {exc}")
+
+    return H264FileOutput()
 
 
 class FrameAlignmentError(RuntimeError):
@@ -141,63 +217,12 @@ class VideoCapture:
 
         self._output_path = Path(output_path)
         self._h264_path = self._output_path.with_suffix(".h264")
-        from picamera2.outputs import FileOutput
-
         self._timing = FrameTiming(self.sync)
         self._frame_timestamps = self._timing.timestamps
         self.timestamp_alignment = {}
         self._frame_count = 0
-        timing = self._timing
 
-        class TimestampedFileOutput(FileOutput):
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.queue_peak = 0
-                self._queue = queue.Queue(maxsize=OUTPUT_QUEUE_FRAMES)
-                self._writer = threading.Thread(
-                    target=self._write_queued, name="h264-writer", daemon=True)
-                self._writer.start()
-
-            def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=False):
-                # Encoder thread: hand over and return at once. A full queue
-                # blocks, which drops at the camera as before rather than
-                # losing an encoded picture mid-stream.
-                self._queue.put((frame, keyframe, timestamp, packet, audio))
-                self.queue_peak = max(self.queue_peak, self._queue.qsize())
-
-            def _write_queued(self):
-                while (item := self._queue.get()) is not None:
-                    try:
-                        super().outputframe(*item)
-                    except Exception as exc:
-                        # Surface writer-thread I/O failures in stop(), after the
-                        # encoder has released its buffers and other streams stop.
-                        timing.record_error(f"Video output write failed: {exc}")
-                    if self.dead:
-                        timing.record_error("Video output reported a failed write")
-                    self._queue.task_done()
-
-            def _finish_writes(self):
-                if self._writer.is_alive():
-                    self._queue.put(None)
-                    self._writer.join()
-
-            def stop(self):
-                # Before FileOutput.stop clears `recording`, which would make
-                # it discard the pictures still queued.
-                self._finish_writes()
-                super().stop()
-
-            def close(self):
-                self._finish_writes()
-                super().close()
-
-            def outputtimestamp(self, timestamp):
-                # FileOutput calls this after writing/flushing a video picture,
-                # including pictures drained during stop_encoder().
-                timing.written(timestamp)
-
-        output = TimestampedFileOutput(str(self._h264_path))
+        output = _h264_file_output(self._h264_path, self._timing)
         self._output = output
 
         self._recording = True
