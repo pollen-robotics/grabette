@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 
 from casquette.models import CaptureStatus, SensorState
@@ -24,6 +25,12 @@ class Backend(ABC):
 
     def get_sync_metadata(self) -> dict:
         return getattr(self, "_sync_metadata", {}) or {}
+
+    # Wall-clock instant of the last recording's t=0 (the shared zero of its
+    # stream timestamps), or None when the backend doesn't know it.
+    @property
+    def recording_started_utc(self) -> datetime | None:
+        return None
 
     @abstractmethod
     async def start(self) -> None: ...
