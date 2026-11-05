@@ -3429,11 +3429,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(choices=choices, value=value), header, rows)
 
     def on_task_select(session_id):
+        sessions = _get_sessions()
         # Selecting a task also points the device at it, so a recording started
         # from the grabette's own button lands where the dashboard is looking.
-        if session_id:
+        # The id may be stale (the dropdown accepts any value), so only forward
+        # one the device actually knows.
+        if session_id and any(s["id"] == session_id for s in sessions):
             client.set_active_task(session_id)
-        rows, header = _refresh_episode_table(session_id)
+        rows, header = _refresh_episode_table(session_id, sessions)
         return header, rows
 
     def _get_selected_ids(table_data) -> list[str]:
@@ -4228,8 +4231,16 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 # Tasks are created and edited on the fleet, not on the device;
                 # here you only choose which one to look at.
                 tasks_title = gr.HTML(_section_label("Tasks"))
+                # allow_custom_value: Gradio checks the submitted value against
+                # its server-side copy of the choices, which can be empty (API
+                # blip, server restart, reset session) while the browser still
+                # holds a task id — every timer tick then raised "Value: … is
+                # not in the list of choices: []". The handlers validate the id
+                # themselves; filterable=False keeps users from typing one.
                 task_list = gr.Dropdown(choices=[], show_label=False,
                                         container=False, interactive=True,
+                                        allow_custom_value=True,
+                                        filterable=False,
                                         elem_classes="ep-task-menu")
                 # Remembers, per browser, which task was selected so a page
                 # refresh stays on it instead of snapping back to the first.
