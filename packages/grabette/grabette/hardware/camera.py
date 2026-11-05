@@ -4,7 +4,6 @@ Ported from grabette-capture/grabette_capture/video.py.
 """
 
 import gc
-import json
 import logging
 import queue
 import subprocess
@@ -72,7 +71,6 @@ class VideoCapture:
         self._frame_count: int = 0
         self._timing = FrameTiming(self.sync)
         self.timestamp_alignment: dict = {}
-        self._has_b_frames = None
         self._output = None
 
     def init_camera(self) -> None:
@@ -149,7 +147,6 @@ class VideoCapture:
         self._frame_timestamps = self._timing.timestamps
         self.timestamp_alignment = {}
         self._frame_count = 0
-        self._has_b_frames = None
         timing = self._timing
 
         class TimestampedFileOutput(FileOutput):
@@ -236,10 +233,6 @@ class VideoCapture:
         self.timestamp_alignment = self._timing.result(self._frame_count)
         # How close the SD card came to stalling the camera (OUTPUT_QUEUE_FRAMES = full).
         self.timestamp_alignment["writer_queue_peak"] = getattr(self._output, "queue_peak", None)
-        if self._has_b_frames != 0:
-            self.timestamp_alignment["valid"] = False
-            self.timestamp_alignment["errors"].append(
-                f"Cannot verify video presentation order: has_b_frames={self._has_b_frames}")
         try:
             write_json_atomic(self._output_path.with_suffix(".frames.json"), {
                 "alignment": self.timestamp_alignment, "frames": self._timing.frames,
@@ -285,16 +278,15 @@ class VideoCapture:
                     "ffprobe", "-v", "error",
                     "-select_streams", "v:0",
                     "-count_packets",
-                    "-show_entries", "stream=nb_read_packets,has_b_frames",
-                    "-of", "json",
+                    "-show_entries", "stream=nb_read_packets",
+                    "-of", "csv=p=0",
                     str(self._output_path),
                 ],
                 capture_output=True, text=True, timeout=30,
             )
             result.check_returncode()
-            stream = json.loads(result.stdout)["streams"][0]
-            self._has_b_frames = stream.get("has_b_frames")
-            return int(stream["nb_read_packets"])
+            val = result.stdout.strip()
+            return int(val) if val.isdigit() else 0
         except Exception:
             return 0
 

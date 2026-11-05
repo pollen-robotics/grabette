@@ -46,6 +46,8 @@ class FrameTiming:
             if pts_us is None:
                 self._error("Missing output PTS")
                 return
+            # Output order must be presentation order: this is what rejects
+            # B-frames/reordering, independently of ffprobe's heuristics.
             if self._last_output_pts is not None and pts_us <= self._last_output_pts:
                 self._error(f"Non-increasing encoder output PTS: {pts_us}")
             self._last_output_pts = pts_us

@@ -111,7 +111,6 @@ def capture(monkeypatch, tmp_path):
 
     def mux():
         camera._frame_count = len(hardware.output.written)
-        camera._has_b_frames = 0
 
     monkeypatch.setattr(camera, "_mux_to_mp4", mux)
     try:
@@ -239,16 +238,19 @@ def test_failed_encoder_start_restores_gc_and_closes_output(capture):
     assert gc.isenabled()
 
 
-def test_matching_counts_do_not_validate_unknown_presentation_order(capture, monkeypatch):
+def test_reordered_output_is_invalid_even_when_counts_match(capture):
+    # B-frames (or any reordering) make the encoder emit pictures out of
+    # presentation order. The output-PTS order check catches this without
+    # relying on ffprobe's has_b_frames heuristic.
     camera, hardware, path = capture
-    frame(camera, hardware, 0, 1_010_000_123)
-
-    def mux():
-        camera._frame_count = 1
-        camera._has_b_frames = 2
-
-    monkeypatch.setattr(camera, "_mux_to_mp4", mux)
-    with pytest.raises(FrameAlignmentError, match="presentation order"):
+    for pts, sensor_ns in ((0, 1_010_000_000), (25_000, 1_035_000_000)):
+        request = types.SimpleNamespace(
+            pts_us=pts, get_metadata=lambda ns=sensor_ns: {"SensorTimestamp": ns})
+        camera._encoder._timestamp(request)
+    hardware.output.outputframe(b"picture", keyframe=True, timestamp=25_000)
+    hardware.output.outputframe(b"picture", keyframe=False, timestamp=0)
+    hardware.output._queue.join()
+    with pytest.raises(FrameAlignmentError, match="Non-increasing encoder output PTS"):
         camera.stop()
     assert path.with_suffix(".h264").exists()
 
