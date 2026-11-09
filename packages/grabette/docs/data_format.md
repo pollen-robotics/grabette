@@ -89,17 +89,28 @@ shared episode clock. Each entry corresponds to a picture written to
 a callback may precede encoder startup, or the encoder may still drain pictures
 after capture stops.
 
-The recorder associates each encoder input PTS with its original picamera2
-`SensorTimestamp`, then publishes that capture time only after the matching
-encoded picture is written. Output delivery time is never substituted for a
-missing capture time, and missing pictures are not filled or resampled.
+The recorder only uses public picamera2 API. `Picamera2.post_callback` records
+the `SensorTimestamp` of every camera frame; the output receives each written
+picture's PTS. The constant offset between PTS and sensor time is not assumed
+(how picamera2 derives the PTS varies between versions): it is found by
+matching the first 10 written pictures against the camera frames, to within
+2 µs, and must be unique. Each written picture then gets the sensor time at
+PTS + offset, published only after the picture is written. Output delivery
+time is never substituted for a missing capture time, and missing pictures are
+not filled or resampled. A PTS that does not follow the sensor clock, or an
+ambiguous offset, makes alignment invalid rather than guessed.
 
 `raw_video.frames.json` stores `frames` with `frame_index`,
 `sensor_timestamp_ns`, `encoder_pts_us`, and `timestamp_ms`, plus an `alignment`
-summary also available as `metadata.json.video_timestamp_alignment`.
+summary also available as `metadata.json.video_timestamp_alignment`
+(`source`: `encoded_output_pts_matched_sensor_timestamp_v2`).
 The summary compares the video picture count, written-output count, and mapped
-timestamp count, and records inputs for which the encoder emitted no picture
-as `unwritten_input_count`. Such inputs do not add timestamps to the saved list.
+timestamp count. It also records `camera_frame_count` (frames the camera
+delivered during the recording), `pts_offset_us` (the offset found), and
+`unwritten_camera_frame_count`: camera frames between the first and last
+written picture that the encoder never emitted. Frames before the first or
+after the last written picture are not counted. None of these add timestamps
+to the saved list.
 `writer_queue_peak` is the most encoded pictures that waited at once to be
 written to disk. Writes go through a queue of 300 pictures (~6 s) so that an
 SD-card stall doesn't hold up the camera; a peak at 300 means the queue filled

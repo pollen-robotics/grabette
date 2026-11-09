@@ -1,6 +1,7 @@
 """Saved pictures, rather than preview callbacks, own their capture times."""
 import gc
 import json
+import random
 import sys
 import threading
 import time
@@ -73,11 +74,10 @@ class FakeEncoder:
     def __init__(self, bitrate):
         pass
 
-    def _timestamp(self, request):
-        return request.pts_us
-
 
 class FakeCamera:
+    post_callback = None
+
     def create_video_configuration(self, **kwargs):
         return kwargs
 
@@ -131,11 +131,28 @@ def capture(monkeypatch, tmp_path):
         gc.enable() if enabled else gc.disable()
 
 
+def camera_frame(hardware, sensor_ns):
+    # What picamera2 does for each camera frame, before the encoder gets it.
+    hardware.post_callback(types.SimpleNamespace(
+        get_metadata=lambda: {"SensorTimestamp": sensor_ns}))
+
+
+def sensor_times(count):
+    """~20 ms frames whose intervals jitter by a few us, like the real sensor."""
+    rng = random.Random(count)
+    return [1_010_000_123 + i * 20_000_000 + round(rng.gauss(0, 5_000)) for i in range(count)]
+
+
+def pts_of(sensor_ns, first_ns=1_010_000_123):
+    return sensor_ns // 1000 - first_ns // 1000
+
+
+def ms(sensor_ns):
+    return (sensor_ns - 1_000_000_000) / 1_000_000
+
+
 def frame(camera, hardware, pts, sensor_ns, *, keyframe=True):
-    request = types.SimpleNamespace(
-        pts_us=pts, get_metadata=lambda: {"SensorTimestamp": sensor_ns})
-    # Exercise the actual encoder override installed by init_camera().
-    assert camera._encoder._timestamp(request) == pts
+    camera_frame(hardware, sensor_ns)
     hardware.output.outputframe(b"picture", keyframe=keyframe, timestamp=pts)
     # Writes run on the output's own thread: wait for this one, so a test can
     # inject a failure into the NEXT write.
@@ -166,18 +183,42 @@ def test_camera_keeps_every_buffer_for_the_pipeline(capture):
 
 def test_initial_nonkeyframe_does_not_shift_the_next_timestamp(capture):
     camera, hardware, _ = capture
-    frame(camera, hardware, 0, 1_010_000_123, keyframe=False)
-    frame(camera, hardware, 25_000, 1_035_000_456)
-    assert camera.stop() == [35.000456]
-    assert camera.timestamp_alignment["unwritten_input_count"] == 1
+    times = sensor_times(6)
+    for i, ns in enumerate(times):
+        frame(camera, hardware, pts_of(ns), ns, keyframe=i == 1)
+    assert camera.stop() == [ms(ns) for ns in times[1:]]
+    # Dropped before the stream's first keyframe: not a loss mid-stream.
+    assert camera.timestamp_alignment["unwritten_camera_frame_count"] == 0
+    assert camera.timestamp_alignment["camera_frame_count"] == 6
+
+
+def test_post_callback_is_installed_only_while_recording(capture):
+    camera, hardware, _ = capture
+    assert hardware.post_callback == camera._on_camera_frame
+    frame(camera, hardware, 0, 1_010_000_123)
+    camera.stop()
+    assert hardware.post_callback is None
+
+
+def test_picamera2_without_post_callback_is_refused_at_init(monkeypatch):
+    class OldCamera(FakeCamera):
+        def __getattribute__(self, name):
+            if name == "post_callback":
+                raise AttributeError(name)
+            return super().__getattribute__(name)
+
+    monkeypatch.setitem(sys.modules, "picamera2",
+                        types.SimpleNamespace(Picamera2=OldCamera, Preview=object()))
+    monkeypatch.setitem(sys.modules, "picamera2.encoders",
+                        types.SimpleNamespace(H264Encoder=FakeEncoder))
+    with pytest.raises(RuntimeError, match="Incompatible picamera2"):
+        VideoCapture(FakeSync()).init_camera()
 
 
 def test_encoder_drain_records_a_frame_after_recording_flag_is_cleared(capture):
     camera, hardware, _ = capture
     frame(camera, hardware, 0, 1_010_000_123)
-    request = types.SimpleNamespace(
-        pts_us=25_000, get_metadata=lambda: {"SensorTimestamp": 1_035_000_456})
-    camera._encoder._timestamp(request)
+    camera_frame(hardware, 1_035_000_456)
 
     def drain():
         assert not camera._recording
@@ -191,18 +232,17 @@ def test_a_stalled_write_neither_blocks_the_encoder_nor_loses_pictures(capture):
     camera, hardware, _ = capture
     hardware.output._file.gate = threading.Event()
     start = time.monotonic()
-    for i in range(20):
-        request = types.SimpleNamespace(
-            pts_us=i * 20_000, get_metadata=lambda i=i: {"SensorTimestamp": 1_000_000_000 + i * 20_000_000})
-        camera._encoder._timestamp(request)
-        hardware.output.outputframe(b"picture", keyframe=i == 0, timestamp=i * 20_000)
+    times = sensor_times(20)
+    for i, ns in enumerate(times):
+        camera_frame(hardware, ns)
+        hardware.output.outputframe(b"picture", keyframe=i == 0, timestamp=pts_of(ns))
     # The encoder thread handed every picture over without waiting for the disk.
     assert time.monotonic() - start < 0.5
     assert hardware.output._file.writes == 0
     # The disk recovers only once stop() is under way: what was queued must
     # still be written, although stopping clears the output's `recording`.
     threading.Timer(0.2, hardware.output._file.gate.set).start()
-    assert camera.stop() == [i * 20.0 for i in range(20)]
+    assert camera.stop() == [ms(ns) for ns in times]
     assert camera.timestamp_alignment["valid"]
     assert camera.timestamp_alignment["writer_queue_peak"] >= 19
 
@@ -210,18 +250,20 @@ def test_a_stalled_write_neither_blocks_the_encoder_nor_loses_pictures(capture):
 @pytest.mark.parametrize("failure", ["write", "flush"])
 def test_write_failure_is_reported_even_when_partial_prefix_counts_match(capture, failure):
     camera, hardware, path = capture
-    frame(camera, hardware, 0, 1_010_000_123)
+    times = sensor_times(13)
+    for i, ns in enumerate(times[:12]):
+        frame(camera, hardware, pts_of(ns), ns, keyframe=i == 0)
     setattr(hardware.output._file, f"fail_{failure}", True)
     # Returning from the callback lets the encoder release its buffers.
-    frame(camera, hardware, 25_000, 1_035_000_456, keyframe=False)
+    frame(camera, hardware, pts_of(times[12]), times[12], keyframe=False)
     with pytest.raises(FrameAlignmentError):
         camera.stop()
     assert not camera.is_open
-    assert camera.frame_timestamps == [10.000123]
+    assert camera.frame_timestamps == [ms(ns) for ns in times[:12]]
     if failure == "write":
         # Nothing reached the file: counts match, only the error can tell.
-        assert camera.timestamp_alignment["video_frame_count"] == 1
-    assert camera.timestamp_alignment["timestamp_count"] == 1
+        assert camera.timestamp_alignment["video_frame_count"] == 12
+    assert camera.timestamp_alignment["timestamp_count"] == 12
     assert any("write failed" in e for e in camera.timestamp_alignment["errors"])
     assert not camera.timestamp_alignment["valid"]
     assert path.with_suffix(".h264").exists()
@@ -249,9 +291,7 @@ def test_the_h264_file_holds_exactly_the_written_pictures(capture):
 @pytest.mark.parametrize("call", ["old_three_args", "new_five_args"])
 def test_output_accepts_both_picamera2_outputframe_signatures(capture, call):
     camera, hardware, _ = capture
-    request = types.SimpleNamespace(
-        pts_us=0, get_metadata=lambda: {"SensorTimestamp": 1_010_000_123})
-    camera._encoder._timestamp(request)
+    camera_frame(hardware, 1_010_000_123)
     if call == "old_three_args":
         hardware.output.outputframe(b"picture", True, 0)
     else:
@@ -289,6 +329,7 @@ def test_failed_encoder_start_restores_gc_and_closes_output(capture):
     with pytest.raises(RuntimeError, match="encoder start"):
         camera.start_recording(path)
     assert not camera._recording
+    assert hardware.post_callback is None
     assert hardware.failed_output._file.closed
     assert gc.isenabled()
 
@@ -298,10 +339,8 @@ def test_reordered_output_is_invalid_even_when_counts_match(capture):
     # presentation order. The output-PTS order check catches this without
     # relying on ffprobe's has_b_frames heuristic.
     camera, hardware, path = capture
-    for pts, sensor_ns in ((0, 1_010_000_000), (25_000, 1_035_000_000)):
-        request = types.SimpleNamespace(
-            pts_us=pts, get_metadata=lambda ns=sensor_ns: {"SensorTimestamp": ns})
-        camera._encoder._timestamp(request)
+    for sensor_ns in (1_010_000_000, 1_035_000_000):
+        camera_frame(hardware, sensor_ns)
     hardware.output.outputframe(b"picture", keyframe=True, timestamp=25_000)
     hardware.output.outputframe(b"picture", keyframe=False, timestamp=0)
     hardware.output._queue.join()
@@ -310,21 +349,20 @@ def test_reordered_output_is_invalid_even_when_counts_match(capture):
     assert path.with_suffix(".h264").exists()
 
 
-@pytest.mark.parametrize("failure", ["missing_sensor_time", "encoder_timestamp_error"])
-def test_encoder_input_timestamp_failure_invalidates_a_matching_saved_prefix(capture, monkeypatch, failure):
+@pytest.mark.parametrize("failure", ["missing_sensor_time", "metadata_error"])
+def test_camera_frame_timestamp_failure_invalidates_a_matching_saved_prefix(capture, failure):
     camera, hardware, path = capture
     frame(camera, hardware, 0, 1_010_000_123)
-    request = types.SimpleNamespace(pts_us=25_000, get_metadata=lambda: {})
-    if failure == "encoder_timestamp_error":
-        def fail(self, request):
-            raise RuntimeError("injected encoder timestamp failure")
 
-        monkeypatch.setattr(FakeEncoder, "_timestamp", fail)
-    # The worker may stop delivering frames, but stop() must still reject the
+    def metadata():
+        if failure == "metadata_error":
+            raise RuntimeError("injected metadata failure")
+        return {}
+
+    # Must not raise on picamera2's request thread, but must still reject the
     # one-frame prefix even though its video/timestamp counts match exactly.
-    with pytest.raises((KeyError, RuntimeError)):
-        camera._encoder._timestamp(request)
-    with pytest.raises(FrameAlignmentError, match="timestamp encoder input"):
+    hardware.post_callback(types.SimpleNamespace(get_metadata=metadata))
+    with pytest.raises(FrameAlignmentError, match="sensor timestamp|metadata"):
         camera.stop()
     assert camera.timestamp_alignment["video_frame_count"] == 1
     assert camera.timestamp_alignment["timestamp_count"] == 1

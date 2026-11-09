@@ -1,6 +1,28 @@
-"""Associate written encoder frames with their original sensor capture times."""
+"""Associate written encoder frames with their original sensor capture times.
 
+Only public picamera2 API is involved. The camera reports every frame's
+`SensorTimestamp` (via `Picamera2.post_callback`) and the output receives each
+written picture's PTS (`Output.outputframe`). picamera2 derives that PTS from
+the sensor timestamp, but how (origin, rounding) is an internal detail that
+varies between versions. So the link is not assumed: the constant offset
+between output PTS and sensor time is found by matching the first written
+pictures against the camera frames, and must be unique. Afterwards each
+written picture gets the sensor time at PTS + offset.
+
+If the PTS ever stops following the sensor clock, no offset fits: the take is
+marked invalid rather than given guessed times.
+"""
+
+from collections import OrderedDict
 from threading import Lock
+
+# Written pictures matched together to find the offset. Frame intervals jitter
+# by ~6 us (median) from one frame to the next, and by at least 12 us within
+# 10 frames on every take checked: no offset shifted by whole frames fits them.
+LOCK_FRAMES = 10
+# PTS and sensor times are compared in microseconds; allow for rounding.
+TOLERANCE_US = 2
+_DELTAS = sorted(range(-TOLERANCE_US, TOLERANCE_US + 1), key=abs)
 
 
 class FrameTiming:
@@ -9,10 +31,14 @@ class FrameTiming:
         self.timestamps = []
         self.frames = []
         self.errors = []
-        self.submitted_count = 0
+        self.camera_frame_count = 0
         self.written_count = 0
-        self._pending = {}
-        self._last_input_pts = None
+        self.unwritten_camera_frame_count = 0
+        self.pts_offset_us = None
+        self._camera = OrderedDict()  # sensor time (us) -> sensor time (ns), in capture order
+        self._last_camera_ns = None
+        self._held = []  # (index, pts_us) written before the offset is known
+        self._matching_failed = False
         self._last_output_pts = None
         self._lock = Lock()
 
@@ -24,18 +50,21 @@ class FrameTiming:
         with self._lock:
             self._error(message)
 
-    def submitted(self, pts_us, sensor_ns):
-        # Called before the request is queued to the hardware encoder.
+    def camera_frame(self, sensor_ns):
+        # Called on picamera2's request thread for every camera frame, before
+        # the encoder sees it: keep it short.
         with self._lock:
-            self.submitted_count += 1
-            if self._last_input_pts is not None and pts_us <= self._last_input_pts:
-                self._error(f"Non-increasing encoder input PTS: {pts_us}")
+            self.camera_frame_count += 1
+            if self._matching_failed:
                 return
-            self._last_input_pts = pts_us
             if sensor_ns is None:
-                self._error(f"Missing sensor timestamp for input PTS: {pts_us}")
+                self._error("Missing sensor timestamp on a camera frame")
                 return
-            self._pending[pts_us] = sensor_ns
+            if self._last_camera_ns is not None and sensor_ns <= self._last_camera_ns:
+                self._error(f"Non-increasing camera sensor timestamp: {sensor_ns}")
+                return
+            self._last_camera_ns = sensor_ns
+            self._camera[sensor_ns // 1000] = sensor_ns
 
     def written(self, pts_us):
         # The H.264 output invokes this only after a picture has been written/flushed.
@@ -50,24 +79,76 @@ class FrameTiming:
             # B-frames/reordering, independently of ffprobe's heuristics.
             if self._last_output_pts is not None and pts_us <= self._last_output_pts:
                 self._error(f"Non-increasing encoder output PTS: {pts_us}")
+                return
             self._last_output_pts = pts_us
-            ns = self._pending.pop(pts_us, None)
-            if ns is None:
-                self._error(f"No sensor timestamp for output PTS: {pts_us}")
+            if self.pts_offset_us is None:
+                self._held.append((index, pts_us))
+                if len(self._held) >= LOCK_FRAMES:
+                    self._match_held()
                 return
-            try:
-                ts = self.sync.boottime_ns_to_ms(ns)
-            except Exception as exc:
-                self._error(f"Cannot map sensor timestamp: {exc}")
-                return
-            if self.timestamps and ts <= self.timestamps[-1]:
-                self._error(f"Non-increasing sensor timestamp at frame {index}")
-            self.timestamps.append(ts)
-            self.frames.append(dict(frame_index=index, sensor_timestamp_ns=ns,
-                                    encoder_pts_us=pts_us, timestamp_ms=ts))
+            self._map(index, pts_us)
+
+    def finish(self):
+        """Map pictures still waiting for the offset (takes shorter than
+        LOCK_FRAMES). Call once the encoder has drained."""
+        with self._lock:
+            if self._held:
+                self._match_held()
+
+    def _find(self, sensor_us):
+        for delta in _DELTAS:
+            if sensor_us + delta in self._camera:
+                return sensor_us + delta
+        return None
+
+    def _match_held(self):
+        held, self._held = self._held, []
+        if self._matching_failed:
+            return
+        first_pts = held[0][1]
+        offsets = [key - first_pts for key in self._camera
+                   if all(self._find(pts + key - first_pts) is not None for _, pts in held)]
+        if len(offsets) != 1:
+            # Not unique: picking one could shift every timestamp by whole frames.
+            self._error(f"Cannot match encoder PTS to camera frames: {len(offsets)} "
+                        f"offsets fit the first {len(held)} written pictures")
+            self._matching_failed = True
+            self._camera.clear()
+            return
+        self.pts_offset_us = offsets[0]
+        # Camera frames before the first written picture never reached the
+        # file (encoder not started yet, or no keyframe yet): not a loss.
+        first_key = self._find(first_pts + self.pts_offset_us)
+        while next(iter(self._camera)) < first_key:
+            self._camera.popitem(last=False)
+        for index, pts in held:
+            self._map(index, pts)
+
+    def _map(self, index, pts_us):
+        if self._matching_failed:
+            return
+        key = self._find(pts_us + self.pts_offset_us)
+        if key is None:
+            self._error(f"No camera frame for output PTS: {pts_us}")
+            return
+        # Earlier camera frames were never written: the encoder skipped them.
+        while next(iter(self._camera)) < key:
+            self._camera.popitem(last=False)
+            self.unwritten_camera_frame_count += 1
+        ns = self._camera.pop(key)
+        try:
+            ts = self.sync.boottime_ns_to_ms(ns)
+        except Exception as exc:
+            self._error(f"Cannot map sensor timestamp: {exc}")
+            return
+        if self.timestamps and ts <= self.timestamps[-1]:
+            self._error(f"Non-increasing sensor timestamp at frame {index}")
+        self.timestamps.append(ts)
+        self.frames.append(dict(frame_index=index, sensor_timestamp_ns=ns,
+                                encoder_pts_us=pts_us, timestamp_ms=ts))
 
     def result(self, video_frame_count):
-        # Caller must join/stop the encoder before taking this snapshot.
+        # Caller must stop the encoder and call finish() before this snapshot.
         with self._lock:
             errors = list(self.errors)
             if not self.timestamps:
@@ -75,9 +156,10 @@ class FrameTiming:
             if video_frame_count != len(self.timestamps) or self.written_count != len(self.timestamps):
                 errors.append(f"Frame counts differ: video={video_frame_count}, "
                               f"written={self.written_count}, timestamps={len(self.timestamps)}")
-            return dict(valid=not errors, source="encoded_output_sensor_timestamp_v1",
+            return dict(valid=not errors, source="encoded_output_pts_matched_sensor_timestamp_v2",
                         video_frame_count=video_frame_count,
                         timestamp_count=len(self.timestamps),
                         written_count=self.written_count,
-                        submitted_count=self.submitted_count,
-                        unwritten_input_count=len(self._pending), errors=errors)
+                        camera_frame_count=self.camera_frame_count,
+                        unwritten_camera_frame_count=self.unwritten_camera_frame_count,
+                        pts_offset_us=self.pts_offset_us, errors=errors)

@@ -180,21 +180,12 @@ class VideoCapture:
             )
         self._picam2.configure(video_config)
         logger.info("Camera configured with %d buffers", self.buffer_count)
-        owner = self
-
-        class SensorTimestampEncoder(H264Encoder):
-            def _timestamp(self, request):
-                try:
-                    pts_us = super()._timestamp(request)
-                    owner._timing.submitted(pts_us, request.get_metadata()["SensorTimestamp"])
-                    return pts_us
-                except Exception as exc:
-                    # An exception in an encoder worker must not make a saved,
-                    # matching prefix look like a complete successful capture.
-                    owner._timing.record_error(f"Cannot timestamp encoder input: {exc}")
-                    raise
-
-        self._encoder = SensorTimestampEncoder(bitrate=self.bitrate)
+        # Capture times come from the public post_callback (see FrameTiming).
+        # Without it nothing could be timestamped: refuse the camera now
+        # rather than invalidate every take.
+        if not hasattr(self._picam2, "post_callback"):
+            raise RuntimeError("Incompatible picamera2: Picamera2.post_callback is missing")
+        self._encoder = H264Encoder(bitrate=self.bitrate)
 
         if self.preview:
             try:
@@ -237,13 +228,25 @@ class VideoCapture:
 
         self._recording = True
         gc.disable()  # Prevent GC pauses from dropping frames during recording
+        # Set before the encoder starts, so it sees every frame the encoder gets.
+        self._picam2.post_callback = self._on_camera_frame
         try:
             self._picam2.start_encoder(self._encoder, output)
         except Exception:
+            self._picam2.post_callback = None
             self._recording = False
             gc.enable()
             output.close()
             raise
+
+    def _on_camera_frame(self, request) -> None:
+        # picamera2's request thread, before the encoder: never raise here.
+        try:
+            sensor_ns = request.get_metadata().get("SensorTimestamp")
+        except Exception as exc:
+            self._timing.record_error(f"Cannot read camera frame metadata: {exc}")
+            return
+        self._timing.camera_frame(sensor_ns)
 
     def stop(self) -> list[float]:
         if not self._recording:
@@ -253,7 +256,9 @@ class VideoCapture:
         try:
             self._picam2.stop_encoder()
         finally:
+            self._picam2.post_callback = None
             gc.enable()
+        self._timing.finish()
         if self.preview:
             try:
                 self._picam2.stop_preview()
