@@ -438,3 +438,27 @@ def test_camera_frame_timestamp_failure_invalidates_a_matching_saved_prefix(capt
     assert camera.timestamp_alignment["video_frame_count"] == 1
     assert camera.timestamp_alignment["timestamp_count"] == 1
     assert path.with_suffix(".h264").exists()
+
+
+def test_software_versions_are_saved_with_the_alignment(monkeypatch, capture):
+    camera, hardware, path = capture
+    import importlib.metadata
+
+    def run(cmd, **kwargs):
+        if cmd[0] == "ffprobe":
+            raise FileNotFoundError(cmd[0])
+        return types.SimpleNamespace(
+            stdout="ffmpeg version 5.1.6-0+deb12u1+rpt3 Copyright (c) 2000-2024\nbuilt with gcc\n")
+
+    monkeypatch.setattr(camera_module.subprocess, "run", run)
+    monkeypatch.setattr(importlib.metadata, "version", lambda name: "0.3.36")
+    camera_module.software_versions.cache_clear()
+    try:
+        frame(camera, hardware, 0, 1_010_000_123)
+        camera.stop()
+        expected = {"picamera2": "0.3.36", "ffmpeg": "5.1.6-0+deb12u1+rpt3", "ffprobe": None}
+        assert camera.timestamp_alignment["software_versions"] == expected
+        provenance = json.loads(path.with_suffix(".frames.json").read_text())
+        assert provenance["alignment"]["software_versions"] == expected
+    finally:
+        camera_module.software_versions.cache_clear()

@@ -3,6 +3,7 @@
 Ported from grabette-capture/grabette_capture/video.py.
 """
 
+import functools
 import gc
 import heapq
 import logging
@@ -182,6 +183,32 @@ def _h264_file_output(path: Path, timing: FrameTiming):
     return H264FileOutput()
 
 
+@functools.cache
+def software_versions() -> dict[str, str | None]:
+    """Versions of the tools the video alignment relies on (None: not found).
+
+    Saved with every take so that, if a picamera2 or FFmpeg update ever
+    changes their behaviour, invalid takes can be traced to that update.
+    Computed once per daemon: picamera2 and FFmpeg only change on a restart.
+    """
+    versions: dict[str, str | None] = {}
+    try:
+        from importlib.metadata import version
+        versions["picamera2"] = version("picamera2")
+    except Exception:
+        versions["picamera2"] = None
+    for tool in ("ffmpeg", "ffprobe"):
+        try:
+            out = subprocess.run([tool, "-version"], capture_output=True,
+                                 text=True, timeout=10).stdout
+            # "ffmpeg version 5.1.6-0+deb12u1+rpt3 Copyright (c) ..."
+            words = out.split("\n", 1)[0].split()
+            versions[tool] = words[2] if len(words) > 2 and words[1] == "version" else None
+        except Exception:
+            versions[tool] = None
+    return versions
+
+
 class FrameAlignmentError(RuntimeError):
     """The saved video cannot safely be paired with its capture timestamps."""
 
@@ -242,6 +269,7 @@ class VideoCapture:
 
         self._picam2 = Picamera2()
         frame_duration_us = int(1_000_000 / self.fps)
+        software_versions()  # cached now, rather than on the first stop
 
         if self.preview:
             video_config = self._picam2.create_video_configuration(
@@ -357,6 +385,7 @@ class VideoCapture:
         # Pictures the encoder handed back out of order, put back in PTS order.
         self.timestamp_alignment["reordered_output_count"] = getattr(self._output, "reordered_count", None)
         self.timestamp_alignment["camera_buffer_count"] = self.buffer_count
+        self.timestamp_alignment["software_versions"] = dict(software_versions())
         try:
             write_json_atomic(self._output_path.with_suffix(".frames.json"), {
                 "alignment": self.timestamp_alignment, "frames": self._timing.frames,
