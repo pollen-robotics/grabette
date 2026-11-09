@@ -36,6 +36,11 @@ def test_no_angles_is_a_fault():
     assert _episode_status({**GOOD, "angle_sample_count": 0}) == "✗ angles"
 
 
+def test_misaligned_video_is_a_fault():
+    # valid: false in metadata.json: the take beeped at stop.
+    assert _episode_status({**GOOD, "video_aligned": False}) == "✗ video sync"
+
+
 def test_dropped_frames_is_a_fault():
     assert _episode_status({**GOOD, "frame_drops": ["depth"]}) == "✗ depth frames dropped"
     assert _episode_status({**GOOD, "frame_drops": ["rgb", "depth"]}) == "✗ rgb, depth frames dropped"

@@ -92,18 +92,24 @@ class EpisodeInfo(BaseModel):
     metadata_ok: bool = True
     # Streams that recorded well under their frame rate ("rgb", "depth").
     frame_drops: list[str] = []
+    # False when the saved video cannot be paired with its capture timestamps
+    # (metadata.json "valid", set from video_timestamp_alignment). The episode
+    # beeped at stop: it must not be listed as OK.
+    video_aligned: bool = True
     issues: list[str] = []  # see episode_issues()
 
 
 def episode_issues(ep: dict) -> list[str]:
-    """Episode faults, worst first: "metadata", "camera", "angles",
-    "<stream>_frames_dropped". Unreadable metadata stands alone (the other
+    """Episode faults, worst first: "metadata", "camera", "video_sync",
+    "angles", "<stream>_frames_dropped". Unreadable metadata stands alone (the other
     counters are then zeros)."""
     if not ep.get("metadata_ok", True):
         return ["metadata"]
     issues = []
     if not ep.get("has_video", True) or not ep.get("frame_count"):
         issues.append("camera")
+    elif not ep.get("video_aligned", True):
+        issues.append("video_sync")
     if not ep.get("angle_sample_count"):
         issues.append("angles")
     issues += [f"{stream}_frames_dropped" for stream in ep.get("frame_drops") or []]
@@ -517,6 +523,7 @@ class TaskManager:
         imu_sample_count = 0
         angle_sample_count = 0
         frame_drops = []
+        video_aligned = True
         metadata_ok = True
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
@@ -539,6 +546,8 @@ class TaskManager:
                                 or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
             frame_drops = meta.get("frame_drops", [])
+            video_aligned = (meta.get("valid", True) is not False and
+                             (meta.get("video_timestamp_alignment") or {}).get("valid", True) is not False)
         else:
             metadata_ok = False
 
@@ -553,6 +562,7 @@ class TaskManager:
             has_imu=imu_present,
             metadata_ok=metadata_ok,
             frame_drops=frame_drops,
+            video_aligned=video_aligned,
         )
         info.issues = episode_issues(info.model_dump())
         return info

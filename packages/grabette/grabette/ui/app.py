@@ -2255,7 +2255,7 @@ def _episode_status(ep: dict) -> str:
     """One cell: the worst thing this episode's own counters admit to."""
     issues = episode_issues(ep)
     if issues and not issues[0].endswith(_DROP_SUFFIX):
-        return f"✗ {issues[0]}"
+        return f"✗ {issues[0].replace('_', ' ')}"
     if issues:
         return f"✗ {', '.join(i.removesuffix(_DROP_SUFFIX) for i in issues)} frames dropped"
     if float(ep.get("duration_seconds") or 0) < _EP_MIN_SECONDS:
@@ -2266,6 +2266,8 @@ def _episode_status(ep: dict) -> str:
 _ISSUE_TEXT = {
     "metadata": "Its metadata.json is missing or unreadable.",
     "camera": "The camera recorded no video.",
+    "video_sync": "The video frames could not be matched to their capture times: "
+                  "the video is likely out of sync.",
     "angles": "No gripper angles were recorded.",
 }
 

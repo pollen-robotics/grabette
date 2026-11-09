@@ -615,6 +615,22 @@ def test_last_episode_reports_its_issues(tmp_path):
     assert info.issues == ["depth_frames_dropped"]
 
 
+@pytest.mark.parametrize("meta", [
+    {"valid": False},
+    {"video_timestamp_alignment": {"valid": False}},
+])
+def test_misaligned_video_is_an_issue_of_the_last_episode(tmp_path, meta):
+    # It beeped at stop: the popup and the episode list must say why.
+    tm = TaskManager(data_dir=tmp_path)
+    _record(tm, UNASSIGNED_ID, "ep_misaligned")
+    ep = tm.episodes_dir / "ep_misaligned"
+    (ep / "raw_video.mp4").write_text("")
+    (ep / "metadata.json").write_text(json.dumps({**_GOOD_META, **meta}))
+    info = tm.last_episode()
+    assert not info.video_aligned
+    assert info.issues == ["video_sync"]
+
+
 def test_last_episode_forgets_a_deleted_episode(tmp_path):
     tm = TaskManager(data_dir=tmp_path)
     _record(tm, UNASSIGNED_ID, "ep_bad")
@@ -630,3 +646,6 @@ def test_episode_issues():
     assert episode_issues({**good, "angle_sample_count": 0,
                            "frame_drops": ["rgb", "depth"]}) == [
         "angles", "rgb_frames_dropped", "depth_frames_dropped"]
+    assert episode_issues({**good, "video_aligned": False}) == ["video_sync"]
+    # No video at all is the camera fault, not a sync one.
+    assert episode_issues({**good, "has_video": False, "video_aligned": False}) == ["camera"]
