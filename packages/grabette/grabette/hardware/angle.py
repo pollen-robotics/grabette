@@ -11,11 +11,13 @@ read from gripette.config.settings (proximal_sign / distal_sign, derived
 from `hand`).
 """
 
+import errno
 import json
 import logging
 import math
 import threading
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +33,35 @@ CALIBRATION_SAMPLES = 20
 # A capture iteration longer than this is logged with its timing breakdown:
 # well above the ~10 ms period, well below the 593 ms hole seen on 2026-11-04.
 SLOW_ITERATION_S = 0.1
+# Failed reads logged one by one per capture; the rest are only counted in the
+# end-of-capture summary, so an unplugged sensor does not flood the journal.
+MAX_LOGGED_READ_ERRORS = 20
+
+
+@dataclass
+class _Read:
+    """One timed I2C read: the angle, or the error that replaced it."""
+    deg: float | None
+    seconds: float
+    error: str | None = None   # ETIMEDOUT, EREMOTEIO, ... or the exception type
+    detail: str = ""
+
+
+def _error_name(exc: BaseException) -> str:
+    """ETIMEDOUT (the driver gave up waiting), EREMOTEIO (no ACK from the
+    sensor), EIO... — each points to a different layer. Falls back to the
+    exception type when there is no errno."""
+    code = getattr(exc, "errno", None)
+    if isinstance(code, int):
+        return errno.errorcode.get(code, f"errno {code}")
+    return type(exc).__name__
+
+
+def _describe(read: "_Read | None") -> str:
+    if read is None:
+        return "-"
+    text = f"{read.seconds * 1000:.0f} ms"
+    return text if read.error is None else f"{text} {read.error}"
 
 
 def load_calibration() -> dict | None:
@@ -202,51 +233,65 @@ class AngleCapture:
         read_count = 0
         sample_interval = 1.0 / self.sample_rate_hz
 
+        # Failed reads per sensor (distal, proximal), by error name.
+        errors_by_kind = (Counter(), Counter())
         prev_start = None
-        t_read1 = t_read2 = None
+        reads: list[_Read | None] = [None, None]
         while self._running:
             loop_start = time.monotonic()
             read_count += 1
             # An iteration takes ~10 ms; a long one is a hole in angle_data.
             # Say where the time went: the two I2C reads, or the rest of the
-            # previous iteration (its sleep, or the GIL).
+            # previous iteration (its sleep, or the GIL). Read the journal with
+            # `-o short-precise` to line it up with the kernel's messages.
             if prev_start is not None and loop_start - prev_start > SLOW_ITERATION_S:
                 logger.warning(
                     "Angle loop stalled %.0f ms (distal read %s, proximal read %s, "
                     "%d errors so far)",
                     (loop_start - prev_start) * 1000,
-                    "-" if t_read1 is None else f"{t_read1 * 1000:.0f} ms",
-                    "-" if t_read2 is None else f"{t_read2 * 1000:.0f} ms",
+                    _describe(reads[0]), _describe(reads[1]),
                     error_count,
                 )
             prev_start = loop_start
-            t_read1 = t_read2 = None
 
-            try:
-                ts = self.sync.get_timestamp_ms()
-                t = time.monotonic()
-                raw1 = self._read_angle_raw(self._i2c_1)
-                t_read1 = time.monotonic() - t
-                t = time.monotonic()
-                raw2 = self._read_angle_raw(self._i2c_2)
-                t_read2 = time.monotonic() - t
+            ts = self.sync.get_timestamp_ms()
+            # Both sensors are read even when the first one fails, so a stall
+            # tells whether one bus or both were stuck.
+            reads = [self._timed_read(self._i2c_1), self._timed_read(self._i2c_2)]
+            for sensor, (name, bus, r) in enumerate(zip(
+                    ("distal", "proximal"), (self.i2c_bus_1, self.i2c_bus_2), reads)):
+                if r.error is None:
+                    continue
+                error_count += 1
+                errors_by_kind[sensor][r.error] += 1
+                if error_count <= MAX_LOGGED_READ_ERRORS:
+                    logger.warning("Angle: %s read failed on /dev/i2c-%d after %.0f ms: %s",
+                                   name, bus, r.seconds * 1000, r.detail)
+            if reads[0].error is None and reads[1].error is None:
                 # i2c_bus_1 is the DISTAL sensor, _2 is PROXIMAL — see init.
-                cal1 = self._normalize_angle(raw1 - self._offset_1_deg) * settings.distal_sign
-                cal2 = self._normalize_angle(raw2 - self._offset_2_deg) * settings.proximal_sign
-
+                cal1 = self._normalize_angle(reads[0].deg - self._offset_1_deg) * settings.distal_sign
+                cal2 = self._normalize_angle(reads[1].deg - self._offset_2_deg) * settings.proximal_sign
                 self._samples.samples.append({
                     "cts": ts,
                     "value": [math.radians(cal1), math.radians(cal2)],
                 })
-            except Exception:
-                error_count += 1
 
             elapsed = time.monotonic() - loop_start
             sleep_time = sample_interval - elapsed
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        logger.info("Angle: %d reads, %d errors", read_count, error_count)
+        logger.info("Angle: %d reads, %d errors (distal %s, proximal %s)",
+                    read_count, error_count,
+                    dict(errors_by_kind[0]) or "none", dict(errors_by_kind[1]) or "none")
+
+    def _timed_read(self, i2c) -> _Read:
+        t = time.monotonic()
+        try:
+            deg = self._read_angle_raw(i2c)
+        except Exception as e:
+            return _Read(None, time.monotonic() - t, _error_name(e), f"{type(e).__name__}: {e}")
+        return _Read(deg, time.monotonic() - t)
 
     def start_capture(self) -> None:
         if self._running:
