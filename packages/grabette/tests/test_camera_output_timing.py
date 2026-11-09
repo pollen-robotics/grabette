@@ -10,7 +10,7 @@ import types
 import pytest
 
 from grabette.hardware import camera as camera_module
-from grabette.hardware.camera import FrameAlignmentError, VideoCapture
+from grabette.hardware.camera import REORDER_WINDOW, FrameAlignmentError, VideoCapture
 
 
 class FakeSync:
@@ -154,8 +154,8 @@ def ms(sensor_ns):
 def frame(camera, hardware, pts, sensor_ns, *, keyframe=True):
     camera_frame(hardware, sensor_ns)
     hardware.output.outputframe(b"picture", keyframe=keyframe, timestamp=pts)
-    # Writes run on the output's own thread: wait for this one, so a test can
-    # inject a failure into the NEXT write.
+    # Writes run on the output's own thread: wait until it has taken this
+    # picture. It writes it once REORDER_WINDOW later ones have arrived.
     hardware.output._queue.join()
 
 
@@ -255,11 +255,13 @@ def test_write_failure_is_reported_even_when_partial_prefix_counts_match(capture
         frame(camera, hardware, pts_of(ns), ns, keyframe=i == 0)
     setattr(hardware.output._file, f"fail_{failure}", True)
     # Returning from the callback lets the encoder release its buffers.
+    # This arrival makes the writer write the oldest held picture: that write fails.
     frame(camera, hardware, pts_of(times[12]), times[12], keyframe=False)
+    failed = 12 - REORDER_WINDOW
     with pytest.raises(FrameAlignmentError):
         camera.stop()
     assert not camera.is_open
-    assert camera.frame_timestamps == [ms(ns) for ns in times[:12]]
+    assert camera.frame_timestamps == [ms(ns) for i, ns in enumerate(times) if i != failed]
     if failure == "write":
         # Nothing reached the file: counts match, only the error can tell.
         assert camera.timestamp_alignment["video_frame_count"] == 12
@@ -334,17 +336,86 @@ def test_failed_encoder_start_restores_gc_and_closes_output(capture):
     assert gc.isenabled()
 
 
-def test_reordered_output_is_invalid_even_when_counts_match(capture):
-    # B-frames (or any reordering) make the encoder emit pictures out of
-    # presentation order. The output-PTS order check catches this without
-    # relying on ffprobe's has_b_frames heuristic.
+def output_in_order(camera, hardware, times, order, payload=lambda i: b"picture",
+                    slice_payload=None):
+    """The camera sees `times`; the encoder hands pictures back in `order`."""
+    for ns in times:
+        camera_frame(hardware, ns)
+    for i in order:
+        data = slice_payload(i) if slice_payload else payload(i)
+        hardware.output.outputframe(data, keyframe=i == 0, timestamp=pts_of(times[i]))
+
+
+def test_swapped_encoder_output_is_put_back_in_order(capture):
+    # rgrabette 20261109_101716: the encoder handed back B before A. Written
+    # as-is, the decoder dropped A and the video lost sync.
     camera, hardware, path = capture
-    for sensor_ns in (1_010_000_000, 1_035_000_000):
-        camera_frame(hardware, sensor_ns)
-    hardware.output.outputframe(b"picture", keyframe=True, timestamp=25_000)
-    hardware.output.outputframe(b"picture", keyframe=False, timestamp=0)
-    hardware.output._queue.join()
-    with pytest.raises(FrameAlignmentError, match="Non-increasing encoder output PTS"):
+    times = sensor_times(20)
+    order = list(range(20))
+    order[6], order[7] = order[7], order[6]
+    output_in_order(camera, hardware, times, order, payload=lambda i: b"<%d>" % i)
+    hardware.output.close()  # flush to disk before reading it back
+    assert path.with_suffix(".h264").read_bytes() == b"".join(b"<%d>" % i for i in range(20))
+    assert camera.stop() == [ms(ns) for ns in times]
+    alignment = camera.timestamp_alignment
+    assert alignment["valid"], alignment["errors"]
+    assert alignment["reordered_output_count"] == 1
+    assert alignment["unwritten_camera_frame_count"] == 0
+
+
+def test_in_order_output_is_untouched(capture):
+    camera, hardware, path = capture
+    times = sensor_times(20)
+    output_in_order(camera, hardware, times, range(20), payload=lambda i: b"<%d>" % i)
+    hardware.output.close()
+    assert path.with_suffix(".h264").read_bytes() == b"".join(b"<%d>" % i for i in range(20))
+    assert camera.stop() == [ms(ns) for ns in times]
+    assert camera.timestamp_alignment["reordered_output_count"] == 0
+
+
+def test_first_keyframe_arriving_late_still_starts_the_stream(capture):
+    # Sorting comes before the "start on a keyframe" rule: nothing is lost.
+    camera, hardware, _ = capture
+    times = sensor_times(12)
+    output_in_order(camera, hardware, times, [1, 0] + list(range(2, 12)))
+    assert camera.stop() == [ms(ns) for ns in times]
+    assert camera.timestamp_alignment["reordered_output_count"] == 1
+
+
+def test_picture_late_by_the_whole_window_is_still_put_back(capture):
+    camera, hardware, _ = capture
+    times = sensor_times(20)
+    order = [i for i in range(20) if i != 5]
+    order.insert(order.index(5 + REORDER_WINDOW) + 1, 5)  # after REORDER_WINDOW later ones
+    output_in_order(camera, hardware, times, order)
+    assert camera.stop() == [ms(ns) for ns in times]
+    assert camera.timestamp_alignment["valid"]
+
+
+def test_picture_later_than_the_window_is_invalid(capture):
+    camera, hardware, path = capture
+    times = sensor_times(20)
+    late = REORDER_WINDOW + 1
+    order = [i for i in range(20) if i != 5]
+    order.insert(order.index(5 + late) + 1, 5)  # after REORDER_WINDOW + 1 later ones
+    output_in_order(camera, hardware, times, order)
+    with pytest.raises(FrameAlignmentError, match="pictures late"):
+        camera.stop()
+    assert path.with_suffix(".h264").exists()
+
+
+def test_b_frames_are_invalid_rather_than_sorted(capture):
+    # B-frames are out of PTS order by design: sorting them would corrupt the
+    # stream. This replaced ffprobe's has_b_frames check.
+    camera, hardware, path = capture
+    times = sensor_times(20)
+    order = list(range(20))
+    order[6], order[7] = order[7], order[6]
+    b_slice = b"\x00\x00\x00\x01\x01\xa0"  # non-IDR slice, slice_type 1 (B)
+    p_slice = b"\x00\x00\x00\x01\x01\xc0"  # slice_type 0 (P)
+    output_in_order(camera, hardware, times, order,
+                    slice_payload=lambda i: b_slice if i == 6 else p_slice)
+    with pytest.raises(FrameAlignmentError, match="B-frame"):
         camera.stop()
     assert path.with_suffix(".h264").exists()
 

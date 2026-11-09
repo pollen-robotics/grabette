@@ -115,6 +115,12 @@ to the saved list.
 written to disk. Writes go through a queue of 300 pictures (~6 s) so that an
 SD-card stall doesn't hold up the camera; a peak at 300 means the queue filled
 and the camera may have dropped frames again.
+`reordered_output_count` is the number of pictures the hardware encoder handed
+back after a later one (seen: 2 in 6934 pictures). The writer holds the 3 most
+recent pictures and writes them in PTS order, which is the encoded stream's
+order (the encoder makes no B-frames), so these are put back in place and the
+video stays decodable and in sync. A picture more than 3 places late, or a
+B-frame, makes alignment invalid.
 
 An unknown output PTS, non-increasing mapped times, failed output writes, or a
 count/order mismatch makes alignment invalid. The raw `.h264` is retained for

@@ -4,6 +4,7 @@ Ported from grabette-capture/grabette_capture/video.py.
 """
 
 import gc
+import heapq
 import logging
 import queue
 import subprocess
@@ -20,6 +21,40 @@ logger = logging.getLogger(__name__)
 # Encoded pictures waiting to be written: ~6 s at 50 fps, ~4 MB of H.264
 # (a 2 s SD stall, 102 pictures, was seen on 2026-11-04). See _h264_file_output.
 OUTPUT_QUEUE_FRAMES = 300
+
+# Pictures the writer holds back to put them in PTS order. The Pi's hardware
+# encoder occasionally hands two consecutive pictures back swapped (2 in 6934
+# on 2026-11-09): written as-is, the decoder silently drops the late one and
+# the video loses sync. Its pictures are encoded in capture order (no
+# B-frames), so PTS order is exactly the encoded stream order. 3 pictures
+# (60 ms) covers a picture up to 3 places late; later than that, the take is
+# invalid as before.
+REORDER_WINDOW = 3
+
+
+def _slice_type(frame) -> int | None:
+    """H.264 slice_type (0 P, 1 B, 2 I, ...) of the first picture slice in an
+    Annex B access unit, or None if there is none. Only called for the rare
+    pictures that arrive out of order."""
+    data = bytes(frame)
+    pos = 0
+    while (pos := data.find(b"\x00\x00\x01", pos)) != -1:
+        pos += 3
+        if pos < len(data) and data[pos] & 0x1F in (1, 5):  # non-IDR / IDR slice
+            rbsp = data[pos + 1:pos + 17].replace(b"\x00\x00\x03", b"\x00\x00")
+            bits = "".join(f"{b:08b}" for b in rbsp)
+            values, i = [], 0
+            for _ in range(2):  # ue(v) first_mb_in_slice, then ue(v) slice_type
+                zeros = 0
+                while i < len(bits) and bits[i] == "0":
+                    zeros += 1
+                    i += 1
+                if i + zeros >= len(bits):
+                    return None
+                values.append(int(bits[i:i + zeros + 1], 2) - 1)
+                i += zeros + 1
+            return values[1] % 5
+    return None
 
 
 def _h264_file_output(path: Path, timing: FrameTiming):
@@ -39,8 +74,13 @@ def _h264_file_output(path: Path, timing: FrameTiming):
         def __init__(self):
             super().__init__()
             self.queue_peak = 0
+            self.reordered_count = 0  # pictures that arrived after a later one
             self._file = open(path, "wb")
             self._have_keyframe = False
+            self._held = []  # (pts, arrival, item), a min-heap: see REORDER_WINDOW
+            self._arrivals = 0
+            self._max_pts = None
+            self._last_written_pts = None
             self._queue = queue.Queue(maxsize=OUTPUT_QUEUE_FRAMES)
             self._writer = threading.Thread(
                 target=self._write_queued, name="h264-writer", daemon=True)
@@ -58,15 +98,56 @@ def _h264_file_output(path: Path, timing: FrameTiming):
             self.queue_peak = max(self.queue_peak, self._queue.qsize())
 
         def _write_queued(self):
+            # Nothing may escape this loop: a dead writer would fill the queue,
+            # block the encoder and stall the camera.
             while (item := self._queue.get()) is not None:
                 try:
-                    self._write(*item)
+                    self._reorder(item)
                 except Exception as exc:
-                    # Surface writer-thread I/O failures in stop(), after the
-                    # encoder has released its buffers and other streams stop.
-                    timing.record_error(f"Video output write failed: {exc}")
+                    timing.record_error(f"Video output reordering failed: {exc}")
                 finally:
                     self._queue.task_done()
+            self._flush_held()
+
+        def _reorder(self, item):
+            pts = item[2]
+            if pts is None:
+                # Can't be placed: write it where it came; timing reports it.
+                self._flush_held()
+                self._write_safely(item)
+                return
+            if self._max_pts is not None and pts < self._max_pts:
+                self.reordered_count += 1
+                logger.warning("H.264 encoder output out of order: PTS %d after %d, "
+                               "put back in order", pts, self._max_pts)
+                if _slice_type(item[0]) == 1:
+                    # B-frames are legitimately out of PTS order: sorting them
+                    # would break the stream. The Pi's encoder makes none.
+                    timing.record_error(f"B-frame in H.264 output at PTS {pts}")
+            else:
+                self._max_pts = pts
+            heapq.heappush(self._held, (pts, self._arrivals, item))
+            self._arrivals += 1
+            if len(self._held) > REORDER_WINDOW:
+                self._write_safely(heapq.heappop(self._held)[2])
+
+        def _flush_held(self):
+            while self._held:
+                self._write_safely(heapq.heappop(self._held)[2])
+
+        def _write_safely(self, item):
+            pts = item[2]
+            if pts is not None and self._last_written_pts is not None and pts < self._last_written_pts:
+                timing.record_error(f"Encoder output PTS {pts} arrived more than "
+                                    f"{REORDER_WINDOW} pictures late")
+            if pts is not None:
+                self._last_written_pts = pts
+            try:
+                self._write(*item)
+            except Exception as exc:
+                # Surface writer-thread I/O failures in stop(), after the
+                # encoder has released its buffers and other streams stop.
+                timing.record_error(f"Video output write failed: {exc}")
 
         def _write(self, frame, keyframe, timestamp):
             # A stream must start on a keyframe: earlier pictures can't be decoded.
@@ -273,6 +354,8 @@ class VideoCapture:
         self.timestamp_alignment = self._timing.result(self._frame_count)
         # How close the SD card came to stalling the camera (OUTPUT_QUEUE_FRAMES = full).
         self.timestamp_alignment["writer_queue_peak"] = getattr(self._output, "queue_peak", None)
+        # Pictures the encoder handed back out of order, put back in PTS order.
+        self.timestamp_alignment["reordered_output_count"] = getattr(self._output, "reordered_count", None)
         self.timestamp_alignment["camera_buffer_count"] = self.buffer_count
         try:
             write_json_atomic(self._output_path.with_suffix(".frames.json"), {

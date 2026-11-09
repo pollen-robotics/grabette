@@ -75,8 +75,9 @@ class FrameTiming:
             if pts_us is None:
                 self._error("Missing output PTS")
                 return
-            # Output order must be presentation order: this is what rejects
-            # B-frames/reordering, independently of ffprobe's heuristics.
+            # The output writes pictures in PTS order (camera.REORDER_WINDOW,
+            # which also rejects B-frames): anything else here is a picture
+            # that came too late to be put back, and the take is invalid.
             if self._last_output_pts is not None and pts_us <= self._last_output_pts:
                 self._error(f"Non-increasing encoder output PTS: {pts_us}")
                 return
