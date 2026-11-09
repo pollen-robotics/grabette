@@ -113,10 +113,11 @@ def _camera_only() -> None:
     """The daemon's camera configuration, streaming, nothing encoded or written."""
     from picamera2 import Picamera2
 
-    from grabette.hardware.camera import CameraCapture as C
+    from grabette.backend.rpi import FPS
+    from grabette.hardware.camera import VideoCapture as C
 
     picam2 = Picamera2()
-    duration = int(1_000_000 / C.DEFAULT_FPS)
+    duration = int(1_000_000 / FPS)
     picam2.configure(picam2.create_video_configuration(
         main={"size": C.DEFAULT_RESOLUTION, "format": "YUV420"},
         controls={"FrameDurationLimits": (duration, duration)},
@@ -131,16 +132,17 @@ def _camera_only() -> None:
 
 
 def recording(sync, out_dir: Path, segment_s: float, pause_s: float, stats: Counter) -> None:
-    """Back-to-back recordings through the daemon's CameraCapture (writer
+    """Back-to-back recordings through the daemon's VideoCapture (writer
     thread, mux, ffprobe), deleted after each one."""
-    from grabette.hardware.camera import CameraCapture
+    from grabette.backend.rpi import FPS
+    from grabette.hardware.camera import VideoCapture
 
     seg_dir = out_dir / "segments"
     seg_dir.mkdir()
     n = 0
     while not stop.is_set():
         n += 1
-        cam = CameraCapture(sync)
+        cam = VideoCapture(sync, fps=FPS)  # as backend/rpi.py builds it
         try:
             cam.init_camera()
             cam.start_recording(seg_dir / f"seg{n:03d}.mp4")
