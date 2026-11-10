@@ -13,6 +13,12 @@ Run on the Pi with the grabette venv, daemon STOPPED for every mode but
     .venv/bin/python scripts/bench_i2c_angles.py --mode record    # C: + H.264 recording, as in an episode
     .venv/bin/python scripts/bench_i2c_angles.py --mode orbbec-record  # E: Orbbec recording, no RPi camera
     .venv/bin/python scripts/bench_i2c_angles.py --mode orbbec    # F: Orbbec streaming, nothing recorded
+    .venv/bin/python scripts/bench_i2c_angles.py --mode both-record  # G: RPi camera + Orbbec recordings
+
+G records both cameras together, segment by segment, as an episode does
+(the depth camera streams all along, as in the daemon): the episodes of D
+without the daemon. On 2026-11-10, C and E gave no I2C error in 2 h each on
+two grabettes, while D gave one every 14-37 min.
 
 E records the depth camera as an episode does (x264 + FFV1 ffmpeg encoders,
 files on the SD card, deleted after each segment), with the daemon's Orbbec
@@ -190,9 +196,8 @@ def orbbec_load(sync, out_dir: Path, segment_s: float, pause_s: float,
         stop.set()
 
 
-def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
-    """The daemon's OrbbecCapture: its pipeline always streams (live view);
-    with `record`, back-to-back recordings deleted after each one."""
+def open_orbbec(sync):
+    """The daemon's OrbbecCapture with the daemon's settings (.env), streaming."""
     from grabette.hardware.orbbec import OrbbecCapture
 
     kwargs = {}
@@ -207,6 +212,20 @@ def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
     cam = OrbbecCapture(sync, **kwargs)
     cam.init_device()
     log(f"orbbec streaming {kwargs}")
+    return cam
+
+
+def orbbec_stats(st: dict, stats: Counter, prefix: str = "") -> str:
+    stats[prefix + "dropped_frames"] += st.get("dropped_frames") or 0
+    gap = round(st.get("left_max_gap_ms") or 0)
+    stats[prefix + "max_left_gap_ms"] = max(stats[prefix + "max_left_gap_ms"], gap)
+    return f"{st.get('left_frames')} left frames, max gap {gap} ms, {st.get('dropped_frames')} dropped"
+
+
+def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
+    """The daemon's OrbbecCapture: its pipeline always streams (live view);
+    with `record`, back-to-back recordings deleted after each one."""
+    cam = open_orbbec(sync)
     try:
         if not record:
             stop.wait()
@@ -224,11 +243,7 @@ def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
                 stop.wait(segment_s)
                 st = cam.stop_recording()
                 stats["segments_ok"] += 1
-                stats["dropped_frames"] += st.get("dropped_frames") or 0
-                gap = round(st.get("left_max_gap_ms") or 0)
-                stats["max_left_gap_ms"] = max(stats["max_left_gap_ms"], gap)
-                log(f"segment {n}: {st.get('left_frames')} left frames, "
-                    f"max gap {gap} ms, {st.get('dropped_frames')} dropped")
+                log(f"segment {n}: {orbbec_stats(st, stats)}")
             except Exception as e:
                 stats["segments_failed"] += 1
                 log(f"segment {n} failed: {type(e).__name__}: {e}")
@@ -241,6 +256,76 @@ def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
         shutil.rmtree(seg_dir, ignore_errors=True)
     finally:
         cam.shutdown()
+
+
+# ── Both cameras (mode both-record) ───────────────────────────────────
+
+
+def both_load(sync, out_dir: Path, segment_s: float, pause_s: float, stats: Counter) -> None:
+    try:
+        _both_load(sync, out_dir, segment_s, pause_s, stats)
+    except Exception as e:
+        stats["orbbec_failed"] += 1
+        log(f"orbbec failed, stopping the run: {type(e).__name__}: {e}")
+        stop.set()
+
+
+def _both_load(sync, out_dir, segment_s, pause_s, stats) -> None:
+    """Segments recorded by both cameras at once, deleted after each one: the
+    RPi camera opened per segment as in mode record, the Orbbec streaming all
+    along as in the daemon and waited for before each start."""
+    from grabette.backend.rpi import FPS
+    from grabette.hardware.camera import VideoCapture
+
+    dcam = open_orbbec(sync)
+    seg_dir = out_dir / "segments"
+    seg_dir.mkdir()
+    try:
+        n = 0
+        while not stop.is_set():
+            n += 1
+            seg = seg_dir / f"seg{n:03d}"
+            seg.mkdir()
+            dcam.wait_until_ready()
+            cam = VideoCapture(sync, fps=FPS)  # as backend/rpi.py builds it
+            depth_on = rgb_on = False
+            try:
+                cam.init_camera()
+                dcam.start_recording(seg)
+                depth_on = True
+                cam.start_recording(seg / "raw_video.mp4")
+                rgb_on = True
+                log(f"recording segment {n}")
+                stop.wait(segment_s)
+            except Exception as e:
+                stats["segments_failed_start"] += 1
+                log(f"segment {n} failed to start: {type(e).__name__}: {e}")
+            # Stopped one after the other, each failure counted on its own.
+            if rgb_on:
+                try:
+                    cam.stop()
+                    stats["rgb_segments_ok"] += 1
+                except Exception as e:
+                    stats["rgb_segments_failed"] += 1
+                    log(f"segment {n} rgb failed: {type(e).__name__}: {e}")
+            else:
+                try:
+                    cam.close()
+                except Exception:
+                    pass
+            if depth_on:
+                try:
+                    st = dcam.stop_recording()
+                    stats["depth_segments_ok"] += 1
+                    log(f"segment {n} depth: {orbbec_stats(st, stats, 'depth_')}")
+                except Exception as e:
+                    stats["depth_segments_failed"] += 1
+                    log(f"segment {n} depth failed: {type(e).__name__}: {e}")
+            shutil.rmtree(seg, ignore_errors=True)
+            stop.wait(pause_s)
+    finally:
+        shutil.rmtree(seg_dir, ignore_errors=True)
+        dcam.shutdown()
 
 
 # ── I2C reads (every mode but episodes) ───────────────────────────────
@@ -334,15 +419,15 @@ def daemon_summary(text: str) -> dict:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--mode", required=True, choices=(
-        "i2c", "camera", "record", "episodes", "orbbec", "orbbec-record"))
+        "i2c", "camera", "record", "episodes", "orbbec", "orbbec-record", "both-record"))
     p.add_argument("--duration", type=float, default=3600, help="seconds (default 3600)")
     p.add_argument("--rate", type=float, default=100, help="I2C read loop, Hz (default 100)")
     p.add_argument("--slow-ms", type=float, default=50,
                    help="log reads slower than this (default 50; normal is 1-15 ms)")
     p.add_argument("--segment", type=float, default=120,
-                   help="record/episodes/orbbec-record: length of each recording, s (default 120)")
+                   help="record/episodes/orbbec-record/both-record: length of each recording, s (default 120)")
     p.add_argument("--pause", type=float, default=5,
-                   help="record/episodes/orbbec-record: pause between recordings, s (default 5)")
+                   help="record/episodes/orbbec-record/both-record: pause between recordings, s (default 5)")
     p.add_argument("--api", default="http://127.0.0.1:8000", help="episodes: daemon URL")
     p.add_argument("--out", type=Path, default=Path.home() / "i2c_bench")
     p.add_argument("--allow-daemon", action="store_true",
@@ -392,6 +477,9 @@ def main() -> int:
             load = threading.Thread(target=orbbec_load, daemon=True, args=(
                 sync, out_dir, args.segment, args.pause, args.mode == "orbbec-record",
                 load_stats))
+        elif args.mode == "both-record":
+            load = threading.Thread(target=both_load, daemon=True,
+                                    args=(sync, out_dir, args.segment, args.pause, load_stats))
         if load is not None:
             load.start()
         stats = {"loop_gaps": 0, "sensors": {n: {
