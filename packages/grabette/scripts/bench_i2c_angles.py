@@ -5,12 +5,19 @@ Reads the two angle sensors the way the daemon does (same AngleCapture code,
 and logs every slow or failed I2C read. Holes come about once per 20 min of
 recording, so give each condition about an hour (--duration, default 3600 s).
 
-Run on the Pi with the grabette venv, daemon STOPPED for the first three modes
-(it holds the camera and reads the sensors itself):
+Run on the Pi with the grabette venv, daemon STOPPED for every mode but
+`episodes` (it holds the cameras and reads the sensors itself):
     sudo systemctl stop grabette
     .venv/bin/python scripts/bench_i2c_angles.py --mode i2c       # A: I2C alone
     .venv/bin/python scripts/bench_i2c_angles.py --mode camera    # B: + camera, no encoder
     .venv/bin/python scripts/bench_i2c_angles.py --mode record    # C: + H.264 recording, as in an episode
+    .venv/bin/python scripts/bench_i2c_angles.py --mode orbbec-record  # E: Orbbec recording, no RPi camera
+    .venv/bin/python scripts/bench_i2c_angles.py --mode orbbec    # F: Orbbec streaming, nothing recorded
+
+E records the depth camera as an episode does (x264 + FFV1 ffmpeg encoders,
+files on the SD card, deleted after each segment), with the daemon's Orbbec
+settings from .env (run from the daemon's directory). F keeps only the USB
+stream and power draw, to split those from the encoding load if E shows holes.
 
 Mode `episodes` (D) drives the RUNNING daemon instead: it starts and stops
 episodes through its API and reads the daemon's own angle warnings from the
@@ -25,6 +32,7 @@ Writes ~/i2c_bench/<UTC start>_<mode>/:
   summary.json  reads, errors by errno, slow reads, max read, shared-IRQ count
   kernel.log    kernel messages of the run (i2c-bcm2835 "unexpected interrupt")
   daemon.log    mode episodes only: the daemon's angle lines
+  bench.log     everything printed during the run
 
 Ctrl-C ends the run early and still writes the summary.
 """
@@ -52,6 +60,7 @@ LOOP_GAP_S = 0.1  # same threshold as the daemon's "Angle loop stalled"
 REPORT_EVERY_S = 60
 
 stop = threading.Event()
+log_file = None  # bench.log, once the output directory exists
 
 
 def utc_now() -> str:
@@ -59,7 +68,11 @@ def utc_now() -> str:
 
 
 def log(msg: str) -> None:
-    print(f"{datetime.now(timezone.utc):%H:%M:%S} {msg}", flush=True)
+    line = f"{datetime.now(timezone.utc):%H:%M:%S} {msg}"
+    print(line, flush=True)
+    if log_file is not None:
+        log_file.write(line + "\n")
+        log_file.flush()
 
 
 def i2c_irq_count() -> dict | None:
@@ -163,7 +176,74 @@ def recording(sync, out_dir: Path, segment_s: float, pause_s: float, stats: Coun
     shutil.rmtree(seg_dir, ignore_errors=True)
 
 
-# ── I2C reads (modes i2c, camera, record) ─────────────────────────────
+# ── Depth camera load (modes orbbec and orbbec-record) ────────────────
+
+
+def orbbec_load(sync, out_dir: Path, segment_s: float, pause_s: float,
+                record: bool, stats: Counter) -> None:
+    try:
+        _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats)
+    except Exception as e:
+        # Without the Orbbec this run would be mode i2c under another name.
+        stats["orbbec_failed"] += 1
+        log(f"orbbec failed, stopping the run: {type(e).__name__}: {e}")
+        stop.set()
+
+
+def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
+    """The daemon's OrbbecCapture: its pipeline always streams (live view);
+    with `record`, back-to-back recordings deleted after each one."""
+    from grabette.hardware.orbbec import OrbbecCapture
+
+    kwargs = {}
+    try:
+        from grabette.config import Settings
+        settings = Settings()
+        kwargs = dict(ir_exposure_us=settings.orbbec_ir_exposure_us,
+                      ir_gain=settings.orbbec_ir_gain,
+                      rotate_180=bool(settings.orbbec_rotate_180))
+    except Exception as e:
+        log(f"settings not read ({type(e).__name__}: {e}), Orbbec defaults")
+    cam = OrbbecCapture(sync, **kwargs)
+    cam.init_device()
+    log(f"orbbec streaming {kwargs}")
+    try:
+        if not record:
+            stop.wait()
+            return
+        seg_dir = out_dir / "segments"
+        seg_dir.mkdir()
+        n = 0
+        while not stop.is_set():
+            n += 1
+            seg = seg_dir / f"seg{n:03d}"
+            cam.wait_until_ready()  # as the daemon does before t=0
+            try:
+                cam.start_recording(seg)
+                log(f"recording segment {n}")
+                stop.wait(segment_s)
+                st = cam.stop_recording()
+                stats["segments_ok"] += 1
+                stats["dropped_frames"] += st.get("dropped_frames") or 0
+                gap = round(st.get("left_max_gap_ms") or 0)
+                stats["max_left_gap_ms"] = max(stats["max_left_gap_ms"], gap)
+                log(f"segment {n}: {st.get('left_frames')} left frames, "
+                    f"max gap {gap} ms, {st.get('dropped_frames')} dropped")
+            except Exception as e:
+                stats["segments_failed"] += 1
+                log(f"segment {n} failed: {type(e).__name__}: {e}")
+                try:
+                    cam.stop_recording()
+                except Exception:
+                    pass
+            shutil.rmtree(seg, ignore_errors=True)
+            stop.wait(pause_s)
+        shutil.rmtree(seg_dir, ignore_errors=True)
+    finally:
+        cam.shutdown()
+
+
+# ── I2C reads (every mode but episodes) ───────────────────────────────
 
 
 def read_loop(cap, rate_hz: float, slow_s: float, writer, stats: dict) -> None:
@@ -253,15 +333,16 @@ def daemon_summary(text: str) -> dict:
 
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--mode", choices=("i2c", "camera", "record", "episodes"), required=True)
+    p.add_argument("--mode", required=True, choices=(
+        "i2c", "camera", "record", "episodes", "orbbec", "orbbec-record"))
     p.add_argument("--duration", type=float, default=3600, help="seconds (default 3600)")
     p.add_argument("--rate", type=float, default=100, help="I2C read loop, Hz (default 100)")
     p.add_argument("--slow-ms", type=float, default=50,
                    help="log reads slower than this (default 50; normal is 1-15 ms)")
     p.add_argument("--segment", type=float, default=120,
-                   help="record/episodes: length of each recording, s (default 120)")
+                   help="record/episodes/orbbec-record: length of each recording, s (default 120)")
     p.add_argument("--pause", type=float, default=5,
-                   help="record/episodes: pause between recordings, s (default 5)")
+                   help="record/episodes/orbbec-record: pause between recordings, s (default 5)")
     p.add_argument("--api", default="http://127.0.0.1:8000", help="episodes: daemon URL")
     p.add_argument("--out", type=Path, default=Path.home() / "i2c_bench")
     p.add_argument("--allow-daemon", action="store_true",
@@ -271,12 +352,14 @@ def main() -> int:
     if args.mode == "episodes" and not daemon_active():
         sys.exit("mode episodes drives the daemon: sudo systemctl start grabette")
     if args.mode != "episodes" and daemon_active() and not args.allow_daemon:
-        sys.exit("the daemon holds the camera and reads the sensors: "
+        sys.exit("the daemon holds the cameras and reads the sensors: "
                  "sudo systemctl stop grabette (or --allow-daemon)")
 
     t0_epoch = time.time()
     out_dir = args.out / f"{datetime.now(timezone.utc):%Y%m%d_%H%M%S}_{args.mode}"
     out_dir.mkdir(parents=True)
+    global log_file
+    log_file = open(out_dir / "bench.log", "a", buffering=1)
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     timer = threading.Timer(args.duration, stop.set)
@@ -305,6 +388,10 @@ def main() -> int:
         elif args.mode == "record":
             load = threading.Thread(target=recording, daemon=True,
                                     args=(sync, out_dir, args.segment, args.pause, load_stats))
+        elif args.mode in ("orbbec", "orbbec-record"):
+            load = threading.Thread(target=orbbec_load, daemon=True, args=(
+                sync, out_dir, args.segment, args.pause, args.mode == "orbbec-record",
+                load_stats))
         if load is not None:
             load.start()
         stats = {"loop_gaps": 0, "sensors": {n: {
