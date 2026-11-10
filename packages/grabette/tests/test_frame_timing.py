@@ -95,6 +95,59 @@ class FrameTimingTests(unittest.TestCase):
         self.assertIn("offsets fit", " ".join(result["errors"]))
         self.assertEqual(self.timing.timestamps, [])
 
+    def test_matched_offset_records_its_source(self):
+        camera = sensor_times(30)
+        result = self.record(camera, camera)
+        self.assertEqual(result["pts_offset_source"], "matched")
+        self.assertEqual(result["pts_offset_candidates"], 1)
+
+    def test_encoder_origin_resolves_regular_frames(self):
+        # What a lightly loaded Pi gives (bench of 2026-11-10): 2 to 5 offsets fit.
+        camera = [1_010_000_000 + i * 20_000_000 for i in range(30)]
+        written = camera[3:23]
+        self.timing = FrameTiming(self.sync, pts_origin_us=lambda: written[0] // 1000)
+        result = self.record(camera, written)
+        self.assertTrue(result["valid"], result["errors"])
+        self.assertEqual(result["pts_offset_source"], "encoder_first_timestamp")
+        self.assertGreater(result["pts_offset_candidates"], 1)
+        self.assertEqual(self.timing.timestamps, self.expected_ms(written))
+        self.assertEqual(result["unwritten_camera_frame_count"], 0)
+
+    def test_encoder_origin_used_with_jittered_frames(self):
+        camera = sensor_times(30)
+        self.timing = FrameTiming(self.sync, pts_origin_us=lambda: camera[2] // 1000)
+        result = self.record(camera, camera[2:])
+        self.assertTrue(result["valid"], result["errors"])
+        self.assertEqual(result["pts_offset_source"], "encoder_first_timestamp")
+        self.assertEqual(result["pts_offset_candidates"], 1)
+        self.assertEqual(self.timing.timestamps, self.expected_ms(camera[2:]))
+
+    def test_wrong_encoder_origin_falls_back_to_matching(self):
+        camera = sensor_times(30)
+        # Half a frame off: fits no camera frame.
+        self.timing = FrameTiming(self.sync, pts_origin_us=lambda: camera[0] // 1000 + 10_000)
+        with self.assertLogs("grabette.hardware.frame_timing", "WARNING"):
+            result = self.record(camera, camera)
+        self.assertTrue(result["valid"], result["errors"])
+        self.assertEqual(result["pts_offset_source"], "matched")
+        self.assertEqual(self.timing.timestamps, self.expected_ms(camera))
+
+    def test_wrong_encoder_origin_on_regular_frames_is_invalid(self):
+        camera = [1_010_000_000 + i * 20_000_000 for i in range(30)]
+        self.timing = FrameTiming(self.sync, pts_origin_us=lambda: camera[0] // 1000 + 10_000)
+        result = self.record(camera, camera[:20])
+        self.assertFalse(result["valid"])
+        self.assertIn("offsets fit", " ".join(result["errors"]))
+
+    def test_unavailable_encoder_origin_falls_back_to_matching(self):
+        camera = sensor_times(30)
+        for origin in (lambda: None, lambda: 1 / 0):
+            with self.subTest(origin=origin):
+                self.timing = FrameTiming(self.sync, pts_origin_us=origin)
+                result = self.record(camera, camera)
+                self.assertTrue(result["valid"], result["errors"])
+                self.assertEqual(result["pts_offset_source"], "matched")
+
     def test_pts_not_derived_from_sensor_time_is_invalid(self):
         camera = sensor_times(30)
         # A nominal frame-rate clock instead of the sensor: no offset fits.

@@ -295,6 +295,9 @@ class VideoCapture:
         if not hasattr(self._picam2, "post_callback"):
             raise RuntimeError("Incompatible picamera2: Picamera2.post_callback is missing")
         self._encoder = H264Encoder(bitrate=self.bitrate)
+        if not hasattr(self._encoder, "firsttimestamp"):
+            logger.warning("picamera2 encoder has no firsttimestamp: "
+                           "PTS offset will be found by matching alone")
 
         if self.preview:
             try:
@@ -327,7 +330,7 @@ class VideoCapture:
 
         self._output_path = Path(output_path)
         self._h264_path = self._output_path.with_suffix(".h264")
-        self._timing = FrameTiming(self.sync)
+        self._timing = FrameTiming(self.sync, pts_origin_us=self._encoder_pts_origin)
         self._frame_timestamps = self._timing.timestamps
         self.timestamp_alignment = {}
         self._frame_count = 0
@@ -347,6 +350,12 @@ class VideoCapture:
             gc.enable()
             output.close()
             raise
+
+    def _encoder_pts_origin(self):
+        # picamera2 0.3.x: PTS = int(SensorTimestamp / 1000) - encoder.firsttimestamp,
+        # set on the first frame the encoder gets. Not documented: FrameTiming
+        # checks it against the camera frames before using it.
+        return getattr(self._encoder, "firsttimestamp", None)
 
     def _on_camera_frame(self, request) -> None:
         # picamera2's request thread, before the encoder: never raise here.
