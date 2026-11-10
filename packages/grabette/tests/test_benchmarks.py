@@ -62,7 +62,7 @@ def _episode(root: Path, eid: str, device: str = "grabette-test", *, seconds: fl
         "video_timestamp_alignment": {"valid": valid, "unwritten_camera_frame_count": 0,
                                       "reordered_output_count": 0, "writer_queue_peak": 12},
         "dcam": {"left_frames": len(depth), "depth_frames": len(depth), "dropped_frames": 0},
-        "sync": {"scheduled_start_utc": f"2026-11-09T10:00:00.000000+00:00",
+        "sync": {"scheduled_start_utc": "2026-11-09T10:00:00.000000+00:00",
                  "capture_started_utc": "2026-11-09T10:00:00.003000+00:00",
                  "wake_skew_ms": 0.3, "start_capture_ms": start_capture_ms},
     }
