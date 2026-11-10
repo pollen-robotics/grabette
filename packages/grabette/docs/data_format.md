@@ -92,9 +92,11 @@ after capture stops.
 The recorder only uses public picamera2 API. `Picamera2.post_callback` records
 the `SensorTimestamp` of every camera frame; the output receives each written
 picture's PTS. The constant offset between PTS and sensor time is not assumed
-(how picamera2 derives the PTS varies between versions): it is found by
-matching the first 10 written pictures against the camera frames, to within
-2 µs, and must be unique. Each written picture then gets the sensor time at
+(how picamera2 derives the PTS varies between versions). The encoder's own
+PTS origin (picamera2's `firsttimestamp`) is used when all of the first 10
+written pictures then fall on camera frames, to within 2 µs. Otherwise the
+offset is found by matching those pictures against the camera frames, and must
+be unique. Each written picture then gets the sensor time at
 PTS + offset, published only after the picture is written. Output delivery
 time is never substituted for a missing capture time, and missing pictures are
 not filled or resampled. A PTS that does not follow the sensor clock, or an
@@ -106,7 +108,10 @@ summary also available as `metadata.json.video_timestamp_alignment`
 (`source`: `encoded_output_pts_matched_sensor_timestamp_v2`).
 The summary compares the video picture count, written-output count, and mapped
 timestamp count. It also records `camera_frame_count` (frames the camera
-delivered during the recording), `pts_offset_us` (the offset found), and
+delivered during the recording), `pts_offset_us` (the offset found),
+`pts_offset_source` (`encoder_first_timestamp` or `matched`),
+`pts_offset_candidates` (how many offsets matching alone would accept: above 1,
+it could not have decided without the encoder origin), and
 `unwritten_camera_frame_count`: camera frames between the first and last
 written picture that the encoder never emitted. Frames before the first or
 after the last written picture are not counted. None of these add timestamps
