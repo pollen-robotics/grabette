@@ -12,9 +12,11 @@ from `hand`).
 """
 
 import errno
+import fcntl
 import json
 import logging
 import math
+import os
 import threading
 import time
 from collections import Counter
@@ -36,6 +38,18 @@ SLOW_ITERATION_S = 0.1
 # Failed reads logged one by one per capture; the rest are only counted in the
 # end-of-capture summary, so an unplugged sensor does not flood the journal.
 MAX_LOGGED_READ_ERRORS = 20
+# The i2c-bcm2835 driver waits 1 s by default for a transfer to complete. After
+# a broken transaction (EIO) the next read on that bus waits for a completion
+# that never comes: a 1 s hole in angle_data, seen ~1/h when both cameras
+# record. A healthy read takes ~1 ms, so 20 ms is ample, and the read retried
+# right after the timeout succeeds (the driver resets the controller).
+I2C_TIMEOUT_MS = 20
+# ioctl from <linux/i2c-dev.h>: the adapter's timeout, in units of 10 ms. It
+# applies to the whole adapter, whichever file descriptor sets it, until reboot.
+I2C_TIMEOUT = 0x0702
+# Attempts at reading both sensors in one iteration. A hole is EIO then
+# ETIMEDOUT, then a good read: 3 attempts turn it into one ~30 ms late sample.
+MAX_READ_ATTEMPTS = 3
 
 
 @dataclass
@@ -62,6 +76,26 @@ def _describe(read: "_Read | None") -> str:
         return "-"
     text = f"{read.seconds * 1000:.0f} ms"
     return text if read.error is None else f"{text} {read.error}"
+
+
+def set_i2c_timeout(bus: int, timeout_ms: int = I2C_TIMEOUT_MS) -> bool:
+    """Shorten the kernel's wait for an I2C transfer on /dev/i2c-<bus>.
+
+    Returns False (and logs why) when it cannot be set: the reads still work,
+    only a broken transaction costs the driver's default of 1 s again."""
+    try:
+        fd = os.open(f"/dev/i2c-{bus}", os.O_RDWR)
+    except OSError as e:
+        logger.warning("Angle: I2C timeout not set on /dev/i2c-%d: %s", bus, e)
+        return False
+    try:
+        fcntl.ioctl(fd, I2C_TIMEOUT, max(1, round(timeout_ms / 10)))
+    except OSError as e:
+        logger.warning("Angle: I2C timeout not set on /dev/i2c-%d: %s", bus, e)
+        return False
+    finally:
+        os.close(fd)
+    return True
 
 
 def load_calibration() -> dict | None:
@@ -203,6 +237,7 @@ class AngleCapture:
 
         self._i2c_1 = ExtendedI2C(self.i2c_bus_1)
         self._i2c_2 = ExtendedI2C(self.i2c_bus_2)
+        timeouts_set = [set_i2c_timeout(bus) for bus in (self.i2c_bus_1, self.i2c_bus_2)]
         # Opening /dev/i2c-N says nothing about the sensor behind it: read each
         # one once, so an unplugged sensor fails here and not silently later.
         for name, bus, i2c in (("distal", self.i2c_bus_1, self._i2c_1),
@@ -213,7 +248,8 @@ class AngleCapture:
                 self._close()
                 raise OSError(e.errno, f"{name} sensor does not answer on "
                                        f"/dev/i2c-{bus} ({e.strerror or e})") from e
-        logger.info("Angle sensors initialized at %d Hz", self.sample_rate_hz)
+        logger.info("Angle sensors initialized at %d Hz, I2C timeout %s", self.sample_rate_hz,
+                    f"{I2C_TIMEOUT_MS} ms" if all(timeouts_set) else "left at the driver default")
 
     def _read_angle_raw(self, i2c) -> float:
         result = bytearray(2)
@@ -235,8 +271,11 @@ class AngleCapture:
 
         # Failed reads per sensor (distal, proximal), by error name.
         errors_by_kind = (Counter(), Counter())
+        # Iterations saved by a retry, which would otherwise have no sample.
+        recovered = 0
         prev_start = None
         reads: list[_Read | None] = [None, None]
+        retries = 0
         while self._running:
             loop_start = time.monotonic()
             read_count += 1
@@ -247,30 +286,40 @@ class AngleCapture:
             if prev_start is not None and loop_start - prev_start > SLOW_ITERATION_S:
                 logger.warning(
                     "Angle loop stalled %.0f ms (distal read %s, proximal read %s, "
-                    "%d errors so far)",
+                    "%d retries, %d errors so far)",
                     (loop_start - prev_start) * 1000,
                     _describe(reads[0]), _describe(reads[1]),
-                    error_count,
+                    retries, error_count,
                 )
             prev_start = loop_start
 
-            ts = self.sync.get_timestamp_ms()
             # Both sensors are read even when the first one fails, so a stall
-            # tells whether one bus or both were stuck.
-            reads = [self._timed_read(self._i2c_1), self._timed_read(self._i2c_2)]
-            for sensor, (name, bus, r) in enumerate(zip(
-                    ("distal", "proximal"), (self.i2c_bus_1, self.i2c_bus_2), reads)):
-                if r.error is None:
-                    continue
-                error_count += 1
-                errors_by_kind[sensor][r.error] += 1
-                if error_count <= MAX_LOGGED_READ_ERRORS:
-                    logger.warning("Angle: %s read failed on /dev/i2c-%d after %.0f ms: %s",
-                                   name, bus, r.seconds * 1000, r.detail)
-            if reads[0].error is None and reads[1].error is None:
+            # tells whether one bus or both were stuck. A failed pair is read
+            # again at once, both sensors with a fresh timestamp, so the sample
+            # stays one instant. `reads` keeps the first attempt for the stall log.
+            for attempt in range(MAX_READ_ATTEMPTS):
+                ts = self.sync.get_timestamp_ms()
+                pair = [self._timed_read(self._i2c_1), self._timed_read(self._i2c_2)]
+                if attempt == 0:
+                    reads = pair
+                for sensor, (name, bus, r) in enumerate(zip(
+                        ("distal", "proximal"), (self.i2c_bus_1, self.i2c_bus_2), pair)):
+                    if r.error is None:
+                        continue
+                    error_count += 1
+                    errors_by_kind[sensor][r.error] += 1
+                    if error_count <= MAX_LOGGED_READ_ERRORS:
+                        logger.warning("Angle: %s read failed on /dev/i2c-%d after %.0f ms "
+                                       "(attempt %d): %s", name, bus, r.seconds * 1000,
+                                       attempt + 1, r.detail)
+                if pair[0].error is None and pair[1].error is None:
+                    break
+            retries = attempt
+            if pair[0].error is None and pair[1].error is None:
+                recovered += attempt > 0
                 # i2c_bus_1 is the DISTAL sensor, _2 is PROXIMAL — see init.
-                cal1 = self._normalize_angle(reads[0].deg - self._offset_1_deg) * settings.distal_sign
-                cal2 = self._normalize_angle(reads[1].deg - self._offset_2_deg) * settings.proximal_sign
+                cal1 = self._normalize_angle(pair[0].deg - self._offset_1_deg) * settings.distal_sign
+                cal2 = self._normalize_angle(pair[1].deg - self._offset_2_deg) * settings.proximal_sign
                 self._samples.samples.append({
                     "cts": ts,
                     "value": [math.radians(cal1), math.radians(cal2)],
@@ -281,9 +330,11 @@ class AngleCapture:
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
-        logger.info("Angle: %d reads, %d errors (distal %s, proximal %s)",
+        logger.info("Angle: %d reads, %d errors (distal %s, proximal %s), "
+                    "%d samples saved by a retry",
                     read_count, error_count,
-                    dict(errors_by_kind[0]) or "none", dict(errors_by_kind[1]) or "none")
+                    dict(errors_by_kind[0]) or "none", dict(errors_by_kind[1]) or "none",
+                    recovered)
 
     def _timed_read(self, i2c) -> _Read:
         t = time.monotonic()

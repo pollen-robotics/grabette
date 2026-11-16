@@ -35,7 +35,8 @@ pile up there), and run it once per branch to compare (develop vs this one):
 Writes ~/i2c_bench/<UTC start>_<mode>/:
   events.csv    every read over --slow-ms or failed, and every loop gap over
                 100 ms (UTC, CLOCK_BOOTTIME, sensor, duration, errno)
-  summary.json  reads, errors by errno, slow reads, max read, shared-IRQ count
+  summary.json  reads, errors by errno, slow reads, max read, shared-IRQ count,
+                temperature and throttling (every 30 s)
   kernel.log    kernel messages of the run (i2c-bcm2835 "unexpected interrupt")
   daemon.log    mode episodes only: the daemon's angle lines
   bench.log     everything printed during the run
@@ -46,6 +47,7 @@ Ctrl-C ends the run early and still writes the summary.
 import argparse
 import csv
 import json
+import re
 import shutil
 import signal
 import subprocess
@@ -103,6 +105,54 @@ def daemon_active() -> bool:
         return subprocess.run(["systemctl", "is-active", "--quiet", "grabette"]).returncode == 0
     except FileNotFoundError:
         return False
+
+
+THERMAL_EVERY_S = 30
+# vcgencmd get_throttled bits: now (low nibble) and since boot (<< 16).
+THROTTLE_BITS = {0x1: "under_voltage", 0x2: "arm_freq_capped", 0x4: "throttled", 0x8: "soft_temp_limit"}
+
+
+def thermal_status() -> dict:
+    """Temperature and throttling (vcgencmd); None values when unavailable."""
+    out: dict = {"utc": utc_now(), "temp_c": None, "throttled": None, "now": []}
+    try:
+        t = subprocess.run(["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=5).stdout
+        th = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return out
+    m = re.search(r"temp=([\d.]+)", t)
+    if m:
+        out["temp_c"] = float(m.group(1))
+    m = re.search(r"throttled=(0x[0-9a-fA-F]+)", th)
+    if m:
+        v = int(m.group(1), 16)
+        out["throttled"] = hex(v)
+        out["now"] = [name for bit, name in THROTTLE_BITS.items() if v & bit]
+    return out
+
+
+def thermal_sampler(samples: list) -> None:
+    """Every THERMAL_EVERY_S, on its own thread so the read loop keeps its pace."""
+    was_throttled = False
+    while True:
+        t = thermal_status()
+        samples.append(t)
+        if bool(t["now"]) != was_throttled:
+            was_throttled = bool(t["now"])
+            log(f"{'THROTTLED' if was_throttled else 'no longer throttled'}: {t['temp_c']} °C, {t['throttled']}")
+        if stop.wait(THERMAL_EVERY_S):
+            break
+
+
+def thermal_summary(samples: list) -> dict:
+    temps = [t["temp_c"] for t in samples if t["temp_c"] is not None]
+    hot = [t for t in samples if t["now"]]
+    return {"temp_c_start": temps[0] if temps else None, "temp_c_max": max(temps) if temps else None,
+            "temp_c_end": temps[-1] if temps else None,
+            "throttled_now": sorted({n for t in hot for n in t["now"]}),
+            "throttled_samples": len(hot), "samples": len(samples),
+            "first_throttled_utc": hot[0]["utc"] if hot else None,
+            "throttled_end": samples[-1]["throttled"] if samples else None}
 
 
 def journal(since_epoch: float, *args: str) -> str:
@@ -452,6 +502,9 @@ def main() -> int:
     timer.start()
 
     irq_start = i2c_irq_count()
+    thermal: list = []
+    sampler = threading.Thread(target=thermal_sampler, args=(thermal,), daemon=True)
+    sampler.start()
     summary: dict = {"mode": args.mode, "start_utc": utc_now(), "args": {
         k: str(v) for k, v in vars(args).items()}}
     load_stats: Counter = Counter()
@@ -510,6 +563,9 @@ def main() -> int:
     kernel = journal(t0_epoch, "-k")
     (out_dir / "kernel.log").write_text(kernel)
     summary["kernel_i2c_lines"] = sum("i2c" in l.lower() for l in kernel.splitlines())
+    stop.set()
+    sampler.join(timeout=10)
+    summary["thermal"] = thermal_summary(thermal)
     if args.mode == "episodes":
         daemon = journal(t0_epoch, "-u", "grabette")
         angle_lines = [l for l in daemon.splitlines()
