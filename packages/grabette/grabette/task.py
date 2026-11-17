@@ -20,6 +20,7 @@ import json
 
 from grabette.hardware.episode_files import DCAM_IMU, episode_features, metadata_stats, resolve
 import logging
+import os
 import shutil
 import tarfile
 import tempfile
@@ -172,9 +173,15 @@ class TaskManager:
                 # Legacy files use the "sessions" key; new ones use "tasks".
                 self._tasks = data.get("tasks", data.get("sessions", []))
                 self._features = data.get("episode_features") or {}
-            except (json.JSONDecodeError, KeyError):
-                logger.warning("Corrupt task registry, starting fresh")
+            except (ValueError, KeyError, AttributeError) as e:
+                # Keep the bad file for manual recovery instead of overwriting it.
+                backup = path.with_name(
+                    f"{path.name}.corrupt-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+                path.rename(backup)
+                logger.error("Corrupt task registry (%s), moved to %s, starting fresh", e, backup)
                 self._tasks = []
+                self._features = {}
         else:
             self._tasks = []
 
@@ -185,7 +192,11 @@ class TaskManager:
         self._revision += 1
         data = {"tasks": self._tasks, "episode_features": self._features}
         tmp = self._registry_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
+        # fsync so a power cut can't leave a garbage tasks.json.
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
         tmp.rename(self._registry_path)
 
     def _backfill_features(self) -> None:
