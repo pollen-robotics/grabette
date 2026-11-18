@@ -463,6 +463,12 @@ def test_a_rate_limit_is_recognised_through_a_wrapping_exception():
     assert not main._is_rate_limited(ConnectionResetError("reset"))
 
 
+def test_a_looping_exception_chain_does_not_hang_the_rate_limit_check():
+    e = RuntimeError("loops")
+    e.__cause__ = e   # what `raise e from e` leaves behind
+    assert not main._is_rate_limited(e)
+
+
 def test_a_silent_attempt_is_abandoned_instead_of_waiting_forever(monkeypatch, heartbeat):
     # THE regression: an upload that never returns left the device pinned as
     # "uploading" in the fleet forever. It must give up and report. _Hf(hang=True)
@@ -801,6 +807,28 @@ def test_a_saturated_uploader_refuses_instead_of_queueing_silently(monkeypatch, 
 
     assert hf.calls == []
     assert "reboot" in str(e.value)
+
+
+def test_a_saturated_uploader_does_not_queue_the_hub_listing(tmp_path, monkeypatch):
+    # The listing goes through the same two-worker executor. Submitted behind
+    # stalled threads, it would wait with nothing bounding it and the command
+    # would never answer; skipped, the first batch reports the stall instead.
+    _make_episode(tmp_path, "ep1")
+    monkeypatch.setattr(main, "_stalled_uploads", main._UPLOAD_WORKERS)
+
+    listed = []
+
+    class _NoListing(_Hf):
+        def already_uploaded(self, episodes, repo):
+            listed.append(repo)   # an exception would be swallowed as best-effort
+            return set()
+
+    hf = _NoListing()
+    res = _run_upload(tmp_path, ["ep1"], hf, monkeypatch)
+
+    assert listed == [], "listing submitted to a saturated executor"
+    assert res["status"] == "error" and "reboot" in res["message"]
+    assert hf.calls == []
 
 
 def test_repeated_stalls_leave_no_phantom_count(monkeypatch, heartbeat):

@@ -35,9 +35,7 @@ _HUB_READ_TIMEOUT_S = 60.0
 _HUB_WRITE_TIMEOUT_S = 60.0   # no progress writing a chunk for this long = stalled
 _HUB_POOL_TIMEOUT_S = 20.0
 
-# Files up to this size are compared to the Hub's copy by content when deciding
-# whether an episode is already uploaded; larger ones by size only (see
-# HuggingFaceClient.already_uploaded).
+# Above this size, already_uploaded compares by size only.
 _HASH_TO_SKIP_MAX_BYTES = 10 * 1024 * 1024
 
 _client_factory_lock = threading.Lock()
@@ -435,18 +433,10 @@ class HuggingFaceClient:
         return url
 
     def already_uploaded(self, episodes: list[tuple[Path, str]], repo_id: str) -> set[str]:
-        """The path_in_repo of every episode whose files are ALL on the Hub already.
+        """path_in_repo of the episodes whose files are all already on the Hub.
 
-        Re-sending them would cost no bytes and no commit, but it would still
-        make upload_episodes sha256 every file first — minutes per episode on a
-        Pi's SD card, during which the device cannot record. One listing of the
-        repo answers it for the whole batch instead.
-
-        Matching is by path, then content wherever that is cheap to know: a small
-        file (calibration, metadata — the ones that DO get rewritten after a
-        recording) is hashed and compared to the Hub's; a large one (a video,
-        written once at capture and never touched again) is compared by size,
-        since hashing it is exactly the cost this exists to avoid.
+        Avoids re-hashing them in upload_episodes. Files above
+        _HASH_TO_SKIP_MAX_BYTES are compared by size only.
         """
         import hashlib
 
@@ -491,24 +481,11 @@ class HuggingFaceClient:
         private: bool = False,
         commit_message: str | None = None,
     ) -> None:
-        """Upload several episode directories to a dataset repo in ONE commit.
-
-        `episodes` is a list of (episode_dir, path_in_repo). `commit_message`
-        defaults to naming the episodes. The Hub caps commit
-        creation per repo (320/hour at the time of writing), and a commit per
-        episode per device blows through it on a single bimanual build of a
-        hundred-odd takes. One commit for the whole batch costs one unit of that
-        quota whatever the batch size; the bytes still go out through the same
-        preupload (xet/LFS) path as upload_folder, so the heartbeat sees them.
-
-        Re-sending files already on the Hub is free: create_commit drops
-        unchanged files and skips the commit entirely when nothing is left.
-        """
+        """Upload (episode_dir, path_in_repo) pairs in a single commit (Hub commit quota)."""
         from huggingface_hub import CommitOperationAdd
         from huggingface_hub.utils import DEFAULT_IGNORE_PATTERNS, filter_repo_objects
 
         api = self._get_api()
-        # See upload_episode: `private` only takes effect on the first create.
         api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
 
         operations = []
@@ -518,11 +495,7 @@ class HuggingFaceClient:
                      for p in sorted(root.glob("**/*")) if p.is_file()}
             for rel in filter_repo_objects(files.keys(),
                                            ignore_patterns=DEFAULT_IGNORE_PATTERNS):
-                # CommitOperationAdd sha256s the file right here, before any
-                # network call. A batch multiplies that silent phase by its size,
-                # which would read as a stall to the upload watchdog: mark the
-                # heartbeat per file so it stays bounded by ONE file's hash, as
-                # it was with one episode per upload.
+                # Hashing happens here; mark per file so the watchdog doesn't see a stall.
                 operations.append(CommitOperationAdd(
                     path_in_repo=f"{dest.strip('/')}/{rel}", path_or_fileobj=str(files[rel])))
                 note_hub_activity()

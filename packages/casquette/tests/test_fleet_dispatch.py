@@ -104,26 +104,128 @@ async def test_upload_episodes_requires_repo_and_role(daemon, tm):
     assert "raw_repo" in r["message"]
 
 
-async def test_upload_episodes_uploads_present_flags_missing(daemon, tm, monkeypatch):
+class _FakeHF:
+    def __init__(self, on_hub=(), fail_at=None, error=None):
+        self.commits, self.messages = [], []
+        self._on_hub, self._fail_at, self._error = on_hub, fail_at, error
+
+    def already_uploaded(self, episodes, repo):
+        if isinstance(self._on_hub, Exception):
+            raise self._on_hub
+        return {dest for _, dest in episodes if dest in self._on_hub}
+
+    def upload_episodes(self, batch, repo, private, message=None):
+        self.commits.append([dest for _, dest in batch])
+        self.messages.append(message)
+        if self._fail_at == len(self.commits):
+            raise self._error
+
+
+async def _upload(tm, monkeypatch, hf, episode_ids):
     import casquette.fleet.hf as hfmod
 
-    eid = tm.create_episode(tm.get_or_create_task("pick"))  # creates the dir
-    calls = []
-
-    class FakeHF:
-        def upload_episode(self, ep_dir, repo, cb, path_in_repo, private):
-            calls.append((ep_dir.name, repo, path_in_repo, private))
-            return "https://hf/url"
-
-    monkeypatch.setattr(hfmod, "get_hf_client", lambda: FakeHF())
-
-    r = await _handle_relay_command({
+    monkeypatch.setattr(hfmod, "get_hf_client", lambda: hf)
+    return await _handle_relay_command({
         "type": "upload_episodes", "id": "u2",
-        "args": {"raw_repo": "org/ds", "role": "casquette",
-                 "episode_ids": [eid, "20990101_000000"]},
+        "args": {"raw_repo": "org/ds", "role": "casquette", "episode_ids": episode_ids},
     })
+
+
+async def test_upload_episodes_uploads_present_flags_missing(daemon, tm, monkeypatch):
+    eid = tm.create_episode(tm.get_or_create_task("pick"))  # creates the dir
+    hf = _FakeHF()
+
+    r = await _upload(tm, monkeypatch, hf, [eid, "20990101_000000"])
+
     assert r["status"] == "ok"
     assert r["uploaded"] == [eid]
     assert r["missing"] == ["20990101_000000"]
     # each stream uploaded under "{episode_id}/{role}"
-    assert calls[0][2] == f"{eid}/casquette"
+    assert hf.commits == [[f"{eid}/casquette"]]
+
+
+async def test_upload_episodes_share_a_commit_per_batch(daemon, tm, monkeypatch):
+    # One commit per episode per device exhausted the Hub's per-repo commit
+    # quota (320/hour) on a single build.
+    import casquette.app.main as main
+
+    monkeypatch.setattr(main, "_UPLOAD_BATCH_EPISODES", 2)
+    task = tm.get_or_create_task("pick")
+    eids = [tm.create_episode(task, episode_id=f"2026010{i}_000000") for i in range(3)]
+    hf = _FakeHF()
+
+    r = await _upload(tm, monkeypatch, hf, eids)
+
+    assert r["status"] == "ok" and r["uploaded"] == eids
+    assert hf.commits == [[f"{e}/casquette" for e in eids[:2]], [f"{eids[2]}/casquette"]]
+    assert hf.messages == ["batch 1/2 (casquette)", "batch 2/2 (casquette)"]
+
+
+async def test_upload_episodes_already_on_the_hub_are_skipped(daemon, tm, monkeypatch):
+    task = tm.get_or_create_task("pick")
+    eids = [tm.create_episode(task, episode_id=f"2026010{i}_000000") for i in range(2)]
+    hf = _FakeHF(on_hub={f"{eids[0]}/casquette"})
+
+    r = await _upload(tm, monkeypatch, hf, eids)
+
+    assert r["status"] == "ok" and sorted(r["uploaded"]) == sorted(eids)
+    assert hf.commits == [[f"{eids[1]}/casquette"]]
+
+
+async def test_upload_episodes_failed_listing_uploads_everything(daemon, tm, monkeypatch):
+    eid = tm.create_episode(tm.get_or_create_task("pick"))
+    hf = _FakeHF(on_hub=ConnectionResetError("reset"))
+
+    r = await _upload(tm, monkeypatch, hf, [eid])
+
+    assert r["status"] == "ok" and hf.commits == [[f"{eid}/casquette"]]
+
+
+async def test_upload_episodes_rate_limit_is_named(daemon, tm, monkeypatch):
+    from types import SimpleNamespace
+
+    class _HubHTTPError(Exception):
+        response = SimpleNamespace(status_code=429)
+
+    eid = tm.create_episode(tm.get_or_create_task("pick"))
+    hf = _FakeHF(fail_at=1, error=_HubHTTPError("429 Too Many Requests"))
+
+    r = await _upload(tm, monkeypatch, hf, [eid])
+
+    assert r["status"] == "error" and r["uploaded"] == []
+    assert "rate limit" in r["message"] and "429 Too Many Requests" in r["message"]
+
+
+def test_the_client_puts_a_whole_batch_in_one_commit(tmp_path, monkeypatch):
+    from casquette.fleet import hf as hf_module
+
+    for eid in ("ep1", "ep2"):
+        (tmp_path / eid).mkdir()
+        (tmp_path / eid / "raw_video.mp4").write_bytes(b"v")
+        (tmp_path / eid / "imu_data.json").write_text("{}")
+    (tmp_path / "ep1" / ".git").mkdir()
+    (tmp_path / "ep1" / ".git" / "HEAD").write_text("x")   # never committed
+
+    class _Api:
+        def __init__(self):
+            self.commits = []
+
+        def create_repo(self, *a, **k):
+            pass
+
+        def create_commit(self, **k):
+            self.commits.append(k)
+
+    api = _Api()
+    client = hf_module.HuggingFaceClient()
+    monkeypatch.setattr(client, "_get_api", lambda: api)
+
+    client.upload_episodes([(tmp_path / "ep1", "ep1/casquette"),
+                            (tmp_path / "ep2", "ep2/casquette")],
+                           "u/raw", commit_message="batch 1/1 (casquette)")
+
+    assert len(api.commits) == 1
+    assert api.commits[0]["commit_message"] == "batch 1/1 (casquette)"
+    assert sorted(op.path_in_repo for op in api.commits[0]["operations"]) == [
+        f"{eid}/casquette/{name}" for eid in ("ep1", "ep2")
+        for name in ("imu_data.json", "raw_video.mp4")]

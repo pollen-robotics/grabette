@@ -172,12 +172,10 @@ _UPLOAD_WATCHDOG_POLL_S = 5.0       # how often staleness is judged. Costs nothi
 _UPLOAD_BLIND_ATTEMPT_TIMEOUT_S = 14400.0  # 4 h
 _UPLOAD_MAX_ATTEMPTS = 3
 _UPLOAD_RETRY_BASE_S = 5.0          # backoff: 5s, 10s (doubling per attempt)
-# Episodes per Hub commit. The Hub caps commit creation per repo (320/hour), and
-# one commit per episode per device spent that whole quota on a single bimanual
-# build of 160 takes. Batching divides it by this. Kept modest rather than "the
-# whole device in one commit" because the batch is also the unit of retry and of
-# cancellation: a failed attempt re-hashes the whole batch, and a cancel waits for
-# the batch in flight.
+# Episodes per Hub commit (the Hub caps commits at 320/hour per repo).
+# Known limit: an episode whose depth PNGs could not be packed into
+# dcam_depth.mkv (or recorded before packing existed) keeps ~600 files, so a
+# batch of them can reach thousands of files in one commit.
 _UPLOAD_BATCH_EPISODES = 10
 # Deliberately narrow: uploads are sequential within a command, so one worker
 # does the work and the second is headroom for a single abandoned thread.
@@ -441,16 +439,14 @@ async def _await_upload(cf, dest: str, attempt: int) -> None:
 
 
 class _RateLimited(Exception):
-    """The Hub refused with 429. Retrying within seconds cannot help."""
+    """Hub 429: not retried, the quota resets on the scale of an hour."""
 
 
 def _is_rate_limited(e: BaseException) -> bool:
-    """A 429 from the Hub, wherever huggingface_hub put the response.
-
-    Duck-typed rather than isinstance(HfHubHTTPError): importing huggingface_hub
-    here would load it on the event loop, and any HTTP error carrying a response
-    says the same thing."""
-    while e is not None:
+    """A 429 anywhere in the exception chain (duck-typed: no hub import here)."""
+    seen: set[int] = set()   # guards against cyclic chains
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
         if getattr(getattr(e, "response", None), "status_code", None) == 429:
             return True
         e = e.__cause__ or e.__context__
@@ -459,7 +455,7 @@ def _is_rate_limited(e: BaseException) -> bool:
 
 async def _upload_episode_batch(hf, batch: list[tuple], raw_repo: str, private: bool,
                                 is_cancelled, message: str | None = None) -> None:
-    """Upload a batch of (episode_dir, path_in_repo) as ONE Hub commit, bounded
+    """Upload a batch of (episode_dir, path_in_repo) as one Hub commit, bounded
     and retried. Raises on final failure.
 
     Two distinct failures are handled here, and conflating them is what made a
@@ -482,9 +478,7 @@ async def _upload_episode_batch(hf, batch: list[tuple], raw_repo: str, private: 
     Raises _CommandCancelled the moment the build is cancelled, including during
     a backoff wait: a cancel must not have to sit out a retry delay.
 
-    Raises _RateLimited on a 429 without retrying: the Hub's commit quota resets
-    on the scale of an hour, so a 5-second backoff only burns the attempts and
-    then reports the quota as if it were a network fault.
+    Raises _RateLimited on a 429, without retrying.
     """
     dest = batch[0][1] if len(batch) == 1 else f"{batch[0][1]} (+{len(batch) - 1})"
     last: Exception | None = None
@@ -819,13 +813,11 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                                 f"episode(s) can be converted"),
                     "uploaded": uploaded, "missing": missing, "incomplete": incomplete}
 
-        # Skip what a previous build already put on the Hub, same content. Not
-        # for the bytes or the commit (re-sending would cost neither) but for
-        # the hashing that precedes every upload: minutes per episode on the SD
-        # card, with the device unable to record. Best-effort — if the listing
-        # fails, uploading everything is still correct, just slower.
+        # Skip episodes already on the Hub (saves hashing). Best-effort; not
+        # attempted when stalled threads hold every worker (it would never run).
         already: list[str] = []
-        if present and not cancels.is_cancelled(cmd_id):
+        if (present and not cancels.is_cancelled(cmd_id)
+                and _stalled_uploads < _UPLOAD_WORKERS):
             try:
                 on_hub = await asyncio.wrap_future(_get_upload_executor().submit(
                     hf.already_uploaded,
@@ -843,17 +835,8 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         n_batches = -(-len(present) // _UPLOAD_BATCH_EPISODES)
         for start in range(0, len(present), _UPLOAD_BATCH_EPISODES):
             batch = present[start:start + _UPLOAD_BATCH_EPISODES]
-            # Every device commits to the same repo at the same time, so the
-            # role is what tells one device's "batch 1/4" from another's.
             message = f"batch {start // _UPLOAD_BATCH_EPISODES + 1}/{n_batches} ({role})"
-            # Cancellation checkpoint, once per batch. Checked BEFORE the first
-            # upload too: the cancel may have landed while this command was still
-            # queued behind another one (the relay's worker is serial), in which
-            # case nothing should be uploaded at all. Per-batch is the finest
-            # granularity available — one batch is a single blocking
-            # api.create_commit inside hf.upload_episodes, which cannot be
-            # interrupted from outside (see _upload_episode_batch for the bound
-            # we put on it, and _UPLOAD_BATCH_EPISODES for why it is a batch).
+            # Cancellation checkpoint, once per batch (a commit can't be interrupted).
             if cancels.is_cancelled(cmd_id):
                 return {"status": "cancelled", "role": role, "uploaded": uploaded,
                         "missing": missing, "incomplete": incomplete}
