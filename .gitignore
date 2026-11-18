@@ -22,7 +22,7 @@ casquette-data/
 gripette-data/
 
 # NOTE: generated protobuf stubs (*_pb2.py / *_pb2_grpc.py / *.pyi) are
-# committed in this project (gripette, openarm sim import them directly),
+# committed in this project (gripette imports them directly),
 # so they are intentionally NOT ignored.
 
 # IDE / OS
@@ -31,9 +31,6 @@ gripette-data/
 *.swp
 .DS_Store
 *~
-
-# evaluate.py --debug headless frame dumps
-eval_debug_frames/
 
 # The Orbbec SDK writes Log/OrbbecSDK.log.txt into the CWD of whatever loads it.
 # On a deployed Pi the daemon's WorkingDirectory IS this repo, so a checkout

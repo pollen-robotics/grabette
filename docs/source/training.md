@@ -1,17 +1,18 @@
 # Training
 
-The repository ships two policy integrations as worked examples. Both consume the LeRobot dataset built in [Data collection](./data_collection.md#build-the-lerobot-dataset), and share the same dataset preparation. Each one is a **standalone uv project** under `integrations/`, with its own environment and Python 3.12 — a plain `uv sync` inside it is correct and touches nothing else.
+The [grabette-policy](https://github.com/pollen-robotics/grabette-policy) repository ships two policy integrations as worked examples. Both consume the LeRobot dataset built in [Data collection](./data_collection.md#build-the-lerobot-dataset), and share the same dataset preparation. Each one is a **standalone uv project** under `policies/`, with its own environment and Python 3.12 — a plain `uv sync` inside it is correct and touches nothing else.
 
 Before recording data for training, read the [recording guidelines](./data_collection.md#guidelines-for-recording-a-dataset): how you record shows up in the trained policy.
 
 ## DiffusionPolicy
 
-**[integrations/DiffusionPolicy](https://github.com/pollen-robotics/grabette/tree/develop/integrations/DiffusionPolicy)**
+**[policies/DiffusionPolicy](https://github.com/pollen-robotics/grabette-policy/tree/develop/policies/DiffusionPolicy)**
 
 Trains a Diffusion Policy on Grabette demonstrations with stock upstream LeRobot, and holds the dataset preparation shared with π0.5.
 
 ```bash
-cd integrations/DiffusionPolicy
+git clone https://github.com/pollen-robotics/grabette-policy.git   # needs git-lfs
+cd grabette-policy/policies/DiffusionPolicy
 uv sync
 ./run_pipeline.sh <raw_repo_id>   # QA, cleaning, conversion and resize; prints the train command
 ```
@@ -20,7 +21,7 @@ The pipeline converts the absolute camera poses into camera-local delta actions 
 
 ## Pi05
 
-**[integrations/Pi05](https://github.com/pollen-robotics/grabette/tree/develop/integrations/Pi05)**
+**[policies/Pi05](https://github.com/pollen-robotics/grabette-policy/tree/develop/policies/Pi05)**
 
 Fine-tunes [π0.5](https://www.physicalintelligence.company/blog/pi05), a vision-language-action model, on Grabette demonstrations, gates it offline, and runs it on the robot through a remote GPU. It is the verified VLA recipe for Grabette data.
 

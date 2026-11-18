@@ -272,6 +272,21 @@ def test_a_check_forwards_check_only_to_the_space(monkeypatch):
     assert posted_build["check_only"] is False
 
 
+def test_the_dataset_content_choice_is_forwarded_to_the_space(monkeypatch):
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    posted = {}
+    _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"},
+                    extra_args={"keep": ["depth", "imu"]}, posted=posted)
+    assert posted["keep"] == ["depth", "imu"]
+
+    posted_default = {}
+    _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"},
+                    posted=posted_default)
+    assert "keep" not in posted_default
+
+
 def test_a_check_where_every_take_was_rejected_still_reports_ok(monkeypatch):
     # A check whose takes were ALL rejected also lands on "done" with no dataset.
     # The device cannot tell that apart from a clean run, and must not try: the
@@ -356,19 +371,29 @@ async def _awake(*a, **kw):
 class _Hf:
     """Records upload attempts; fails the first `fail_times` of them."""
 
-    def __init__(self, fail_times=0, hang=False):
+    def __init__(self, fail_times=0, hang=False, error=None, on_hub=()):
         self.calls = []
+        self.commits = []
+        self.messages = []
+        self._on_hub = on_hub
         self._fail_times = fail_times
         self._hang = hang
+        self._error = error or ConnectionResetError("connection reset by peer")
 
-    def upload_episode(self, ep_dir, repo, cb, dest, private):
-        self.calls.append(dest)
+    def already_uploaded(self, episodes, repo):
+        if isinstance(self._on_hub, Exception):
+            raise self._on_hub
+        return {dest for _, dest in episodes if dest in self._on_hub}
+
+    def upload_episodes(self, batch, repo, private, message=None):
+        self.calls.extend(dest for _, dest in batch)
+        self.commits.append([dest for _, dest in batch])
+        self.messages.append(message)
         if self._hang:
             import time
             time.sleep(0.5)  # outlives the patched attempt timeout, not the suite
         if len(self.calls) <= self._fail_times:
-            raise ConnectionResetError("connection reset by peer")
-        return f"https://hf.co/{repo}/{dest}"
+            raise self._error
 
 
 class _Progressing:
@@ -380,14 +405,13 @@ class _Progressing:
         self._tick_s = tick_s
         self.calls = []
 
-    def upload_episode(self, ep_dir, repo, cb, dest, private):
-        self.calls.append(dest)
+    def upload_episodes(self, batch, repo, private, message=None):
+        self.calls.extend(dest for _, dest in batch)
         waited = 0.0
         while waited < self._total_s:
             time.sleep(self._tick_s)
             waited += self._tick_s
             self._hf.note_hub_activity()   # bytes are still moving
-        return f"https://hf.co/{repo}/{dest}"
 
 
 @pytest.fixture
@@ -415,8 +439,8 @@ def _fast_watchdog(monkeypatch, stall_s=0.15):
 
 
 def _upload(hf, cancelled=lambda: False, ep_dir="/tmp/ep"):
-    return asyncio.run(main._upload_one_episode(
-        hf, ep_dir, "u/raw", "ep1/left", False, cancelled))
+    return asyncio.run(main._upload_episode_batch(
+        hf, [(ep_dir, "ep1/left")], "u/raw", False, cancelled))
 
 
 def test_a_transient_failure_is_retried(monkeypatch):
@@ -439,6 +463,46 @@ def test_retries_are_bounded_and_report_the_last_error(monkeypatch):
 
     assert len(hf.calls) == main._UPLOAD_MAX_ATTEMPTS
     assert "connection reset" in str(e.value)
+
+
+class _Response:
+    status_code = 429
+
+
+class _HubHTTPError(Exception):
+    """Shaped like huggingface_hub's HfHubHTTPError: the response rides along."""
+
+    response = _Response()
+
+
+def test_a_rate_limit_is_not_retried(monkeypatch):
+    # The Hub's commit quota resets on the scale of an hour: retrying after 5s
+    # only burns the attempts, then reports the quota as a network fault.
+    monkeypatch.setattr(main, "_UPLOAD_RETRY_BASE_S", 0.0)
+    hf = _Hf(fail_times=99, error=_HubHTTPError("429 Too Many Requests"))
+
+    with pytest.raises(main._RateLimited) as e:
+        _upload(hf)
+
+    assert len(hf.calls) == 1
+    assert "rate limit" in str(e.value) and "429 Too Many Requests" in str(e.value)
+
+
+def test_a_rate_limit_is_recognised_through_a_wrapping_exception():
+    try:
+        try:
+            raise _HubHTTPError("429")
+        except _HubHTTPError as inner:
+            raise RuntimeError("commit failed") from inner
+    except RuntimeError as outer:
+        assert main._is_rate_limited(outer)
+    assert not main._is_rate_limited(ConnectionResetError("reset"))
+
+
+def test_a_looping_exception_chain_does_not_hang_the_rate_limit_check():
+    e = RuntimeError("loops")
+    e.__cause__ = e   # what `raise e from e` leaves behind
+    assert not main._is_rate_limited(e)
 
 
 def test_a_silent_attempt_is_abandoned_instead_of_waiting_forever(monkeypatch, heartbeat):
@@ -481,12 +545,11 @@ def test_the_stall_clock_starts_at_the_submit(monkeypatch, heartbeat):
         def __init__(self):
             self.calls = []
 
-        def upload_episode(self, ep_dir, repo, cb, dest, private):
-            self.calls.append(dest)
+        def upload_episodes(self, batch, repo, private, message=None):
+            self.calls.extend(dest for _, dest in batch)
             time.sleep(0.15)                 # hashing: nothing on the wire yet
             heartbeat.note_hub_activity()    # first bytes
             time.sleep(0.15)
-            return f"https://hf.co/{repo}/{dest}"
 
     heartbeat.note_hub_activity()
     time.sleep(0.4)   # staler than the whole stall budget, before we submit
@@ -651,30 +714,96 @@ def test_a_complete_batch_uploads_untouched(tmp_path, monkeypatch):
     res = _run_upload(tmp_path, ["ep1", "ep2"], hf, monkeypatch)
 
     assert res["status"] == "ok"
-    assert hf.calls == ["ep1/left", "ep2/left"]
+    assert hf.commits == [["ep1/left", "ep2/left"]]
     assert res["incomplete"] == [] and "message" not in res
 
 
 def test_the_heartbeat_reports_how_far_the_upload_is(tmp_path, monkeypatch):
     # The command only reports once it is over; until then this is all the fleet
     # has to draw a progress bar and estimate the time left with.
-    _make_episode(tmp_path, "ep1")
-    _make_episode(tmp_path, "ep2")
+    for eid in ("ep1", "ep2", "ep3", "ep_hub"):
+        _make_episode(tmp_path, eid)
     _make_episode(tmp_path, "ep_bad", complete=False)
+    monkeypatch.setattr(main, "_UPLOAD_BATCH_EPISODES", 2)
     seen = []
 
     class _Watching(_Hf):
-        def upload_episode(self, *a):
+        def already_uploaded(self, *a):
             seen.append(main._dataset_progress())
-            return super().upload_episode(*a)
+            return super().already_uploaded(*a)
 
-    res = _run_upload(tmp_path, ["ep1", "ep_bad", "ep2"], _Watching(), monkeypatch)
+        def upload_episodes(self, *a, **kw):
+            seen.append(main._dataset_progress())
+            return super().upload_episodes(*a, **kw)
+
+    res = _run_upload(tmp_path, ["ep1", "ep_bad", "ep_hub", "ep2", "ep3"],
+                      _Watching(on_hub={"ep_hub/left"}), monkeypatch)
 
     assert res["status"] == "ok"
-    # Counted against what will actually be pushed: the screened-out take is not
-    # part of the total, or the bar would never reach the end.
-    assert seen == ["cmd1:upload:0/2", "cmd1:upload:1/2"]
+    # Counted against what will actually be pushed: neither the screened-out take
+    # nor the one already on the Hub is part of the total, or the bar would never
+    # reach the end. It advances once per batch (one commit each).
+    assert seen == ["cmd1:upload", "cmd1:upload:0/3", "cmd1:upload:2/3"]
     assert main._dataset_progress() == ""  # nothing left behind once it is over
+
+
+def test_episodes_share_a_commit_per_batch(tmp_path, monkeypatch):
+    # THE regression: one commit per episode per device hit the Hub's commit
+    # quota (320/hour) on a single bimanual build.
+    for eid in ("ep1", "ep2", "ep3"):
+        _make_episode(tmp_path, eid)
+    monkeypatch.setattr(main, "_UPLOAD_BATCH_EPISODES", 2)
+    hf = _Hf()
+
+    res = _run_upload(tmp_path, ["ep1", "ep2", "ep3"], hf, monkeypatch)
+
+    assert res["status"] == "ok" and res["uploaded"] == ["ep1", "ep2", "ep3"]
+    assert hf.commits == [["ep1/left", "ep2/left"], ["ep3/left"]]
+    assert hf.messages == ["batch 1/2 (left)", "batch 2/2 (left)"]
+
+
+def test_a_failed_batch_reports_only_earlier_batches_as_uploaded(tmp_path, monkeypatch):
+    for eid in ("ep1", "ep2", "ep3"):
+        _make_episode(tmp_path, eid)
+    monkeypatch.setattr(main, "_UPLOAD_BATCH_EPISODES", 2)
+    monkeypatch.setattr(main, "_UPLOAD_MAX_ATTEMPTS", 1)
+
+    class _SecondFails(_Hf):
+        def upload_episodes(self, batch, repo, private, message=None):
+            super().upload_episodes(batch, repo, private, message)
+            if len(self.commits) == 2:
+                raise ConnectionResetError("reset")
+
+    res = _run_upload(tmp_path, ["ep1", "ep2", "ep3"], _SecondFails(), monkeypatch)
+
+    assert res["status"] == "error"
+    assert res["uploaded"] == ["ep1", "ep2"]
+    assert res["message"].startswith("upload failed for ep3:")
+
+
+def test_episodes_already_on_the_hub_are_not_uploaded_again(tmp_path, monkeypatch):
+    # Re-sending costs no commit, but it re-hashes every file on the SD card
+    # first — minutes per episode with the device unable to record.
+    for eid in ("ep1", "ep2", "ep3"):
+        _make_episode(tmp_path, eid)
+    hf = _Hf(on_hub={"ep1/left", "ep3/left"})
+
+    res = _run_upload(tmp_path, ["ep1", "ep2", "ep3"], hf, monkeypatch)
+
+    assert res["status"] == "ok"
+    assert hf.commits == [["ep2/left"]]
+    assert sorted(res["uploaded"]) == ["ep1", "ep2", "ep3"], "they ARE in the raw"
+
+
+def test_a_failed_listing_uploads_everything(tmp_path, monkeypatch):
+    for eid in ("ep1", "ep2"):
+        _make_episode(tmp_path, eid)
+    hf = _Hf(on_hub=ConnectionResetError("reset"))
+
+    res = _run_upload(tmp_path, ["ep1", "ep2"], hf, monkeypatch)
+
+    assert res["status"] == "ok"
+    assert hf.commits == [["ep1/left", "ep2/left"]]
 
 
 def test_an_absent_episode_is_still_reported_as_missing(tmp_path, monkeypatch):
@@ -705,7 +834,7 @@ def test_uploads_run_off_the_default_executor(monkeypatch):
     seen = {}
 
     class _Named:
-        def upload_episode(self, *a):
+        def upload_episodes(self, *a):
             seen["thread"] = threading.current_thread().name
 
     _upload(_Named())
@@ -722,8 +851,8 @@ def test_a_stalled_upload_leaves_the_default_executor_free(monkeypatch, heartbea
 
     async def _drive():
         with pytest.raises(RuntimeError):
-            await main._upload_one_episode(_Hf(hang=True), "/tmp/ep", "u/raw",
-                                           "ep1/left", False, lambda: False)
+            await main._upload_episode_batch(_Hf(hang=True), [("/tmp/ep", "ep1/left")],
+                                             "u/raw", False, lambda: False)
         # While that thread is still running, work handed to the DEFAULT
         # executor must still be served immediately.
         return await asyncio.wait_for(
@@ -760,6 +889,28 @@ def test_a_saturated_uploader_refuses_instead_of_queueing_silently(monkeypatch, 
 
     assert hf.calls == []
     assert "reboot" in str(e.value)
+
+
+def test_a_saturated_uploader_does_not_queue_the_hub_listing(tmp_path, monkeypatch):
+    # The listing goes through the same two-worker executor. Submitted behind
+    # stalled threads, it would wait with nothing bounding it and the command
+    # would never answer; skipped, the first batch reports the stall instead.
+    _make_episode(tmp_path, "ep1")
+    monkeypatch.setattr(main, "_stalled_uploads", main._UPLOAD_WORKERS)
+
+    listed = []
+
+    class _NoListing(_Hf):
+        def already_uploaded(self, episodes, repo):
+            listed.append(repo)   # an exception would be swallowed as best-effort
+            return set()
+
+    hf = _NoListing()
+    res = _run_upload(tmp_path, ["ep1"], hf, monkeypatch)
+
+    assert listed == [], "listing submitted to a saturated executor"
+    assert res["status"] == "error" and "reboot" in res["message"]
+    assert hf.calls == []
 
 
 def test_repeated_stalls_leave_no_phantom_count(monkeypatch, heartbeat):
@@ -814,7 +965,7 @@ def test_a_xet_transfer_that_ticks_without_moving_is_abandoned(monkeypatch,
     updater = real_heartbeat._marking_updater(None)
 
     class _Wedged:
-        def upload_episode(self, ep_dir, repo, cb, dest, private):
+        def upload_episodes(self, batch, repo, private, message=None):
             for _ in range(40):          # 0.8s of ticking, nothing moving
                 time.sleep(0.02)
                 updater(_XetTick(), [])
@@ -836,15 +987,113 @@ def test_a_xet_transfer_that_keeps_moving_is_not_abandoned(monkeypatch,
         def __init__(self):
             self.calls = []
 
-        def upload_episode(self, ep_dir, repo, cb, dest, private):
-            self.calls.append(dest)
+        def upload_episodes(self, batch, repo, private, message=None):
+            self.calls.extend(dest for _, dest in batch)
             for _ in range(40):          # 0.8s, >5x the stall budget
                 time.sleep(0.02)
                 updater(_XetTick(transferred=65536), [])
-            return f"https://hf.co/{repo}/{dest}"
 
     hf = _Moving()
 
     _upload(hf)   # must not raise
 
     assert hf.calls == ["ep1/left"]
+
+
+# --- 6. the real client: one create_commit for the whole batch ----------------
+
+def test_the_client_puts_a_whole_batch_in_one_commit(tmp_path, monkeypatch):
+    from grabette import hf as hf_module
+
+    for eid in ("ep1", "ep2"):
+        _make_episode(tmp_path, eid)
+    (tmp_path / "ep1" / ".git").mkdir()
+    (tmp_path / "ep1" / ".git" / "HEAD").write_text("x")   # never committed
+
+    class _Api:
+        def __init__(self):
+            self.commits = []
+
+        def create_repo(self, *a, **k):
+            pass
+
+        def create_commit(self, **k):
+            self.commits.append(k)
+
+    api = _Api()
+    client = hf_module.HuggingFaceClient()
+    monkeypatch.setattr(client, "_get_api", lambda: api)
+
+    client.upload_episodes([(tmp_path / "ep1", "ep1/left"), (tmp_path / "ep2", "ep2/left")],
+                           "u/raw", commit_message="batch 1/1 (left)")
+
+    assert len(api.commits) == 1
+    assert api.commits[0]["commit_message"] == "batch 1/1 (left)"
+    paths = sorted(op.path_in_repo for op in api.commits[0]["operations"])
+    expected = sorted(f"{eid}/left/{p.relative_to(tmp_path / eid).as_posix()}"
+                      for eid in ("ep1", "ep2")
+                      for p in (tmp_path / eid).glob("**/*")
+                      if p.is_file() and ".git" not in p.parts)
+    assert paths == expected and expected
+
+
+def test_the_client_recognises_what_is_already_on_the_hub(tmp_path, monkeypatch):
+    import hashlib
+    from types import SimpleNamespace
+
+    from grabette import hf as hf_module
+
+    def blob(data):
+        return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+    for eid in ("same", "recalibrated", "partial", "big"):
+        (tmp_path / eid).mkdir()
+        (tmp_path / eid / "calib.json").write_bytes(b"new")
+    (tmp_path / "partial" / "video.mp4").write_bytes(b"v" * 20)
+    (tmp_path / "big" / "video.mp4").write_bytes(b"v" * 20)
+    monkeypatch.setattr(hf_module, "_HASH_TO_SKIP_MAX_BYTES", 10)
+
+    def entry(path, data, lfs=False):
+        return SimpleNamespace(
+            path=path, size=len(data), blob_id=blob(data),
+            lfs=SimpleNamespace(sha256=hashlib.sha256(data).hexdigest()) if lfs else None)
+
+    tree = [
+        entry("same/left/calib.json", b"new"),
+        entry("recalibrated/left/calib.json", b"old"),   # same size, other content
+        entry("partial/left/calib.json", b"new"),        # video never made it
+        entry("big/left/calib.json", b"new", lfs=True),
+        entry("big/left/video.mp4", b"x" * 20, lfs=True),  # too big to hash: size only
+        SimpleNamespace(path="same/left"),                 # a folder
+    ]
+
+    class _Api:
+        def list_repo_tree(self, *a, **k):
+            return iter(tree)
+
+    client = hf_module.HuggingFaceClient()
+    monkeypatch.setattr(client, "_get_api", lambda: _Api())
+
+    done = client.already_uploaded(
+        [(tmp_path / eid, f"{eid}/left") for eid in ("same", "recalibrated", "partial", "big")],
+        "u/raw")
+
+    assert done == {"same/left", "big/left"}
+
+
+def test_a_repo_that_does_not_exist_yet_has_nothing_uploaded(tmp_path, monkeypatch):
+    from huggingface_hub.utils import RepositoryNotFoundError
+
+    from grabette import hf as hf_module
+
+    class _Api:
+        def list_repo_tree(self, *a, **k):
+            # Built without __init__: the real one insists on an httpx response.
+            raise RepositoryNotFoundError.__new__(RepositoryNotFoundError)
+
+    client = hf_module.HuggingFaceClient()
+    monkeypatch.setattr(client, "_get_api", lambda: _Api())
+    (tmp_path / "ep1").mkdir()
+    (tmp_path / "ep1" / "f").write_bytes(b"x")
+
+    assert client.already_uploaded([(tmp_path / "ep1", "ep1/left")], "u/raw") == set()

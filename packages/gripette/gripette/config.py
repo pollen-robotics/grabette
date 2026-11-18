@@ -85,7 +85,8 @@ class Settings(BaseSettings):
     # that is a lower bound on the real travel, not the travel itself; tightening
     # to 102 could reject reachable commands. A loose bound is harmless here — it
     # is a safety envelope, NOT the normaliser. The projection normalises on the
-    # measured travel instead (see grasp_projection.REACHABLE_DISTAL).
+    # measured travel instead (see grabette_dataset_tools.grasp_projection.REACHABLE_DISTAL
+    # in the grabette-policy repo).
     motor2_max: float = math.radians(116)   # +2.0245 rad
 
     # Hard ceiling on motor effort, fraction 0..1 of max torque. Enforced

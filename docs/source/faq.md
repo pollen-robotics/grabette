@@ -55,4 +55,4 @@ Synchronized group recording works by having every device wait out a shared UTC 
 
 ## Can I use Grabette with my own robot?
 
-Yes — that's the design. The core packages carry no dependency on any particular arm; the OpenArm integration in the repository is a worked example, not a requirement. To target another platform, add your own integration alongside it.
+Yes — that's the design. The core packages carry no dependency on any particular arm; the OpenArm integration in the [grabette-policy](https://github.com/pollen-robotics/grabette-policy) repository is a worked example, not a requirement. To target another platform, add your own integration alongside it.

@@ -55,11 +55,14 @@ share representation with what the bridge sends live.
 
 - Grabette V2 powered on, `grabette.service` running on the Pi.
 - A robot or sim exposing the `openarm` gRPC interfaces — see
-  [openarm_gripette_simu](../../openarm_gripette_simu/) for the proto.
+  [openarm_gripette_simu](https://github.com/pollen-robotics/grabette-policy/tree/develop/robots/openarm/openarm_gripette_simu) (in the grabette-policy repo) for the proto.
 - Network reachability: the workstation running the bridge must be able
   to reach both the Pi and the robot's gRPC endpoints.
-- Bridge dependencies installed: `uv sync --extra teleop_bridge` from
-  the grabette repo on the workstation.
+- The bridge, on the workstation: it lives in the
+  [grabette-policy](https://github.com/pollen-robotics/grabette-policy) repo, at
+  `robots/openarm/openarm_gripette_simu/examples/teleop_bridge.py`. Install its
+  dependencies with `uv sync --extra teleop` from `robots/openarm/openarm_gripette_simu`;
+  the bridge commands below run from that directory.
 
 ### Operator workflow
 
@@ -67,7 +70,7 @@ share representation with what the bridge sends live.
 1. Open the Grabette UI in a browser:   http://rgrabette2:8000/
 2. Click "Enter Teleop Mode"            (pauses live-view timers,
                                          starts BasaltVIO on the Pi)
-3. Start the bridge:                    uv run python scripts/teleop_bridge.py [args]
+3. Start the bridge:                    uv run --extra teleop python examples/teleop_bridge.py [args]
 4. Hold the Grabette in your hand, oriented as it will be relative to
    the robot's end-effector. This is the initial frame — all motion
    you make is relative to this starting pose.
@@ -87,13 +90,13 @@ OFF. Status feedback is visible in the UI's teleop status line.
 **Simulation** (sim arm + sim gripper, both on localhost):
 
 ```bash
-uv run python scripts/teleop_bridge.py
+uv run --extra teleop python examples/teleop_bridge.py
 ```
 
 **Real robot** (real gripper on a separate host, conservative scale):
 
 ```bash
-uv run python scripts/teleop_bridge.py \
+uv run --extra teleop python examples/teleop_bridge.py \
     --gripper 192.168.1.36:50051 \
     --max-delta-m 0.02 \
     --pos-scale 0.3 --rot-scale 0.3
@@ -102,7 +105,7 @@ uv run python scripts/teleop_bridge.py \
 **Dry-run on the real robot** (validate plumbing, no motion):
 
 ```bash
-uv run python scripts/teleop_bridge.py \
+uv run --extra teleop python examples/teleop_bridge.py \
     --gripper 192.168.1.36:50051 \
     --dry-run --debug
 ```
@@ -140,7 +143,7 @@ The WS rate is 30 Hz but Basalt's pose rate is ~22-30 Hz, so successive
 messages can carry the same `t` (i.e., the same delta). The bridge
 dedups on `t`.
 
-## Bridge: `scripts/teleop_bridge.py`
+## Bridge: `examples/teleop_bridge.py` (grabette-policy)
 
 Single-file async script. Three concurrent tasks share a `SharedState`:
 
@@ -258,7 +261,7 @@ websocat ws://rgrabette2:8000/api/teleop/stream
 ssh rasp@rgrabette2 'top -bn 1 -p $(pgrep -f "python -m grabette") | tail -3'
 
 # Bridge in maximum-visibility mode:
-uv run python scripts/teleop_bridge.py --dry-run --debug
+uv run --extra teleop python examples/teleop_bridge.py --dry-run --debug
 ```
 
 ## Known limitations

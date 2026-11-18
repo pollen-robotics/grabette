@@ -66,7 +66,7 @@ Added by the rpi backend at capture stop:
 
 ## IMU format
 
-`dcam_imu.json` — the OAK-D SR onboard IMU stream, written as `{"samples": [...]}` with interleaved accelerometer, gyroscope, and rotation-vector packets (accel in m/s², gyro in rad/s), timestamped on the shared capture clock. `convert_episode_to_oak.py` (in [grabette-postprocess](../../grabette-postprocess)) expands it into `imu_acc.csv` / `imu_gyro.csv` / `imu_rotation.csv` for SLAM.
+`dcam_imu.json` — the OAK-D SR onboard IMU stream, written as `{"samples": [...]}` with interleaved accelerometer, gyroscope, and rotation-vector packets (accel in m/s², gyro in rad/s), timestamped on the shared capture clock. `convert_episode_to_oak.py` (in [grabette-postprocess](https://github.com/pollen-robotics/grabette-slam/tree/develop/grabette-postprocess)) expands it into `imu_acc.csv` / `imu_gyro.csv` / `imu_rotation.csv` for SLAM.
 
 > The legacy GoPro-style `imu_data.json` (`ACCL`/`GYRO` streams) is the older casquette/V1 format and is **not** produced by the OAK-D recording — the mock backend still emits it for development.
 
@@ -91,4 +91,4 @@ RPi (camera + OAK-D + AS5600L)
 ```
 
 Downstream processing (SLAM → LeRobot dataset) lives in
-[grabette-postprocess](../../grabette-postprocess).
+[grabette-postprocess](https://github.com/pollen-robotics/grabette-slam/tree/develop/grabette-postprocess).

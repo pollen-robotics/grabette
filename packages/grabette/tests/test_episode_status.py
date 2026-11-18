@@ -36,6 +36,11 @@ def test_no_angles_is_a_fault():
     assert _episode_status({**GOOD, "angle_sample_count": 0}) == "✗ angles"
 
 
+def test_dropped_frames_is_a_fault():
+    assert _episode_status({**GOOD, "frame_drops": ["depth"]}) == "✗ depth frames dropped"
+    assert _episode_status({**GOOD, "frame_drops": ["rgb", "depth"]}) == "✗ rgb, depth frames dropped"
+
+
 def test_a_stray_press_is_flagged_but_not_a_fault():
     assert _episode_status({**GOOD, "duration_seconds": 0.8}) == "⚠ very short"
 
@@ -59,3 +64,43 @@ def test_header_says_when_the_api_is_down():
     # recorded" — that is the reading that gets an episode re-recorded.
     out = _ep_header_html(api_down=True)
     assert "Could not reach" in out
+
+
+# ── the last-recording popup ─────────────────────────────────────────
+
+from grabette.ui.app import _last_recording_popup  # noqa: E402
+
+
+def _last(ep, settled=True):
+    return {"settled": settled, "episode": ep}
+
+
+def test_popup_hidden_for_a_good_recording():
+    assert _last_recording_popup(_last(GOOD))["visible"] is False
+
+
+def test_popup_shows_dropped_frames():
+    up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
+    assert up["visible"] is True
+    assert "depth camera dropped frames" in up["value"]
+    assert GOOD["episode_id"] in up["value"]
+
+
+def test_popup_waits_until_the_recording_is_written():
+    assert _last_recording_popup(_last({"metadata_ok": False}, settled=False))["visible"] is False
+
+
+def test_popup_hidden_when_nothing_to_say():
+    assert _last_recording_popup(None)["visible"] is False
+    assert _last_recording_popup(_last(None))["visible"] is False
+
+
+def test_popup_carries_its_episode_for_the_close_button():
+    up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
+    assert f"data-ep='{GOOD['episode_id']}'" in up["value"]
+    assert "gb-lastrec-close" in up["value"]
+
+
+def test_popup_offers_to_delete_the_episode():
+    up = _last_recording_popup(_last({**GOOD, "frame_drops": ["depth"]}))
+    assert "gb-lastrec-delete" in up["value"]

@@ -189,4 +189,4 @@ The gRPC contract is defined in `proto/gripper.proto`; regenerate the committed 
 | Package | Description |
 |---|---|
 | [grabette](../grabette) | Handheld data-collection device (camera + depth camera + angle sensors) |
-| [grabette-postprocess](../grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |
+| [grabette-postprocess](https://github.com/pollen-robotics/grabette-slam/tree/develop/grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |

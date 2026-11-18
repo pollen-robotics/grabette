@@ -1,6 +1,6 @@
 """Is a recorded episode complete enough to be convertible?
 
-The SLAM Space runs the authoritative check (grabette_postprocess
+The SLAM Space runs the authoritative check (grabette-slam's grabette_postprocess
 checks.recording): it decodes videos, counts samples and looks for stuck joints.
 This is the cheap local mirror of the same contract — presence and non-emptiness
 only, no decoding — so the device can answer the one question that matters
@@ -32,7 +32,7 @@ from grabette.hardware.episode_files import (DCAM_CALIB_OFFLINE, DCAM_DEPTH_DIR,
                                              resolve)
 
 # Files every episode must carry for the raw → LeRobot conversion to be possible.
-# Mirrors the required inputs of grabette_postprocess.checks.recording:
+# Mirrors the required inputs of grabette_postprocess.checks.recording (grabette-slam):
 #   SLAM     — dcam_left.mp4 + timestamps, depth + timestamps, imu, offline calib
 #   Dataset  — angle_data.json (gripper), raw_video.mp4 (Arducam)
 # Named canonically; episodes recorded before the dcam_ rename carry the oakd_*

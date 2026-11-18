@@ -150,4 +150,4 @@ Start with the same setup, the same object and the same manipulation. After a fe
 
 Don't record failed manipulations: the policy would learn them. Delete a bad take right away with **Delete last episode** in the [session](#start-a-session).
 
-The [full recording guide](https://github.com/pollen-robotics/grabette/blob/develop/integrations/DiffusionPolicy/recording_demonstrations_guide.md) explains each rule and the failure it prevents.
+The [full recording guide](https://github.com/pollen-robotics/grabette-policy/blob/develop/policies/DiffusionPolicy/recording_demonstrations_guide.md) explains each rule and the failure it prevents.

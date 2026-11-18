@@ -350,7 +350,7 @@ Tasks, recording sessions, uploads and dataset creation (SLAM → LeRobot) are d
 
 
 
-> Recordings are written to `~/grabette-data/` — see the [data format](docs/data_format.md).<br> Downstream SLAM → LeRobot dataset generation is handled by [grabette-postprocess](../grabette-postprocess).
+> Recordings are written to `~/grabette-data/` — see the [data format](docs/data_format.md).<br> Downstream SLAM → LeRobot dataset generation is handled by [grabette-postprocess](https://github.com/pollen-robotics/grabette-slam/tree/develop/grabette-postprocess).
 
 ## Documentation
 
@@ -364,4 +364,4 @@ Tasks, recording sessions, uploads and dataset creation (SLAM → LeRobot) are d
 | Package | Description |
 |---|---|
 | [gripette](../gripette) | gRPC motor+camera service for the motorized gripper (Pi Zero 2W) |
-| [grabette-postprocess](../grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |
+| [grabette-postprocess](https://github.com/pollen-robotics/grabette-slam/tree/develop/grabette-postprocess) | SLAM/VIO + LeRobot dataset generation (Docker) |
