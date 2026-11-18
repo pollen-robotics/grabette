@@ -90,6 +90,21 @@ GRAVITY = 9.80665
 DEG_TO_RAD = 3.14159265359 / 180.0
 
 
+def _fifo_tag_ok(tag_byte: int) -> bool:
+    """True if a FIFO tag byte is well-formed.
+
+    The tag byte is [7:3]=sensor id, [2:1]=2-bit sample counter, [0]=parity,
+    and the whole byte carries EVEN parity (verified on hardware). A burst that
+    loses I2C byte alignment — a BCM2835 clock-stretch glitch, or a marginal
+    HAT connection — misreads a data byte as a tag: that fails even parity
+    and/or carries a sensor id we never batch. Either way the entry, and the
+    rest of the burst after it, cannot be trusted.
+    """
+    if bin(tag_byte).count("1") & 1:  # parity must be even
+        return False
+    return (tag_byte >> 3) in (FIFO_TAG_GYRO, FIFO_TAG_ACCEL, FIFO_TAG_TIMESTAMP)
+
+
 class LSM6DSV16X:
     """LSM6DSV16X 6-axis IMU driver.
 
@@ -196,6 +211,14 @@ class LSM6DSV16X:
         FIFO_DATA_OUT_Z_H (0x7E) back to FIFO_DATA_OUT_TAG (0x78). Per-entry
         reads cannot keep up with the ~720 entries/s at 240 Hz and let the FIFO
         overflow; a burst drains the backlog in one or two transactions.
+
+        Each entry's tag byte is integrity-checked (``_fifo_tag_ok``). If one
+        fails, the burst has lost byte alignment (clock-stretch glitch or a
+        marginal HAT connection), so the whole drain is discarded and the FIFO
+        flushed to resync — we return nothing rather than emit mis-tagged,
+        imbalanced or wrongly-timestamped samples. A healthy sensor never trips
+        this; a marginal one loses that drain (~a few ms) and keeps the stream
+        clean and monotonic instead of corrupting it.
         """
         n = min(self._fifo_count(), FIFO_MAX_ENTRIES)
         out: list[tuple[str, tuple[float, float, float], int]] = []
@@ -205,7 +228,11 @@ class LSM6DSV16X:
             raw = self._read(FIFO_DATA_OUT_TAG, 7 * c)  # one transaction, c entries
             for k in range(c):
                 off = k * 7
-                tag = raw[off] >> 3
+                tag_byte = raw[off]
+                if not _fifo_tag_ok(tag_byte):
+                    self.flush_fifo()  # lost alignment: drop drain + resync
+                    return []
+                tag = tag_byte >> 3
                 d = raw[off + 1:off + 7]
                 if tag == FIFO_TAG_TIMESTAMP:
                     self._fifo_ts = d[0] | (d[1] << 8) | (d[2] << 16) | (d[3] << 24)
@@ -217,7 +244,6 @@ class LSM6DSV16X:
                     x, y, z = unpack('<hhh', d)
                     out.append(("gyro", (x * self._gyro_scale, y * self._gyro_scale,
                                          z * self._gyro_scale), self._fifo_ts))
-                # other tags (temperature, etc.) are not batched here; ignore.
             done += c
         return out
 
