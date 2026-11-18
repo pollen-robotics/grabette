@@ -216,6 +216,15 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def get_last_episode(self) -> dict | None:
+        """/api/episodes/last, or None if the API could not be asked."""
+        try:
+            r = self._http.get("/api/episodes/last")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     def check_episode(self, episode_id: str) -> dict | None:
         """Which required artifacts an episode lacks, or None if it cannot be
         asked. The only thing that tells the dashboard whether the depth camera

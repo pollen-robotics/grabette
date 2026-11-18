@@ -74,6 +74,10 @@ def _create_backend():
             orbbec_ir_exposure_us=settings.orbbec_ir_exposure_us,
             orbbec_ir_gain=settings.orbbec_ir_gain,
             orbbec_rotate_180=settings.orbbec_rotate_180,
+            stereo_profile=settings.stereo_profile,
+            stereo_mode=settings.stereo_mode,
+            stereo_exposure=settings.stereo_exposure,
+            stereo_gamma=settings.stereo_gamma,
         )
     else:  # auto
         try:
@@ -88,6 +92,10 @@ def _create_backend():
                 orbbec_ir_exposure_us=settings.orbbec_ir_exposure_us,
                 orbbec_ir_gain=settings.orbbec_ir_gain,
                 orbbec_rotate_180=settings.orbbec_rotate_180,
+                stereo_profile=settings.stereo_profile,
+                stereo_mode=settings.stereo_mode,
+                stereo_exposure=settings.stereo_exposure,
+                stereo_gamma=settings.stereo_gamma,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend
@@ -912,6 +920,9 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             "keep_raw": bool(args.get("keep_raw", True)),
             "check_only": check_only,
         }
+        # Absent = the Space's default; [] would mean keep nothing.
+        if args.get("keep") is not None:
+            payload["keep"] = list(args["keep"])
         # Cancelled while this command sat in the relay's queue → never even start
         # the conversion (it would push a dataset nobody asked for any more).
         if cancels.is_cancelled(cmd_id):

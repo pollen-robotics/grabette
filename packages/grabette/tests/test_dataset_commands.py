@@ -236,6 +236,21 @@ def test_a_check_forwards_check_only_to_the_space(monkeypatch):
     assert posted_build["check_only"] is False
 
 
+def test_the_dataset_content_choice_is_forwarded_to_the_space(monkeypatch):
+    monkeypatch.setattr(main, "_wake_space", _awake)
+    monkeypatch.setattr("huggingface_hub.get_token", lambda: "tok")
+
+    posted = {}
+    _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"},
+                    extra_args={"keep": ["depth", "imu"]}, posted=posted)
+    assert posted["keep"] == ["depth", "imu"]
+
+    posted_default = {}
+    _process_result({"status": "done", "result": "https://hf.co/datasets/u/ds"},
+                    posted=posted_default)
+    assert "keep" not in posted_default
+
+
 def test_a_check_where_every_take_was_rejected_still_reports_ok(monkeypatch):
     # A check whose takes were ALL rejected also lands on "done" with no dataset.
     # The device cannot tell that apart from a clean run, and must not try: the
