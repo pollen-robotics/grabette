@@ -63,7 +63,10 @@ def create_imu_driver(sensor: str, i2c, sample_rate_hz: int, **kwargs) -> ImuDri
         )
         if sample_rate_hz <= 100:
             accel_odr, gyro_odr = ACC_ODR_100, GYRO_ODR_100_BW_32
-        elif sample_rate_hz <= 200:
+        elif sample_rate_hz <= 300:
+            # Nearest ODR: a 240 Hz fleet target (for the LSM6) is closer to the
+            # BMI088's 200 Hz step than to 400, and 400 Hz polled over the shared
+            # I2C bus returns empty accel data here — so round 101..300 to 200.
             accel_odr, gyro_odr = ACC_ODR_200, GYRO_ODR_200_BW_23
         else:
             accel_odr, gyro_odr = ACC_ODR_400, GYRO_ODR_400_BW_47
