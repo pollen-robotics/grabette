@@ -35,6 +35,9 @@ _HUB_READ_TIMEOUT_S = 60.0
 _HUB_WRITE_TIMEOUT_S = 60.0   # no progress writing a chunk for this long = stalled
 _HUB_POOL_TIMEOUT_S = 20.0
 
+# Above this size, already_uploaded compares by size only.
+_HASH_TO_SKIP_MAX_BYTES = 10 * 1024 * 1024
+
 _client_factory_lock = threading.Lock()
 _client_factory_installed = False
 
@@ -428,3 +431,82 @@ class HuggingFaceClient:
         url = f"https://huggingface.co/datasets/{repo_id}/tree/main/{dest}"
         logger.info("Episode %s uploaded to %s", episode_dir.name, url)
         return url
+
+    def already_uploaded(self, episodes: list[tuple[Path, str]], repo_id: str) -> set[str]:
+        """path_in_repo of the episodes whose files are all already on the Hub.
+
+        Avoids re-hashing them in upload_episodes. Files above
+        _HASH_TO_SKIP_MAX_BYTES are compared by size only.
+        """
+        import hashlib
+
+        from huggingface_hub.utils import (DEFAULT_IGNORE_PATTERNS, RepositoryNotFoundError,
+                                           filter_repo_objects)
+
+        api = self._get_api()
+        try:
+            remote = {f.path: f for f in api.list_repo_tree(repo_id, repo_type="dataset",
+                                                             recursive=True)
+                      if hasattr(f, "blob_id")}   # files only, not RepoFolder
+        except RepositoryNotFoundError:
+            return set()
+
+        def same(local: Path, entry) -> bool:
+            size = local.stat().st_size
+            if size != entry.size:
+                return False
+            if size > _HASH_TO_SKIP_MAX_BYTES:
+                return True
+            data = local.read_bytes()
+            if entry.lfs is not None:
+                return hashlib.sha256(data).hexdigest() == entry.lfs.sha256
+            return hashlib.sha1(b"blob %d\0" % size + data).hexdigest() == entry.blob_id
+
+        done = set()
+        for episode_dir, dest in episodes:
+            root = Path(episode_dir).expanduser().resolve()
+            files = {p.relative_to(root).as_posix(): p
+                     for p in sorted(root.glob("**/*")) if p.is_file()}
+            rels = list(filter_repo_objects(files.keys(), ignore_patterns=DEFAULT_IGNORE_PATTERNS))
+            prefix = dest.strip("/")
+            if rels and all(f"{prefix}/{rel}" in remote
+                            and same(files[rel], remote[f"{prefix}/{rel}"]) for rel in rels):
+                done.add(dest)
+        return done
+
+    def upload_episodes(
+        self,
+        episodes: list[tuple[Path, str]],
+        repo_id: str,
+        private: bool = False,
+        commit_message: str | None = None,
+    ) -> None:
+        """Upload (episode_dir, path_in_repo) pairs in a single commit (Hub commit quota)."""
+        from huggingface_hub import CommitOperationAdd
+        from huggingface_hub.utils import DEFAULT_IGNORE_PATTERNS, filter_repo_objects
+
+        api = self._get_api()
+        api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
+
+        operations = []
+        for episode_dir, dest in episodes:
+            root = Path(episode_dir).expanduser().resolve()
+            files = {p.relative_to(root).as_posix(): p
+                     for p in sorted(root.glob("**/*")) if p.is_file()}
+            for rel in filter_repo_objects(files.keys(),
+                                           ignore_patterns=DEFAULT_IGNORE_PATTERNS):
+                # Hashing happens here; mark per file so the watchdog doesn't see a stall.
+                operations.append(CommitOperationAdd(
+                    path_in_repo=f"{dest.strip('/')}/{rel}", path_or_fileobj=str(files[rel])))
+                note_hub_activity()
+
+        dests = [dest for _, dest in episodes]
+        api.create_commit(
+            repo_id=repo_id,
+            repo_type="dataset",
+            operations=operations,
+            commit_message=commit_message
+            or f"Upload {len(dests)} episode(s): {', '.join(dests[:5])}"
+            + ("…" if len(dests) > 5 else ""),
+        )
+        logger.info("Uploaded %d episode(s) to %s in one commit", len(dests), repo_id)
