@@ -89,3 +89,54 @@ def camera_info(meta: dict) -> dict:
 def metadata_stats(meta: dict) -> dict:
     """Per-stream capture stats from metadata.json, under either key."""
     return meta.get(CANONICAL_META_KEY) or meta.get(LEGACY_META_KEY) or {}
+
+
+# Optional LeRobot streams, named as in grabette-slam's `keep` option.
+FEATURE_KEYS = ("depth", "right", "imu")
+UNKNOWN_CAMERA = "unknown"
+
+
+def depth_camera_model(ep_dir: Path, fallback: str | None = None) -> str:
+    """Depth camera that recorded the episode. Same rules as grabette-slam."""
+    import json
+
+    ep_dir = Path(ep_dir)
+    meta_path = ep_dir / "metadata.json"
+    if meta_path.is_file():
+        try:
+            model = camera_info(json.loads(meta_path.read_text())).get("model")
+        except (OSError, ValueError):
+            model = None
+        if model:
+            return str(model)
+    calib_path = resolve(ep_dir, DCAM_CALIB)
+    if calib_path.is_file():
+        try:
+            calib = json.loads(calib_path.read_text())
+        except (OSError, ValueError):
+            calib = None
+        if isinstance(calib, dict):
+            if calib.get("productName"):
+                return "oakd"
+            if "gemini" in str(calib.get("name", "")).lower():
+                return "gemini305"
+    if fallback:
+        return fallback
+    if resolve(ep_dir, DCAM_IMU).is_file() or resolve(ep_dir, DCAM_RIGHT).is_file():
+        return "oakd"
+    return UNKNOWN_CAMERA
+
+
+def episode_features(ep_dir: Path, camera_fallback: str | None = None) -> dict:
+    """{"camera", "streams"}: what the LeRobot conversion can keep (file presence only)."""
+    ep_dir = Path(ep_dir)
+    present = {
+        "depth": ((resolve(ep_dir, DCAM_DEPTH_VIDEO).is_file()
+                   or resolve(ep_dir, DCAM_DEPTH_DIR).is_dir())
+                  and resolve(ep_dir, DCAM_DEPTH_TS).is_file()),
+        "right": (resolve(ep_dir, DCAM_RIGHT).is_file()
+                  and resolve(ep_dir, DCAM_RIGHT_TS).is_file()),
+        "imu": resolve(ep_dir, DCAM_IMU).is_file(),
+    }
+    return {"camera": depth_camera_model(ep_dir, camera_fallback),
+            "streams": [k for k in FEATURE_KEYS if present[k]]}

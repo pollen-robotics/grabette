@@ -292,7 +292,8 @@ def test_solo_episode_is_reported_with_its_role(tmp_path, left_hand):
 
     entry = next(t for t in tm.report_tasks() if t["name"] == "Reported Solo")
     assert entry["device_signature"] == ["left"]
-    assert entry["groups"] == [{"members": left_hand, "episode_ids": ["ep_rep"]}]
+    [group] = entry["groups"]
+    assert group["members"] == left_hand and group["episode_ids"] == ["ep_rep"]
 
 
 # move_episodes reports what it did, because two callers need to know: the local UI
@@ -630,3 +631,80 @@ def test_episode_issues():
     assert episode_issues({**good, "angle_sample_count": 0,
                            "frame_drops": ["rgb", "depth"]}) == [
         "angles", "rgb_frames_dropped", "depth_frames_dropped"]
+
+
+def _oakd_files(ep_dir):
+    for name in ("dcam_left.mp4", "dcam_depth.mkv", "dcam_depth_timestamps.json",
+                 "dcam_right.mp4", "dcam_right_timestamps.json", "dcam_imu.json"):
+        (ep_dir / name).write_text("{}")
+
+
+def _gemini_files(ep_dir):
+    for name in ("dcam_left.mp4", "dcam_depth.mkv", "dcam_depth_timestamps.json"):
+        (ep_dir / name).write_text("{}")
+
+
+def _record_with(tm, task_id, eid, write_files):
+    tm.create_episode(task_id, episode_id=eid)
+    write_files(tm.episode_dir(eid))
+    tm.register_episode(eid)
+
+
+def _groups(tm, name):
+    return next(t for t in tm.report_tasks() if t["name"] == name)["groups"]
+
+
+def test_a_recorded_episode_reports_its_features(tmp_path, left_hand, monkeypatch):
+    monkeypatch.setattr(settings, "depth_camera", "oakd")
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("OAK task")
+    _record_with(tm, tid, "ep1", _oakd_files)
+
+    [group] = _groups(tm, "OAK task")
+    assert group["features"] == {"camera": "oakd", "streams": ["depth", "right", "imu"]}
+
+
+def test_episodes_with_different_features_are_split_into_groups(tmp_path, left_hand,
+                                                                 monkeypatch):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Mixed")
+    monkeypatch.setattr(settings, "depth_camera", "oakd")
+    _record_with(tm, tid, "ep1", _oakd_files)
+    _record_with(tm, tid, "ep2", _oakd_files)
+    monkeypatch.setattr(settings, "depth_camera", "gemini305")
+    _record_with(tm, tid, "ep3", _gemini_files)
+
+    by_camera = {g["features"]["camera"]: g for g in _groups(tm, "Mixed")}
+    assert by_camera["oakd"]["episode_ids"] == ["ep1", "ep2"]
+    assert by_camera["gemini305"]["episode_ids"] == ["ep3"]
+    assert by_camera["gemini305"]["features"]["streams"] == ["depth"]
+
+
+def test_episodes_from_before_features_are_backfilled_once(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    tid = tm.create_task("Old")
+    _record_with(tm, tid, "ep_old", _oakd_files)
+    (tm.episode_dir("ep_old") / "metadata.json").write_text(
+        '{"depth_camera": {"model": "oakd"}}')
+    tm._features.clear()
+    tm._save()
+
+    tm2 = TaskManager(data_dir=tmp_path)
+
+    [group] = _groups(tm2, "Old")
+    assert group["features"] == {"camera": "oakd", "streams": ["depth", "right", "imu"]}
+    assert '"episode_features"' in (tmp_path / "tasks.json").read_text()
+
+
+def test_features_follow_a_moved_episode_and_go_with_a_deleted_one(tmp_path, left_hand):
+    tm = TaskManager(data_dir=tmp_path)
+    src, dst = tm.create_task("Src"), tm.create_task("Dst")
+    _record_with(tm, src, "ep_a", _gemini_files)
+    _record_with(tm, src, "ep_b", _gemini_files)
+
+    tm.move_episodes(["ep_a"], dst)
+    [group] = _groups(tm, "Dst")
+    assert group["features"]["streams"] == ["depth"]
+
+    tm.delete_episode("ep_a")
+    assert "ep_a" not in tm._features

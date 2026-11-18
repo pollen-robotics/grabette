@@ -857,6 +857,9 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             "keep_raw": bool(args.get("keep_raw", True)),
             "check_only": check_only,
         }
+        # Absent = the Space's default; [] would mean keep nothing.
+        if args.get("keep") is not None:
+            payload["keep"] = list(args["keep"])
         # Cancelled while this command sat in the relay's queue → never even start
         # the conversion (it would push a dataset nobody asked for any more).
         if cancels.is_cancelled(cmd_id):
