@@ -16,8 +16,16 @@ from casquette.hardware.bmi088 import BMI088, SENSORTIME_RESOLUTION_US
 from casquette.hardware.imu import ImuCapture, ImuDriver, create_imu_driver
 from casquette.hardware.lsm6dsv16x import (
     LSM6DSV16X, TIMESTAMP_RESOLUTION_US, WHO_AM_I, OUTX_L_A, OUTX_L_G, TIMESTAMP0,
-    FIFO_STATUS1, FIFO_DATA_OUT_TAG, FIFO_TAG_ACCEL, FIFO_TAG_GYRO, FIFO_TAG_TIMESTAMP,
+    FIFO_STATUS1, FIFO_DATA_OUT_TAG, FIFO_CTRL4, FIFO_TAG_ACCEL, FIFO_TAG_GYRO,
+    FIFO_TAG_TIMESTAMP, _fifo_tag_ok,
 )
+
+
+def fifo_tag(tag, cnt=0):
+    """Build a well-formed FIFO tag byte: [7:3]=sensor, [2:1]=cnt, [0]=even
+    parity — as the LSM6DSV16X emits them (e.g. accel cnt0 -> 0x11)."""
+    base = (tag << 3) | (cnt << 1)
+    return base | (bin(base).count("1") & 1)
 from casquette.hardware.sync import SyncManager
 
 
@@ -187,7 +195,7 @@ def test_lsm6dsv16x_wrong_whoami_raises():
 
 def test_lsm6dsv16x_read_fifo_parses_burst():
     def entry(tag, data6):
-        return bytes([tag << 3]) + data6
+        return bytes([fifo_tag(tag)]) + data6
     stream = (entry(FIFO_TAG_TIMESTAMP, bytes([0x10, 0, 0, 0, 0, 0]))   # ts = 16
               + entry(FIFO_TAG_ACCEL, struct.pack('<hhh', 1000, 0, -2000))
               + entry(FIFO_TAG_GYRO, struct.pack('<hhh', 100, -100, 0)))
@@ -199,6 +207,30 @@ def test_lsm6dsv16x_read_fifo_parses_burst():
     assert ev[0][2] == 16 and ev[1][2] == 16                # both tagged with ts=16
     assert ev[0][1][0] == pytest.approx(1000 * 0.244e-3 * 9.80665, rel=1e-6)
     assert ev[1][1][0] == pytest.approx(100 * 70e-3 * 3.14159265359 / 180.0, rel=1e-6)
+
+
+def test_fifo_tag_ok_accepts_valid_rejects_corrupt():
+    for tag in (FIFO_TAG_GYRO, FIFO_TAG_ACCEL, FIFO_TAG_TIMESTAMP):
+        for cnt in range(4):
+            assert _fifo_tag_ok(fifo_tag(tag, cnt))
+    assert not _fifo_tag_ok(fifo_tag(FIFO_TAG_ACCEL) ^ 1)   # flipped parity bit
+    assert not _fifo_tag_ok(3 << 3)                         # unknown sensor id (3)
+    assert not _fifo_tag_ok(0x1F)                            # garbage data byte
+
+
+def test_lsm6dsv16x_read_fifo_drops_corrupt_drain():
+    # A burst that loses byte alignment: the middle entry's tag byte is a
+    # misaligned data byte (unknown sensor + bad parity). The whole drain must
+    # be discarded and the FIFO flushed to resync — no partial/mis-tagged data.
+    good_ts = bytes([fifo_tag(FIFO_TAG_TIMESTAMP)]) + bytes([0x10, 0, 0, 0, 0, 0])
+    corrupt = bytes([0x1F]) + bytes(6)
+    good_acc = bytes([fifo_tag(FIFO_TAG_ACCEL)]) + struct.pack('<hhh', 1000, 0, -2000)
+    regs = {FIFO_STATUS1: bytes([3, 0]), FIFO_DATA_OUT_TAG: good_ts + corrupt + good_acc}
+    i2c = FakeI2C(regs)
+    dev = LSM6DSV16X(i2c)
+
+    assert dev.read_fifo() == []                            # whole drain dropped
+    assert any(reg == FIFO_CTRL4 for reg, _ in i2c.writes)  # flush_fifo() resynced
 
 
 def test_drivers_conform_to_protocol():
@@ -215,3 +247,19 @@ def test_create_imu_driver_selects_sensor_and_odr():
     assert isinstance(create_imu_driver("bmi088", FakeI2C({}), 200), BMI088)
     with pytest.raises(ValueError, match="unknown IMU sensor"):
         create_imu_driver("nope", FakeI2C({}), 200)
+
+
+def test_settings_imu_candidates_default():
+    from casquette.config import DEFAULT_IMU_CANDIDATES, Settings
+    # The probe list lives in config now; its default matches the wired hardware.
+    assert Settings().imu_candidates == DEFAULT_IMU_CANDIDATES
+    assert ("bmi088", 1, {}) in Settings().imu_candidates
+
+
+def test_create_imu_driver_bmi088_odr_and_kwargs():
+    from casquette.hardware.bmi088 import ACC_ODR_200, ACC_ODR_400
+    # A 240 Hz fleet target rounds to the nearest BMI088 step (200), not 400.
+    assert create_imu_driver("bmi088", FakeI2C({}), 240)._accel_odr == ACC_ODR_200
+    assert create_imu_driver("bmi088", FakeI2C({}), 400)._accel_odr == ACC_ODR_400
+    # gyro_addr (0x68 on the strapped-low HAT) passes through to the driver.
+    assert create_imu_driver("bmi088", FakeI2C({}), 240, gyro_addr=0x68)._gyro_addr == 0x68

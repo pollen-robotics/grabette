@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from grabette.backend.base import Backend
-from grabette.config import settings
+from grabette.config import DEFAULT_IMU_CANDIDATES, settings
 from grabette.errors import exc_text as _exc_text
 from grabette.hardware.frames import build_frames_payload
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
@@ -33,15 +33,6 @@ _CAMERA_INTRINSICS_SRC = _PACKAGE_ROOT / "config" / "rpi_camera_intrinsics.json"
 _URDF_ROOT = _PACKAGE_ROOT / "urdf"
 
 FPS = 46
-
-# IMU sensors to probe at start, in priority order: (sensor, I2C bus, kwargs).
-# The LSM6DSV16X sits at 0x6A on the main bus (1) of the current HAT; the older
-# BMI088 is on bus 3. detect_imu_capture tries each and uses the first that
-# answers, so one image runs on either hardware and on a device with neither.
-_IMU_CANDIDATES = [
-    ("lsm6dsv16x", 1, {}),
-    ("bmi088", 3, {}),
-]
 
 # How long start_capture waits for the OAK-D to produce valid (post-warmup)
 # frames before starting the recording clock. Safety fallback only — the OAK-D
@@ -110,7 +101,8 @@ class RpiBackend(Backend):
         orbbec_rotate_180: bool = False,
         stereo_profile: str = "skl2mp220", stereo_mode: str = "3040x1080",
         stereo_exposure: int = 300, stereo_gamma: int = 0,
-        enable_imu: bool = True, imu_hz: int = 240,
+        enable_imu: bool = True, imu_hz: int = 200,
+        imu_candidates: list[tuple[str, int, dict]] | None = None,
     ) -> None:
         super().__init__()
         self._running = False
@@ -149,6 +141,9 @@ class RpiBackend(Backend):
         self._stereo_gamma = stereo_gamma
         self._enable_imu = enable_imu
         self._imu_hz = imu_hz
+        self._imu_candidates = (
+            imu_candidates if imu_candidates is not None else DEFAULT_IMU_CANDIDATES
+        )
 
         self._sync = None
         self._camera = None
@@ -340,7 +335,7 @@ class RpiBackend(Backend):
         with old or no IMU hardware records without one, so this never raises
         and never blocks capture (unlike the camera/angle hardware gates)."""
         from grabette.hardware.imu import detect_imu_capture
-        self._imu = detect_imu_capture(self._sync, _IMU_CANDIDATES, self._imu_hz)
+        self._imu = detect_imu_capture(self._sync, self._imu_candidates, self._imu_hz)
 
     def _init_angle_sensors(self, quiet: bool = False) -> None:
         """Bring up the AS5600 gripper encoders.

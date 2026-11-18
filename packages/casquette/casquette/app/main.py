@@ -78,13 +78,13 @@ def _create_backend():
     elif settings.backend == "rpi":
         from casquette.backend.rpi import RpiBackend
         logger.info("Using RpiBackend (forced by config)")
-        return RpiBackend(imu_i2c_bus=settings.imu_i2c_bus)
+        return RpiBackend(imu_hz=settings.imu_hz, imu_candidates=settings.imu_candidates)
     else:  # auto
         try:
             from casquette.backend.rpi import RpiBackend
             import picamera2  # noqa: F401
             logger.info("RPi hardware detected, using RpiBackend")
-            return RpiBackend(imu_i2c_bus=settings.imu_i2c_bus)
+            return RpiBackend(imu_hz=settings.imu_hz, imu_candidates=settings.imu_candidates)
         except ImportError:
             from casquette.backend.mock import MockBackend
             logger.info("No RPi hardware, using MockBackend")

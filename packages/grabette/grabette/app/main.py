@@ -80,6 +80,7 @@ def _create_backend():
             stereo_gamma=settings.stereo_gamma,
             enable_imu=settings.enable_imu,
             imu_hz=settings.imu_hz,
+            imu_candidates=settings.imu_candidates,
         )
     else:  # auto
         try:
@@ -100,6 +101,7 @@ def _create_backend():
                 stereo_gamma=settings.stereo_gamma,
                 enable_imu=settings.enable_imu,
                 imu_hz=settings.imu_hz,
+                imu_candidates=settings.imu_candidates,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend

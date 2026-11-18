@@ -9,25 +9,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from casquette.backend.base import Backend
-from casquette.config import settings
+from casquette.config import DEFAULT_IMU_CANDIDATES, settings
 from casquette.models import CaptureStatus, IMUSample, SensorState
 from casquette.output import write_imu_json
 
 logger = logging.getLogger(__name__)
 
 FPS = 46
-IMU_HZ = 200
 
 
 class RpiBackend(Backend):
     """Backend using real RPi camera and BMI088 IMU hardware."""
 
-    def __init__(self, imu_i2c_bus: int = 1) -> None:
+    def __init__(
+        self, imu_hz: int = 200,
+        imu_candidates: list[tuple[str, int, dict]] | None = None,
+    ) -> None:
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
         self._capture_session_dir: Path | None = None
-        self._imu_i2c_bus = imu_i2c_bus
+        self._imu_hz = imu_hz
+        self._imu_candidates = (
+            imu_candidates if imu_candidates is not None else DEFAULT_IMU_CANDIDATES
+        )
         self._wall_clock_start: str | None = None
 
         self._sync = None
@@ -69,11 +74,7 @@ class RpiBackend(Backend):
         working IMU both bring up cleanly. Never raises.
         """
         from casquette.hardware.imu import detect_imu_capture
-        candidates = [
-            ("lsm6dsv16x", self._imu_i2c_bus, {}),
-            ("bmi088", self._imu_i2c_bus, {}),
-        ]
-        return detect_imu_capture(self._sync, candidates, IMU_HZ)
+        return detect_imu_capture(self._sync, self._imu_candidates, self._imu_hz)
 
     async def stop(self) -> None:
         if self._capturing:
@@ -213,7 +214,7 @@ class RpiBackend(Backend):
                 "frame_count": status.frame_count,
                 "imu_sample_count": status.imu_sample_count,
                 "fps": actual_fps,
-                "imu_hz": IMU_HZ,
+                "imu_hz": self._imu_hz,
                 "imu_sensor": imu_sensor,
                 "backend": "rpi",
                 "device_id": settings.device_id,
