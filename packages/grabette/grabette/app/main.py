@@ -670,6 +670,14 @@ async def _play_goal_when_saved(backend) -> None:
     get_speaker().play_goal()
 
 
+def _last_episode_report():
+    from grabette.app.routers.tasks import get_task_manager
+    backend = _daemon.backend if _daemon else None
+    if backend is None or backend.is_capturing or backend.is_finalizing:
+        return None
+    return get_task_manager().last_episode_issues()
+
+
 async def _dispatch_relay_command(cmd: dict) -> dict:
     """Map fleet commands to grabette daemon actions.
 
@@ -1307,6 +1315,7 @@ async def lifespan(app: FastAPI):
             # LED will find it out too late.
             fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
             depth_warm_provider=lambda: getattr(_daemon.backend, "is_depth_camera_warm", None),
+            last_episode_provider=_last_episode_report,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

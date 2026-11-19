@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import json
 
-from grabette.hardware.episode_files import DCAM_IMU, episode_features, metadata_stats, resolve
+from grabette.hardware.episode_files import (DCAM_IMU, episode_features, metadata_stats,
+                                             resolve, video_aligned)
 import logging
 import os
 import shutil
@@ -157,6 +158,7 @@ class TaskManager:
         # know when to re-report this device's tasks to the fleet.
         self._revision: int = 0
         self._last_episode_id: str | None = None
+        self._last_issues: tuple[str, list[str]] | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -313,7 +315,7 @@ class TaskManager:
         self._pending_episode = (episode_id, task_id, members, signature)
         return episode_id
 
-    def register_episode(self, episode_id: str | None = None) -> None:
+    def register_episode(self, episode_id: str | None = None, valid: bool = True) -> None:
         """File the just-finished episode into its task and bump the count.
 
         Called after stop_capture has written the episode's files. Resolves
@@ -367,6 +369,8 @@ class TaskManager:
         ep_dir = self.episode_dir(eid)
         if ep_dir.is_dir():
             self._features[eid] = episode_features(ep_dir, self._configured_camera())
+            if not valid:
+                self._features[eid]["invalid"] = ["video_sync"]
         # active_task_id is deliberately NOT moved onto the task we just filed
         # into: it is the operator's EXPLICIT local selection (PUT
         # /api/tasks/active, start_session), never a side effect of recording.
@@ -388,6 +392,15 @@ class TaskManager:
         if eid is None or not self.episode_dir(eid).exists():
             return None
         return self._get_episode_info(eid)
+
+    def last_episode_issues(self) -> tuple[str, list[str]] | None:
+        """(id, issues) of the last episode, cached. Call only once its files are written."""
+        eid = self._last_episode_id
+        if eid is None or not self.episode_dir(eid).exists():
+            return None
+        if self._last_issues is None or self._last_issues[0] != eid:
+            self._last_issues = (eid, self._get_episode_info(eid).issues)
+        return self._last_issues
 
     def discard_pending_episode(self) -> None:
         """Drop a pending (created-but-never-registered) episode, removing its
@@ -563,7 +576,7 @@ class TaskManager:
         imu_sample_count = 0
         angle_sample_count = 0
         frame_drops = []
-        video_aligned = True
+        aligned = True
         metadata_ok = True
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
@@ -586,8 +599,7 @@ class TaskManager:
                                 or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
             frame_drops = meta.get("frame_drops", [])
-            video_aligned = (meta.get("valid", True) is not False and
-                             (meta.get("video_timestamp_alignment") or {}).get("valid", True) is not False)
+            aligned = video_aligned(meta)
         else:
             metadata_ok = False
 
@@ -602,7 +614,7 @@ class TaskManager:
             has_imu=imu_present,
             metadata_ok=metadata_ok,
             frame_drops=frame_drops,
-            video_aligned=video_aligned,
+            video_aligned=aligned,
         )
         info.issues = episode_issues(info.model_dump())
         return info
@@ -638,13 +650,16 @@ class TaskManager:
                 m = members_by_ep.get(eid, {})
                 feat = self._features.get(eid)
                 key = (tuple(sorted((role, w.get("device_id")) for role, w in m.items())),
-                       (feat["camera"], tuple(feat["streams"])) if feat else None)
+                       (feat["camera"], tuple(feat["streams"]), tuple(feat.get("invalid", ())))
+                       if feat else None)
                 g = groups.get(key)
                 if g is None:
                     g = groups[key] = {"members": m, "episode_ids": []}
                     if feat:
                         g["features"] = {"camera": feat["camera"],
                                          "streams": list(feat["streams"])}
+                        if feat.get("invalid"):
+                            g["features"]["invalid"] = list(feat["invalid"])
                 g["episode_ids"].append(eid)
             out.append({
                 "name": t["name"],
@@ -691,12 +706,15 @@ class TaskManager:
         episodes = []
         for eid in eids[-UNASSIGNED_REPORT_LIMIT:]:
             info = self._get_episode_info(eid)
-            episodes.append({
+            ep = {
                 "episode_id": eid,
                 "members": members_by_ep.get(eid) or own_members,
                 "duration_seconds": info.duration_seconds,
                 "has_video": info.has_video,
-            })
+            }
+            if not info.video_aligned:
+                ep["invalid"] = ["video_sync"]
+            episodes.append(ep)
         return {"total": len(eids), "episodes": episodes}
 
     # ── Task operations ────────────────────────────────────────────────

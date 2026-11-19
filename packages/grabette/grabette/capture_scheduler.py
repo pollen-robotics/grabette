@@ -32,7 +32,8 @@ FLEET_WAIT_MAX_S = 30.0
 async def stop_capture_and_register(backend, task_manager):
     """Stop and file the take, even an invalid one (valid=False)."""
     result = await backend.stop_capture()
-    task_manager.register_episode(getattr(result, "episode_id", None))
+    task_manager.register_episode(getattr(result, "episode_id", None),
+                                  valid=getattr(result, "valid", True))
     return result
 
 

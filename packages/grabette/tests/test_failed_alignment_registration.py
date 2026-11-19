@@ -71,7 +71,7 @@ def test_each_stop_entrypoint_files_an_invalid_take_without_failing(
     elif entrypoint == "relay":
         assert result["status"] == "ok" and result["result"]["valid"] is False
     cue.assert_not_called()
-    register.assert_called_once_with(episode)
+    register.assert_called_once_with(episode, valid=False)
     tm.create_episode(episode_id="next-take")
     assert episode in {eid for task in tm.list_tasks() for eid in task.episode_ids}
     assert tm.episode_dir(episode).is_dir()
@@ -88,8 +88,8 @@ def test_a_failed_stop_registers_nothing():
 
 
 def test_successful_stop_keeps_its_existing_registration_contract():
-    result = SimpleNamespace(episode_id="saved-take")
+    result = SimpleNamespace(episode_id="saved-take", valid=True)
     backend = SimpleNamespace(stop_capture=AsyncMock(return_value=result))
     tm = Mock()
     assert asyncio.run(stop_capture_and_register(backend, tm)) is result
-    tm.register_episode.assert_called_once_with("saved-take")
+    tm.register_episode.assert_called_once_with("saved-take", valid=True)

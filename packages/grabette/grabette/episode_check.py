@@ -29,7 +29,7 @@ from pathlib import Path
 from grabette.hardware.episode_files import (DCAM_CALIB_OFFLINE, DCAM_DEPTH_DIR,
                                              DCAM_DEPTH_TS, DCAM_DEPTH_VIDEO,
                                              DCAM_IMU, DCAM_LEFT, DCAM_LEFT_TS,
-                                             resolve)
+                                             invalid_reasons, resolve)
 
 # Files every episode must carry for the raw → LeRobot conversion to be possible.
 # Mirrors the required inputs of grabette_postprocess.checks.recording (grabette-slam):
@@ -107,18 +107,6 @@ def _expects_imu(episode_dir: Path) -> bool:
 VALID_VIDEO_TIMESTAMPS = "valid video timestamps"
 
 
-def _video_valid(episode_dir: Path) -> bool:
-    try:
-        meta = json.loads((episode_dir / "metadata.json").read_text())
-    except Exception:
-        return True
-    if not isinstance(meta, dict):
-        return True
-    alignment = meta.get("video_timestamp_alignment")
-    return (meta.get("valid", True) is not False
-            and not (isinstance(alignment, dict) and alignment.get("valid") is False))
-
-
 def missing_files(episode_dir: Path) -> list[str]:
     """The required artifacts this episode lacks, in a stable order ([] = fine).
 
@@ -133,6 +121,6 @@ def missing_files(episode_dir: Path) -> list[str]:
                or (name in _FRAME_SIDECARS and not _has_frames(path))]
     if not any(_present(resolve(episode_dir, alt)) for alt in _DEPTH_ALTERNATIVES):
         missing.append(_DEPTH_ALTERNATIVES[0])
-    if not _video_valid(episode_dir):
+    if invalid_reasons(episode_dir):
         missing.append(VALID_VIDEO_TIMESTAMPS)
     return sorted(missing)
