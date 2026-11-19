@@ -358,6 +358,7 @@ Tasks, recording sessions, uploads and dataset creation (SLAM → LeRobot) are d
 - [Configuration](docs/configuration.md) — environment variables and the robot-frame angle convention.
 - [Data format](docs/data_format.md) — episode layout, calibration & geometry, IMU format, synchronization.
 - [Bluetooth WiFi setup](docs/bluetooth_setup.md) — headless WiFi provisioning over BLE.
+- [Benchmarks](benchmarks/README.md) — checking a capture PR against develop on real grabettes: holes, angles, start, sync.
 
 ## Related packages
 
