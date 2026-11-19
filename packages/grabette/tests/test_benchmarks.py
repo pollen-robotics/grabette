@@ -255,3 +255,97 @@ def test_compare_warns_about_heat():
     w = compare_mod.thermal_warnings(rep(ok), rep(hot))
     assert any("Candidate" in x and "82.3" in x for x in w)
     assert any("same temperature" in x for x in w)  # 70 vs 82.3
+
+
+def test_poisson_cdf_does_not_underflow_on_large_counts():
+    assert compare_mod.poisson_cdf(800, 800.0) == pytest.approx(0.509, abs=0.01)
+    verdict, _ = compare_mod.judge_rate({"count": 800, "minutes": 60}, {"count": 1600, "minutes": 60})
+    assert verdict == "REGRESSION"
+    verdict, _ = compare_mod.judge_rate({"count": 800, "minutes": 60}, {"count": 790, "minutes": 60})
+    assert verdict == "ok"
+
+
+def test_one_depth_burst_is_one_event_not_a_regression(tmp_path):
+    _episode(tmp_path / "base", "20261109_100000", seconds=600)
+    ep = _episode(tmp_path / "cand", "20261109_110000", seconds=600, depth_seq_jump=30)
+    m = report_mod.measure_episode(ep)
+    assert m["depth"]["seq_lost"] == 30 and m["depth"]["seq_loss_events"] == 1
+    rows, _ = compare_mod.compare(_report(tmp_path / "base"), _report(tmp_path / "cand"))
+    row = next(r for r in rows if r["metric"].startswith("Depth: losses"))
+    assert row["verdict"] == "worse, not significant"
+
+
+def test_an_invariant_broken_far_more_often_is_a_regression(tmp_path):
+    for i in range(10):
+        _episode(tmp_path / "base", f"20261109_10{i:02d}00", valid=(i != 0))
+        _episode(tmp_path / "cand", f"20261109_11{i:02d}00", valid=False)
+    rows, regressed = compare_mod.compare(_report(tmp_path / "base"), _report(tmp_path / "cand"))
+    row = next(r for r in rows if r["metric"].startswith("RGB: episodes with invalid"))
+    assert row["verdict"] == "REGRESSION" and regressed
+    rows, regressed = compare_mod.compare(_report(tmp_path / "base"), _report(tmp_path / "base"))
+    assert not regressed
+
+
+def test_run_inputs_count_angle_read_errors_and_alignment_failures(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "run.json").write_text(json.dumps({"episodes": [{"episode_id": "20261109_100000"}]}))
+    (run / "daemon.log").write_text(
+        "Angle: 4521 reads, 3 errors\nAngle: 900 reads, 0 errors\n"
+        "Video timestamp alignment failed: no camera frame for output PTS\n")
+    _, logs, _ = report_mod.run_inputs(run)
+    assert logs["daemon"]["angle_read_errors"] == 3
+    assert logs["daemon"]["alignment_error"] == 1
+
+
+def test_a_run_without_episodes_is_refused_not_ignored(tmp_path, monkeypatch):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "run.json").write_text(json.dumps({"episodes": [{"error": "start: refused"}]}))
+    _episode(tmp_path / "eps", "20261109_100000")
+    monkeypatch.setattr("sys.argv", ["episode_report", str(tmp_path / "eps"), "--run", str(run)])
+    with pytest.raises(SystemExit) as caught:
+        report_mod.main()
+    assert "no recorded episode" in str(caught.value)
+
+
+def _fake_daemon(monkeypatch, *, start, capturing_after_stop=False, stop_fails=False):
+    state = {"is_capturing": False}
+
+    def call(base, path, method="POST"):
+        if path == "/api/episodes/start":
+            state.update(is_capturing=True, episode_id="20261109_100000")
+            return start
+        if path == "/api/episodes/stop":
+            state["is_capturing"] = capturing_after_stop
+            if stop_fails:
+                raise run_mod.urllib.error.URLError("timed out")
+            return {}
+        if path == "/api/state":
+            return {"capture": dict(state)}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(run_mod, "call", call)
+    run_mod.stop.clear()
+
+
+def test_a_group_start_waiting_for_the_cameras_records_once_the_fleet_starts_it(monkeypatch):
+    _fake_daemon(monkeypatch, start={"status": "waiting_camera"})
+    entry = run_mod.record_one("http://x", 0, group=True)
+    assert "error" not in entry and entry["episode_id"] == "20261109_100000"
+    assert not run_mod.stop.is_set()
+
+
+def test_a_failed_stop_waits_for_the_daemon_then_goes_on(monkeypatch):
+    _fake_daemon(monkeypatch, start={"status": "capturing", "episode_id": "e"}, stop_fails=True)
+    entry = run_mod.record_one("http://x", 0, group=False)
+    assert entry["error"].startswith("stop:") and not run_mod.stop.is_set()
+
+
+def test_a_daemon_still_capturing_after_a_failed_stop_ends_the_run(monkeypatch):
+    _fake_daemon(monkeypatch, start={"status": "capturing", "episode_id": "e"},
+                 stop_fails=True, capturing_after_stop=True)
+    monkeypatch.setattr(run_mod, "STOP_WAIT_S", 0.3)
+    run_mod.record_one("http://x", 0, group=False)
+    assert run_mod.stop.is_set()
+    run_mod.stop.clear()

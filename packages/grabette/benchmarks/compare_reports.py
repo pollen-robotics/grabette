@@ -7,13 +7,16 @@ Prints a Markdown table (paste it in the PR) and exits 1 if anything regressed.
 How each figure is judged:
   invariant  must be 0 (invalid alignment, unwritten camera frames, frame
              count mismatch, writer queue full, depth frames dropped...).
-             Regression when the candidate breaks one the baseline kept.
+             Regression when the candidate breaks one the baseline kept, or
+             breaks it much more often (judged as a rate, below).
   rate       rare events counted over a duration (holes, I2C timeouts) or a
-             number of episodes (late starts). A Poisson test asks whether the
+             number of episodes (late starts). Events, not what they cost: a
+             depth loss is one event however many frames it took. A Poisson test asks whether the
              candidate's count is too high for the baseline's rate: regression
              when that would happen by chance less than 5 % of the time
              (improvement, the other way round). With few minutes recorded,
              small differences are reported as "not significant", not hidden.
+  info       shown, never judged.
   value      a median or maximum (start-up delays, angle rate, chronometer
              offsets) with a tolerance: regression when it moves the wrong way
              by more than the tolerance, or crosses an absolute limit.
@@ -31,7 +34,7 @@ from pathlib import Path
 ALPHA = 0.05
 
 # (path in the summary, label, kind, options)
-#   rate:  options = None
+#   rate, invariant, info:  options = None
 #   value: options = (direction, tolerance, absolute limit or None)
 #          direction "up" = higher is worse, "down" = lower is worse, "abs" = |x| higher is worse
 METRICS = [
@@ -53,7 +56,8 @@ METRICS = [
     (("rgb", "pts_offset_matched"), "RGB: PTS offset from matching alone, episodes (info)", "value", ("up", None, None)),
     (("rgb", "pts_offset_ambiguous"), "RGB: episodes matching alone could not decide (info)", "value", ("up", None, None)),
     (("depth", "holes"), "Depth: holes > 100 ms", "rate", None),
-    (("depth", "seq_lost"), "Depth: frames numbered by the camera, never received", "rate", None),
+    (("depth", "seq_loss_events"), "Depth: losses of numbered frames (events)", "rate", None),
+    (("depth", "seq_lost"), "Depth: frames those losses took (info)", "info", None),
     (("depth", "first_frame_ms_abs_max"), "Depth: first frame vs t=0, |ms| (max)", "value", ("up", 30, None)),
     (("angle", "holes_over_500ms"), "Angles: holes > 500 ms (I2C timeouts)", "rate", None),
     (("angle", "holes_over_100ms"), "Angles: holes > 100 ms (loop stalls)", "rate", None),
@@ -80,11 +84,11 @@ def get(d, path):
 def poisson_cdf(k: int, lam: float) -> float:
     if k < 0:
         return 0.0
-    term = total = math.exp(-lam)
-    for i in range(1, k + 1):
-        term *= lam / i
-        total += term
-    return min(total, 1.0)
+    if lam <= 0:
+        return 1.0
+    # Each term in log space: exp(-lam) alone underflows to 0 past lam ≈ 745.
+    log_lam = math.log(lam)
+    return min(sum(math.exp(i * log_lam - lam - math.lgamma(i + 1)) for i in range(k + 1)), 1.0)
 
 
 def judge_rate(base: dict, cand: dict) -> tuple[str, str]:
@@ -106,6 +110,16 @@ def judge_rate(base: dict, cand: dict) -> tuple[str, str]:
     if kc > expected:
         return "worse, not significant", f"{note}; p = {p_worse:.2f}"
     return "ok", note
+
+
+def invariant_rate(sb: dict, sc: dict, b: int, c: int) -> tuple[str, str]:
+    """An invariant broken on both sides: a regression if the candidate breaks it
+    far more often per episode than the baseline did."""
+    verdict, why = judge_rate({"count": b, "episodes": sb.get("episodes")},
+                              {"count": c, "episodes": sc.get("episodes")})
+    if verdict == "REGRESSION":
+        return verdict, f"also broken on the baseline, but far more often; {why}"
+    return "still broken", "also broken on the baseline"
 
 
 def judge_value(b, c, opts) -> tuple[str, str]:
@@ -164,13 +178,15 @@ def compare(base: dict, cand: dict, device: str | None = None) -> tuple[list[dic
         if path == ("invariants", "decoded_frame_mismatch") and not (
                 sb.get("episodes_decoded") and sc.get("episodes_decoded")):
             continue
-        if kind == "invariant":
+        if kind == "info":
+            verdict, why = "info", ""
+        elif kind == "invariant":
             if not c:
                 verdict, why = "ok", ""
-            elif b:
-                verdict, why = "still broken", "also broken on the baseline"
-            else:
+            elif not b:
                 verdict, why = "REGRESSION", "broken on the candidate only"
+            else:
+                verdict, why = invariant_rate(sb, sc, b, c)
         elif kind == "rate":
             verdict, why = judge_rate(b, c) if b and c else ("n/a", "missing on one side")
         else:

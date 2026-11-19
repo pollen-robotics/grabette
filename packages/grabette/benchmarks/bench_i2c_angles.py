@@ -56,6 +56,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # _common.py
+from _common import journal_since  # noqa: E402
 
 CLOCK_BOOTTIME = getattr(time, "CLOCK_BOOTTIME", 7)
 SENSORS = ("distal", "proximal")
@@ -147,16 +149,6 @@ def thermal_summary(samples: list) -> dict:
             "throttled_samples": len(hot), "samples": len(samples),
             "first_throttled_utc": hot[0]["utc"] if hot else None,
             "throttled_end": samples[-1]["throttled"] if samples else None}
-
-
-def journal(since_epoch: float, *args: str) -> str:
-    try:
-        r = subprocess.run(["journalctl", "--no-pager", "-o", "short-precise", "--utc",
-                            "--since", f"@{int(since_epoch)}", *args],
-                           capture_output=True, text=True, timeout=60)
-        return r.stdout or r.stderr
-    except (OSError, subprocess.SubprocessError) as e:
-        return f"journalctl failed: {e}\n"
 
 
 def error_name(exc: BaseException) -> str:
@@ -512,7 +504,7 @@ def main() -> int:
     irq_end = i2c_irq_count()
     if irq_start and irq_end:
         summary["i2c_irq"] = {**irq_end, "count": irq_end["count"] - irq_start["count"]}
-    kernel = journal(t0_epoch, "-k")
+    kernel = journal_since(t0_epoch, "-k")
     (out_dir / "kernel.log").write_text(kernel)
     summary["kernel_i2c_lines"] = sum("i2c" in l.lower() for l in kernel.splitlines())
     stop.set()

@@ -55,6 +55,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # _common.py, also when loaded by the tests
+from _common import journal_since  # noqa: E402
+
 stop = threading.Event()
 
 IN_FLEET_SESSION = ("This grabette is in an open fleet session: a start here is a GROUP start "
@@ -84,16 +87,6 @@ def http_detail(e: Exception) -> str:
 
 def is_local(api: str) -> bool:
     return urlparse(api).hostname in ("127.0.0.1", "localhost", "::1")
-
-
-def journal(since_epoch: float, *args: str) -> str:
-    try:
-        r = subprocess.run(["journalctl", "--no-pager", "-o", "short-precise", "--utc",
-                            "--since", f"@{int(since_epoch)}", *args],
-                           capture_output=True, text=True, timeout=120)
-        return r.stdout or r.stderr
-    except (OSError, subprocess.SubprocessError) as e:
-        return f"journalctl failed: {e}\n"
 
 
 def _run(cmd: list[str]) -> str | None:
@@ -165,6 +158,28 @@ def free_gb(folder: Path) -> float | None:
         return None
 
 
+CAMERA_WAIT_S = 30.0   # a fleet group start waiting for the depth cameras
+STOP_WAIT_S = 300.0    # a stop that timed out, still muxing a long take
+
+
+def capture_state(base: str) -> dict:
+    try:
+        return call(base, "/api/state", method="GET").get("capture") or {}
+    except (urllib.error.URLError, OSError, ValueError):
+        return {}
+
+
+def wait_capture(base: str, capturing: bool, timeout_s: float) -> dict | None:
+    """Poll the daemon until it is (or no longer is) capturing; its capture state, or None."""
+    deadline = time.monotonic() + timeout_s
+    while not stop.is_set() and time.monotonic() < deadline:
+        cap = capture_state(base)
+        if bool(cap.get("is_capturing")) == capturing:
+            return cap
+        stop.wait(0.2)
+    return None
+
+
 def wait_until(t_utc: datetime) -> None:
     stop.wait(max((t_utc - datetime.now(timezone.utc)).total_seconds(), 0))
 
@@ -196,6 +211,16 @@ def record_one(base: str, seconds: float, group: bool, thermal: bool = False) ->
         entry["peers"] = started.get("peers")
         wait_until(t0)
         stop.wait(seconds)
+    elif status == "waiting_camera" and group:
+        # The fleet starts the group once the depth cameras are ready.
+        cap = wait_capture(base, True, CAMERA_WAIT_S)
+        if cap is None:
+            entry["error"] = f"start: no capture within {CAMERA_WAIT_S:.0f} s of waiting_camera"
+            log(entry["error"])
+            stop.set()
+            return entry
+        entry["episode_id"] = cap.get("episode_id")
+        stop.wait(seconds)
     else:
         # The fleet took the start over: cancel it, leave no recording behind.
         try:
@@ -214,6 +239,11 @@ def record_one(base: str, seconds: float, group: bool, thermal: bool = False) ->
         entry["stop_call_s"] = round(time.monotonic() - t, 3)
     except (urllib.error.URLError, OSError, ValueError) as e:
         entry["error"] = f"stop: {e} {http_detail(e)}".strip()
+        # A stop that timed out may still be muxing: wait for it, or every
+        # next start would fail with "Already capturing".
+        if wait_capture(base, False, STOP_WAIT_S) is None:
+            log(f"{entry['error']}; still capturing after {STOP_WAIT_S:.0f} s: run stopped")
+            stop.set()
     return entry
 
 
@@ -290,10 +320,10 @@ def main() -> int:
     if local:
         run["clock"]["end"] = clock_status()
         run["thermal"]["end"] = thermal_status()
-        daemon = journal(t0_epoch, "-u", "grabette")
+        daemon = journal_since(t0_epoch, "-u", "grabette")
         (out_dir / "daemon.log").write_text(
             "\n".join(l for l in daemon.splitlines() if "HTTP/1.1" not in l) + "\n")
-        (out_dir / "kernel.log").write_text(journal(t0_epoch, "-k"))
+        (out_dir / "kernel.log").write_text(journal_since(t0_epoch, "-k"))
     else:
         run["logs"] = "remote daemon: copy its journal over the run window by hand"
     (out_dir / "run.json").write_text(json.dumps(run, indent=2) + "\n")

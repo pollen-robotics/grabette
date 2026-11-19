@@ -52,6 +52,9 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # _common.py, also when loaded by the tests
+from _common import episode_time, find_episodes, load_json, parse_utc  # noqa: E402
+
 STARTUP_MS = 1500.0          # the start-up burst of small RGB losses
 RGB_HOLE_MS = 30.0           # >= one frame lost at ~49 fps
 DAEMON_FLAG_MS = 250.0       # MAX_FRAME_GAP_MS: the daemon flags frame_drops
@@ -67,10 +70,9 @@ HOT_C = 80.0                 # the Pi's soft temperature limit: the CPU slows do
 # Daemon / kernel log lines worth counting, by kind (substring match).
 LOG_PATTERNS = {
     "angle_loop_stalled": "Angle loop stalled",
-    "angle_read_failed": "read failed on /dev/i2c",
     "frame_hole_flagged": "hole between two frames",
     "depth_not_ready": "not ready after",
-    "alignment_error": "FrameAlignmentError",
+    "alignment_error": "Video timestamp alignment failed",
     "traceback": "Traceback",
 }
 KERNEL_PATTERNS = {
@@ -86,13 +88,6 @@ KERNEL_PATTERNS = {
 STOP_LINE = re.compile(r"capture stopped \[ms: ([^\]]*?)\s+total_awaited=([\d.]+)\]")
 
 
-def load_json(path: Path):
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
-
-
 def median_step(ts: list[float]) -> float | None:
     return statistics.median(b - a for a, b in zip(ts, ts[1:])) if len(ts) > 1 else None
 
@@ -101,38 +96,7 @@ def gaps(ts: list[float], threshold: float) -> list[tuple[float, float]]:
     return [(a, b) for a, b in zip(ts, ts[1:]) if b - a > threshold]
 
 
-def episode_time(name: str) -> datetime | None:
-    try:
-        return datetime.strptime(name, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
-def parse_utc(s) -> datetime | None:
-    if not s:
-        return None
-    try:
-        d = datetime.fromisoformat(s)
-    except (TypeError, ValueError):
-        return None
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-
-
 # ── Finding episodes ───────────────────────────────────────────────────
-
-def find_episodes(paths: list[Path]) -> list[Path]:
-    """Folders holding one device's take of an episode."""
-    out = []
-    for p in paths:
-        if not p.exists():
-            print(f"warning: {p} does not exist", file=sys.stderr)
-            continue
-        if (p / "frame_timestamps.json").exists():
-            out.append(p)
-        else:
-            out += sorted(f.parent for f in p.rglob("frame_timestamps.json"))
-    return out
-
 
 def episode_id(folder: Path) -> str:
     """The episode id: the folder's name, or its parent's in a multi-device
@@ -196,8 +160,10 @@ def depth_measures(ep: Path, meta: dict) -> dict | None:
         "last_ms": round(ts[-1], 1),
         "holes": len(holes),
         "max_gap_ms": round(max((b - a for a, b in zip(ts, ts[1:])), default=0), 1),
-        # Numbered by the camera but never received by the host.
+        # Numbered by the camera but never received by the host: frames, and the
+        # losses they came in (one USB hiccup loses many frames at once).
         "seq_lost": sum(max(b - a - 1, 0) for a, b in zip(seqs, seqs[1:])) if len(seqs) == len(ts) else None,
+        "seq_loss_events": sum(b - a > 1 for a, b in zip(seqs, seqs[1:])) if len(seqs) == len(ts) else None,
         "dropped_frames": dcam.get("dropped_frames"),
     }
     if "left_frames" in dcam and "depth_frames" in dcam:
@@ -375,6 +341,8 @@ def summarize(eps: list[dict]) -> dict:
             "episodes": len(with_depth),
             "holes": {"count": sum(values(with_depth, "depth", "holes")), "minutes": round(depth_min, 2)},
             "seq_lost": {"count": sum(values(with_depth, "depth", "seq_lost")), "minutes": round(depth_min, 2)},
+            "seq_loss_events": {"count": sum(values(with_depth, "depth", "seq_loss_events")),
+                                "minutes": round(depth_min, 2)},
             "max_gap_ms": mx(values(with_depth, "depth", "max_gap_ms")),
             "first_frame_ms_abs_max": mx([abs(v) for v in values(with_depth, "depth", "first_ms")]),
         },
@@ -470,6 +438,10 @@ def chrono_measures(path: Path) -> dict | None:
     }
 
 
+# "Angle: 4521 reads, 3 errors": the angle loop's summary at the end of each episode.
+ANGLE_SUMMARY = re.compile(r"Angle: \d+ reads, (\d+) errors")
+
+
 def count_lines(text: str, patterns: dict[str, str]) -> dict[str, int]:
     lines = text.splitlines()
     return {k: sum(p in l for l in lines) for k, p in patterns.items()}
@@ -540,6 +512,7 @@ def run_inputs(run_dir: Path) -> tuple[set[str] | None, dict, dict]:
             text = f.read_text(errors="replace")
             logs[name.split(".")[0]] = count_lines(text, patterns)
             if name == "daemon.log":
+                logs["daemon"]["angle_read_errors"] = sum(int(n) for n in ANGLE_SUMMARY.findall(text))
                 logs["stop_phases_ms"] = stop_phases(text)
     return (set(entries) or None), logs, entries
 
@@ -621,8 +594,10 @@ def main() -> int:
     keep_ids, logs, entries = None, {}, {}
     for run_dir in args.run:
         ids, lg, ent = run_inputs(run_dir)
-        if ids:
-            keep_ids = (keep_ids or set()) | ids
+        if not ids:
+            # Measuring everything instead would mix in other branches' episodes.
+            sys.exit(f"--run {run_dir}: no recorded episode in its run.json")
+        keep_ids = (keep_ids or set()) | ids
         entries.update(ent)
         logs[lg.pop("run")] = lg
 
