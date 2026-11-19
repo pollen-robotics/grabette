@@ -6,16 +6,19 @@ The legacy BMI088 IMU was dropped — IMU data now comes from the OAK-D.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
 import time
+from datetime import datetime
 from pathlib import Path
 
 from grabette.backend.base import Backend
 from grabette.config import settings
 from grabette.errors import exc_text as _exc_text
 from grabette.hardware.frames import build_frames_payload
+from grabette.hardware.camera import FrameAlignmentError
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
 from grabette.output import write_json_atomic
 
@@ -33,10 +36,36 @@ _URDF_ROOT = _PACKAGE_ROOT / "urdf"
 
 FPS = 46
 
+# Above harmless startup losses (~80 ms), below a real desync hole (563 ms seen).
+MAX_FRAME_GAP_MS = 250.0
+
+
+def _dropped_streams(streams) -> list[str]:
+    """Streams with a low average rate or one long hole between frames."""
+    dropped = []
+    for name, n_frames, span_ms, max_gap_ms, expected_fps in streams:
+        recorded_fps = ((n_frames - 1) / (span_ms / 1000.0)
+                        if n_frames >= 2 and span_ms > 0 else 0.0)
+        if recorded_fps < 0.8 * expected_fps:
+            logger.warning("%s camera recorded at %.1f fps (expected %d): "
+                           "frames dropped, episode likely out of sync",
+                           name, recorded_fps, expected_fps)
+            dropped.append(name)
+        elif max_gap_ms > MAX_FRAME_GAP_MS:
+            logger.warning("%s camera has a %.0f ms hole between two frames: "
+                           "frames dropped, episode likely out of sync",
+                           name, max_gap_ms)
+            dropped.append(name)
+    return dropped
+
 # How long start_capture waits for the OAK-D to produce valid (post-warmup)
 # frames before starting the recording clock. Safety fallback only — the OAK-D
 # normally becomes ready well within this.
 OAKD_READY_TIMEOUT_S = 5.0
+# Within this margin of the keep-alive power-down the OAK-D no longer reports
+# itself warm: a start scheduled with the short lead could otherwise find it
+# powered down at T0.
+OAKD_WARM_MARGIN_S = 5.0
 
 
 def _camera_metadata(model: str, cap) -> dict:
@@ -65,17 +94,25 @@ def _camera_metadata(model: str, cap) -> dict:
 # Keyed, not one string: the two are independent, and a single field would let
 # a successful OAK-D bring-up quietly clear a live angle-sensor fault. Listed in
 # report order so a device with both always words it the same way.
+_HW_CAMERA = "rgb_camera"
 _HW_OAKD = "oakd_calibration"
 _HW_ANGLE = "angle_sensors"
 _HW_CALIB = "angle_calibration"
-_HW_ORDER = (_HW_OAKD, _HW_ANGLE, _HW_CALIB)
+_HW_ORDER = (_HW_CAMERA, _HW_OAKD, _HW_ANGLE, _HW_CALIB)
+
+# How often the idle watch retries sensors that never came up.
+_ANGLE_RETRY_S = 3.0
 
 _ANGLE_FAULT_MSG = (
-    "the gripper angle sensors {what} — episodes would carry no angle_data.json "
-    "and could never be converted. Check the AS5600 wiring / I2C bus."
+    "the gripper angle sensors {what}. Episodes would carry no angle_data.json "
+    "and could never be converted."
 )
 # Kept short: the dashboard shows it as is, next to the button that fixes it.
 _CALIB_FAULT_MSG = "your device is not calibrated"
+# The ribbon is only looked for when the camera is opened (start-up, and after
+# each recording): reseating it needs the power off, and back on.
+_CAMERA_FAULT_MSG = ("the RGB camera is not detected ({what}) — power the "
+                     "grabette off, check its ribbon cable, power it back on")
 
 
 class RpiBackend(Backend):
@@ -86,6 +123,8 @@ class RpiBackend(Backend):
         oakd_keepalive_s: float = 30.0, depth_camera: str = "oakd",
         orbbec_ir_exposure_us: int = 0, orbbec_ir_gain: int = 0,
         orbbec_rotate_180: bool = False,
+        stereo_profile: str = "skl2mp220", stereo_mode: str = "3040x1080",
+        stereo_exposure: int = 300, stereo_gamma: int = 0,
     ) -> None:
         super().__init__()
         self._running = False
@@ -93,6 +132,9 @@ class RpiBackend(Backend):
         self._capturing = False
         self._starting = False
         self._stopping = False  # True during stop_capture teardown (drives the fast-blink LED)
+        self._stop_task: asyncio.Task | None = None
+        self._finalizing = False  # True from a stop until its deferred writes are done
+        self._finalizing_episode: str | None = None
         # True while the OAK-D device is being brought up (init in progress).
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
@@ -109,12 +151,18 @@ class RpiBackend(Backend):
         self._hw_faults: dict[str, str] = {}
         self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
+        # Last bring-up retry from the idle watch (_watch_angle_sensors).
+        self._angle_retry_at = 0.0
         self._enable_oakd = enable_oakd
         self._oakd_keepalive_s = oakd_keepalive_s
         self._depth_camera = depth_camera
         self._orbbec_ir_exposure_us = orbbec_ir_exposure_us
         self._orbbec_ir_gain = orbbec_ir_gain
         self._orbbec_rotate_180 = orbbec_rotate_180
+        self._stereo_profile = stereo_profile
+        self._stereo_mode = stereo_mode
+        self._stereo_exposure = stereo_exposure
+        self._stereo_gamma = stereo_gamma
 
         self._sync = None
         self._camera = None
@@ -127,6 +175,14 @@ class RpiBackend(Backend):
         self._oakd_auto_enabled = False
         # Pending "power the OAK-D down after the keep-alive window" timer.
         self._oakd_keepalive_task = None
+        # time.monotonic() at which that timer fires (None = not armed).
+        self._oakd_powerdown_at = None
+        # Camera object that last passed wait_until_ready; replacing self._oakd
+        # invalidates it.
+        self._depth_ready_cam = None
+        # Two concurrent warm-ups would otherwise both init the camera, and the
+        # second finds the USB device busy.
+        self._oakd_power_lock = asyncio.Lock()
         # Set when stop_capture defers hardware re-init out of the stop path;
         # start_capture then lazily re-inits the camera/angle (overlapped with
         # the OAK-D warmup) so re-init never delays the LED/stop.
@@ -144,13 +200,11 @@ class RpiBackend(Backend):
 
     async def start(self) -> None:
         from grabette.hardware.sync import SyncManager
-        from grabette.hardware.camera import VideoCapture
 
         self._sync = SyncManager()
-        self._camera = VideoCapture(self._sync, fps=FPS)
 
         logger.info("Initializing camera...")
-        self._camera.init_camera()
+        self._init_camera()
 
         if self._enable_angle:
             self._init_angle_sensors()
@@ -168,6 +222,25 @@ class RpiBackend(Backend):
         self._running = True
         self._start_time = time.time()
         logger.info("RpiBackend started")
+
+    def _init_camera(self) -> None:
+        """Open the RGB camera, or latch a fault when it is not there.
+
+        A missing camera used to raise out of start(): the angle sensors and
+        the depth camera were never brought up, the daemon stayed in ERROR and
+        every API call answered 503 — a dashboard showing every part as
+        "unknown" instead of naming the one that is missing."""
+        from grabette.hardware.camera import VideoCapture
+        self._camera = VideoCapture(self._sync, fps=FPS)
+        try:
+            self._camera.init_camera()
+        except Exception as e:
+            self._camera.close()
+            self._set_hw_error(_HW_CAMERA, _CAMERA_FAULT_MSG.format(
+                what=_exc_text(e)))
+            logger.error("RGB camera unusable — recording disabled: %s", e)
+        else:
+            self._clear_hw_error(_HW_CAMERA)
 
     async def _watch_depth_camera_cable(self) -> None:
         """Clear a "did not start" fault once the cable is plugged back in.
@@ -222,6 +295,15 @@ class RpiBackend(Backend):
                     ir_gain=self._orbbec_ir_gain,
                     rotate_180=self._orbbec_rotate_180,
                 )
+            elif self._depth_camera == "stereo_uvc":
+                from grabette.hardware.stereo_uvc import StereoUvcCapture
+                self._oakd = StereoUvcCapture(
+                    self._sync,
+                    profile=self._stereo_profile,
+                    mode=self._stereo_mode,
+                    exposure=self._stereo_exposure,
+                    gamma=self._stereo_gamma,
+                )
             else:
                 self._oakd = OakdCapture(self._sync)
             self._oakd.init_device()
@@ -261,7 +343,7 @@ class RpiBackend(Backend):
             logger.warning("Speaker init failed, continuing without sound", exc_info=True)
             self._speaker = None
 
-    def _init_angle_sensors(self) -> None:
+    def _init_angle_sensors(self, quiet: bool = False) -> None:
         """Bring up the AS5600 gripper encoders.
 
         Failing here is a hardware fault, not a degraded mode: stop_capture only
@@ -285,7 +367,62 @@ class RpiBackend(Backend):
             self._angle = None
             self._set_hw_error(_HW_ANGLE, _ANGLE_FAULT_MSG.format(
                 what=f"could not be initialised ({_exc_text(e)})"))
-            logger.error("Angle sensors unusable — recording disabled: %s", e)
+            # The idle watch retries every few seconds; one line, not one each.
+            (logger.debug if quiet else logger.error)(
+                "Angle sensors unusable — recording disabled: %s", e)
+
+    def _watch_angle_sensors(self) -> None:
+        """Keep the angle fault in step with the sensors while idle.
+
+        Runs on the idle poll (get_state), right after its reads. A sensor
+        unplugged after boot used to go unnoticed — the bus stays open, the
+        reads fail silently — until a whole recording came out without angle
+        data. Now silence for STALE_S raises the fault (capture refused, LED,
+        dashboard), and answers clear it. A device whose sensors never came up
+        retries the bring-up every few seconds, so plugging them back in is
+        enough.
+
+        Never during a capture or its start/stop: those own the sensors, and
+        _note_angle_output judges the recording itself."""
+        if (not self._enable_angle or self._capturing or self._starting
+                or self._stopping or self._needs_reinit):
+            return
+        a = self._angle
+        if a is None:
+            now = time.monotonic()
+            if now - self._angle_retry_at >= _ANGLE_RETRY_S:
+                self._angle_retry_at = now
+                self._init_angle_sensors(quiet=True)
+            return
+        unresponsive = getattr(a, "unresponsive", None)
+        if unresponsive is None:
+            return
+        dead = unresponsive()
+        if dead:
+            if _HW_ANGLE not in self._hw_faults:
+                logger.error("Angle sensors stopped answering: %s", ", ".join(dead))
+            self._set_hw_error(_HW_ANGLE, _ANGLE_FAULT_MSG.format(
+                what=f"stopped answering ({' and '.join(dead)})"))
+        elif _HW_ANGLE in self._hw_faults:
+            logger.info("Angle sensors answering again")
+            self._clear_hw_error(_HW_ANGLE)
+
+    @property
+    def angle_sensors_status(self) -> dict:
+        return {
+            "enabled": self._enable_angle,
+            "initialized": self._angle is not None,
+            "error": self._hw_faults.get(_HW_ANGLE, ""),
+        }
+
+    def reinit_angle_sensors(self) -> None:
+        if self._capturing or self._starting:
+            raise RuntimeError("A recording is in progress")
+        if not self._enable_angle:
+            return
+        if self._angle is not None:
+            self._angle.stop()  # idle: closes the bus handles, nothing to join
+        self._init_angle_sensors()
 
     def _check_angle_calibration(self) -> None:
         """Latch a fault while the angle sensors have no saved zero.
@@ -363,6 +500,10 @@ class RpiBackend(Backend):
         logger.info("RpiBackend stopped")
 
     @property
+    def recording_started_utc(self) -> datetime | None:
+        return self._sync.start_utc
+
+    @property
     def is_camera_connected(self) -> bool:
         return self._camera is not None and self._camera.is_open
 
@@ -415,29 +556,48 @@ class RpiBackend(Backend):
         self._cancel_oakd_keepalive()
         self._oakd_auto_enabled = False
 
-        if on == self._enable_oakd and (on == self.is_oakd_initialized):
-            return  # already in the requested state
-
-        import asyncio
         loop = asyncio.get_event_loop()
 
-        if on:
-            self._enable_oakd = True
-            self._oakd_initializing = True
-            try:
-                await loop.run_in_executor(None, self._init_oakd)
-            finally:
-                self._oakd_initializing = False
-            logger.info("OAK-D enabled via UI")
-        else:
-            self._enable_oakd = False
-            if self._oakd is not None:
+        async with self._oakd_power_lock:
+            if on == self._enable_oakd and (on == self.is_oakd_initialized):
+                return  # already in the requested state
+
+            if on:
+                self._enable_oakd = True
+                self._oakd_initializing = True
                 try:
-                    await loop.run_in_executor(None, self._oakd.shutdown)
-                except Exception as e:
-                    logger.warning("OAK-D shutdown error: %s", e)
-                self._oakd = None
-            logger.info("OAK-D disabled via UI")
+                    await loop.run_in_executor(None, self._init_oakd)
+                finally:
+                    self._oakd_initializing = False
+                logger.info("OAK-D enabled via UI")
+            else:
+                self._enable_oakd = False
+                if self._oakd is not None:
+                    try:
+                        await loop.run_in_executor(None, self._oakd.shutdown)
+                    except Exception as e:
+                        logger.warning("OAK-D shutdown error: %s", e)
+                    self._oakd = None
+                logger.info("OAK-D disabled via UI")
+
+    @property
+    def is_depth_camera_warm(self) -> bool:
+        """Powered, past its warm-up (wait_until_ready succeeded), and not about
+        to be powered down by the keep-alive."""
+        cam = self._oakd
+        if cam is None or not cam.is_initialized or cam is not self._depth_ready_cam:
+            return False
+        at = self._oakd_powerdown_at
+        return at is None or at - time.monotonic() > OAKD_WARM_MARGIN_S
+
+    async def _wait_depth_ready(self) -> None:
+        """Wait until the depth camera is ready, and remember it once it is."""
+        cam = self._oakd
+        if cam is None or not cam.is_initialized:
+            return
+        loop = asyncio.get_event_loop()
+        if await loop.run_in_executor(None, cam.wait_until_ready, OAKD_READY_TIMEOUT_S):
+            self._depth_ready_cam = cam
 
     # ── OAK-D keep-alive (auto-power-down after a grace period) ────────────────
 
@@ -445,6 +605,7 @@ class RpiBackend(Backend):
         """Cancel a pending auto-power-down, if any."""
         task = self._oakd_keepalive_task
         self._oakd_keepalive_task = None
+        self._oakd_powerdown_at = None
         if task is not None and not task.done():
             task.cancel()
 
@@ -452,6 +613,7 @@ class RpiBackend(Backend):
         """Arm the auto-power-down timer (replaces any existing one)."""
         import asyncio
         self._cancel_oakd_keepalive()
+        self._oakd_powerdown_at = time.monotonic() + self._oakd_keepalive_s
         self._oakd_keepalive_task = asyncio.create_task(self._oakd_keepalive_powerdown())
 
     async def _oakd_keepalive_powerdown(self) -> None:
@@ -464,6 +626,7 @@ class RpiBackend(Backend):
             return
         # Clear our own ref first so set_oakd_enabled() below is a no-op cancel.
         self._oakd_keepalive_task = None
+        self._oakd_powerdown_at = None
         if self._capturing or self.is_teleop_active or not self._oakd_auto_enabled:
             return
         logger.info("OAK-D keep-alive expired — powering down")
@@ -579,22 +742,29 @@ class RpiBackend(Backend):
                 )
         else:
             # When idle, read directly from sensors
-            if self._angle and self._angle._i2c_1 and self._angle._i2c_2:
-                try:
-                    raw1 = self._angle._read_angle_raw(self._angle._i2c_1)
-                    raw2 = self._angle._read_angle_raw(self._angle._i2c_2)
+            a = self._angle
+            if a and a._i2c_1 and a._i2c_2:
+                # Each sensor read on its own: a failing distal must not stop
+                # the proximal read, or it would look unplugged too.
+                raws = []
+                for i2c in (a._i2c_1, a._i2c_2):
+                    try:
+                        raws.append(a._read_angle_raw(i2c))
+                    except Exception:
+                        raws.append(None)
+                raw1, raw2 = raws
+                if raw1 is not None and raw2 is not None:
                     # Sign source matches AngleCapture._capture_loop — read
                     # from settings (derived from `hand`) rather than the
                     # AS5600 class constants that used to live on the wrapper.
-                    cal1 = self._angle._normalize_angle(raw1 - self._angle._offset_1_deg) * settings.distal_sign
-                    cal2 = self._angle._normalize_angle(raw2 - self._angle._offset_2_deg) * settings.proximal_sign
+                    cal1 = a._normalize_angle(raw1 - a._offset_1_deg) * settings.distal_sign
+                    cal2 = a._normalize_angle(raw2 - a._offset_2_deg) * settings.proximal_sign
                     angle = AngleSample(
                         timestamp_ms=time.time() * 1000,
                         proximal=math.radians(cal2),
                         distal=math.radians(cal1),
                     )
-                except Exception:
-                    pass
+            self._watch_angle_sensors()
 
         imu = None
         if self._oakd is not None and self._oakd.is_initialized:
@@ -612,29 +782,30 @@ class RpiBackend(Backend):
         and the first frame. Idempotent; fast no-op when already warm."""
         if self._capturing:
             return
-        import asyncio
-        loop = asyncio.get_event_loop()
         # Keep it warm for the imminent capture (don't let a keep-alive power
         # it down between now and T0).
         self._cancel_oakd_keepalive()
-        busy = self.busy_reason
-        if busy:
-            raise RuntimeError(busy)
-        if not self.is_oakd_initialized:
-            await self.set_oakd_enabled(True)
-            self._oakd_auto_enabled = True
-        if self._needs_reinit:
-            self._reinit_hardware()
-        elif self._enable_angle and self._angle is None:
-            self._init_angle_sensors()  # the retry that can clear the fault below
-        # Refuse the warm-up too, not just start_capture: this runs BEFORE a
-        # group's shared T0, so failing here lets the peer/fleet learn this
-        # device is out before the synchronized start rather than at T0.
-        self.raise_if_capture_blocked()
-        if self._oakd and self._oakd.is_initialized:
-            await loop.run_in_executor(
-                None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
-            )
+        try:
+            busy = self.busy_reason
+            if busy:
+                raise RuntimeError(busy)
+            if not self.is_oakd_initialized:
+                await self.set_oakd_enabled(True)
+                self._oakd_auto_enabled = True
+            if self._needs_reinit:
+                self._reinit_hardware()
+            elif self._enable_angle and self._angle is None:
+                self._init_angle_sensors()  # the retry that can clear the fault below
+            # Refuse the warm-up too, not just start_capture: this runs BEFORE a
+            # group's shared T0, so failing here lets the peer/fleet learn this
+            # device is out before the synchronized start rather than at T0.
+            self.raise_if_capture_blocked()
+            await self._wait_depth_ready()
+        finally:
+            # Not every warm-up is followed by a capture (session open, refused
+            # start): don't leave an auto-enabled camera on forever.
+            if self._oakd_auto_enabled and self.is_oakd_initialized and not self._capturing:
+                self._schedule_oakd_keepalive()
 
     async def start_capture(self, episode_dir: Path) -> None:
         if self._capturing:
@@ -696,10 +867,7 @@ class RpiBackend(Backend):
             # Defer the recording clock until the OAK-D is producing valid frames
             # (autoexposure + depth converged), so t=0 lands on good data instead
             # of cold-boot warmup. No-op/fast if the OAK-D is already warm.
-            if self._oakd and self._oakd.is_initialized:
-                await loop.run_in_executor(
-                    None, self._oakd.wait_until_ready, OAKD_READY_TIMEOUT_S,
-                )
+            await self._wait_depth_ready()
 
             self._episode_dir = episode_dir
 
@@ -740,6 +908,17 @@ class RpiBackend(Backend):
         logger.info("RpiBackend capture started → %s", episode_dir)
 
     async def stop_capture(self) -> CaptureStatus:
+        # The mux no longer blocks the loop, so a second stop can arrive mid-stop: it joins this one.
+        if self._stop_task is None:
+            self._stop_task = asyncio.ensure_future(self._stop_capture())
+            self._stop_task.add_done_callback(self._clear_stop_task)
+        return await asyncio.shield(self._stop_task)
+
+    def _clear_stop_task(self, task) -> None:
+        if self._stop_task is task:
+            self._stop_task = None
+
+    async def _stop_capture(self) -> CaptureStatus:
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
@@ -762,8 +941,7 @@ class RpiBackend(Backend):
         # Audible cue (descending, mirroring the ascending one at start) — HERE,
         # at the top of the teardown: the stream stops below flip their recording
         # flag at once and only THEN spend ~1-2s muxing, so this is the instant
-        # frames stop being saved. Being a detached subprocess, it is heard
-        # during that mux even though the mux blocks the event loop. Placing it
+        # frames stop being saved. Placing it
         # after the muxes instead would report "episode written", a second or two
         # after the take actually ended.
         if self._speaker is not None:
@@ -784,8 +962,7 @@ class RpiBackend(Backend):
 
         # Finalize OAK and RPi camera concurrently. Both flip their "recording"
         # flag immediately (capture stops at once) and then spend ~1-2s muxing
-        # H.264 → mp4. Running the OAK finalize in an executor while the camera
-        # finalize runs here overlaps the muxes (the OAK also muxes left/right
+        # H.264 → mp4. Running both finalizes in executors overlaps the muxes (the OAK also muxes left/right
         # in parallel internally), cutting the stop/save time to ~the single
         # longest mux. Angle is already stopped above, so the "angle must stop
         # before the camera mux" ordering still holds.
@@ -796,9 +973,17 @@ class RpiBackend(Backend):
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         _t_cam = time.monotonic()
-        frame_timestamps = self._camera.stop()
+        self._needs_reinit = True  # the camera is being closed
+        video_valid = True
+        try:
+            frame_timestamps = await loop.run_in_executor(None, self._camera.stop)
+        except FrameAlignmentError as exc:
+            # Not a failed stop: the take is kept, marked invalid.
+            video_valid = False
+            frame_timestamps = self._camera.frame_timestamps
+            logger.error("Video timestamp alignment failed: %s", exc)
+        frame_provenance = self._camera.frame_provenance
         t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
-        self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
         t_phases["muxes_wallclock"] = (time.monotonic() - _t_muxes) * 1000
 
@@ -830,6 +1015,7 @@ class RpiBackend(Backend):
             frame_count=self._camera.frame_count,
             imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
             angle_sample_count=angle_count,
+            valid=video_valid,
         )
 
         # Build the metadata dict now so all values are captured while state
@@ -842,6 +1028,7 @@ class RpiBackend(Backend):
             "imu_sample_count": status.imu_sample_count,
             "angle_sample_count": status.angle_sample_count,
             "fps": actual_fps,
+            "video_timestamp_alignment": self._camera.timestamp_alignment,
             "backend": "rpi",
             # Identity + convention tags — let downstream readers know which
             # device + handedness recorded this episode and which sign
@@ -856,10 +1043,25 @@ class RpiBackend(Backend):
             # explicit for downstream traceability).
             "urdf": urdf_name,
         }
+        if not video_valid:
+            meta["valid"] = False
         if oakd_stats:
             # Per-stream capture stats. Key is "dcam" since the camera may be an
             # OAK-D or a Gemini 305; readers accept the legacy "oakd" too.
             meta["dcam"] = oakd_stats
+
+        # A stalled writer loop drops frames and has come with a >1 s
+        # Arducam/depth desync — flag it so the take gets redone.
+        rgb_max_gap_ms = max((b - a for a, b in zip(frame_timestamps, frame_timestamps[1:])),
+                             default=0.0)
+        streams = [("rgb", len(frame_timestamps), video_span_ms, rgb_max_gap_ms, FPS)]
+        if oakd_stats and oakd_stats.get("left_span_ms") is not None:
+            streams.append(("depth", oakd_stats.get("left_frames", 0),
+                            oakd_stats["left_span_ms"],
+                            oakd_stats.get("left_max_gap_ms", 0.0), self._oakd.fps))
+        frame_drops = _dropped_streams(streams)
+        if frame_drops:
+            meta["frame_drops"] = frame_drops
 
         meta["depth_camera"] = _camera_metadata(self._depth_camera, self._oakd)
 
@@ -881,9 +1083,12 @@ class RpiBackend(Backend):
         # moment. call_soon schedules the callback right after this coroutine
         # returns, on the same event loop — the caller (button listener /
         # REST endpoint) sees stop_capture complete immediately.
+        self._finalizing = True
+        self._finalizing_episode = episode_dir.name if episode_dir else None
         loop.call_soon(
             self._finalize_and_reinit,
             episode_dir, frame_timestamps, angle_samples, meta, urdf_path,
+            frame_provenance,
         )
 
         total_ms = t_phases.get("angle_stop", 0) + t_phases.get("muxes_wallclock", 0)
@@ -901,6 +1106,7 @@ class RpiBackend(Backend):
         angle_samples,
         meta,
         urdf_path,
+        frame_provenance=None,
     ) -> None:
         """Deferred post-stop work: JSON writes + calibration + frames + reinit.
 
@@ -943,6 +1149,8 @@ class RpiBackend(Backend):
                     logger.warning(
                         "URDF missing at %s — episode will lack frames.json", urdf_path,
                     )
+                if frame_provenance is not None and not frame_provenance.save():
+                    meta["valid"] = False
                 # metadata.json goes last so its presence signals the episode
                 # is fully saved to any watcher.
                 write_json_atomic(episode_dir / "metadata.json", meta)
@@ -960,10 +1168,14 @@ class RpiBackend(Backend):
         # instead — an episode that didn't persist is exactly what an operator
         # must not learn about later from the journal.
         if self._speaker is not None:
-            if writes_ok:
+            if writes_ok and meta.get("valid", True) and not meta.get("frame_drops"):
                 self._speaker.play_saved()
             else:
                 self._speaker.play_error()
+        # The episode is on disk and its cue is out: a waiting goal cue may go
+        # (see app.main._play_goal_when_saved). The re-init below is for the next take.
+        self._finalizing = False
+        self._finalizing_episode = None
 
         _t = time.monotonic()
         try:
@@ -985,9 +1197,7 @@ class RpiBackend(Backend):
         fast-restart fallback. Idempotent — the flag guards against double-run."""
         if not self._needs_reinit:
             return
-        from grabette.hardware.camera import VideoCapture
-        self._camera = VideoCapture(self._sync, fps=FPS)
-        self._camera.init_camera()
+        self._init_camera()
         if self._enable_angle:
             self._init_angle_sensors()
         self._needs_reinit = False
@@ -1029,6 +1239,16 @@ class RpiBackend(Backend):
     def is_stopping(self) -> bool:
         return self._stopping
 
+    @property
+    def is_finalizing(self) -> bool:
+        return self._finalizing
+
+    @property
+    def busy_episode_id(self) -> str | None:
+        if self._capturing and self._episode_dir is not None:
+            return self._episode_dir.name
+        return self._finalizing_episode if self._finalizing else None
+
     def _note_angle_output(self, angle_samples) -> None:
         """Record whether the finished recording actually produced angle data.
 
@@ -1064,10 +1284,18 @@ class RpiBackend(Backend):
         self._hw_faults.pop(key, None)
 
     @property
+    def depth_camera_error(self) -> str:
+        """The depth camera's own fault, out of hardware_error ("" = none), so
+        the dashboard can put it under the depth camera rather than quote every
+        fault the device has."""
+        return self._hw_faults.get(_HW_OAKD, "")
+
+    @property
     def hardware_error(self) -> str:
         """Why this grabette must not record right now ("" = fine).
 
-        Set by _init_oakd (no OAK-D offline calibration), _init_angle_sensors
+        Set by _init_camera (no RGB camera), _init_oakd (no OAK-D offline
+        calibration), _init_angle_sensors
         / stop_capture (no gripper angle data) and _check_angle_calibration
         (angle sensors never zeroed). Read by start_capture and
         prepare_capture (which refuse) and by the button listener's LED monitor

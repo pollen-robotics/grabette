@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import shutil
+import os
 from datetime import datetime
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
-from grabette.capture_scheduler import get_capture_scheduler
-from grabette.config import settings
+from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
 from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.hardware.episode_files import DCAM_LEFT, resolve
@@ -157,7 +157,7 @@ async def start_capture(
     if backend.is_capturing:
         raise HTTPException(status_code=409, detail="Already capturing")
     scheduler = get_capture_scheduler()
-    if scheduler.is_scheduled():
+    if scheduler.is_pending():
         raise HTTPException(status_code=409, detail="A start is already scheduled")
     # Hardware fault or dataset work in progress. Checked BEFORE the episode is
     # created so a refusal leaves no half-made episode to discard, and reported
@@ -180,6 +180,10 @@ async def start_capture(
         raise HTTPException(status_code=409,
                             detail={"message": "group start refused (a peer may be offline)",
                                     "detail": sync.get("detail")})
+    if status == "waiting_camera":
+        # start_capture comes later from the fleet.
+        scheduler.mark_waiting_for_fleet()
+        return {"status": "waiting_camera"}
     target = None
     if status == "scheduled":
         gname = sync.get("task_name") or ""
@@ -236,6 +240,9 @@ async def stop_capture(
     if outcome == "cancelled":
         tm.discard_pending_episode()
         return {"status": "cancelled"}
+    if outcome == "cancelled_wait":
+        await notify_group_stop(should_abort=scheduler.is_pending)
+        return {"status": "cancelled"}
     if not backend.is_capturing:
         raise HTTPException(status_code=409, detail="Not capturing")
     # Notify BEFORE stopping locally, exactly like the physical-button path:
@@ -247,10 +254,46 @@ async def stop_capture(
     await notify_group_stop(
         should_abort=lambda: backend.is_capturing or scheduler.is_scheduled(),
     )
-    status = await backend.stop_capture()
-    # File the episode into its task only now that its data is written.
-    tm.register_episode(getattr(status, "episode_id", None))
+    status = await stop_capture_and_register(backend, tm)
     return status
+
+
+def _archive_response(archive_path: Path, filename: str) -> StreamingResponse:
+    """Streams the archive from an open handle and unlinks it right away, so
+    it is gone even if the download is cancelled."""
+    f = archive_path.open("rb")
+    size = os.fstat(f.fileno()).st_size
+    archive_path.unlink()
+
+    def chunks():
+        with f:
+            yield from iter(lambda: f.read(1 << 20), b"")
+
+    return StreamingResponse(chunks(), media_type="application/gzip", headers={
+        "Content-Length": str(size),
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        # Lets the dashboard tell the archive is ready and the download started.
+        "Set-Cookie": "grabette_dl=1; Path=/",
+    })
+
+
+@router.get("/api/episodes/download")
+def download_episodes(episode_ids: list[str] = Query(), tm: TaskManager = Depends(get_task_manager)):
+    try:
+        archive_path = tm.create_episodes_zip(episode_ids)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    filename = f"episodes_{episode_ids[0]}.tar.gz" if len(episode_ids) == 1 else "episodes.tar.gz"
+    return _archive_response(archive_path, filename)
+
+
+@router.get("/api/episodes/last")
+def get_last_episode(tm: TaskManager = Depends(get_task_manager),
+                     backend: Backend = Depends(get_backend)):
+    """Last recording, for the dashboard popup. Not `settled` while capturing or
+    finalizing: metadata.json may not be written yet."""
+    settled = not (backend.is_capturing or backend.is_finalizing)
+    return {"settled": settled, "episode": tm.last_episode() if settled else None}
 
 
 @router.get("/api/episodes/{episode_id}")
@@ -287,24 +330,7 @@ def download_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager
         archive_path = tm.create_episode_archive(episode_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Episode not found")
-    return FileResponse(
-        archive_path,
-        media_type="application/gzip",
-        filename=f"{episode_id}.tar.gz",
-    )
-
-
-class DownloadEpisodesRequest(BaseModel):
-    episode_ids: list[str]
-
-
-@router.post("/api/episodes/download")
-def download_episodes(req: DownloadEpisodesRequest, tm: TaskManager = Depends(get_task_manager)):
-    if not req.episode_ids:
-        raise HTTPException(status_code=400, detail="No episode IDs provided")
-    archive_path = tm.create_episodes_zip(req.episode_ids)
-    filename = f"episodes_{req.episode_ids[0]}.tar.gz" if len(req.episode_ids) == 1 else "episodes.tar.gz"
-    return FileResponse(archive_path, media_type="application/gzip", filename=filename)
+    return _archive_response(archive_path, f"{episode_id}.tar.gz")
 
 
 @router.get("/api/episodes/{episode_id}/video")
@@ -333,19 +359,24 @@ def delete_all_episodes(
     backend: Backend = Depends(get_backend),
     tm: TaskManager = Depends(get_task_manager),
 ):
-    if backend.is_capturing or get_capture_scheduler().is_scheduled():
+    if (backend.is_capturing or backend.is_finalizing
+            or get_capture_scheduler().is_scheduled()):
         raise HTTPException(status_code=409, detail="A recording is in progress")
     try:
         count = tm.delete_all_episodes()
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
-    # Archives built for the dashboard's Download button are copies of episodes.
-    shutil.rmtree(settings.data_dir / ".downloads", ignore_errors=True)
     return {"deleted": count}
 
 
 @router.delete("/api/episodes/{episode_id}")
-def delete_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+def delete_episode(
+    episode_id: str,
+    backend: Backend = Depends(get_backend),
+    tm: TaskManager = Depends(get_task_manager),
+):
+    if episode_id == backend.busy_episode_id:
+        raise HTTPException(status_code=409, detail="This episode is still being recorded or saved")
     try:
         tm.delete_episode(episode_id)
     except FileNotFoundError:

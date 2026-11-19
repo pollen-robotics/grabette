@@ -104,22 +104,37 @@ SAVED_TONES: tuple[tuple[float, float], ...] = ((1760.0, 0.06),)
 # nobody mistakes it for a take starting or failing.
 PREVIEW_TONES: tuple[tuple[float, float], ...] = ((1320.0, 0.12),)
 
+# Goal: the session's episode goal is reached (the fleet's audio signal, sent as
+# a play_sound command). Not a take-level cue: it marks the end of a whole batch,
+# heard once per session, so it is the one fanfare of the set — a four-note
+# rising arpeggio ending on a held note, longer than the start pair it could
+# otherwise be confused with. All four pitches are inside the speaker's band
+# (see ERROR_TONES) and none is used by another cue.
+GOAL_TONES: tuple[tuple[float, float], ...] = (
+    (988.0, 0.10), (1245.0, 0.10), (1480.0, 0.10), (1976.0, 0.30),
+)
+
 CUE_START = "capture_start"
 CUE_STOP = "capture_stop"
 CUE_SAVED = "capture_saved"
 CUE_ERROR = "capture_error"
 CUE_PREVIEW = "volume_preview"
+CUE_GOAL = "session_goal"
 CUES: dict[str, tuple[tuple[float, float], ...]] = {
     CUE_START: START_TONES,
     CUE_STOP: STOP_TONES,
     CUE_SAVED: SAVED_TONES,
     CUE_ERROR: ERROR_TONES,
     CUE_PREVIEW: PREVIEW_TONES,
+    CUE_GOAL: GOAL_TONES,
 }
 
 # What the dashboard's test button plays: the four cues a recording uses, in
 # the order a take produces them (same as scripts/test_speaker.py).
 TEST_SEQUENCE: tuple[str, ...] = (CUE_START, CUE_STOP, CUE_SAVED, CUE_ERROR)
+# Every cue that can be played on demand: the sequence, plus the fleet's goal
+# fanfare, which no take produces.
+TESTABLE: tuple[str, ...] = TEST_SEQUENCE + (CUE_GOAL,)
 # Silence between two cues of the test sequence, so each is heard on its own.
 TEST_GAP_S = 0.5
 
@@ -387,6 +402,11 @@ class Speaker:
         """Blip 'episode written to disk' (short, high). Returns at once; never
         raises."""
         self._play(CUE_SAVED)
+
+    def play_goal(self) -> None:
+        """Fanfare 'the session's episode goal is reached'. Returns at once;
+        never raises."""
+        self._play(CUE_GOAL)
 
     def play_error(self) -> None:
         """Buzz 'that command failed' (repeated triplet). Safe to call from every

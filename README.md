@@ -8,7 +8,7 @@
 Open-source toolkit for collecting robotic manipulation demonstrations and
 turning them into training-ready datasets.
 
-A GRABETTE rig records synchronized **camera + IMU** streams from hand-held or
+A GRABETTE rig records synchronized **camera + depth** streams (+ IMU with the OAK-D SR) from hand-held or
 gripper-mounted devices, recovers camera trajectories with SLAM, and exports
 [LeRobot](https://huggingface.co/docs/lerobot) datasets for policy learning.
 The data-collection pipeline is **robot-agnostic**.
@@ -21,31 +21,26 @@ https://github.com/user-attachments/assets/6db9dd7b-1762-4004-8a76-ce76323499ba
 <br><br><br>
 ## Components
 
-### `packages/` — robot-agnostic core
+### `packages/` — the devices (what runs on the Raspberry Pi images)
 
 | Package | Role | Target | Interface |
 |---|---|---|---|
 | [`grabette`](packages/grabette) | Hand held data-collection device | Raspberry Pi | HTTP/WebSocket, :8000 |
 | [`gripette`](packages/gripette) | Robot mounted Gripper motor | Raspberry Pi Zero 2W | gRPC, :50051 |
-| [`grabette-postprocess`](packages/grabette-postprocess) | Data postprocess + SLAM → LeRobot dataset generation | Workstation | CLI |
-| [`grabette-chunkrel`](packages/grabette-chunkrel) | Optional chunk-relative action representation (maths + LeRobot processor steps); per-step deltas stay the default | Workstation / GPU | Python library |
 | [`casquette (WIP)`](packages/casquette) | POV head-mounted device | Raspberry Pi Zero 2W | HTTP/WebSocket, :8001 |
 
-### `integrations/` — integration example (OpenArm 7-DOF arm + Gripette)
+### Related repositories
 
-| Package | Role |
+| Repository | Role |
 |---|---|
-| [`openarm_gripette`](integrations/openarm/openarm_gripette) | Code to control the OpenArm + Gripette robot |
-| [`openarm_gripette_simu`](integrations/openarm/openarm_gripette_simu) | MuJoCo simulation of OpenArm + Gripette and synthetic data collection |
-| [`openarm_gripette_model`](integrations/openarm/openarm_gripette_model) | Robot description (URDF / MuJoCo XML) and mesh assets, generated from Onshape |
-| [`DiffusionPolicy`](integrations/DiffusionPolicy) | Diffusion Policy training code |
-| [`Pi05`](integrations/Pi05) | π0.5 VLA fine-tuning, gates, and remote-GPU deployment (shares the DiffusionPolicy dataset pipeline) |
+| [grabette-slam](https://github.com/pollen-robotics/grabette-slam) | Raw recordings → SLAM → LeRobot dataset: the `grabette-postprocess` package and the Hugging Face Space that runs it |
+| [grabette-policy](https://github.com/pollen-robotics/grabette-policy) | Policy learning: Diffusion Policy and π0.5 training, action representations (grasp projection, chunk-relative), diagnostics, and the OpenArm + Gripette robot (model, sim, real driver, teleop bridge) |
+| [grabette-os](https://github.com/pollen-robotics/grabette-os) | The `grabetteos` / `gripetteos` Raspberry Pi images |
 
 **Using GRABETTE with a different robot arm:**
-the core in `packages/` carries no
-OpenArm dependency. To target another platform, add an
-`integrations/<your-arm>/` alongside `openarm/` — the OpenArm integration is the
-reference example.
+the devices carry no OpenArm dependency. The OpenArm integration in
+[grabette-policy](https://github.com/pollen-robotics/grabette-policy) is the
+reference example for adding another platform.
 
 
 ## Cloning
@@ -86,28 +81,23 @@ uv run --package grabette python packages/grabette/main.py   # run a service (mo
 ```
 
 > **The one rule to know:** this repo is a single uv **workspace** — one shared
-> `.venv` and one `uv.lock` at the root. A bare `uv sync`, run from *anywhere*
-> in the repo, builds the **whole workspace** and installs every package's
-> dependencies — gigabytes of torch/mujoco on a Raspberry Pi if you're not
-> careful. Therefore:
+> `.venv` and one `uv.lock` at the root. A bare `uv sync`, run from the repo
+> root, builds the **whole workspace** and installs every package's
+> dependencies. Therefore:
 >
 > - **Single package / deployment** → `uv sync --package <name>`
 >   (extras attach to it: `uv sync --package grabette --extra rpi`).
 > - **Full dev environment** → `uv sync --all-packages`.
-> - `integrations/DiffusionPolicy` is deliberately **standalone** (own
->   `uv.lock`, heavy training pins) — inside it a plain `uv sync` is correct.
 
-**On-device install (Raspberry Pi):** each device package ships a `make
+**On-device install (Raspberry Pi):** the simplest path is to flash the
+prebuilt `grabetteos` / `gripetteos` image from the
+[latest grabette-os release](https://github.com/pollen-robotics/grabette-os/releases/latest),
+which has everything below baked in. For a manual install, each device package ships a `make
 install-rpi` target that builds the `--system-site-packages` venv `picamera2`
 needs (a bare `uv sync` skips it and the service falls back to the mock
 backend). Follow the package's own README for the exact steps:
 [grabette](packages/grabette), [gripette](packages/gripette),
 [casquette](packages/casquette) *(WIP)*.
-
-**Note — `lerobot` / Python 3.12:** `grabette-postprocess`'s LeRobot commands,
-the real OpenArm driver, and the sim's `dataset`/`eval` extras require Python
-≥ 3.12 (gated by env markers so the device packages remain installable on
-3.11). The OpenArm sim also needs the system `liburdfdom` package for `placo`.
 
 ## License
 

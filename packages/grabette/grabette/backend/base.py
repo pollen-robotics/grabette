@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 
 from grabette.models import CaptureStatus, SensorState
@@ -34,6 +35,12 @@ class Backend(ABC):
         absolute UTC to align them. Consumed once (cleared after)."""
         self._sync_metadata = dict(meta or {})
 
+    @property
+    def recording_started_utc(self) -> datetime | None:
+        """Wall-clock instant of the last recording's t=0 (the shared zero of
+        its stream timestamps), or None when the backend doesn't know it."""
+        return None
+
     def _take_sync_metadata(self) -> dict:
         """Return and clear the pending sync metadata (so a later solo capture
         never inherits a previous synchronized episode's data)."""
@@ -64,6 +71,21 @@ class Backend(ABC):
         listener blinks the error pattern so the fault is visible on the device
         itself. Default: no backend-detectable fault."""
         return ""
+
+    @property
+    def angle_sensors_status(self) -> dict:
+        """The gripper angle sensors, for the dashboard's "Angle sensors" chip.
+
+        enabled: this device is meant to have them; initialized: they came up;
+        error: the fault blocking capture because of them ("" = none).
+        Default: a backend without angle sensors."""
+        return {"enabled": False, "initialized": False, "error": ""}
+
+    def reinit_angle_sensors(self) -> None:
+        """Bring the angle sensors up again, now — the dashboard's way out of a
+        fault once its cause is fixed, without waiting for the next press.
+        Default: nothing to bring up."""
+        return None
 
     # --- gripper angle calibration -------------------------------------------
     # The angle sensors read the raw magnet angle; the zero (fingers fully
@@ -146,6 +168,17 @@ class Backend(ABC):
     @property
     @abstractmethod
     def is_capturing(self) -> bool: ...
+
+    @property
+    def is_finalizing(self) -> bool:
+        """True between a stop and the end of its deferred post-stop work (the
+        "saved" cue fires there). Default False for backends with none."""
+        return False
+
+    @property
+    def busy_episode_id(self) -> str | None:
+        """The episode still being recorded or written, which must not be deleted."""
+        return None
 
     @abstractmethod
     def get_frame_jpeg(self) -> bytes | None: ...

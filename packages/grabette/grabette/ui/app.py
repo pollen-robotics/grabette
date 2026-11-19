@@ -9,12 +9,16 @@ import math
 import re
 import time
 from functools import partial
-from urllib.parse import quote
+from pathlib import Path
+from urllib.parse import quote, urlencode
+from types import SimpleNamespace
 
 import gradio as gr
-from PIL import Image
+from PIL import Image, ImageSequence
 
 from grabette.config import settings
+from grabette.task import episode_issues
+from grabette.hardware import i2c_diag
 from grabette.ui.api_client import GrabetteClient
 from grabette.ui.summary import recording_summary
 
@@ -57,8 +61,8 @@ MODAL_CSS = """
     background: #000 !important;
     border-color: #000 !important;
     color: #fff !important;
-    font-size: 1.15rem !important;
-    padding: .7rem 1.4rem !important;
+    font-size: 1.05rem !important;
+    padding: .45rem 1.1rem !important;
 }
 .gb-titlebar .gb-power:hover {
     background: #333 !important;
@@ -71,6 +75,10 @@ html.gb-off .toast-wrap {
     flex: 0 0 auto !important;
     width: auto !important;
     min-width: 0 !important;
+}
+.gb-titlebar .html-container {
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
 }
 /* Episodes: a table that reads as a table, and buttons the size of their labels instead of four stretched bars. */
 /* The task menu is sized to a task name on a laptop, full width on a phone. */
@@ -190,6 +198,21 @@ html.gb-off .toast-wrap {
     margin: .35rem 0 0 !important;
 }
 #ov-page .ov-rule-bottom {
+    display: none !important;
+}
+/* A little tighter than gradio's default between the rows of a section. */
+#ov-page #ov-data,
+#ov-page #ov-account {
+    gap: .5rem !important;
+}
+/* The Overview's section rules, closer to what they separate than _OV_RULE
+   elsewhere (gradio already drops its bottom margin, being the last thing in
+   its block). */
+#ov-page .ov-rule .html-container > div > div {
+    margin: calc(1.4rem - 6px) 0 -3px !important;
+}
+/* An empty note (most of the time) takes no room under its tile. */
+#ov-page .ov-note:not(:has(p)) {
     display: none !important;
 }
 /* Title and speaker volume side by side, the volume right after the title
@@ -381,6 +404,8 @@ html.gb-off .toast-wrap {
         order: -1;
     }
     /* …but a device that cannot record says so before anything else. */
+    #ov-page #ov-checks,
+    #ov-page #ov-ts-fault,
     #ov-page #ov-calib {
         order: -3;
     }
@@ -404,6 +429,7 @@ html.gb-off .toast-wrap {
     flex: 0 0 auto !important;
     width: auto !important;
     min-width: 0 !important;
+    max-width: 100% !important;
 }
 .gb-calib-box .html-container {
     padding: 0 !important;
@@ -414,6 +440,13 @@ html.gb-off .toast-wrap {
     border-radius: 12px !important;
     background: #f59e0b1a !important;
     border: 1px solid #f59e0b66 !important;
+}
+/* The same, red, for the parts that stop a recording (_ov_problems_html). */
+.gb-calib-box.gb-ts-callout {
+    padding: .7rem 1rem !important;
+    border-radius: 12px !important;
+    background: #ef44441a !important;
+    border: 1px solid #ef444466 !important;
 }
 /* On Test Recording: lined up with the status pill above it, and room for
    the shadow inside the card's overflow:hidden. */
@@ -558,7 +591,7 @@ html.gb-off .toast-wrap {
         filter: grayscale(1) opacity(.6);
         transition: filter .2s;
     }
-    #tr-page img.tr-gif:hover {
+    #tr-page img.tr-gif.tr-playing {
         filter: none;
     }
 }
@@ -592,11 +625,296 @@ html.gb-off .toast-wrap {
         width: 100% !important;
     }
 }
+/* The Overview's pre-recording checks: a row of chips (_ov_checks_html). */
+.gb-checks .html-container {
+    padding: 0 !important;
+}
+/* Troubleshooting: the diagnostic popup's card, a little wider for its tabs. */
+.gb-diag-card.gb-ts-card {
+    max-width: 640px !important;
+}
+/* The tabs as a segmented bar, like the Overview's RGB / Depth toggle: one
+   cell per part, all on one line even on a phone, each with its coloured mark
+   (set per tab by _ts_tabs_css). The one on screen is filled with its colour,
+   and its section sits below, clear of the bar. */
+.gb-ts-card .gb-ts-css {
+    display: none !important;
+}
+/* Gradio decides what overflows into a "…" menu by adding up the widths of a
+   hidden copy of the tabs: with that copy at no width, every tab stays in the
+   bar. */
+.gb-ts-card .tab-container.visually-hidden button {
+    font-size: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    min-width: 0 !important;
+}
+.gb-ts-card .tab-container:not(.visually-hidden) {
+    display: grid !important;
+    grid-auto-columns: 1fr !important;
+    grid-auto-flow: column !important;
+    height: auto !important;
+    gap: .25rem !important;
+    margin: .9rem 0 0 !important;
+    padding: .25rem !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 12px !important;
+}
+.gb-ts-card .tabitem {
+    padding: 1.1rem 0 0 !important;
+    border: none !important;
+}
+/* Grey "?" until _ts_tabs_css says better: fallbacks, not defaults set here,
+   since gradio scopes these rules and they would outrank its. */
+.gb-ts-card [role=tab] {
+    display: block !important;
+    min-width: 0 !important;
+    padding: .45rem .4rem !important;
+    border-radius: 9px !important;
+    border: 1px solid transparent !important;
+    background: transparent !important;
+    color: var(--body-text-color) !important;
+    font-size: .82rem !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    white-space: normal !important;
+    text-align: center !important;
+    opacity: .7;
+}
+.gb-ts-card [role=tab]::before {
+    content: var(--gb-tab-m, "?");
+    margin-right: .35rem;
+    color: var(--gb-tab-c, #94a3b8);
+    font-weight: 700;
+}
+.gb-ts-card [role=tab]::after {
+    display: none !important;
+}
+.gb-ts-card [role=tab]:hover {
+    opacity: 1;
+}
+.gb-ts-card [role=tab][aria-selected=true] {
+    opacity: 1;
+    border-color: var(--gb-tab-c, #94a3b8) !important;
+    background: color-mix(in srgb, var(--gb-tab-c, #94a3b8) 14%, transparent) !important;
+}
+.gb-ts-card img {
+    object-fit: contain !important;
+    border-radius: 10px;
+}
+/* The Diagnose button on Test Recording (see _angle_diag_prompt). */
+.gb-diag-box {
+    align-items: center !important;
+    justify-content: flex-start !important;
+    flex-wrap: wrap !important;
+    gap: .75rem 1.25rem !important;
+}
+.gb-diag-box > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+}
+.gb-diag-box .html-container {
+    padding: 0 !important;
+}
+#tr-page .gb-diag-box {
+    padding: .2rem 12px .6rem !important;
+}
+#tr-page .gb-diag-box .gb-diag-open,
+.gb-diag-box .gb-diag-open {
+    width: auto !important;
+    flex: 0 0 auto !important;
+    align-self: center !important;
+    border-radius: 6px !important;  /* literal: zeroed inside a Group */
+    font-weight: 700 !important;
+}
+/* The diagnostic popup: a fixed backdrop with the report as one card. */
+.gb-diag-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.6) !important;
+    z-index: 9999 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    margin: 0 !important;
+    padding: 1rem !important;
+}
+/* Gradio hides a column with a class; the display:flex above must not win. */
+.gb-diag-modal.hide,
+.gb-diag-modal.hidden {
+    display: none !important;
+}
+.gb-diag-card {
+    position: relative !important;
+    max-width: 560px !important;
+    width: 100% !important;
+    max-height: calc(100vh - 2rem) !important;
+    overflow-y: auto !important;
+    flex: 0 1 auto !important;
+    background: var(--background-fill-primary) !important;
+    border: 1px solid var(--border-color-primary) !important;
+    border-radius: 18px !important;
+    padding: 1.3rem 1.4rem !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45) !important;
+    gap: .9rem !important;
+}
+.gb-diag-card .html-container {
+    padding: 0 !important;
+}
+#tr-page .gb-diag-card .gb-diag-actions.row,
+.gb-diag-card .gb-diag-actions {
+    align-items: center !important;
+    flex-wrap: wrap !important;
+    gap: .6rem !important;
+}
+.gb-diag-card .gb-diag-actions {
+    justify-content: flex-start !important;
+}
+.gb-diag-card .gb-diag-actions > * {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
+/* Troubleshooting's one Close, under every section, on the right: the
+   angle sensors' own Close (after a fix) would be a second one. */
+.gb-ts-card .gb-diag-actions.gb-ts-foot {
+    justify-content: flex-end !important;
+    margin-top: .4rem !important;
+}
+.gb-ts-card button.gb-diag-done {
+    display: none !important;
+}
+.gb-diag-card .gb-diag-gone,
+.gb-diag-card .form:has(> .gb-diag-gone),
+.gb-diag-card button.gb-diag-gone {
+    display: none !important;
+}
+.gb-diag-card button {
+    border-radius: 6px !important;  /* literal: zeroed inside a Group */
+    width: auto !important;
+    flex: 0 0 auto !important;
+}
+#tr-page .gb-diag-card .gb-diag-close,
+.gb-diag-card .gb-diag-close {
+    position: absolute !important;
+    top: .6rem !important;
+    right: .6rem !important;
+    z-index: 1 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    padding: .2rem .6rem !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: var(--body-text-color-subdued) !important;
+    font-size: 1.1rem !important;
+}
+.gb-diag-card .gb-fault {
+    display: none !important;
+}
+.gb-diag-card .gb-fault.gb-on {
+    display: block !important;
+}
+.gb-diag-card button.gb-fault-nav {
+    padding: 0 .3rem !important;
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    color: var(--body-text-color-subdued) !important;
+    font-size: 1.1rem !important;
+    line-height: 1 !important;
+    cursor: pointer;
+}
+.gb-diag-card button.gb-fault-nav:hover:not(:disabled) {
+    color: var(--body-text-color) !important;
+}
+.gb-diag-card button.gb-fault-nav:disabled {
+    opacity: .3;
+    cursor: default;
+}
+/* A check's detail: a tooltip on the ⓘ for a mouse, a subtitle the ⓘ toggles
+   on a touch screen (_DIAG_POPUP_JS). The verdict below says what matters. */
+.gb-diag-card .gb-check-head {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+}
+.gb-diag-card .gb-info {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 50%;
+    border: 1px solid currentColor;
+    color: var(--body-text-color-subdued);
+    font-size: .65rem;
+    font-weight: 700;
+    font-style: normal;
+    line-height: 1;
+    cursor: help;
+    user-select: none;
+}
+.gb-diag-card .gb-tip {
+    display: none;
+    font-size: .85rem;
+    color: var(--body-text-color-subdued);
+}
+.gb-diag-card .gb-check.gb-open .gb-tip {
+    display: block;
+}
+@media (hover: hover) {
+    .gb-diag-card .gb-check:not(.gb-open) .gb-check-head:has(.gb-info:hover) + .gb-tip {
+        display: block;
+        position: absolute;
+        z-index: 2;
+        width: max-content;
+        max-width: min(22rem, 80vw);
+        margin-top: .3rem;
+        padding: .4rem .6rem;
+        border-radius: 8px;
+        background: var(--background-fill-secondary);
+        border: 1px solid var(--border-color-primary);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+        color: var(--body-text-color);
+    }
+    .gb-diag-card .gb-check-body {
+        position: relative;
+    }
+}
+@media (max-width: 560px) {
+    #tr-page .gb-diag-box .gb-diag-open,
+    .gb-diag-box .gb-diag-open,
+    .gb-diag-card .gb-diag-actions button {
+        width: 100% !important;
+    }
+}
 """
 
 # The navbar sits outside .gradio-container, where MODAL_CSS (scoped to it by
 # gradio) cannot reach, so its rules go in the page <head> instead.
 NAV_HEAD = """<style>
+/* Gradio's Source Sans Pro SemiBold is a stub holding little more than A and
+   B, so every other letter of a 600 weight fell back to the Regular, bolded
+   by the browser: A and B stood out in another font. The same family under
+   a name of its own, with the full Bold shipped alongside (never declared by
+   gradio) for both weights. */
+@font-face {
+    font-family: "Grabette Sans";
+    src: url("/static/fonts/SourceSansPro/SourceSansPro-Regular.woff2") format("woff2");
+    font-weight: 400;
+}
+@font-face {
+    font-family: "Grabette Sans";
+    src: url("/static/fonts/SourceSansPro/SourceSansPro-Bold.woff2") format("woff2");
+    font-weight: 600 700;
+}
+:root, body, .gradio-container {
+    --font: "Grabette Sans", ui-sans-serif, system-ui, sans-serif !important;
+}
 @media (max-width: 560px) {
     /* Four tabs on one line on a phone. */
     nav:has(> a[data-sveltekit-reload]) {
@@ -663,25 +981,48 @@ def _hf_login_only_html(label: str) -> str:
     )
 
 
-# Hover-to-play, on pointers that can hover; phones keep the plain looping GIF.
-# Each hover gets a fresh blob: URL so the animation restarts from frame 0 —
-# browsers share one animation clock per URL — without downloading it again.
-# window.URL, not URL: inside an inline handler that resolves to document.URL.
-_GIF_ENTER_JS = (
-    "if(!matchMedia('(hover: hover)').matches)return;var i=this;"
-    "if(i._b){i.src=window.URL.createObjectURL(i._b);return}"
-    "fetch(i.dataset.gif).then(function(r){return r.blob()}).then(function(b){"
-    "i._b=b;if(i.matches(':hover'))i.src=window.URL.createObjectURL(b)})"
-)
-_GIF_LEAVE_JS = (
-    "if(!matchMedia('(hover: hover)').matches)return;"
-    "if(this.src.startsWith('blob:'))window.URL.revokeObjectURL(this.src);"
-    "this.src=this.dataset.poster"
-)
-_GIF_LOAD_JS = (
-    "if(!this.dataset.m&&!matchMedia('(hover: hover)').matches)"
-    "{this.dataset.m=1;this.src=this.dataset.gif}"
-)
+# On a PC the GIFs play one after the other; phones loop them all. A fresh
+# blob: URL restarts the animation from frame 0.
+_GIF_CYCLE_JS = """
+() => {
+  let k = 0;
+  (function next() {
+    const gifs = document.querySelectorAll('#tr-page img.tr-gif');
+    if (!gifs.length) return setTimeout(next, 500);
+    if (!matchMedia('(hover: hover)').matches) return gifs.forEach(i => i.src = i.dataset.gif);
+    const i = gifs[k++ % gifs.length];
+    fetch(i.dataset.gif).then(r => r.blob()).then(b => {
+      i.src = URL.createObjectURL(b);
+      i.classList.add('tr-playing');
+      setTimeout(() => {
+        URL.revokeObjectURL(i.src);
+        i.src = i.dataset.poster;
+        i.classList.remove('tr-playing');
+        next();
+      }, +i.dataset.ms);
+    });
+  })();
+}
+"""
+
+
+_DOWNLOAD_JS = """
+async (u, msg) => {
+  if (!u) return msg;
+  document.cookie = 'grabette_dl=; Path=/; max-age=0';
+  location.href = u;
+  while (!document.cookie.includes('grabette_dl=')) await new Promise(r => setTimeout(r, 500));
+  return "✅ Archive ready — the download is in your browser's downloads.";
+}
+"""
+
+
+def _gif_ms(filename: str) -> int:
+    try:
+        with Image.open(Path(__file__).parent / "assets" / filename) as im:
+            return sum(f.info.get("duration", 100) for f in ImageSequence.Iterator(im))
+    except OSError:
+        return 3000
 
 
 # Test Recording shows the grabette's own button being pressed instead of
@@ -698,15 +1039,11 @@ def _button_gif(filename: str, title: str, caption_html: str) -> str:
         '<figure style="margin:0 auto;width:100%;">'
         '<div class="tr-gif-title">'
         f'{html.escape(title)}</div>'
-        # Still and grey until hovered: the page shows a first-frame poster
-        # and only swaps the GIF in on mouseenter.
         f'<img class="tr-gif" src="/ui-assets/{poster}" alt="{alt}"'
         f' data-gif="/ui-assets/{filename}" data-poster="/ui-assets/{poster}"'
+        f' data-ms="{_gif_ms(filename)}"'
         ' style="width:100%;aspect-ratio:1;object-fit:cover;display:block;'
         'border-radius:14px;background:#0f172a;"'
-        f' onmouseenter="{html.escape(_GIF_ENTER_JS)}"'
-        f' onmouseleave="{html.escape(_GIF_LEAVE_JS)}"'
-        f' onload="{html.escape(_GIF_LOAD_JS)}"'
         ' onerror="this.style.display=\'none\';'
         'this.nextElementSibling.style.display=\'flex\';">'
         '<div style="display:none;align-items:center;justify-content:center;'
@@ -851,8 +1188,6 @@ def _calibration_figure() -> str:
 
 
 def _calib_warning_html(text: str) -> str:
-    """The warning line inside the amber callout; the callout itself is the
-    row around it (.gb-calib-callout), so the button can sit inside too."""
     return (
         '<div style="display:flex;align-items:center;gap:.6rem;">'
         '<span style="font-size:1.2rem;line-height:1;">⚠️</span>'
@@ -887,11 +1222,26 @@ def _depth_camera_state(dcam: dict | None) -> str:
                                                        "unknown")
 
 
-def _tr_cameras(rgb: str, depth: str, depth_label: str) -> str:
+def _angle_state(status: dict | None) -> str | None:
+    """The angle sensors' chip state, or None for a device built without them."""
+    if status is None:
+        return "unknown"
+    if not status.get("enabled"):
+        return None
+    return "connected" if status.get("initialized") and not status.get("error") \
+        else "missing"
+
+
+def _tr_cameras(rgb: str, depth: str, depth_label: str,
+                angle: str | None = None) -> str:
     """One chip per camera: whether it is plugged in. The depth camera is not
-    started here — the recording brings it up, LED blinking, as usual."""
+    started here — the recording brings it up, LED blinking, as usual. The
+    angle sensors get a chip of their own when the device has them."""
     chips = []
-    for label, state in (("RGB camera", rgb), (f"RGB-D ({depth_label})", depth)):
+    items = [("RGB camera", rgb), (f"RGB-D ({depth_label})", depth)]
+    if angle is not None:
+        items.append(("Angle sensors", angle))
+    for label, state in items:
         color, mark, text = _CAM_STATES[state]
         chips.append(
             '<span style="display:inline-flex;align-items:baseline;gap:.4rem;'
@@ -902,6 +1252,491 @@ def _tr_cameras(rgb: str, depth: str, depth_label: str) -> str:
             f'<strong>{text}</strong></span>')
     return ('<div style="display:flex;flex-wrap:wrap;gap:.4rem;">'
             + "".join(chips) + "</div>")
+
+
+# ── Angle-sensor diagnostic ──────────────────────────────────────────
+#
+# Angle sensors that do not come up block recording, with an error that names
+# the symptom ("No device found for /dev/i2c-3") but not the cause. The
+# Diagnose popup walks the I2C stack on the device (hardware/i2c_diag.py) and
+# offers the fix for the first broken layer.
+_DIAG_FIX_CLASSES = ["gb-diag-fix"]
+_DIAG_PW_CLASSES = ["gb-diag-pw"]
+_DIAG_DONE_CLASSES = ["gb-diag-done"]
+_DIAG_PW_HINT = "Default password: rasp"
+
+_DIAG_MARKS = {
+    "ok": ("#10b981", "✓"),
+    "fail": ("#ef4444", "✗"),
+    "warn": ("#f59e0b", "!"),
+    "skip": ("#94a3b8", "–"),
+}
+
+
+def _without(fn, i: int):
+    """`fn` with the i-th of its outputs dropped, for a container that has no
+    component to send it to."""
+    def wrapped(*args):
+        out = list(fn(*args))
+        del out[i]
+        return tuple(out)
+    return wrapped
+
+
+def _diag_report_html(diag: dict | None, error: str = "") -> str:
+    """The diagnosis as a checklist, its verdict, and the by-hand commands."""
+    if error:
+        return (f'<div style="color:#ef4444;font-weight:600;">⛔ '
+                f'{html.escape(error)}</div>')
+    if diag is None:
+        return ('<div style="opacity:.75;">Checking the I2C buses and the '
+                'sensors…</div>')
+    rows = _diag_rows(diag.get("checks", []))
+    color = "#10b981" if diag.get("healthy") else "#ef4444"
+    verdict = (_diag_faults_html(diag["faults"]) if diag.get("faults") else
+               _diag_verdict_html(diag.get("summary", ""), color))
+    manual = ""
+    if diag.get("manual"):
+        cmds = html.escape("\n".join(diag["manual"]))
+        manual = (
+            '<details style="margin-top:.7rem;font-size:.85rem;">'
+            '<summary style="cursor:pointer;">Do it by hand (SSH on the '
+            'grabette)</summary><pre style="margin:.4rem 0 0;padding:.6rem;'
+            'border-radius:8px;background:var(--background-fill-secondary);'
+            f'white-space:pre-wrap;">{cmds}</pre></details>')
+    return "<div>" + "".join(rows) + verdict + manual + "</div>"
+
+
+# The layers under the sensors (boot configuration, kernel buses, driver,
+# device files) are one row: the sensors' own rows are what people read, and
+# the fix offered still depends on which layer is broken.
+_DIAG_SYSTEM_KEYS = ("boot_config", "kernel_buses", "i2c_dev", "node_")
+
+
+def _diag_rows(checks: list[dict]) -> list[str]:
+    system = [c for c in checks
+              if c.get("key", "").startswith(_DIAG_SYSTEM_KEYS)]
+    rows = []
+    if system:
+        statuses = [c.get("status") for c in system]
+        worst = next((st for st in ("fail", "warn") if st in statuses), "ok")
+        bad = [c for c in system if c.get("status") == worst]
+        detail = ("; ".join(f'{c.get("label")}: {c.get("detail")}' for c in bad)
+                  if worst != "ok" else
+                  "Boot configuration, I2C buses, driver and device files are "
+                  "in place.")
+        rows.append(_diag_check_row(worst, "I2C system setup", detail))
+    rows += [_diag_check_row(c.get("status"), c.get("label", ""),
+                             c.get("detail", ""))
+             for c in checks if c not in system]
+    return rows
+
+
+def _diag_check_row(status: str | None, label: str, detail: str = "") -> str:
+    """One line of a checklist: its mark, its label, and the detail under ⓘ."""
+    color, mark = _DIAG_MARKS.get(status, _DIAG_MARKS["skip"])
+    return (
+        '<div class="gb-check" style="display:flex;gap:.6rem;align-items:baseline;'
+        'padding:.35rem 0;border-bottom:1px solid var(--border-color-primary);">'
+        f'<span style="color:{color};font-weight:800;width:1rem;'
+        f'text-align:center;flex:0 0 auto;">{mark}</span>'
+        '<div class="gb-check-body"><div class="gb-check-head">'
+        f'<span style="font-weight:600;">{html.escape(label)}</span>'
+        + ('<span class="gb-info" role="button" aria-label="Details">i</span>'
+           if detail else '')
+        + f'</div><div class="gb-tip">{html.escape(detail)}</div>'
+        '</div></div>')
+
+
+def _diag_verdict_html(text: str, color: str) -> str:
+    if color == "#10b981":
+        # A part that works as a filled pill, like the Overview's "Ready to
+        # record": a tinted box would read as the selected tab above it.
+        return (
+            '<div style="margin-top:.8rem;"><span style="display:inline-block;'
+            'padding:.35rem .8rem;border-radius:999px;background:#10b981;'
+            f'color:#fff;font-weight:700;font-size:.88rem;">✓ {html.escape(text)}'
+            '</span></div>')
+    return (
+        f'<div style="margin-top:.8rem;padding:.6rem .8rem;border-radius:10px;'
+        f'background:{color}1a;border:1px solid {color}55;font-weight:600;">'
+        f'{html.escape(text)}</div>')
+
+
+# Sensors at fault, one page each — its verdict, then how to fix it — with
+# arrows between them when there are several (_DIAG_POPUP_JS). The first
+# page shows; a redraw (the live refresh, on a changed diagnosis) starts over
+# from it.
+def _diag_faults_html(faults: list[dict]) -> str:
+    n = len(faults)
+    pages = []
+    for i, f in enumerate(faults):
+        nav = ""
+        if n > 1:
+            nav = (
+                '<div style="display:flex;justify-content:flex-end;'
+                'align-items:center;gap:.2rem;margin-top:.8rem;font-size:.8rem;'
+                'color:var(--body-text-color-subdued);">'
+                + _diag_nav_btn("‹", "Previous problem", -1, i == 0)
+                + f'<span>{i + 1} / {n}</span>'
+                + _diag_nav_btn("›", "Next problem", 1, i == n - 1) + '</div>')
+        pages.append(
+            f'<div class="gb-fault{" gb-on" if i == 0 else ""}">{nav}'
+            + _diag_verdict_html(f["summary"], "#ef4444")
+            + _diag_cable_help_html(f.get("cable")) + '</div>')
+    return '<div class="gb-faults">' + "".join(pages) + '</div>'
+
+
+def _diag_nav_btn(arrow: str, label: str, step: int, disabled: bool) -> str:
+    return (f'<button type="button" class="gb-fault-nav" data-step="{step}" '
+            f'aria-label="{label}" title="{label}"'
+            f'{" disabled" if disabled else ""}>{arrow}</button>')
+
+
+# Gradio sanitizes HTML-component content (no onclick survives it): one
+# delegated listener per page turns the fault pages and opens a check's detail
+# under it (the tap a touch screen has instead of hovering the ⓘ).
+_DIAG_POPUP_JS = """
+() => {
+  if (window.__grabetteDiagPopup) { return; }
+  window.__grabetteDiagPopup = true;
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) { return; }
+    var info = e.target.closest('.gb-diag-card .gb-info');
+    if (info) {
+      info.closest('.gb-check').classList.toggle('gb-open');
+      return;
+    }
+    var btn = e.target.closest('.gb-fault-nav');
+    if (!btn || btn.disabled) { return; }
+    var pages = btn.closest('.gb-faults').querySelectorAll(':scope > .gb-fault');
+    var i = Array.prototype.findIndex.call(pages, function (p) {
+      return p.classList.contains('gb-on');
+    });
+    var next = i + Number(btn.dataset.step);
+    if (next < 0 || next >= pages.length) { return; }
+    pages[i].classList.remove('gb-on');
+    pages[next].classList.add('gb-on');
+  });
+}
+"""
+
+
+# Troubleshooting opens on the part at fault by clicking its tab (see
+# _troubleshooting).
+_TS_SHOW_JS = """
+(section) => {
+  var tab = document.querySelector(
+    '.gb-ts-card [role=tab][data-tab-id="' + section + '"]');
+  if (tab) { tab.click(); }
+}
+"""
+
+
+# Where a sensor's cable runs, for a sensor that does not answer at all (a
+# wrong chip is not a cable): <name>-sensor-cable.gif, served from
+# grabette/ui/assets like the Test Recording gifs.
+_CABLE_TIPS = (
+    "Check the connections on both ends of the cable.",
+    "Check the cable is not pinched anywhere along the way.",
+)
+
+
+def _diag_cable_help_html(name: str | None) -> str:
+    if name not in {n for n, _, _, _ in i2c_diag.SENSOR_BUSES}:
+        return ""
+    return (
+        '<div style="margin-top:.8rem;">' + _tips_html(_CABLE_TIPS)
+        + f'<img src="/ui-assets/{name}-sensor-cable.gif" '
+        f'alt="The {name} sensor cable, from the HAT to the sensor" '
+        'style="width:100%;display:block;margin-top:.6rem;'
+        'border-radius:10px;background:#fff;" '
+        'onerror="this.style.display=\'none\';"></div>')
+
+
+def _tips_html(tips: tuple[str, ...]) -> str:
+    """What to look at, one 👁 line each, above the cable gif."""
+    items = "".join(
+        '<li style="display:flex;gap:.5rem;align-items:baseline;">'
+        f'<span aria-hidden="true">👁</span><span>{html.escape(t)}</span></li>'
+        for t in tips)
+    return ('<ul style="list-style:none;margin:0;padding:0;'
+            f'display:grid;gap:.3rem;font-weight:600;">{items}</ul>')
+
+
+# ── Pre-recording checks (Overview) ──────────────────────────────────
+#
+# What Test Recording would refuse or warn about, read off the same status
+# endpoints, so a fault shows on the landing page before anyone presses the
+# button. The Troubleshooting popup behind it has one section per part, each
+# with its checks, its verdict and what to do about it.
+_TS_RGB, _TS_DEPTH, _TS_ANGLE = "rgb", "depth", "angle"
+_TS_SECTIONS = (
+    (_TS_RGB, "RGB camera"),
+    (_TS_DEPTH, "RGB-D camera"),
+    (_TS_ANGLE, "Angle sensors"),
+)
+
+# The RGB camera is found by the Pi's firmware at boot (camera_auto_detect=1
+# in config.txt), which loads its driver only if it is there: plugged back in
+# while running, it stays invisible until the next start-up. And a CSI ribbon
+# is not made to be plugged in under power.
+_RGB_TIPS = (
+    "Power the grabette off before touching the ribbon cable: plugging it in "
+    "while powered can damage the camera or the Raspberry Pi.",
+    "Check the ribbon cable is seated on both ends.",
+    "Power the grabette back on: the camera is detected at start-up.",
+)
+_RGB_AT_BOOT = ("The grabette only looks for this camera when it starts: "
+                "plugging it back in while it is on does not bring it back.")
+_RGB_REBOOT_HINT = ("Already plugged back in with the grabette on? Reboot it "
+                    "so the camera is detected.")
+# The ribbon of the RGB camera is opened at start-up (and after each
+# recording) only, so it needs the power off and back on. The depth camera is
+# on USB: the backend watches the bus and clears its fault on an unplug and
+# replug (RpiBackend._watch_depth_camera_cable), so no restart is needed.
+_DEPTH_TIPS = (
+    "Check the USB cable on both ends.",
+    "Unplug it and plug it back in — no need to restart the grabette.",
+)
+
+
+def _ov_checks(cap: dict | None, cam: dict | None, dcam: dict | None,
+               angle: dict | None) -> list[tuple[str, str | None, str]] | None:
+    """What stands between this device and a recording, as (level, section,
+    text): "fail" refuses the recording, "warn" only holds it up. None when
+    the device did not answer at all.
+
+    `cap` is the capture status from /api/state, the others the status of
+    the RGB camera, the depth camera and the angle sensors."""
+    if cap is None and cam is None and dcam is None and angle is None:
+        return None
+    cap, dcam = cap or {}, dcam or {}
+    issues: list[tuple[str, str | None, str]] = []
+    rgb = _camera_state(cam)
+    if rgb == "missing":
+        issues.append(("fail", _TS_RGB, "RGB camera not detected"))
+    elif rgb == "starting":
+        issues.append(("warn", _TS_RGB, "RGB camera starting"))
+    label = dcam.get("label") or "Depth camera"
+    if dcam.get("error"):
+        issues.append(("fail", _TS_DEPTH, f"{label}: {dcam['error']}"))
+    elif _depth_camera_state(dcam or None) == "missing":
+        issues.append(("fail", _TS_DEPTH, f"{label} not detected"))
+    elif dcam.get("initializing"):
+        issues.append(("warn", _TS_DEPTH, f"{label} starting"))
+    if (angle or {}).get("error"):
+        issues.append(("fail", _TS_ANGLE, "Gripper angle sensors not working"))
+    blocked = cap.get("blocked_reason")
+    # The calibration has its own callout (_calibration_prompt).
+    if (blocked and not cap.get("needs_calibration")
+            and not any(level == "fail" for level, _, _ in issues)):
+        # Refused, and no part is at fault: the device is busy (an upload…),
+        # which clears on its own.
+        issues.append(("warn", None, f"Cannot record right now — {blocked}"))
+    return issues
+
+
+def _ov_checks_html(issues: list[tuple[str, str | None, str]] | None,
+                    blocked: bool = False) -> str:
+    """The Overview's checks: whether it can record (`blocked`: refused for
+    a reason of its own, like the calibration), then one chip per part, like
+    Test Recording's (_tr_cameras), with what is wrong in its tooltip; its
+    class (gb-checks-<kind>) sums them up."""
+    if issues is None:
+        kind = "unknown"
+    elif any(level == "fail" for level, _, _ in issues):
+        kind = "fail"
+    else:
+        kind = "warn" if issues else "ok"
+    chips = []
+    if issues is not None:
+        ready = not issues and not blocked
+        color = ("#10b981" if ready else
+                 "#f59e0b" if kind == "warn" and not blocked else "#ef4444")
+        chips.append(
+            '<span style="display:inline-flex;align-items:center;'
+            'white-space:nowrap;padding:.3rem .7rem;border-radius:999px;'
+            f'font-size:.82rem;font-weight:700;color:#fff;background:{color};">'
+            f'{"Ready to record" if ready else "Cannot record"}</span>')
+    for section, label in _TS_SECTIONS:
+        texts = [t for _, s, t in issues or () if s == section]
+        levels = {level for level, s, _ in issues or () if s == section}
+        if issues is None:
+            color, mark = _CAM_STATES["unknown"][:2]
+            state, tip = "", "Cannot reach the device"
+        elif levels:
+            level = "fail" if "fail" in levels else "warn"
+            color, mark = _DIAG_MARKS[level]
+            state = "Not working" if level == "fail" else "Starting"
+            tip = " · ".join(texts)
+        else:
+            color, mark = _DIAG_MARKS["ok"]
+            state, tip = "", "OK"
+        chips.append(
+            f'<span title="{html.escape(tip, quote=True)}" '
+            'style="display:inline-flex;align-items:baseline;gap:.4rem;'
+            'white-space:nowrap;'
+            'padding:.3rem .7rem;border-radius:999px;font-size:.82rem;'
+            f'border:1px solid {color}55;">'
+            f'<span style="color:{color};font-weight:700;">{mark}</span>'
+            f'<span style="opacity:.75;">{html.escape(label)}</span>'
+            + (f'<strong>{state}</strong>' if state else "") + '</span>')
+    # Refused with no part at fault: the device is busy.
+    notes = "".join(
+        '<div style="font-size:.82rem;opacity:.75;margin-top:.35rem;">'
+        f'{html.escape(t)}</div>'
+        for _, s, t in issues or () if s is None)
+    return (f'<div class="gb-checks-state gb-checks-{kind}">'
+            '<div style="display:flex;flex-wrap:wrap;gap:.4rem;">'
+            + "".join(chips) + f'</div>{notes}</div>')
+
+
+def _ov_problems_html(issues: list[tuple[str, str | None, str]] | None) -> str:
+    """What stops the recording, above the button to Troubleshooting."""
+    n = sum(level == "fail" for level, _, _ in issues or ())
+    items = "".join(
+        '<li style="display:flex;gap:.5rem;align-items:baseline;">'
+        f'<span style="color:{_DIAG_MARKS[level][0]};font-weight:800;">'
+        f'{_DIAG_MARKS[level][1]}</span><span>{html.escape(text)}</span></li>'
+        for level, _, text in issues or ())
+    return (
+        '<div style="display:flex;align-items:center;gap:.6rem;">'
+        '<span style="font-size:1.2rem;line-height:1;">⛔</span>'
+        '<span style="font-weight:700;font-size:1.02rem;'
+        'color:var(--body-text-color);">'
+        f'{n} problem{"s" if n > 1 else ""} to fix before recording</span></div>'
+        '<ul style="list-style:none;margin:.35rem 0 0;padding:0;'
+        f'display:grid;gap:.15rem;">{items}</ul>')
+
+
+def _ts_first_section(issues: list[tuple[str, str | None, str]] | None) -> str:
+    """The section Troubleshooting opens on: the first part at fault."""
+    for wanted in ("fail", "warn"):
+        for level, section, _ in issues or ():
+            if level == wanted and section:
+                return section
+    return _TS_RGB
+
+
+def _ts_tabs_css(issues: list[tuple[str, str | None, str]] | None) -> str:
+    """Each tab's colour and mark, the way Test Recording's chips show a
+    part's state (_CAM_STATES): set as variables the static rules of the
+    tabs read (MODAL_CSS, .gb-ts-card), since a tab's label is plain text."""
+    rules = []
+    for section, _ in _TS_SECTIONS:
+        if issues is None:
+            color, mark = _CAM_STATES["unknown"][:2]
+        else:
+            levels = {level for level, s, _ in issues if s == section}
+            color, mark = _DIAG_MARKS["fail" if "fail" in levels else
+                                      "warn" if "warn" in levels else "ok"]
+        rules.append(f'.gb-ts-card [role=tab][data-tab-id="{section}"]'
+                     f'{{--gb-tab-c:{color};--gb-tab-m:"{mark}";}}')
+    return "<style>" + "".join(rules) + "</style>"
+
+
+def _ts_unknown_html() -> str:
+    return ('<div style="opacity:.75;">Cannot reach the device — trying '
+            'again…</div>')
+
+
+def _ts_note_html(text: str) -> str:
+    return (f'<div style="margin-top:.7rem;font-size:.9rem;">'
+            f'{html.escape(text)}</div>')
+
+
+def _ts_rgb_html(cam: dict | None) -> str:
+    state = _camera_state(cam)
+    if state == "unknown":
+        return _ts_unknown_html()
+    row = {
+        "connected": _diag_check_row("ok", "Camera detected"),
+        "starting": _diag_check_row(
+            "warn", "Camera detected",
+            "Restarting, as it does after each recording."),
+        "missing": _diag_check_row("fail", "Camera detected",
+                                   "The device does not see an RGB camera."),
+    }[state]
+    if state == "connected":
+        verdict = _diag_verdict_html("The RGB camera is working.", "#10b981")
+    elif state == "starting":
+        verdict = _diag_verdict_html(
+            "The RGB camera is restarting — wait a few seconds.", "#f59e0b")
+    else:
+        verdict = (_diag_verdict_html(
+            "The RGB camera is not detected: recording is disabled until it "
+            "is.", "#ef4444")
+            + _ts_note_html(_RGB_AT_BOOT)
+            + _camera_cable_help_html("rgb-camera-cable.gif",
+                                      "The RGB camera ribbon cable",
+                                      _RGB_TIPS)
+            + _ts_note_html(_RGB_REBOOT_HINT))
+    return "<div>" + row + verdict + "</div>"
+
+
+def _ts_depth_html(dcam: dict | None) -> str:
+    """Plugged in, started, ready to record: each step only checked once the
+    one before it holds, so an unplugged camera is not also "ready"."""
+    if dcam is None:
+        return _ts_unknown_html()
+    label = dcam.get("label") or "Depth camera"
+    if not dcam.get("supported"):
+        return _diag_verdict_html("This grabette has no depth camera.",
+                                  "#94a3b8")
+    connected = dcam.get("connected")
+    error = dcam.get("error") or ""
+    first = "Plug it in first."
+    rows = [_diag_check_row(
+        {True: "ok", False: "fail"}.get(connected, "skip"), "Plugged in",
+        "" if connected is not None else
+        "Cannot be checked without starting it.")]
+    if connected is False:
+        rows.append(_diag_check_row("skip", "Started", first))
+    elif dcam.get("initialized"):
+        rows.append(_diag_check_row("ok", "Started"))
+    elif dcam.get("initializing"):
+        rows.append(_diag_check_row("warn", "Started", "Starting…"))
+    elif not dcam.get("enabled"):
+        rows.append(_diag_check_row(
+            "skip", "Started",
+            "Off: a recording starts it, or start it below to try it now."))
+    else:
+        rows.append(_diag_check_row("fail", "Started",
+                                    "Switched on, but it did not start."))
+    if error:
+        rows.append(_diag_check_row("fail", "Ready to record", error))
+    elif connected is False:
+        rows.append(_diag_check_row("skip", "Ready to record", first))
+    elif dcam.get("initializing"):
+        rows.append(_diag_check_row("warn", "Ready to record", "Starting…"))
+    else:
+        rows.append(_diag_check_row("ok", "Ready to record"))
+    if connected is False:
+        verdict = (_diag_verdict_html(
+            f"The {label} is not detected: recording is disabled until it is.",
+            "#ef4444")
+            + _camera_cable_help_html("depth-camera-cable.gif",
+                                      f"The {label} USB cable", _DEPTH_TIPS))
+    elif error:
+        verdict = _diag_verdict_html(f"{label}: {error}", "#ef4444")
+    elif dcam.get("initializing"):
+        verdict = _diag_verdict_html(f"The {label} is starting…", "#f59e0b")
+    else:
+        verdict = _diag_verdict_html(f"The {label} is working.",
+                                     "#10b981")
+    return "<div>" + "".join(rows) + verdict + "</div>"
+
+
+def _camera_cable_help_html(gif: str, alt: str, tips: tuple[str, ...]) -> str:
+    """What to check, then where a camera's cable runs (a gif in
+    grabette/ui/assets, like the angle sensors')."""
+    return (
+        '<div style="margin-top:.8rem;">' + _tips_html(tips)
+        + f'<img src="/ui-assets/{gif}" alt="{html.escape(alt)}" '
+        'style="width:100%;display:block;margin-top:.6rem;'
+        'border-radius:10px;background:#fff;" '
+        'onerror="this.style.display=\'none\';"></div>')
 
 
 def _replay_video_iframe(episode_id: str, stream: str = "raw") -> str:
@@ -938,6 +1773,16 @@ _CALIB_VIEWER_IFRAME = (
     '<iframe src="/viewer?yaw=180" '
     'style="width:100%;height:260px;border:none;display:block;'
     'border-radius:12px;background:#1a1a2e;"></iframe>'
+)
+
+# Troubleshooting's live test of the angle sensors: the same view again, with
+# what to do with it.
+_TS_ANGLE_LIVE = (
+    '<div style="margin-top:.9rem;font-size:.88rem;font-weight:600;">'
+    'Test them live: move the gripper, the 3D model should follow it.</div>'
+    '<div style="margin:.2rem 0 .5rem;font-size:.8rem;opacity:.7;">'
+    'The model only updates twice a second, so it moves in small jumps.</div>'
+    + _CALIB_VIEWER_IFRAME
 )
 
 # Row separator — a hairline in the theme's own border colour, not the dark
@@ -1114,91 +1959,43 @@ _SOUND_CUES = (
 # what the LED and the beeps say.
 _TR_HOWTO_HTML = "<div class='tr-howto-title'>Wait for the start and stop signals</div>"
 
-# The "Signal" buttons under the animations play the cue the device will make.
-# A gradio button holds text only, so the ear and the cue are CSS masks, drawn
-# like _ramp_icon/_cue_icon and painted in the button's own text colour.
-def _css_mask(svg: str) -> str:
-    return f'url("data:image/svg+xml,{quote(svg)}")'
-
-
-_EAR_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none'"
-    " stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>"
-    "<path d='M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0'/>"
-    "<path d='M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4'/></svg>"
-)
-_START_SIGNAL_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 20'>"
-    "<polygon points='4,18 28,18 28,2'/></svg>"
-)
-# Falling + one beep, the "+" and the dot sized like the ramp beside them.
-_STOP_SIGNAL_SVG = (
-    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 20'>"
-    "<polygon points='4,2 4,18 28,18'/>"
-    "<rect x='37' y='9' width='10' height='2'/><rect x='41' y='5' width='2' height='10'/>"
-    "<circle cx='60' cy='10' r='3.5'/></svg>"
-)
-_TR_SIGNAL_CSS = f"""
-#tr-page .tr-howto-title {{
+_TR_SIGNAL_CSS = """
+#tr-page .tr-howto-title {
     margin: .25rem 0 .25rem;
     text-align: center;
     font-size: 1.05rem;
     font-weight: 700;
-}}
+}
 /* Sits right under its caption: no stretched column pushing it down. */
-#tr-page .tr-gif-col {{
+#tr-page .tr-gif-col {
     gap: 0 !important;
     justify-content: flex-start !important;
-}}
-#tr-page .tr-gif-col > * {{
+}
+#tr-page .tr-gif-col > * {
     flex-grow: 0 !important;
-}}
-/* Grey, and shaped like the camera chips below it. */
-#tr-page button.tr-signal {{
+}
+#tr-page button.tr-signal {
     align-self: center !important;
     width: auto !important;
     min-width: 0 !important;
     flex: none !important;
-    gap: .4rem !important;
     /* Close to its caption, clear of what follows (the chips on a PC, the
        stop animation on a phone). */
     margin: .35rem 0 1.25rem !important;
     padding: .3rem .7rem !important;
     border-radius: 999px !important;
-    border: 1px solid #94a3b855 !important;
-    background: #94a3b822 !important;
-    color: var(--body-text-color) !important;
-    font-size: .82rem !important;
-    font-weight: 600 !important;
-    box-shadow: none !important;
-}}
-#tr-page button.tr-signal:hover {{
-    background: #94a3b844 !important;
-}}
-#tr-page .tr-signal::before,
-#tr-page .tr-signal::after {{
-    content: "";
-    display: inline-block;
-    height: 1.1em;
-    background-color: currentColor;
-    -webkit-mask: var(--tr-icon) no-repeat center / contain;
-    mask: var(--tr-icon) no-repeat center / contain;
-}}
-#tr-page .tr-signal::before {{
-    width: 1.1em;
-    --tr-icon: {_css_mask(_EAR_SVG)};
-}}
-#tr-page .tr-signal-start::after {{
-    width: 1.76em;
-    --tr-icon: {_css_mask(_START_SIGNAL_SVG)};
-}}
-#tr-page .tr-signal-stop::after {{
-    width: 3.96em;
-    --tr-icon: {_css_mask(_STOP_SIGNAL_SVG)};
-}}
+    border: none !important;
+    background: var(--button-primary-background-fill) !important;
+    color: var(--button-primary-text-color) !important;
+    font-size: .85rem !important;
+    font-weight: 700 !important;
+    box-shadow: 0 2px 6px #0004 !important;
+    cursor: pointer;
+}
+#tr-page button.tr-signal:hover {
+    filter: brightness(1.1);
+}
 """
-# Built from the icons above, so it joins MODAL_CSS only here (the app mounts
-# MODAL_CSS on its own, see app/main.py).
 MODAL_CSS += _TR_SIGNAL_CSS
 # How long the stop button waits between the falling cue and the beep.
 _TR_STOP_SIGNAL_GAP_S = 1.0
@@ -1273,7 +2070,7 @@ _TITLE_HTML = (
     "<h1 style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',"
     "Roboto,Helvetica,Arial,sans-serif;font-weight:700;"
     "font-size:var(--text-xxl,2rem);color:var(--body-text-color);"
-    "margin:var(--spacing-xxl) 0 var(--spacing-lg);\">GRABETTE</h1>"
+    "margin:0;\">GRABETTE</h1>"
 )
 
 # Battery percentage at/below which the low-battery warning popup + sound fire.
@@ -1451,17 +2248,138 @@ _LIVE_VIEW_ENABLED = False
 _EP_MIN_SECONDS = 2.0
 
 
+_DROP_SUFFIX = "_frames_dropped"
+
+
 def _episode_status(ep: dict) -> str:
     """One cell: the worst thing this episode's own counters admit to."""
-    if not ep.get("metadata_ok", True):
-        return "✗ metadata"
-    if not ep.get("has_video", True) or not ep.get("frame_count"):
-        return "✗ camera"
-    if not ep.get("angle_sample_count"):
-        return "✗ angles"
+    issues = episode_issues(ep)
+    if issues and not issues[0].endswith(_DROP_SUFFIX):
+        return f"✗ {issues[0].replace('_', ' ')}"
+    if issues:
+        return f"✗ {', '.join(i.removesuffix(_DROP_SUFFIX) for i in issues)} frames dropped"
     if float(ep.get("duration_seconds") or 0) < _EP_MIN_SECONDS:
         return "⚠ very short"
     return "✓ ok"
+
+
+_ISSUE_TEXT = {
+    "metadata": "Its metadata.json is missing or unreadable.",
+    "camera": "The camera recorded no video.",
+    "video_sync": "The video frames could not be matched to their capture times: "
+                  "the video is likely out of sync.",
+    "angles": "No gripper angles were recorded.",
+}
+
+
+def _issue_text(issue: str) -> str:
+    if issue.endswith(_DROP_SUFFIX):
+        stream = issue.removesuffix(_DROP_SUFFIX)
+        return f"The {stream} camera dropped frames: the videos are likely out of sync."
+    return _ISSUE_TEXT.get(issue, issue)
+
+
+def _last_recording_popup(last: dict | None):
+    """Popup for the last recording's issues, from /api/episodes/last."""
+    last = last or {}
+    ep = last.get("episode") if last.get("settled") else None
+    issues = episode_issues(ep) if ep else []
+    if not issues:
+        return gr.update(visible=False)
+    items = "".join(f"<li>{html.escape(_issue_text(i))}</li>" for i in issues)
+    eid = html.escape(str(ep.get("episode_id", "?")))
+    body = (
+        f"<div class='gb-lastrec' data-ep='{eid}' "
+        "style='position:fixed;bottom:24px;right:24px;z-index:9999;"
+        "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
+        "padding:16px 20px;max-width:260px;"
+        "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
+        "<button type='button' class='gb-lastrec-close' aria-label='Dismiss' "
+        "style='position:absolute;top:2px;right:2px;width:36px;height:36px;"
+        "padding:0;border:none;background:transparent;cursor:pointer;"
+        "touch-action:manipulation;color:#7f1d1d;font-size:1.3rem;"
+        "line-height:1;'>×</button>"
+        "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
+        "margin:0 24px 4px 0;'>Last recording failed</div>"
+        "<ul style='font-size:0.88rem;color:#7f1d1d;margin:0 0 6px;"
+        f"padding-left:18px;'>{items}</ul>"
+        "<div style='font-size:0.8rem;color:#7f1d1d;'>"
+        f"Episode {eid}.</div>"
+        "<button type='button' class='gb-lastrec-delete' "
+        "style='margin-top:10px;padding:6px 12px;border-radius:8px;"
+        "border:1px solid #dc2626;background:#dc2626;color:#fff;"
+        "font-size:0.85rem;font-weight:600;cursor:pointer;"
+        "touch-action:manipulation;'>Delete this episode</button>"
+        "</div>"
+    )
+    return gr.update(visible=True, value=body)
+
+
+# Popup buttons and stacking above the battery popup. The popup is re-rendered
+# every few seconds, so state goes through CSS rules, not the element itself.
+_LAST_REC_INIT_JS = """
+() => {
+  if (window.__grabetteLastRec) { return; }
+  window.__grabetteLastRec = true;
+  var KEY = 'grabette-dismissed-episodes';
+  var ids = [];
+  try { ids = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) { ids = []; }
+  var style = document.createElement('style');
+  document.head.appendChild(style);
+  function render() {
+    style.textContent = '.gb-lastrec{bottom:var(--gb-lastrec-bottom,24px)!important}\\n'
+      + ids.map(function (id) {
+        return '.gb-lastrec[data-ep="' + CSS.escape(id) + '"]{display:none!important}';
+      }).join('\\n');
+  }
+  render();
+  var lastBottom = '';
+  setInterval(function () {
+    var batt = document.querySelector('.gb-batt');
+    var h = batt ? batt.getBoundingClientRect().height : 0;
+    var bottom = (h > 0 ? 24 + h + 12 : 24) + 'px';
+    if (bottom !== lastBottom) {
+      document.documentElement.style.setProperty('--gb-lastrec-bottom', bottom);
+      lastBottom = bottom;
+    }
+  }, 300);
+  function hide(id) {
+    if (ids.indexOf(id) < 0) { ids = ids.concat([id]).slice(-20); }
+    try { localStorage.setItem(KEY, JSON.stringify(ids)); } catch (err) {}
+    render();
+  }
+  function popupButton(e, cls) {
+    var t = e.target && e.target.nodeType === 3 ? e.target.parentElement : e.target;
+    var x = t && t.closest && t.closest(cls);
+    var box = x && x.closest('.gb-lastrec');
+    return box && box.dataset.ep ? box.dataset.ep : null;
+  }
+  // pointerup too: some mobile browsers drop the click after a tap.
+  function dismiss(e) {
+    var id = popupButton(e, '.gb-lastrec-close');
+    if (id) { hide(id); }
+  }
+  document.addEventListener('click', dismiss, true);
+  document.addEventListener('pointerup', dismiss, true);
+  // One tap fires both: ignore the second, right after the dialog closes.
+  var lastDelete = 0;
+  function onDelete(e) {
+    var id = popupButton(e, '.gb-lastrec-delete');
+    if (!id || Date.now() - lastDelete < 1000) { return; }
+    var ok = window.confirm('Delete episode ' + id + '? This cannot be undone.');
+    lastDelete = Date.now();
+    if (!ok) { return; }
+    fetch('/api/episodes/' + encodeURIComponent(id), {method: 'DELETE'})
+      .then(function (r) {
+        if (!r.ok) { throw new Error('HTTP ' + r.status); }
+        hide(id);
+      })
+      .catch(function (err) { window.alert('Could not delete episode ' + id + ': ' + err.message); });
+  }
+  document.addEventListener('click', onDelete, true);
+  document.addEventListener('pointerup', onDelete, true);
+}
+"""
 
 
 def _ep_header_html(description: str = "", api_down: bool = False) -> str:
@@ -1583,14 +2501,7 @@ def _status_bar_html(sys_info, oakd_status, cam_status):
 
 
 def create_ui(api_url: str | None = None) -> gr.Blocks:
-    # Route downloaded episode archives to the SD-card-backed data_dir
-    # instead of the OS /tmp (which on Pi OS is a small tmpfs). Same reason
-    # as the SessionManager staging; the SessionManager's startup sweep
-    # cleans this same directory across daemon restarts.
-    client = GrabetteClient(
-        base_url=api_url,
-        download_dir=settings.data_dir / ".downloads",
-    )
+    client = GrabetteClient(base_url=api_url)
 
     # ── Camera ────────────────────────────────────────────────────────
 
@@ -1669,6 +2580,204 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
     # ── Capture (Datasets page) ───────────────────────────────────────
 
+    # ── Angle-sensor diagnostic (Test Recording + Troubleshooting) ────
+
+    def _diag_fix_update(diag: dict | None):
+        """The fix button, the id it applies, and the Close button (shown once
+        nothing is wrong any more), as the diagnosis says."""
+        fix = (diag or {}).get("fix")
+        return (_diag_fix_btn(bool(fix),
+                              value=(diag or {}).get("fix_label") or "Fix it"),
+                fix, _diag_done_btn(bool((diag or {}).get("healthy"))))
+
+    # The fix button is shown and hidden with a class, never with `visible`:
+    # gradio 6 drops a visible=False -> True update on it often enough that
+    # the one button the popup exists for would sometimes never appear.
+    def _diag_fix_btn(shown: bool, **kw):
+        return gr.update(elem_classes=_DIAG_FIX_CLASSES + ([] if shown else
+                                                           ["gb-diag-gone"]),
+                         interactive=True, **kw)
+
+    def _diag_done_btn(shown: bool):
+        return gr.update(elem_classes=_DIAG_DONE_CLASSES + ([] if shown else
+                                                            ["gb-diag-gone"]))
+
+    def on_diag_again():
+        """A clean slate, the walk about to run."""
+        return (_diag_report_html(None), gr.update(interactive=False), None,
+                _diag_done_btn(False), "", gr.update(interactive=False))
+
+    def on_diag_run():
+        """Outputs: report, fix button, fix id, Close button, "run again"
+        button, the last diagnosis (what the live refresh compares against)
+        and its timer."""
+        res = client.angle_diagnose()
+        if "error" in res:
+            return (_diag_report_html(None, res["error"]),
+                    _diag_fix_btn(False), None, _diag_done_btn(False),
+                    gr.update(interactive=True), None, gr.Timer(active=True))
+        return (_diag_report_html(res), *_diag_fix_update(res),
+                gr.update(interactive=True), res, gr.Timer(active=True))
+
+    def on_diag_tick(last, fix):
+        """Run the walk again while the popup is open, so a sensor plugged in
+        (or pulled out) shows up without a click. Only a CHANGED diagnosis is
+        redrawn: the report stays still, and a message from a fix stays up
+        until the situation it describes moves on."""
+        keep = (gr.update(),) * 7
+        if fix == i2c_diag.FIX_REBOOT and last is None:
+            return keep  # a reboot pending after a config change: nothing to see
+        res = client.angle_diagnose()
+        if "error" in res or res == last:
+            return keep
+        status = client.get_angle_status() or {}
+        return (_diag_report_html(res), *_diag_fix_update(res), "", res,
+                gr.update(visible=bool(status.get("error"))))
+
+    def on_diag_fix_start():
+        # The live refresh pauses while the fix runs: it would redraw the
+        # button under the "Working…" the click just put there.
+        return gr.update(value="Working…", interactive=False), gr.Timer(active=False)
+
+    def _diag_pw(shown: bool, **kw):
+        """The password field, shown with a class for the same reason as the
+        fix button."""
+        return gr.update(elem_classes=_DIAG_PW_CLASSES + ([] if shown else
+                                                          ["gb-diag-gone"]),
+                         **kw)
+
+    def on_diag_fix(fix, report, password):
+        """Apply it, show the walk run again, and drop the callout at once
+        rather than on the next poll when the sensors came back.
+
+        Outputs: report, fix button, fix id, Close button, message, callout
+        box, the last diagnosis, the live-refresh timer and the password field.
+
+        The password stays in its field (the browser) until the popup closes,
+        so a fix followed by a reboot asks for it once."""
+        res = client.angle_fix(fix, password)
+        status = client.get_angle_status() or {}
+        box = gr.update(visible=bool(status.get("error")))
+        live = gr.Timer(active=True)
+        keep_pw = gr.update()
+        if res.get("needs_password"):
+            # Ask, and keep the refresh off: it would redraw the button and the
+            # message while they type.
+            return (report, _diag_fix_btn(True, value="Apply with this password"),
+                    fix, _diag_done_btn(False), f"🔒 {res['error']}", box, gr.update(),
+                    gr.Timer(active=False), _diag_pw(True, value=""))
+        if "error" in res:
+            return (report, gr.update(value="Try again", interactive=True), fix,
+                    _diag_done_btn(False), f"⛔ {res['error']}", box, gr.update(), live, keep_pw)
+        if res.get("rebooting"):
+            return (report, _diag_fix_btn(False), None, _diag_done_btn(False),
+                    f"🔄 {res['done']}", box, None, gr.Timer(active=False),
+                    _diag_pw(False, value=""))
+        if res.get("reboot"):
+            # last=None + fix "reboot" is what holds the refresh off.
+            return (report, _diag_fix_btn(True, value="Reboot the grabette"),
+                    i2c_diag.FIX_REBOOT, _diag_done_btn(False),
+                    f"✓ {res['done']}", box, None, live,
+                    keep_pw)
+        diag = res.get("diagnosis")
+        return (_diag_report_html(diag), *_diag_fix_update(diag),
+                f"✓ {res['done']}", box, diag, live, _diag_pw(False))
+
+    def _angle_diag_body(box=None, live=False):
+        """The report, its fix buttons and its live refresh, built where it is
+        called: in the Diagnose popup, and in the Angle sensors section of
+        Troubleshooting. `box` is the page's Diagnose button, hidden as soon as
+        a fix brings the sensors back (None: there is none to hide). `live`
+        adds a place for the live 3D model, under the report.
+
+        Returns the parts the container wires: `reset` and `run` (the outputs
+        of on_diag_again and on_diag_run, which start a walk), the live
+        `timer`, the `done` button, the `live` view (None without one) and
+        the `password` field (cleared on close)."""
+        report = gr.HTML(_diag_report_html(None))
+        live_view = gr.HTML("") if live else None
+        msg = gr.Markdown("")
+        # Shown when sudo asks for it (see on_diag_fix).
+        password = gr.Textbox(
+            type="password", label="Grabette password",
+            info=_DIAG_PW_HINT,
+            elem_classes=_DIAG_PW_CLASSES + ["gb-diag-gone"])
+        with gr.Row(elem_classes="gb-diag-actions"):
+            fix_btn = gr.Button(
+                "Fix it", variant="primary", scale=0, min_width=0,
+                elem_classes=_DIAG_FIX_CLASSES + ["gb-diag-gone"])
+            done_btn = gr.Button(
+                "Close", variant="primary", scale=0, min_width=0,
+                elem_classes=_DIAG_DONE_CLASSES + ["gb-diag-gone"])
+            again_btn = gr.Button("Run the diagnostic again",
+                                  scale=0, min_width=0)
+        fix_state = gr.State(None)
+        last_diag = gr.State(None)
+        # Live refresh, only while the report is on screen: each tick is a
+        # real walk down the I2C stack on the device.
+        live_timer = gr.Timer(2.0, active=False)
+        reset_outputs = [report, fix_btn, fix_state, done_btn, msg, again_btn]
+        run_outputs = [report, fix_btn, fix_state, done_btn, again_btn,
+                       last_diag, live_timer]
+        tick_outputs = [report, fix_btn, fix_state, done_btn, msg, last_diag]
+        fix_outputs = [report, fix_btn, fix_state, done_btn, msg, last_diag,
+                       live_timer, password]
+        tick_fn, fix_fn = on_diag_tick, on_diag_fix
+        if box is None:
+            tick_fn, fix_fn = _without(on_diag_tick, 6), _without(on_diag_fix, 5)
+        else:
+            tick_outputs.append(box)
+            fix_outputs.insert(5, box)
+
+        again_btn.click(fn=on_diag_again, outputs=reset_outputs,
+                        queue=False).then(fn=on_diag_run, outputs=run_outputs)
+        live_timer.tick(fn=tick_fn, inputs=[last_diag, fix_state],
+                        outputs=tick_outputs)
+        fix_btn.click(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
+                      queue=False).then(
+            fn=fix_fn, inputs=[fix_state, report, password],
+            outputs=fix_outputs)
+        # Enter in the field applies the fix, like the button.
+        password.submit(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
+                        queue=False).then(
+            fn=fix_fn, inputs=[fix_state, report, password],
+            outputs=fix_outputs)
+        return SimpleNamespace(reset=reset_outputs, run=run_outputs,
+                               timer=live_timer, done=done_btn,
+                               live=live_view, password=password)
+
+    def _angle_diag_prompt():
+        """The "Diagnose" button and the popup it opens. Returns the box
+        holding the button, hidden until the device reports an angle-sensor
+        fault — the caller's poll shows it.
+        """
+        with gr.Row(visible=False, elem_classes="gb-diag-box") as box:
+            open_btn = gr.Button("→ Diagnose the angle sensors",
+                                 variant="primary", size="lg", scale=0,
+                                 min_width=0, elem_classes="gb-diag-open")
+        with gr.Column(visible=False, elem_classes="gb-diag-modal") as modal:
+            with gr.Column(elem_classes="gb-diag-card"):
+                # Pinned to the card's top-right corner by CSS, not laid out
+                # beside the title.
+                close_btn = gr.Button("✕", size="sm", scale=0, min_width=0,
+                                      elem_classes="gb-diag-close")
+                gr.HTML('<div style="font-weight:700;font-size:1.15rem;'
+                        'padding-right:2rem;">Angle sensors diagnostic</div>')
+                body = _angle_diag_body(box)
+
+        open_btn.click(
+            fn=lambda: (gr.update(visible=True), *on_diag_again()),
+            outputs=[modal, *body.reset],
+            queue=False,
+        ).then(fn=on_diag_run, outputs=body.run)
+        # Closing forgets the password.
+        for _btn in (close_btn, body.done):
+            _btn.click(fn=lambda: (gr.update(visible=False),
+                                   gr.Timer(active=False),
+                                   _diag_pw(False, value="")),
+                       outputs=[modal, body.timer, body.password], queue=False)
+        return box
+
     # ── Calibration prompt (Overview + Test Recording) ────────────────
 
     # The popup's two phases (set up and run, then check) are shown and hidden
@@ -1707,13 +2816,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 "", _CALIB_VIEWER_IFRAME,
                 gr.update(visible=bool(res.get("needs_calibration"))))
 
-    def _calibration_prompt(warning: str | None, elem_id: str | None = None):
+    def _calibration_prompt(warning: str | None = None,
+                            elem_id: str | None = None):
         """The "Calibrate my device" button (right after `warning`, in one
         callout, when given) and the popup it opens: two steps to calibrate,
-        then a third to check the 3D model follows the gripper. Returns the box
-        holding the button, hidden until the device says it needs calibrating —
-        the caller's poll shows it — and a function that makes any other button
-        open the same popup (the Overview's "Recalibrate").
+        then a third to check the 3D model follows the gripper. Returns the
+        box holding the button, hidden until the device says it needs
+        calibrating — the caller's poll shows it — and a function that makes
+        any other button open the same popup (the Overview's "Recalibrate").
         """
         classes = ["gb-calib-box"] + (["gb-calib-callout"] if warning else [])
         with gr.Row(visible=False, elem_id=elem_id,
@@ -1781,9 +2891,244 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             fn=on_calibrate, outputs=[setup, check, run_btn, msg, viewer, box])
         return box, bind_open
 
-    def poll_calibration():
-        st = client.get_calibration() or {}
-        return gr.update(visible=bool(st.get("needs_calibration")))
+    # ── Troubleshooting (Overview) ────────────────────────────────────
+
+    def _ts_read():
+        """Everything the checks look at, one call to each endpoint."""
+        return ((client.get_state() or {}).get("capture"),
+                client.get_camera_status(), client.get_oakd_status(),
+                client.get_angle_status())
+
+    def poll_ov_checks():
+        """The Overview's chips, the callout of what stops the recording (and
+        its way to Troubleshooting), and the calibration callout (not while
+        the sensors it reads are down)."""
+        cap, cam, dcam, angle = _ts_read()
+        issues = _ov_checks(cap, cam, dcam, angle)
+        must_calib = bool((cap or {}).get("needs_calibration")
+                          and not (angle or {}).get("error"))
+        failing = any(level == "fail" for level, _, _ in issues or ())
+        return (_ov_checks_html(issues,
+                                bool((cap or {}).get("blocked_reason"))),
+                _ov_problems_html(issues),
+                gr.update(visible=failing),
+                gr.update(visible=must_calib))
+
+    def _ts_gone(classes: list[str], shown: bool) -> dict:
+        """Shown and hidden with a class, for the same reason as the
+        diagnostic's fix button (_diag_fix_btn)."""
+        return {"elem_classes": classes + ([] if shown else ["gb-diag-gone"])}
+
+    def ts_sections():
+        """Every section but the angle sensors' (they have their own live
+        refresh), the tabs' colours, and the checks themselves.
+
+        Outputs: RGB report, image and Reboot button, depth report, image
+        and Start (or Restart) button, the angle sensors' live view, the
+        tabs' style, the issues."""
+        cap, cam, dcam, angle = _ts_read()
+        issues = _ov_checks(cap, cam, dcam, angle)
+        label = (dcam or {}).get("label") or "depth camera"
+        # Not while it is unplugged: the start could only fail.
+        can_start = bool(dcam and dcam.get("supported")
+                         and not dcam.get("initializing")
+                         and dcam.get("connected") is not False)
+        verb = "Restart" if (dcam or {}).get("enabled") else "Start"
+        rgb_frame = get_camera_frame()
+        depth_frame = (get_depth_frame() if (dcam or {}).get("initialized")
+                       else None)
+        return (
+            _ts_rgb_html(cam),
+            gr.update(value=rgb_frame,
+                      **_ts_gone(["gb-ts-img"], rgb_frame is not None)),
+            # Its classes only: a refresh must not undo "Rebooting…".
+            gr.update(**_ts_gone(["gb-ts-reboot"],
+                                 _camera_state(cam) == "missing")),
+            _ts_depth_html(dcam),
+            gr.update(value=depth_frame,
+                      **_ts_gone(["gb-ts-img"], depth_frame is not None)),
+            gr.update(value=f"{verb} the {label}", interactive=True,
+                      elem_classes=["gb-ts-start"]
+                      + ([] if can_start else ["gb-diag-gone"])),
+            (_TS_ANGLE_LIVE if angle and angle.get("enabled")
+             and not angle.get("error") else ""),
+            _ts_tabs_css(issues),
+            issues,
+        )
+
+    def on_ts_open():
+        """The popup at once, its sections read after (on_ts_fill).
+
+        Outputs: the popup, the refresh timer, the depth message, the RGB and
+        depth reports."""
+        checking = '<div style="opacity:.75;">Checking…</div>'
+        return (gr.update(visible=True), gr.Timer(active=True), "",
+                checking, checking)
+
+    def on_ts_fill():
+        """Outputs: the part to show first (the first one at fault), then
+        ts_sections'."""
+        *sections, issues = ts_sections()
+        return (_ts_first_section(issues), *sections)
+
+    def on_ts_tick():
+        return ts_sections()[:-1]
+
+    def on_ts_angle_reset(section):
+        if section != _TS_ANGLE:
+            return (gr.update(),) * 6
+        return on_diag_again()
+
+    def on_ts_angle_run(section):
+        """Walk the I2C stack when the Angle sensors section is the one on
+        screen; leave it (and its live refresh) off otherwise."""
+        if section != _TS_ANGLE:
+            return (*(gr.update(),) * 6, gr.Timer(active=False))
+        status = client.get_angle_status()
+        if status is not None and not status.get("enabled"):
+            return (_diag_verdict_html("This grabette is built without angle "
+                                       "sensors.", "#94a3b8"),
+                    _diag_fix_btn(False), None, _diag_done_btn(False),
+                    gr.update(interactive=False), None,
+                    gr.Timer(active=False))
+        return on_diag_run()
+
+    def on_ts_depth_start():
+        """Start the depth camera, or restart it when it is on."""
+        res = {}
+        if (client.get_oakd_status() or {}).get("enabled"):
+            res = client.set_oakd(False)
+        if not res.get("error"):
+            res = client.set_oakd(True)
+        # Still starting after the client's timeout is not a failure.
+        failed = (res.get("error")
+                  and not (client.get_oakd_status() or {}).get("initializing"))
+        msg = f"⛔ {res['error']}" if failed else ""
+        return (msg, *ts_sections()[:-1])
+
+    def _ts_pw(shown: bool, **kw):
+        return gr.update(**_ts_gone(["gb-ts-pw"], shown), **kw)
+
+    def on_ts_rgb_reboot(password):
+        """Reboot so the firmware looks for the RGB camera again. Through the
+        angle sensors' fix route: the same sudo rule (make install-i2c-fix)
+        and the same password prompt when there is none.
+
+        Outputs: message, Reboot button, password field."""
+        res = client.angle_fix(i2c_diag.FIX_REBOOT, password)
+        if res.get("needs_password"):
+            return (f"🔒 {res['error']}",
+                    gr.update(value="Reboot with this password",
+                              interactive=True),
+                    _ts_pw(True, value=""))
+        if "error" in res:
+            return (f"⛔ {res['error']}",
+                    gr.update(value="Reboot the grabette", interactive=True),
+                    gr.update())
+        return (f"🔄 {res['done']}",
+                gr.update(value="Rebooting…", interactive=False),
+                _ts_pw(False, value=""))
+
+    def _troubleshooting():
+        """The Troubleshooting popup: one section per part of the grabette,
+        each with its checks and what to do about them. The angle sensors'
+        section is the Diagnose popup's report, fixes included. Returns a
+        function that makes a button open it."""
+        with gr.Column(visible=False,
+                       elem_classes=["gb-diag-modal", "gb-ts-modal"]) as modal:
+            with gr.Column(elem_classes=["gb-diag-card", "gb-ts-card"]):
+                close_btn = gr.Button("✕", size="sm", scale=0, min_width=0,
+                                      elem_classes="gb-diag-close")
+                gr.HTML('<div style="font-weight:700;font-size:1.15rem;'
+                        'padding-right:2rem;">Troubleshooting</div>'
+                        '<div style="font-size:.85rem;opacity:.75;">'
+                        'What each part of the grabette reports, and how to '
+                        'fix it.</div>')
+                tabs_css = gr.HTML(_ts_tabs_css(None), elem_classes="gb-ts-css")
+                with gr.Tabs():
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_RGB], id=_TS_RGB) as tab_rgb:
+                        rgb_html = gr.HTML(_ts_unknown_html())
+                        rgb_img = gr.Image(show_label=False, container=False,
+                                           height=180, interactive=False,
+                                           buttons=[], elem_classes=[
+                                               "gb-ts-img", "gb-diag-gone"])
+                        rgb_msg = gr.Markdown("")
+                        # Shown when sudo asks for it (see on_ts_rgb_reboot).
+                        rgb_pw = gr.Textbox(
+                            type="password", label="Grabette password",
+                            info=_DIAG_PW_HINT,
+                            elem_classes=["gb-ts-pw", "gb-diag-gone"])
+                        with gr.Row(elem_classes="gb-diag-actions"):
+                            rgb_reboot = gr.Button(
+                                "Reboot the grabette", variant="primary",
+                                scale=0, min_width=0,
+                                elem_classes=["gb-ts-reboot", "gb-diag-gone"])
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_DEPTH], id=_TS_DEPTH) as tab_depth:
+                        depth_html = gr.HTML(_ts_unknown_html())
+                        depth_img = gr.Image(show_label=False, container=False,
+                                             height=180, interactive=False,
+                                             buttons=[], elem_classes=[
+                                                 "gb-ts-img", "gb-diag-gone"])
+                        depth_msg = gr.Markdown("")
+                        with gr.Row(elem_classes="gb-diag-actions"):
+                            depth_btn = gr.Button(
+                                "Start the depth camera", variant="primary",
+                                scale=0, min_width=0,
+                                elem_classes=["gb-ts-start", "gb-diag-gone"])
+                    with gr.Tab(dict(_TS_SECTIONS)[_TS_ANGLE], id=_TS_ANGLE) as tab_angle:
+                        angle = _angle_diag_body(live=True)
+                with gr.Row(elem_classes=["gb-diag-actions", "gb-ts-foot"]):
+                    foot_close = gr.Button("Close", scale=0, min_width=0)
+        section = gr.State(_TS_RGB)
+        # A textbox, not a State: the JS that clicks the tab reads it, and a
+        # State never reaches the browser.
+        first = gr.Textbox(_TS_RGB, visible=False)
+        # Cheap reads (statuses and two snapshots), only while it is open.
+        timer = gr.Timer(2.0, active=False)
+        tab_list = [tab_rgb, tab_depth, tab_angle]
+        outputs = [rgb_html, rgb_img, rgb_reboot, depth_html, depth_img,
+                   depth_btn, angle.live, tabs_css]
+
+        # The first part at fault is shown by clicking its tab, as a person
+        # would: setting the tabs' `selected` from here pins them to it, and
+        # the next clicks on the others bounce back. The click's select event
+        # then runs that part's checks like any other.
+        def bind_open(btn: gr.Button) -> None:
+            btn.click(
+                fn=on_ts_open,
+                outputs=[modal, timer, depth_msg, rgb_html, depth_html],
+                queue=False,
+            ).then(fn=on_ts_fill, outputs=[first, *outputs]
+            ).then(fn=None, inputs=first, js=_TS_SHOW_JS)
+
+        timer.tick(fn=on_ts_tick, outputs=outputs)
+        for tab, sec in zip(tab_list, (s for s, _ in _TS_SECTIONS)):
+            tab.select(fn=lambda sec=sec: sec, outputs=section, queue=False
+            ).then(fn=on_ts_angle_reset, inputs=section, outputs=angle.reset,
+                   queue=False
+            ).then(fn=on_ts_angle_run, inputs=section, outputs=angle.run)
+        depth_btn.click(fn=lambda: gr.update(value="Working…",
+                                             interactive=False),
+                        outputs=depth_btn, queue=False
+        ).then(fn=on_ts_depth_start, outputs=[depth_msg, *outputs])
+        # Enter in the password field reboots, like the button.
+        for trigger in (rgb_reboot.click, rgb_pw.submit):
+            trigger(fn=lambda: gr.update(value="Working…", interactive=False),
+                    outputs=rgb_reboot, queue=False
+            ).then(fn=on_ts_rgb_reboot, inputs=rgb_pw,
+                   outputs=[rgb_msg, rgb_reboot, rgb_pw])
+        # Closing stops both refreshes and forgets the password.
+        for _btn in (close_btn, foot_close, angle.done):
+            # The live view goes too: a closed popup polls nothing.
+            _btn.click(fn=lambda: (gr.update(visible=False),
+                                   gr.Timer(active=False),
+                                   gr.Timer(active=False),
+                                   _diag_pw(False, value=""),
+                                   _ts_pw(False, value=""), "", ""),
+                       outputs=[modal, timer, angle.timer, angle.password,
+                                rgb_pw, rgb_msg, angle.live],
+                       queue=False)
+        return bind_open
 
     # ── Test Recording page ───────────────────────────────────────────
     #
@@ -1819,13 +3164,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """One tick: mirror the device's capture state onto the page.
 
         Outputs: status pill, camera chips, verdict card, the three episode
-        controls (check, download, delete), the flow dict and the Calibrate
+        controls (check, download, delete), the flow dict, and the Diagnose
+        and Calibrate buttons' boxes.
         button's box.
         """
         flow = dict(flow or _TR_FLOW0)
         cap = (client.get_state() or {}).get("capture", {})
         capturing = bool(cap.get("is_capturing"))
         blocked = cap.get("blocked_reason") or ""
+        angle_status = client.get_angle_status()
+        diag = gr.update(visible=bool((angle_status or {}).get("error"))
+                         and not capturing)
         needs_calib = bool(cap.get("needs_calibration"))
         calib = gr.update(visible=needs_calib and not capturing)
 
@@ -1840,6 +3189,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=""),
                 *_tr_controls(None),
                 flow,
+                diag,
                 calib,
             )
 
@@ -1855,7 +3205,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 return (_tr_pill("waiting", "Saving the episode…"),
                         gr.update(),
                         gr.update(value=""),
-                        *_tr_controls(None), flow, calib)
+                        *_tr_controls(None), flow, diag, calib)
             flow["settling"] = 0
             if verdict is None:
                 # Out of patience: report what the episode actually says now,
@@ -1870,6 +3220,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 gr.update(value=verdict),
                 *_tr_controls(flow["episode_id"]),
                 flow,
+                diag,
                 calib,
             )
 
@@ -1880,10 +3231,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         rgb_state = _camera_state(client.get_camera_status())
         depth_state = _depth_camera_state(dcam)
         cameras = _tr_cameras(rgb_state, depth_state,
-                              (dcam or {}).get("label") or "depth camera")
-        if needs_calib:
+                              (dcam or {}).get("label") or "depth camera",
+                              _angle_state(angle_status))
+        if needs_calib and not (angle_status or {}).get("error"):
             # Named on its own, with the button that fixes it right under the
             # pill: "Cannot record — <fault>" would leave them to find it.
+            # Sensors that are down cannot be calibrated: that fault comes first.
             pill = _tr_pill("blocked", _CALIB_BLOCKED)
         elif blocked:
             # Not capturing is not the same as ready: a device held back by an
@@ -1899,8 +3252,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         elif flow["episode_id"]:
             pill = _tr_pill("done", "Recorded — check it below")
         else:
-            pill = _tr_pill("idle", "Cameras connected — press the button")
-        return pill, cameras, *([gr.update()] * 4), flow, calib
+            pill = _tr_pill("idle", "Ready — press the button")
+        return pill, cameras, *([gr.update()] * 4), flow, diag, calib
 
     def on_test_check(flow):
         """Replay the episode: the daemon feeds its recorded samples back into
@@ -2010,7 +3363,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         s = client.get_oakd_status() or {}
         enabled = bool(s.get("enabled"))
         result = client.set_oakd(not enabled)
-        if "error" in result:
+        if result.get("error"):
             logger.warning("Depth camera toggle failed: %s", result["error"])
         return _oakd_button_update()
 
@@ -2099,15 +3452,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
     # ── Episode actions ───────────────────────────────────────────────
 
     def on_download_episodes(table_data):
-        """Build the archive and reveal the drop it lands in."""
         episode_ids = _get_selected_ids(table_data)
         if not episode_ids:
-            return gr.update(), "Tick the episodes to download"
-        path = client.download_episodes(episode_ids)
-        if path is None:
-            return gr.update(), "⛔ Could not build the archive."
-        return (gr.update(value=path, visible=True),
-                f"{len(episode_ids)} episode(s) ready to download")
+            return "", "Tick the episodes to download"
+        return ("/api/episodes/download?" + urlencode({"episode_ids": episode_ids}, doseq=True),
+                f"⏳ Preparing {len(episode_ids)} episode(s)… the download starts once the archive is ready.")
 
     def on_delete_episode(table_data, session_id):
         episode_ids = _get_selected_ids(table_data)
@@ -2231,6 +3580,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         """(popup_update, beep_signal) — bound to the battery timers/loads."""
         return _battery_popup_html(client.get_system_info())
 
+    def check_last_recording():
+        """Popup update — bound to the last-recording timers/loads."""
+        return _last_recording_popup(client.get_last_episode())
+
     # ── System bar ────────────────────────────────────────────────────
 
     def _battery_popup_html(info: dict | None):
@@ -2250,7 +3603,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             pct = info["battery_pct"]
             _batt_beep["n"] += 1
             html = (
-                "<div style='position:fixed;bottom:24px;right:24px;z-index:9999;"
+                "<div class='gb-batt' style='position:fixed;bottom:24px;right:24px;z-index:9999;"
                 "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
                 "padding:16px 20px;max-width:260px;"
                 "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
@@ -2406,9 +3759,29 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         if status.get("enabled"):
             return mode, ""
         result = client.set_oakd(True)
-        if "error" in result:
-            return mode, f"⛔ {result['error']}"
-        return mode, f"*Starting {name}…*"
+        if result.get("error"):
+            # Still starting after the client's timeout is not a failure.
+            note = ov_depth_note(mode)
+            return mode, (note if isinstance(note, str)
+                          else f"⛔ {result['error']}")
+        return mode, ("" if result.get("initialized")
+                      else f"⛔ {name} did not start.")
+
+    def ov_depth_note(mode):
+        """The note under the toggle, following the depth camera's state."""
+        if mode != _OV_DEPTH:
+            return gr.update()
+        status = client.get_oakd_status()
+        if status is None or not status.get("supported"):
+            return gr.update()
+        name = status.get("label") or "Depth camera"
+        if status.get("error"):
+            return f"⛔ {status['error']}"
+        if status.get("initialized"):
+            return ""
+        if status.get("initializing"):
+            return f"*Starting {name}…*"
+        return gr.update()
 
     # ── Speaker volume ────────────────────────────────────────────────
 
@@ -2530,8 +3903,18 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         elem_classes="ov-sound-close",
                     )
 
-            # Before anything else on the device: it will not record until
-            # this is done.
+            # Before anything else on the device: whether it can record, what
+            # stops it, and the way to the fix.
+            ov_checks_html = gr.HTML(_ov_checks_html(None), elem_id="ov-checks",
+                                     elem_classes="gb-checks")
+            with gr.Row(visible=False, elem_id="ov-ts-fault",
+                        elem_classes=["gb-calib-box", "gb-ts-callout"]) as ov_ts_box:
+                ov_problems_html = gr.HTML("")
+                ov_ts_btn = gr.Button("→ Troubleshooting", variant="primary",
+                                      size="lg", scale=0, min_width=0,
+                                      elem_classes="gb-calib-open")
+            ov_ts_bind = _troubleshooting()
+            ov_ts_bind(ov_ts_btn)
             ov_calib_box, ov_calib_bind = _calibration_prompt(_CALIB_REQUIRED,
                                                               "ov-calib")
 
@@ -2569,12 +3952,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 with gr.Column(scale=1, min_width=230):
                     gr.HTML(_section_label("Health"))
                     ov_health_card = gr.HTML(_ov_health_card(None))
+                    with gr.Row(elem_classes="ov-tile-btn"):
+                        ov_ts_bind(gr.Button("Troubleshooting", size="sm"))
 
             # ── Recording and the episodes it produces ────────────────
             # On a phone: Grabette data, then Account & fleet, then status
             # (see #ov-data / #ov-account in the CSS).
             with gr.Column(elem_id="ov-data"):
-                gr.HTML(_OV_RULE, elem_classes="ov-rule-top")
+                gr.HTML(_OV_RULE, elem_classes=["ov-rule", "ov-rule-top"])
                 gr.HTML(_ov_group_title(
                     "Grabette data",
                     "Check the recording works, then browse what is on the device.",
@@ -2595,7 +3980,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
             # ── Account | Fleet Space ─────────────────────────────────
             with gr.Column(elem_id="ov-account"):
-                gr.HTML(_OV_RULE)
+                gr.HTML(_OV_RULE, elem_classes="ov-rule")
                 gr.HTML(_ov_group_title(
                     "Account & fleet",
                     "Sign in to Hugging Face, and open the Fleet Space to start recording organized data and creating datasets.",
@@ -2607,15 +3992,21 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                     with gr.Column(scale=1, min_width=260):
                         gr.HTML(_section_label("Fleet Space"))
                         gr.HTML(_FLEET_BUTTON_HTML.format(url=settings.relay_url))
-                gr.HTML(_OV_RULE, elem_classes="ov-rule-bottom")
+                gr.HTML(_OV_RULE, elem_classes=["ov-rule", "ov-rule-bottom"])
 
         ov_mode_state = gr.State(_OV_RGB)
-        ov_cam_mode.change(fn=on_ov_mode, inputs=ov_cam_mode,
-                           outputs=[ov_mode_state, ov_cam_msg])
+        # State first: on_ov_mode blocks while the depth camera starts.
+        ov_cam_mode.change(fn=lambda mode: mode, inputs=ov_cam_mode,
+                           outputs=ov_mode_state, queue=False).then(
+            fn=on_ov_mode, inputs=ov_cam_mode,
+            outputs=[ov_mode_state, ov_cam_msg])
 
         cn_camera_timer = gr.Timer(0.2)
         cn_camera_timer.tick(fn=ov_frame, inputs=ov_mode_state,
                              outputs=ov_camera_img)
+        ov_depth_note_timer = gr.Timer(1.0)
+        ov_depth_note_timer.tick(fn=ov_depth_note, inputs=ov_mode_state,
+                                 outputs=ov_cam_msg, show_progress="hidden")
 
         ov_volume.release(fn=on_volume_release, inputs=ov_volume,
                           outputs=[ov_mute_btn, ov_sound_note])
@@ -2634,10 +4025,13 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         demo.load(fn=load_sound, outputs=[ov_volume, ov_mute_btn,
                                           ov_sound_note, ov_sound_default])
         demo.load(fn=None, js=_VOLUME_TIP_JS)
+        demo.load(fn=None, js=_DIAG_POPUP_JS)
 
-        ov_calib_timer = gr.Timer(3.0)
-        ov_calib_timer.tick(fn=poll_calibration, outputs=ov_calib_box)
-        demo.load(fn=poll_calibration, outputs=ov_calib_box)
+        ov_checks_timer = gr.Timer(3.0)
+        ov_checks_outputs = [ov_checks_html, ov_problems_html, ov_ts_box,
+                             ov_calib_box]
+        ov_checks_timer.tick(fn=poll_ov_checks, outputs=ov_checks_outputs)
+        demo.load(fn=poll_ov_checks, outputs=ov_checks_outputs)
 
         ov_info_timer = gr.Timer(10.0)
         ov_info_timer.tick(fn=refresh_overview,
@@ -2651,6 +4045,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_cn.change(fn=None, inputs=batt_beep_cn, outputs=None, js=_BATTERY_BEEP_JS)
         demo.load(fn=check_battery_warning, outputs=[batt_popup_cn, batt_beep_cn])
         demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_cn = gr.HTML(visible=False)
+        last_rec_timer_cn = gr.Timer(3.0)
+        last_rec_timer_cn.tick(fn=check_last_recording, outputs=last_rec_popup_cn)
+        demo.load(fn=check_last_recording, outputs=last_rec_popup_cn)
+        demo.load(fn=None, js=_LAST_REC_INIT_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 2 — Test Recording
@@ -2683,23 +4083,22 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                    elem_classes="tr-gif-col"):
                         gr.HTML(_button_gif(
                             "start-recording.gif", "Start signal",
-                            "<b>Press</b> to start, wait for the <b>rising beep</b> and for "
+                            "<b>Press</b> to start, <br> wait for the <b>rising beep</b> <br> and for "
                             "the LED to <b>stop blinking</b>."))
                         tr_start_signal_btn = gr.Button(
-                            "Signal:", size="sm",
-                            elem_classes=["tr-signal", "tr-signal-start"])
+                            "▶ Play start sound", size="sm", elem_classes="tr-signal")
                     with gr.Column(scale=1, min_width=200,
                                    elem_classes="tr-gif-col"):
                         gr.HTML(_button_gif(
                             "stop-recording.gif", "Stop signal",
-                            "<b>Press</b> again to stop, and wait for the <b>last</b> beep "
+                            "<b>Press</b> again to stop, <br>and wait for the <b>last</b> beep <br>"
                             "and the LED to be <b>off</b>."))
                         tr_stop_signal_btn = gr.Button(
-                            "Signal:", size="sm",
-                            elem_classes=["tr-signal", "tr-signal-stop"])
+                            "▶ Play stop sounds", size="sm", elem_classes="tr-signal")
                 tr_cameras = gr.HTML("")
                 tr_state = gr.HTML(_tr_pill("idle", "Waiting for the button"))
-                tr_calib_box, _ = _calibration_prompt(None)
+                tr_diag_box = _angle_diag_prompt()
+                tr_calib_box, _ = _calibration_prompt()
                 # 1 Hz against the daemon's cached state — the page has no other
                 # way to learn about a press that happened on the device.
                 tr_poll_timer = gr.Timer(1.0)
@@ -2771,7 +4170,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         tr_poll_timer.tick(
             fn=poll_test_recording, inputs=tr_flow,
             outputs=[tr_state, tr_cameras, tr_summary, tr_check_btn,
-                     tr_download_link, tr_delete_btn, tr_flow, tr_calib_box],
+                     tr_download_link, tr_delete_btn, tr_flow, tr_diag_box,
+                     tr_calib_box],
         )
         # Same handler for both: a restart is a replay started over from zero,
         # and the players follow whatever the clock says.
@@ -2803,6 +4203,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_tr.change(fn=None, inputs=batt_beep_tr, outputs=None, js=_BATTERY_BEEP_JS)
         test_demo.load(fn=check_battery_warning, outputs=[batt_popup_tr, batt_beep_tr])
         test_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_tr = gr.HTML(visible=False)
+        last_rec_timer_tr = gr.Timer(3.0)
+        last_rec_timer_tr.tick(fn=check_last_recording, outputs=last_rec_popup_tr)
+        test_demo.load(fn=check_last_recording, outputs=last_rec_popup_tr)
+        test_demo.load(fn=None, js=_LAST_REC_INIT_JS)
+        test_demo.load(fn=None, js=_GIF_CYCLE_JS)
+        test_demo.load(fn=None, js=_DIAG_POPUP_JS)
 
     # ══════════════════════════════════════════════════════════════════
     # Page 3 — Episodes
@@ -2857,10 +4265,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                 episode_msg = gr.Markdown("")
                 # The full verdict for one episode — empty until Check is used.
                 episode_check = gr.HTML("")
-                # Hidden until an archive exists: an empty file drop is a hole
-                # in the page on every state but one.
-                dl_file = gr.File(label="Episode archive", visible=False,
-                                  height=90)
+                dl_url = gr.Textbox(visible=False)
 
                 # Replay panel (hidden until replay starts)
                 with gr.Group(visible=False) as replay_panel:
@@ -2903,7 +4308,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         task_list.change(fn=lambda v: v, inputs=task_list, outputs=selected_task_state)
 
         dl_btn.click(fn=on_download_episodes, inputs=episodes_table,
-                     outputs=[dl_file, episode_msg])
+                     outputs=[dl_url, episode_msg]).then(
+            fn=None, inputs=[dl_url, episode_msg], outputs=episode_msg, js=_DOWNLOAD_JS)
         check_btn.click(fn=on_check_episode, inputs=episodes_table,
                         outputs=[episode_check, episode_msg])
         del_episode_btn.click(
@@ -2950,6 +4356,12 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_ep.change(fn=None, inputs=batt_beep_ep, outputs=None, js=_BATTERY_BEEP_JS)
         episodes_demo.load(fn=check_battery_warning, outputs=[batt_popup_ep, batt_beep_ep])
         episodes_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_ep = gr.HTML(visible=False)
+        last_rec_timer_ep = gr.Timer(3.0)
+        last_rec_timer_ep.tick(fn=check_last_recording, outputs=last_rec_popup_ep)
+        episodes_demo.load(fn=check_last_recording, outputs=last_rec_popup_ep)
+        episodes_demo.load(fn=None, js=_LAST_REC_INIT_JS)
         episodes_demo.load(fn=None, js=_EP_DRAG_SELECT_JS)
 
         episodes_demo.load(
@@ -3074,5 +4486,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         batt_beep_st.change(fn=None, inputs=batt_beep_st, outputs=None, js=_BATTERY_BEEP_JS)
         settings_demo.load(fn=check_battery_warning, outputs=[batt_popup_st, batt_beep_st])
         settings_demo.load(fn=None, js=_BATTERY_INIT_JS)
+
+        last_rec_popup_st = gr.HTML(visible=False)
+        last_rec_timer_st = gr.Timer(3.0)
+        last_rec_timer_st.tick(fn=check_last_recording, outputs=last_rec_popup_st)
+        settings_demo.load(fn=check_last_recording, outputs=last_rec_popup_st)
+        settings_demo.load(fn=None, js=_LAST_REC_INIT_JS)
 
     return demo

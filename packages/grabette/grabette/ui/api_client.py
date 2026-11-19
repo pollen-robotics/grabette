@@ -4,18 +4,10 @@ from __future__ import annotations
 
 import logging
 import os
-import tempfile
-from pathlib import Path
 
 import httpx
 
 logger = logging.getLogger(__name__)
-
-# Read-response in 8 MB chunks. Large enough to keep syscall overhead low,
-# small enough that a multi-GB download never puts >8 MB in RAM at a time.
-# The old `r.content` reader buffered the whole response (>1 GB for a full
-# dataset), which OOM'd on the 4 GB Pi and silently returned None.
-_DOWNLOAD_CHUNK_BYTES = 8 * 1024 * 1024
 
 
 def _error_detail(exc: httpx.HTTPStatusError) -> str:
@@ -44,21 +36,12 @@ class GrabetteClient:
     def __init__(
         self,
         base_url: str | None = None,
-        download_dir: str | Path | None = None,
     ) -> None:
         self.base_url = (
             base_url
             or os.environ.get("GRABETTE_API_URL")
             or "http://localhost:8000"
         )
-        # Where downloaded episode archives are staged before Gradio serves
-        # them to the browser. Passed explicitly by the local daemon so the
-        # multi-GB tar.gz lands on the SD card, NOT on Pi OS's tmpfs /tmp
-        # (which is small enough to fill after a couple of downloads and
-        # brick the whole daemon with ENOSPC). Falls back to the OS temp
-        # dir for callers that don't set it — fine on workstations / HF
-        # Spaces where /tmp is a normal-sized filesystem.
-        self._download_dir = Path(download_dir) if download_dir else Path(tempfile.gettempdir())
         self._http = httpx.Client(base_url=self.base_url, timeout=10.0)
 
     # -- Camera --
@@ -233,6 +216,15 @@ class GrabetteClient:
         except Exception:
             return None
 
+    def get_last_episode(self) -> dict | None:
+        """/api/episodes/last, or None if the API could not be asked."""
+        try:
+            r = self._http.get("/api/episodes/last")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
     def check_episode(self, episode_id: str) -> dict | None:
         """Which required artifacts an episode lacks, or None if it cannot be
         asked. The only thing that tells the dashboard whether the depth camera
@@ -265,26 +257,6 @@ class GrabetteClient:
             return {"error": _error_detail(e)}
         except Exception as e:
             return {"error": str(e)}
-
-    def download_episodes(self, episode_ids: list[str]) -> str | None:
-        try:
-            filename = "episodes.tar.gz" if len(episode_ids) > 1 else f"{episode_ids[0]}.tar.gz"
-            self._download_dir.mkdir(parents=True, exist_ok=True)
-            path = str(self._download_dir / filename)
-            with self._http.stream(
-                "POST",
-                "/api/episodes/download",
-                json={"episode_ids": episode_ids},
-                timeout=None,
-            ) as r:
-                r.raise_for_status()
-                with open(path, "wb") as f:
-                    for chunk in r.iter_bytes(chunk_size=_DOWNLOAD_CHUNK_BYTES):
-                        f.write(chunk)
-            return path
-        except Exception:
-            logger.exception("download_episodes(%s) failed", episode_ids)
-            return None
 
     def move_episodes(self, episode_ids: list[str], target_task_id: str) -> dict:
         try:
@@ -349,6 +321,40 @@ class GrabetteClient:
             return r.json()
         except httpx.HTTPStatusError as e:
             return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    # -- Angle sensors --
+
+    def get_angle_status(self) -> dict | None:
+        try:
+            r = self._http.get("/api/angle/status")
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            return None
+
+    def angle_diagnose(self) -> dict:
+        try:
+            r = self._http.post("/api/angle/diagnose", timeout=30.0)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
+    def angle_fix(self, fix: str, password: str | None = None) -> dict:
+        """{"error", "needs_password"} when sudo wants the device password."""
+        try:
+            r = self._http.post("/api/angle/fix",
+                                json={"fix": fix, "password": password or None},
+                                timeout=30.0)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e),
+                    "needs_password": e.response.status_code == 401}
         except Exception as e:
             return {"error": str(e)}
 

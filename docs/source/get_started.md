@@ -1,127 +1,111 @@
 # Getting started
 
-This page takes you from nothing to a LeRobot dataset. If you don't have a device yet, start with [mock mode](#try-it-without-hardware) — the whole dashboard works on a laptop.
-
-## Try it without hardware
-
-The device software detects that it isn't running on a Raspberry Pi and falls back to a mock backend, which serves synthetic camera and sensor data. Everything else — the dashboard, sessions, episodes, replay — behaves normally.
-
-You need [uv](https://docs.astral.sh/uv/) and Python ≥ 3.11.
-
-```bash
-git clone https://github.com/pollen-robotics/grabette.git
-cd grabette
-uv sync --package grabette
-uv run --package grabette python packages/grabette/main.py
-```
-
-Open <http://localhost:8000> and you are in [the dashboard](./dashboard.md).
-
-<Tip warning={true}>
-
-The repository is a single uv **workspace**: a bare `uv sync` builds *every* package, which pulls in gigabytes of PyTorch and MuJoCo. Always pass `--package <name>` unless you deliberately want the full development environment (`uv sync --all-packages`).
-
-</Tip>
-
-## Set up a real Grabette
-
-### 1. Flash and install
-
-Flash **Raspberry Pi OS Lite (64-bit)** onto an SD card with the [Raspberry Pi Imager](https://www.raspberrypi.com/software/), setting a hostname (for example `R-grabette`), a user, your WiFi credentials, and enabling SSH. Both Bookworm and Trixie are tested.
-
-SSH into the Pi and install:
-
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/pollen-robotics/grabette.git
-cd grabette/packages/grabette
-
-sudo cp config/config.txt /boot/firmware   # hardware overlays
-make install-netdev                        # rights for WiFi scanning
-sudo reboot
-```
-
-After the reboot, run the one-shot bringup. A Grabette is built as either a **left** or a **right** hand — the angle sensors are mirrored, so the daemon has to be told which one this device is:
-
-```bash
-make install-rpi HAND=right    # or HAND=left
-make install-systemd           # start on boot
-```
-
-`install-rpi` installs the apt-managed `picamera2` stack, the OAK-D udev rule, and a `--system-site-packages` virtualenv against the system Python; `install-systemd` enables the daemon and the Bluetooth WiFi-setup service. Both are idempotent — re-run them if something looks wrong.
+This page takes you from a Grabette in its box to its dashboard, ready to record.
 
 <Tip>
 
-If the logs say `Using MockBackend` instead of `RPi hardware detected, using RpiBackend`, the virtualenv didn't pick up the system packages. Re-running `make install-rpi HAND=...` fixes it.
+Don't have a device yet? Grabette is open hardware: [Build your own](./build_your_own.md) page walks you through the parts, the assembly and the software install.
 
 </Tip>
 
-### 2. Get it on the network
+## Power
 
-If the WiFi you set at flash time isn't the one you need, you can provision the device over Bluetooth — no screen, no SSH. Open the [Bluetooth tool](https://pollen-robotics.github.io/grabette/) in Chrome or Edge, connect to the device, scan and pick your network. The tool sends the default PIN (`00000`) itself and only asks for it if you changed it.
+### Power on and off
 
-### 3. Calibrate
+To power on, press the button once, then press it a second time and hold it until the blue light appears. Give the device a moment to start up.
 
-Once, before the first recording: open the gripper so that **both joints are fully extended**, then
+<img src="https://github.com/pollen-robotics/grabette/raw/develop/docs/images/turn_on.gif" alt="Powering on a Grabette" width="400" style="display: block; margin: 0 auto;"/>
 
-```bash
-uv run python scripts/calibrate_angles.py
-sudo reboot
+To power off, use the **Power off** button in the [dashboard](#dashboard)'s title bar, or the power button next to the device in the [Fleet Space](./data_collection.md#grabette-fleet).
+
+### Charging
+
+Plug a USB-C cable into the charging port shown below. The board has several USB-C ports that look alike: use this one.
+
+<img src="https://github.com/pollen-robotics/grabette/raw/develop/docs/images/grabette-charging.jpg" alt="The Grabette's USB-C charging port" width="600" style="display: block; margin: 0 auto;"/>
+
+The battery level is shown on the dashboard's **Overview** page and next to the device in the Fleet Space.
+
+<!-- TODO: charge time, and what the battery indicator shows while charging. -->
+
+## First-time setup with the Bluetooth tool
+
+You use the [Bluetooth tool](https://pollen-robotics.github.io/grabette/) **once**, when you set up your Grabette: it connects to the device over Bluetooth to put it on your WiFi network. After that, you reach the Grabette over WiFi, through its dashboard.
+
+Open it in Chrome or Edge, on a computer or an Android phone, and follow its steps:
+
+1. **WiFi setup** — connect to the Grabette, scan for networks, pick yours and enter its password.
+2. **Calibration** — open the gripper fully, start the calibration, then move the gripper: the 3D model should follow it. The Grabette won't record until it is calibrated.
+3. **Dashboard** — the tool gives you the device's address.
+
+Come back to it only to move the Grabette to another WiFi network.
+
+<Tip warning={true}>
+
+The tool doesn't work on iPhone or iPad, whatever the browser: every iOS browser runs on WebKit, which has no Web Bluetooth.
+
+</Tip>
+
+If the tool can't find or connect to the device, see the [FAQ](./faq.md#the-bluetooth-tool-wont-connect).
+
+## Dashboard
+
+Every Grabette serves a web dashboard on port **8000**. It is how you check the device, make a test recording, review episodes or switch wifi network — no SSH, no command line.
+
+```
+http://<hostname>.local:8000     # e.g. http://R-grabette.local:8000
 ```
 
-### 4. Record
+The device's IP address works too.
 
-Browse to `http://<hostname>.local:8000` and record — the physical button on the device and the dashboard's **Episodes** section do the same thing. See [The dashboard](./dashboard.md) for what each section does.
+![The dashboard's Overview page](https://github.com/pollen-robotics/grabette/raw/develop/docs/images/dashboard-overview-page.png)
 
-Recordings land in `~/grabette-data/` on the device.
+### Overview
 
-## Turn recordings into a LeRobot dataset
+The landing page.
 
-Two routes produce the same thing.
+- **Speaker** — the volume of the recording beeps, a mute button, and **Test sounds** to play them. It says so when no speaker is fitted.
+- **Cameras** — the live image, with an RGB / Depth toggle. Choosing Depth turns the depth camera on if it's off.
+- **3D model** — the gripper, moving with the live finger-joint angles. Open and close it to check if the angle sensors are properly calibrated, and use **Recalibrate** under it if they aren't.
+- **Device** — hostname, side (left or right hand), IP address and WiFi network, with a **Change network** shortcut.
+- **Health** — battery, temperature and storage used.
+- **Grabette data** — shortcuts to **Test Recording** and **Episodes**.
+- **Account & fleet** — the Hugging Face sign-in, and the **Fleet Space** button to record data and create datasets.
 
-### In the cloud
+### Signing in to Hugging Face
 
-Upload the episodes to a Hugging Face dataset from the dashboard's **Datasets** section, then run the [Grabette SLAM Space](./spaces.md#grabette-slam--lerobot) on them. Nothing to install; the Space does the SLAM and pushes the LeRobot dataset under your account.
+Click the Hugging Face button to sign in with your account (OAuth, one click). Pasting an access token is available as a fallback under *or use a token*; create one at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with write access to the datasets you intend to push.
 
-### On your workstation
+The Fleet Space and every upload depend on this login.
 
-Requires Docker and Python ≥ 3.12 (LeRobot's minimum). Copy the episodes off the device, then:
+### Test Recording
 
-```bash
-uv sync --package grabette-postprocess
-docker pull pollenrobotics/oak-vslam
-cd packages/grabette-postprocess
+A guided first recording, to check the whole device before a real session:
 
-# 1. sanity-check the recordings
-uv run python scripts/checks/check_dataset.py -i ~/data/dataset
+1. **Record a few seconds** — press the button and wait for the start signal (a rising beep, and the LED stops blinking), pick an object up, then press again and wait for the stop signal (the last beep, and the LED turns off). The page shows whether each camera is connected, and tells you when to press.
+2. **Check what was recorded** — a summary, a replay of the RGB and depth video with the angle chart, and a download link.
+3. **Delete it** — a test recording is not training data. If you keep it, it is filed under the *Unassigned* task in **Episodes**.
+4. **Record real data** — sign in to Hugging Face if needed, and open the Fleet Space.
 
-# 2. expand one episode into the layout the SLAM binary expects
-uv run python scripts/pipeline/convert_episode_to_oak.py -i ~/data/dataset/episode
+![The dashboard's Test Recording page](https://github.com/pollen-robotics/grabette/raw/develop/docs/images/dashboard-test-recording-page.png)
 
-# 3. recover the camera trajectory
-uv run python scripts/pipeline/run_oak_slam.py -i ~/data/dataset/episode
+### Episodes
 
-# 4. check the trajectory before you build on top of it
-uv run python scripts/checks/check_trajectory.py -i ~/data/dataset -v
+Where you review what is on the device.
 
-# 5. build the LeRobot v3 dataset
-uv run python scripts/pipeline/generate_dataset.py \
-  -i ~/data/dataset \
-  --repo_id your-name/your-dataset \
-  --task "pick up the cup" \
-  --root ~/lerobot_datasets
+- **Tasks** — pick a task to list its episodes. Tasks are created in the Fleet Space, not here.
+- **Episodes table** — duration, frame count, angles and status for each episode.
+- **Replay** — the video with the angle chart and a timeline.
+- **Check** — a full verdict on the episode's files and quality. Deleting a bad take now is much cheaper than discovering it after SLAM.
+- **Download** — the episode as an archive.
+- **Delete**, and **Delete all Grabette data** at the bottom of the page.
 
-# 6. push it to the Hub
-uv run python scripts/pipeline/push_to_hub.py \
-  --repo_id your-name/your-dataset \
-  --root ~/lerobot_datasets
-```
+![The dashboard's Episodes page](https://github.com/pollen-robotics/grabette/raw/develop/docs/images/dashboard-episodes-page.png)
 
-Steps 2 and 3 take a single episode directory; the others take the dataset directory containing them.
+### Network
 
-The full pipeline, including the synchronization checks and the Rerun 3D viewer, is documented in the [grabette-postprocess README](https://github.com/pollen-robotics/grabette/tree/develop/packages/grabette-postprocess).
+The device card again, and **Change WiFi network** to see the current connection and switch networks. The [Bluetooth tool](https://pollen-robotics.github.io/grabette/?device=grabette#wifi) is the fallback when the device isn't reachable at all.
 
-## Next steps
+## Ready to record your first dataset?
 
-- Train on the result: the repository's [DiffusionPolicy](https://github.com/pollen-robotics/grabette/tree/develop/integrations/DiffusionPolicy) and [π0.5](https://github.com/pollen-robotics/grabette/tree/develop/integrations/Pi05) integrations both consume this dataset format.
-- Record with several devices at once — see [the fleet Space](./spaces.md#grabette-fleet).
+Sign in to Hugging Face, then hop on to the [Fleet Space](./data_collection.md) 🚀

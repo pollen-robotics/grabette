@@ -183,7 +183,7 @@ class ButtonListener:
         # checking it first would flash solid mid-init, then blink again. Since
         # is_scheduled stays True until start_capture fully returns, this holds a
         # steady blink through the whole warm-up → solid only once truly recording.
-        if getattr(b, "is_starting", False) or get_capture_scheduler().is_scheduled():
+        if getattr(b, "is_starting", False) or get_capture_scheduler().is_pending():
             return "blink"       # initializing: warming up / waiting for T0
         if b.is_capturing:
             return "on"          # recording (solid)
@@ -274,7 +274,7 @@ class ButtonListener:
 
         if self._backend.is_teleop_active:
             self._toggle_teleop_send()
-        elif self._backend.is_capturing or get_capture_scheduler().is_scheduled():
+        elif self._backend.is_capturing or get_capture_scheduler().is_pending():
             self._do_stop_capture()
         else:
             self._do_start_capture()
@@ -320,6 +320,11 @@ class ButtonListener:
         status = sync.get("status")
         members = sync.get("members")
         signature = sync.get("signature")
+        if status == "waiting_camera":
+            # start_capture comes later from the fleet.
+            get_capture_scheduler().mark_waiting_for_fleet()
+            logger.info("Button start: fleet is waiting for the depth cameras")
+            return
         if status == "scheduled":
             gname = sync.get("task_name") or ""
             task_id = sm.get_or_create_task(gname) if gname else sm.active_task_id
@@ -370,13 +375,14 @@ class ButtonListener:
         self._stop_ack_until = time.monotonic() + STOP_ACK_S
         future = asyncio.run_coroutine_threadsafe(self._stop_capture_coro(), self._loop)
         try:
-            future.result(timeout=30.0)
+            # No timeout: the stop includes the mux, which grows with the take.
+            future.result()
         except Exception:
             logger.exception("Button stop_capture failed")
             cue_error()
 
     async def _stop_capture_coro(self) -> None:
-        from grabette.capture_scheduler import get_capture_scheduler
+        from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
         from grabette.fleet_sync import notify_group_stop
 
         scheduler = get_capture_scheduler()
@@ -393,6 +399,10 @@ class ButtonListener:
         if outcome == "cancelled":
             sm.discard_pending_episode()
             logger.info("Button stop: cancelled a pending scheduled start")
+            return
+        if outcome == "cancelled_wait":
+            await notify_group_stop(should_abort=scheduler.is_pending)
+            logger.info("Button stop: cancelled a start waiting for the cameras")
             return
         if not self._backend.is_capturing:
             logger.warning("Button stop ignored — not capturing")
@@ -414,8 +424,7 @@ class ButtonListener:
         await notify_group_stop(
             should_abort=lambda: self._backend.is_capturing or scheduler.is_scheduled(),
         )
-        status = await self._backend.stop_capture()
-        sm.register_episode(getattr(status, "episode_id", None))
+        status = await stop_capture_and_register(self._backend, sm)
         logger.info(
             "Button capture stopped: %.1fs, %d frames",
             status.duration_seconds, status.frame_count,

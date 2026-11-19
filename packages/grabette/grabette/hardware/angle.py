@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 CALIBRATION_FILE = Path.home() / ".grabette" / "angle_calibration.json"
 # Reads averaged per sensor when calibrating, for a stable zero.
 CALIBRATION_SAMPLES = 20
+# A capture iteration longer than this is logged with its timing breakdown:
+# well above the ~10 ms period, well below the 593 ms hole seen on 2026-11-04.
+SLOW_ITERATION_S = 0.1
 
 
 def load_calibration() -> dict | None:
@@ -96,6 +99,10 @@ class AngleCapture:
     DEFAULT_SAMPLE_RATE_HZ = 100
     AS5600_ADDRESS = 0x40  # AS5600L default; AS5600 (non-L) was 0x36
     ANGLE_REGISTER = 0x0C
+    # A sensor with no successful read for this long is reported unplugged.
+    # Several 50 Hz idle reads (or 100 Hz capture reads): one glitch is not a
+    # disconnection, a second of silence is.
+    STALE_S = 1.0
     # Per-sensor signs are read from settings.distal_sign / proximal_sign,
     # derived from settings.hand. See gripette/grabette/config.py for the
     # right/left → sign mapping.
@@ -120,6 +127,9 @@ class AngleCapture:
 
         self._offset_1_deg = 0.0
         self._offset_2_deg = 0.0
+        # time.monotonic() of the last successful read, distal then proximal —
+        # the only proof a sensor is there: opening its bus succeeds without one.
+        self._last_ok = [0.0, 0.0]
         self._load_calibration()
 
     def _load_calibration(self) -> None:
@@ -162,27 +172,64 @@ class AngleCapture:
 
         self._i2c_1 = ExtendedI2C(self.i2c_bus_1)
         self._i2c_2 = ExtendedI2C(self.i2c_bus_2)
+        # Opening /dev/i2c-N says nothing about the sensor behind it: read each
+        # one once, so an unplugged sensor fails here and not silently later.
+        for name, bus, i2c in (("distal", self.i2c_bus_1, self._i2c_1),
+                               ("proximal", self.i2c_bus_2, self._i2c_2)):
+            try:
+                self._read_angle_raw(i2c)
+            except OSError as e:
+                self._close()
+                raise OSError(e.errno, f"{name} sensor does not answer on "
+                                       f"/dev/i2c-{bus} ({e.strerror or e})") from e
         logger.info("Angle sensors initialized at %d Hz", self.sample_rate_hz)
 
     def _read_angle_raw(self, i2c) -> float:
         result = bytearray(2)
         i2c.writeto_then_readfrom(self.AS5600_ADDRESS, bytes([self.ANGLE_REGISTER]), result)
+        self._last_ok[0 if i2c is self._i2c_1 else 1] = time.monotonic()
         raw = ((result[0] & 0x0F) << 8) | result[1]
         return raw * 360.0 / 4096.0
+
+    def unresponsive(self) -> list[str]:
+        """The sensors that have not answered for STALE_S ("" = none)."""
+        now = time.monotonic()
+        return [name for name, t in zip(("distal", "proximal"), self._last_ok)
+                if now - t > self.STALE_S]
 
     def _capture_loop(self) -> None:
         error_count = 0
         read_count = 0
         sample_interval = 1.0 / self.sample_rate_hz
 
+        prev_start = None
+        t_read1 = t_read2 = None
         while self._running:
             loop_start = time.monotonic()
             read_count += 1
+            # An iteration takes ~10 ms; a long one is a hole in angle_data.
+            # Say where the time went: the two I2C reads, or the rest of the
+            # previous iteration (its sleep, or the GIL).
+            if prev_start is not None and loop_start - prev_start > SLOW_ITERATION_S:
+                logger.warning(
+                    "Angle loop stalled %.0f ms (distal read %s, proximal read %s, "
+                    "%d errors so far)",
+                    (loop_start - prev_start) * 1000,
+                    "-" if t_read1 is None else f"{t_read1 * 1000:.0f} ms",
+                    "-" if t_read2 is None else f"{t_read2 * 1000:.0f} ms",
+                    error_count,
+                )
+            prev_start = loop_start
+            t_read1 = t_read2 = None
 
             try:
                 ts = self.sync.get_timestamp_ms()
+                t = time.monotonic()
                 raw1 = self._read_angle_raw(self._i2c_1)
+                t_read1 = time.monotonic() - t
+                t = time.monotonic()
                 raw2 = self._read_angle_raw(self._i2c_2)
+                t_read2 = time.monotonic() - t
                 # i2c_bus_1 is the DISTAL sensor, _2 is PROXIMAL — see init.
                 cal1 = self._normalize_angle(raw1 - self._offset_1_deg) * settings.distal_sign
                 cal2 = self._normalize_angle(raw2 - self._offset_2_deg) * settings.proximal_sign
@@ -220,14 +267,16 @@ class AngleCapture:
             self._thread.join(timeout=1.0)
             self._thread = None
 
+        self._close()
+        return self._samples
+
+    def _close(self) -> None:
         if self._i2c_1 is not None:
             self._i2c_1.deinit()
             self._i2c_1 = None
         if self._i2c_2 is not None:
             self._i2c_2.deinit()
             self._i2c_2 = None
-
-        return self._samples
 
     @property
     def sample_count(self) -> int:

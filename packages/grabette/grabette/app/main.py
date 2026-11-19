@@ -74,6 +74,10 @@ def _create_backend():
             orbbec_ir_exposure_us=settings.orbbec_ir_exposure_us,
             orbbec_ir_gain=settings.orbbec_ir_gain,
             orbbec_rotate_180=settings.orbbec_rotate_180,
+            stereo_profile=settings.stereo_profile,
+            stereo_mode=settings.stereo_mode,
+            stereo_exposure=settings.stereo_exposure,
+            stereo_gamma=settings.stereo_gamma,
         )
     else:  # auto
         try:
@@ -88,6 +92,10 @@ def _create_backend():
                 orbbec_ir_exposure_us=settings.orbbec_ir_exposure_us,
                 orbbec_ir_gain=settings.orbbec_ir_gain,
                 orbbec_rotate_180=settings.orbbec_rotate_180,
+                stereo_profile=settings.stereo_profile,
+                stereo_mode=settings.stereo_mode,
+                stereo_exposure=settings.stereo_exposure,
+                stereo_gamma=settings.stereo_gamma,
             )
         except ImportError:
             from grabette.backend.mock import MockBackend
@@ -110,6 +118,7 @@ _SPACE_WAKE_PROBE_TIMEOUT_S = 20.0  # one liveness probe
 _SPACE_WAKE_RETRY_S = 5.0           # between probes
 _SPACE_POST_TIMEOUT_S = 120.0       # /api/process, on a Space known to be awake
 _SPACE_POLL_TIMEOUT_S = 30.0        # one /api/status poll (retried on failure)
+_SPACE_STALL_TIMEOUT_S = 1800.0     # no change in the Space's status for this long = wedged
 
 # --- episode upload (raw dataset) ---------------------------------------------
 # Three layers, because each catches what the one below it cannot:
@@ -163,6 +172,11 @@ _UPLOAD_WATCHDOG_POLL_S = 5.0       # how often staleness is judged. Costs nothi
 _UPLOAD_BLIND_ATTEMPT_TIMEOUT_S = 14400.0  # 4 h
 _UPLOAD_MAX_ATTEMPTS = 3
 _UPLOAD_RETRY_BASE_S = 5.0          # backoff: 5s, 10s (doubling per attempt)
+# Episodes per Hub commit (the Hub caps commits at 320/hour per repo).
+# Known limit: an episode whose depth PNGs could not be packed into
+# dcam_depth.mkv (or recorded before packing existed) keeps ~600 files, so a
+# batch of them can reach thousands of files in one commit.
+_UPLOAD_BATCH_EPISODES = 10
 # Deliberately narrow: uploads are sequential within a command, so one worker
 # does the work and the second is headroom for a single abandoned thread.
 _UPLOAD_WORKERS = 2
@@ -424,9 +438,25 @@ async def _await_upload(cf, dest: str, attempt: int) -> None:
         raise
 
 
-async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: bool,
-                              is_cancelled) -> None:
-    """Upload one episode dir, bounded and retried. Raises on final failure.
+class _RateLimited(Exception):
+    """Hub 429: not retried, the quota resets on the scale of an hour."""
+
+
+def _is_rate_limited(e: BaseException) -> bool:
+    """A 429 anywhere in the exception chain (duck-typed: no hub import here)."""
+    seen: set[int] = set()   # guards against cyclic chains
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if getattr(getattr(e, "response", None), "status_code", None) == 429:
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
+async def _upload_episode_batch(hf, batch: list[tuple], raw_repo: str, private: bool,
+                                is_cancelled, message: str | None = None) -> None:
+    """Upload a batch of (episode_dir, path_in_repo) as one Hub commit, bounded
+    and retried. Raises on final failure.
 
     Two distinct failures are handled here, and conflating them is what made a
     flaky link fatal:
@@ -447,7 +477,10 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
 
     Raises _CommandCancelled the moment the build is cancelled, including during
     a backoff wait: a cancel must not have to sit out a retry delay.
+
+    Raises _RateLimited on a 429, without retrying.
     """
+    dest = batch[0][1] if len(batch) == 1 else f"{batch[0][1]} (+{len(batch) - 1})"
     last: Exception | None = None
     for attempt in range(1, _UPLOAD_MAX_ATTEMPTS + 1):
         if is_cancelled():
@@ -464,8 +497,8 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
         # independent of the event loop. An asyncio future's callback is
         # scheduled ON the loop, so a loop that stops before the thread finishes
         # would leak the stall count permanently.
-        cf = _get_upload_executor().submit(
-            hf.upload_episode, ep_dir, raw_repo, None, dest, private)
+        cf = _get_upload_executor().submit(hf.upload_episodes, batch, raw_repo, private,
+                                                 message)
         try:
             await _await_upload(cf, dest, attempt)
             return
@@ -481,6 +514,11 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
             logger.error("abandoning the upload thread for %s: %s (%d now stalled)",
                          dest, _exc_text(e), stalled)
         except Exception as e:  # noqa: BLE001 — retry whatever the Hub/network raised
+            if _is_rate_limited(e):
+                raise _RateLimited(
+                    "Hugging Face rate limit reached — not retried, it resets on "
+                    "the scale of an hour. Episodes already uploaded are kept. "
+                    f"Hub said: {_exc_text(e)}") from e
             last = e
             logger.warning("upload of %s failed (attempt %d/%d): %s",
                            dest, attempt, _UPLOAD_MAX_ATTEMPTS, _exc_text(e))
@@ -551,7 +589,7 @@ def _device_activity() -> str:
         return "processing"
     if "uploading" in kinds:
         return "uploading"
-    # An upload we stopped waiting on is still RUNNING (see _upload_one_episode):
+    # An upload we stopped waiting on is still RUNNING (see _upload_episode_batch):
     # the thread cannot be killed, and on a Pi it is hashing and chunking, not
     # idling on a socket. The device is not free just because we gave up on it.
     if _stalled_uploads:
@@ -597,6 +635,49 @@ def _busy_reason() -> str:
     return _RECORDING_BLOCKERS.get(_device_activity(), "")
 
 
+# Longest a goal cue waits for the take it closes to be stopped and saved. A
+# group stop is scheduled a few seconds ahead and the save follows the mux, so
+# this is generous; past it something is wrong, and a late fanfare would only
+# confuse.
+GOAL_CUE_WAIT_S = 30.0
+# Pause after the "saved" blip so the two cues are heard apart — and so they
+# don't reach the card together (see _play_goal_when_saved).
+GOAL_CUE_GAP_S = 0.5
+_sound_tasks: set[asyncio.Task] = set()
+
+
+async def _play_goal_when_saved(backend) -> None:
+    """Play the goal cue once the take that reached the goal is stopped AND
+    saved. The fleet sends it on that take's stop, which this device then follows
+    with its own stop and saved cues, a second or more later: waiting them out
+    makes the goal the last thing heard, and keeps two aplay off the card at the
+    same time (the card is opened directly, without a mixer, so the second may
+    simply fail)."""
+    from grabette.hardware.sound import get_speaker
+
+    def busy() -> bool:
+        return (backend.is_capturing or getattr(backend, "is_stopping", False)
+                or backend.is_finalizing)
+
+    deadline = time.monotonic() + GOAL_CUE_WAIT_S
+    while busy():
+        if time.monotonic() > deadline:
+            logger.warning("Goal cue dropped: still recording or saving after %.0fs",
+                           GOAL_CUE_WAIT_S)
+            return
+        await asyncio.sleep(0.1)
+    await asyncio.sleep(GOAL_CUE_GAP_S)
+    get_speaker().play_goal()
+
+
+def _last_episode_report():
+    from grabette.app.routers.tasks import get_task_manager
+    backend = _daemon.backend if _daemon else None
+    if backend is None or backend.is_capturing or backend.is_finalizing:
+        return None
+    return get_task_manager().last_episode_issues()
+
+
 async def _dispatch_relay_command(cmd: dict) -> dict:
     """Map fleet commands to grabette daemon actions.
 
@@ -607,7 +688,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
     behaves identically to one triggered locally on this device.
     """
     from grabette.cancel import get_cancel_registry
-    from grabette.capture_scheduler import get_capture_scheduler
+    from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
     from grabette.daemon import DaemonState
     from grabette.task import episode_id_for
     from grabette.app.routers.tasks import get_task_manager
@@ -639,6 +720,29 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
     if daemon is None:
         return {"status": "error", "message": "daemon not running"}
     scheduler = get_capture_scheduler()
+
+    if ctype == "play_sound":
+        # The fleet's audio signal: the session's episode goal was just reached.
+        # Acked at once and played in the background — the relay runs commands
+        # one at a time, and waiting here for the save would hold up the next
+        # start_capture behind it.
+        cue = cmd.get("args", {}).get("cue")
+        if cue != "goal":
+            return {"status": "error", "message": f"unknown cue {cue!r}"}
+        task = asyncio.create_task(_play_goal_when_saved(daemon.backend))
+        _sound_tasks.add(task)  # strong ref: asyncio only keeps a weak one
+        task.add_done_callback(_sound_tasks.discard)
+        return {"status": "ok"}
+
+    if ctype == "test_sound":
+        # The fleet's ▶ buttons: the dashboard's sound test, refusals included.
+        from fastapi import HTTPException
+        from grabette.app.routers.sound import play_test
+        try:
+            play_test(cmd.get("args", {}).get("cue"))
+        except HTTPException as e:
+            return {"status": "error", "message": str(e.detail)}
+        return {"status": "ok"}
 
     if ctype == "get_state":
         status = daemon.status
@@ -717,22 +821,38 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                                 f"episode(s) can be converted"),
                     "uploaded": uploaded, "missing": missing, "incomplete": incomplete}
 
-        for eid, ep_dir in present:
-            # Cancellation checkpoint, once per episode. Checked BEFORE the first
-            # upload too: the cancel may have landed while this command was still
-            # queued behind another one (the relay's worker is serial), in which
-            # case nothing should be uploaded at all. Per-episode is the finest
-            # granularity available — one episode is a single blocking
-            # api.upload_folder inside hf.upload_episode, which cannot be
-            # interrupted from outside (see _upload_one_episode for the bound we
-            # put on it).
+        # Skip episodes already on the Hub (saves hashing). Best-effort; not
+        # attempted when stalled threads hold every worker (it would never run).
+        already: list[str] = []
+        if (present and not cancels.is_cancelled(cmd_id)
+                and _stalled_uploads < _UPLOAD_WORKERS):
+            try:
+                on_hub = await asyncio.wrap_future(_get_upload_executor().submit(
+                    hf.already_uploaded,
+                    [(ep_dir, f"{eid}/{role}") for eid, ep_dir in present], raw_repo))
+                already = [eid for eid, _ in present if f"{eid}/{role}" in on_hub]
+                present = [(eid, d) for eid, d in present if f"{eid}/{role}" not in on_hub]
+                uploaded.extend(already)
+                if already:
+                    logger.info("%d episode(s) already on %s, not re-uploaded",
+                                len(already), raw_repo)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("could not list %s, uploading every episode: %s",
+                               raw_repo, _exc_text(e))
+
+        n_batches = -(-len(present) // _UPLOAD_BATCH_EPISODES)
+        for start in range(0, len(present), _UPLOAD_BATCH_EPISODES):
+            batch = present[start:start + _UPLOAD_BATCH_EPISODES]
+            message = f"batch {start // _UPLOAD_BATCH_EPISODES + 1}/{n_batches} ({role})"
+            # Cancellation checkpoint, once per batch (a commit can't be interrupted).
             if cancels.is_cancelled(cmd_id):
                 return {"status": "cancelled", "role": role, "uploaded": uploaded,
                         "missing": missing, "incomplete": incomplete}
             try:
-                await _upload_one_episode(hf, ep_dir, raw_repo, f"{eid}/{role}", private,
-                                          lambda: cancels.is_cancelled(cmd_id))
-                uploaded.append(eid)
+                await _upload_episode_batch(
+                    hf, [(ep_dir, f"{eid}/{role}") for eid, ep_dir in batch],
+                    raw_repo, private, lambda: cancels.is_cancelled(cmd_id), message)
+                uploaded.extend(eid for eid, _ in batch)
             except _CommandCancelled:
                 return {"status": "cancelled", "role": role, "uploaded": uploaded,
                         "missing": missing, "incomplete": incomplete}
@@ -741,7 +861,8 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     # Cancelled mid-upload: the failure is a consequence, not news.
                     return {"status": "cancelled", "role": role, "uploaded": uploaded,
                             "missing": missing, "incomplete": incomplete}
-                return {"status": "error", "message": f"upload failed for {eid}: {_exc_text(e)}",
+                which = batch[0][0] if len(batch) == 1 else f"{batch[0][0]}…{batch[-1][0]}"
+                return {"status": "error", "message": f"upload failed for {which}: {_exc_text(e)}",
                         "uploaded": uploaded, "missing": missing,
                         "incomplete": incomplete, "role": role}
         if cancels.is_cancelled(cmd_id):
@@ -790,6 +911,9 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             "keep_raw": bool(args.get("keep_raw", True)),
             "check_only": check_only,
         }
+        # Absent = the Space's default; [] would mean keep nothing.
+        if args.get("keep") is not None:
+            payload["keep"] = list(args["keep"])
         # Cancelled while this command sat in the relay's queue → never even start
         # the conversion (it would push a dataset nobody asked for any more).
         if cancels.is_cancelled(cmd_id):
@@ -822,10 +946,14 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     space_jid = (await r.json()).get("job_id")
                 if not space_jid:
                     return {"status": "error", "message": "Space returned no job_id"}
-                deadline = time.monotonic() + 3600.0  # 60-min cap
+                last_progress = time.monotonic()
+                last_mark = None
                 while True:
-                    if time.monotonic() > deadline:
-                        return {"status": "error", "message": "processing timed out"}
+                    stalled = time.monotonic() - last_progress
+                    if stalled >= _SPACE_STALL_TIMEOUT_S:
+                        return {"status": "error", "message": (
+                            f"processing stalled — no progress from the Space for "
+                            f"{stalled / 60:.0f} min (job {space_jid})")}
                     await asyncio.sleep(5.0)
                     # Stop waiting on the Space as soon as the build is cancelled.
                     # NB: this releases the device, it does not stop the Space —
@@ -842,6 +970,9 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                             st = await r.json()
                     except Exception:  # noqa: BLE001 — transient poll error, retry
                         continue
+                    mark = (len(str(st.get("log") or "")), len(st.get("quality") or []))
+                    if mark != last_mark:
+                        last_mark, last_progress = mark, time.monotonic()
                     sstatus = st.get("status", "running")
                     if sstatus == "done":
                         result_url = st.get("result")
@@ -915,8 +1046,13 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         if not eids:
             return {"status": "error", "message": "episode_id or episode_ids is required"}
         tm = get_task_manager()
+        daemon = get_daemon_instance()
+        busy = getattr(daemon.backend, "busy_episode_id", None) if daemon else None
         deleted, absent, errors = [], [], []
         for eid in eids:
+            if eid == busy:
+                errors.append(f"{eid}: still being recorded or saved")
+                continue
             try:
                 tm.delete_episode(eid)
                 deleted.append(eid)
@@ -1092,8 +1228,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             await scheduler.schedule_stop(backend, tm, stop_target)
             return {"status": "scheduled_stop", "stop_at_utc": stop_target.isoformat()}
 
-        result = await backend.stop_capture()
-        tm.register_episode(getattr(result, "episode_id", None))
+        result = await stop_capture_and_register(backend, tm)
         # Return a plain dict, not the CaptureStatus model: the relay POSTs this
         # result as JSON, and json.dumps can't serialize a pydantic object — the
         # TypeError would escape the relay loop and kill it (the device then
@@ -1169,7 +1304,8 @@ async def lifespan(app: FastAPI):
             capabilities=["get_state", "start_capture", "stop_capture", "logout",
                           "upload_episodes", "process_dataset", "cancel_dataset",
                           "delete_episode", "edit_task", "delete_task",
-                          "assign_episodes", "prepare_capture", "shutdown"],
+                          "assign_episodes", "prepare_capture", "shutdown",
+                          "play_sound", "test_sound"],
             hand=settings.hand,
             battery_provider=_pisugar_battery,  # reported via heartbeat for the fleet UI
             tasks_provider=get_task_manager().report_tasks,  # this device's tasks, sent on connect
@@ -1183,6 +1319,8 @@ async def lifespan(app: FastAPI):
             # only find that out by walking up to the grabette and reading its
             # LED will find it out too late.
             fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
+            depth_warm_provider=lambda: getattr(_daemon.backend, "is_depth_camera_warm", None),
+            last_episode_provider=_last_episode_report,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
@@ -1240,6 +1378,7 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
+    from grabette.app.routers.angle import router as angle_router
     from grabette.app.routers.calibration import router as calibration_router
     from grabette.app.routers.charts import router as charts_router
     from grabette.app.routers.oakd import router as oakd_router
@@ -1262,6 +1401,7 @@ def create_app() -> FastAPI:
     app.include_router(replay_router)
     app.include_router(teleop_router)
     app.include_router(oakd_router)
+    app.include_router(angle_router)
     app.include_router(calibration_router)
 
     # Serve URDF model + STL meshes as static files
@@ -1294,13 +1434,6 @@ def create_app() -> FastAPI:
             from grabette.ui.app import MODAL_CSS, NAV_HEAD, create_ui
 
             demo = create_ui()
-            # `allowed_paths` whitelists directories from which Gradio's
-            # `/gradio_api/file=<path>` handler will serve files to the
-            # browser. Without this, the multi-GB episode archives written
-            # to data_dir/.downloads/ pass silently through — the file
-            # exists on disk but Gradio refuses to hand it out, and the UI
-            # never surfaces a download link. Default allowed paths cover
-            # only Gradio's own cache and the OS temp dir.
             # `css=` is not optional here: mount_gradio_app overwrites
             # blocks.css with its own argument, so the stylesheet passed to
             # gr.Blocks(css=...) is silently dropped when the UI is mounted
@@ -1309,7 +1442,6 @@ def create_app() -> FastAPI:
             # auth modal — disappears without this.
             app = gr.mount_gradio_app(
                 app, demo, path="/", css=MODAL_CSS, head=NAV_HEAD, footer_links=[],
-                allowed_paths=[str(settings.data_dir / ".downloads")],
             )
             logger.info("Gradio UI mounted at /")
         except ImportError:

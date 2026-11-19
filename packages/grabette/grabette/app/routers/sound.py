@@ -24,7 +24,7 @@ class VolumeRequest(BaseModel):
 
 
 class TestRequest(BaseModel):
-    # One cue of sound.TEST_SEQUENCE, or None for the whole sequence.
+    # One cue of sound.TESTABLE, or None for the whole TEST_SEQUENCE.
     cue: str | None = None
 
 
@@ -69,12 +69,11 @@ def set_volume(req: VolumeRequest):
     return _status()
 
 
-@router.post("/test")
-def test_sounds(req: TestRequest | None = None):
+def play_test(cue: str | None = None) -> dict:
     """Play the recording cues once, in the order a take produces them, or
-    only the one named by `cue`."""
-    cue = req.cue if req else None
-    if cue is not None and cue not in sound.TEST_SEQUENCE:
+    only the one named by `cue`. Raises HTTPException when it can't. Shared by
+    the dashboard (below) and the fleet's test_sound command (app.main)."""
+    if cue is not None and cue not in sound.TESTABLE:
         raise HTTPException(status_code=422, detail=f"Unknown sound: {cue}")
     # The sequence opens with the "recording is live" cue: played mid-take it
     # would tell the operator a recording just started.
@@ -89,3 +88,8 @@ def test_sounds(req: TestRequest | None = None):
     if not sound.get_speaker().play_test_sequence(cues):
         raise HTTPException(status_code=409, detail="A test is already playing.")
     return status
+
+
+@router.post("/test")
+def test_sounds(req: TestRequest | None = None):
+    return play_test(req.cue if req else None)

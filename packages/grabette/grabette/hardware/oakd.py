@@ -365,7 +365,7 @@ class OakdCapture:
             "baseline": baseline_m,
             "imu_to_cam": imu_extr,
         }
-        # Same contract the offline pipeline checks (grabette_postprocess
+        # Same contract the offline pipeline checks (grabette-slam's grabette_postprocess
         # checks.recording._check_calib): a present-but-degenerate calibration is
         # exactly as unusable as a missing one, so catch it here too rather than
         # letting it through to produce episodes that fail conversion.
@@ -520,6 +520,11 @@ class OakdCapture:
 
         stats = {
             "left_frames": len(self._left_ts),
+            "left_span_ms": (self._left_ts[-1]["host_ms"] - self._left_ts[0]["host_ms"]
+                             if len(self._left_ts) >= 2 else 0.0),
+            "left_max_gap_ms": max((b["host_ms"] - a["host_ms"]
+                                    for a, b in zip(self._left_ts, self._left_ts[1:])),
+                                   default=0.0),
             "right_frames": len(self._right_ts),
             "depth_frames": len(self._depth_ts) if self.enable_depth else None,
             "imu_samples": len(self._imu_samples),

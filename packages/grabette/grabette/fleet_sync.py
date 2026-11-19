@@ -82,6 +82,7 @@ async def request_group_start(task_name: str | None) -> dict[str, Any]:
                        locally (legitimate standalone episode).
       * "scheduled"  — group start scheduled: {scheduled_start_utc, task_name,
                        peers}. Record at the shared T0.
+      * "waiting_camera" — start_capture comes later from the fleet.
       * "refused"    — fleet was REACHED but declined (e.g. a peer is offline,
                        HTTP 409). The device IS in a group session, so the
                        caller must NOT silently record a half-rig solo episode
@@ -101,7 +102,7 @@ async def request_group_start(task_name: str | None) -> dict[str, Any]:
         # Timeout passed per-request: the borrowed relay session carries its own
         # (longer) session-wide default, which must not silently apply here.
         async with _http_session() as session:
-            async with session.post(url, json={"task_name": task_name or ""},
+            async with session.post(url, json={"task_name": task_name or "", "can_wait": True},
                                     headers=headers, timeout=timeout) as r:
                 if r.status == 200:
                     return await r.json()

@@ -10,27 +10,19 @@ This page is a starting point, seeded from the questions the repository's own do
 
 No. You demonstrate the task with your hand, holding the Grabette. The recording contains the camera trajectory and the finger-joint angles, and carries no assumption about which arm will eventually replay it. A robot only enters the picture at training and deployment time.
 
-## Do I need the OAK-D camera?
+## Do I need a depth camera?
 
-On **Grabette**, yes. Trajectory recovery is visual-inertial and uses the OAK-D SR's depth and IMU streams; without it there is no SLAM and therefore no dataset. It is off by default to save battery, so turn it on before recording.
+On **Grabette**, yes. Trajectory recovery uses the depth stream; without it there is no SLAM and therefore no dataset. The default is the Orbbec Gemini 305, which has no IMU, so SLAM runs IMU-free. A Luxonis OAK-D SR also works (`make install-rpi CAMERA=oakd`), and its IMU is then used too. The camera is off by default to save battery: a recording turns it on automatically, and it powers down about 30 s after the recording stops.
 
-On **Gripette** the OAK-D is optional — the standard motor-and-camera service doesn't need it.
-
-## The daemon says `Using MockBackend` on a real Raspberry Pi
-
-The virtualenv didn't pick up the apt-managed `picamera2` and `libcamera` packages, so the hardware backend can't import and the daemon falls back to mock data. Re-run `make install-rpi HAND=...`; it rebuilds the venv with `--system-site-packages` against the system Python and verifies every import.
+On **Gripette** a depth camera is optional — the standard motor-and-camera service doesn't need it.
 
 ## Why does `make install-rpi` insist on `HAND=`?
 
-A device is built as a left or a right hand, and the angle sensors are mounted mirrored between the two. The daemon has to know which it is to interpret them. The value is written to `/etc/grabette/env` and persists across reboots.
+A device is built as a left or a right hand, and the angle sensors are mounted mirrored between the two. The daemon has to know which it is to interpret them. The value is written to `/etc/grabette/env` (`/etc/gripette/env` on a Gripette) and persists across reboots.
 
-## `uv sync` is downloading gigabytes of PyTorch
+## I re-ran `install-rpi` and my OAK-D Grabette stopped working
 
-You ran it without `--package`. The repository is a single uv workspace, so a bare `uv sync` from anywhere in it resolves *every* package, training integrations included. Use `uv sync --package grabette` for one package, or `uv sync --all-packages` when you genuinely want the full development environment.
-
-## The `.stl` files are 130-byte text files
-
-The repository stores mesh assets in Git LFS and you cloned before running `git lfs install`. Install it, then `git lfs pull` in the clone. If you're deploying to a Pi, which never loads the meshes, skip them entirely with `GIT_LFS_SKIP_SMUDGE=1 git clone ...`.
+`CAMERA` defaults to `gemini305`, and `install-rpi` writes the setting rather than reading the previous one. Re-running it without `CAMERA=oakd` switches the device to the Gemini. Re-run `make install-rpi HAND=... CAMERA=oakd`.
 
 ## I can't reach `http://<hostname>.local:8000`
 
@@ -38,11 +30,24 @@ The repository stores mesh assets in Git LFS and you cloned before running `git 
 
 ## The Bluetooth tool won't connect
 
-It relies on Web Bluetooth, so it needs Chrome or Edge — Safari and Firefox won't work. Chrome may also need `chrome://flags/#enable-experimental-web-platform-features` enabled. If a connection hangs at pairing, clear the stale bond on both sides: `bluetoothctl remove <device-mac>` on the Pi, and *Forget* the device in `chrome://bluetooth-internals`.
+It relies on Web Bluetooth, so it needs Chrome or Edge on a computer or an Android phone — Safari and Firefox won't work, and on iPhone or iPad no browser does, Chrome included. Chrome may also need `chrome://flags/#enable-experimental-web-platform-features` enabled, notably on Linux.
 
-## Dataset generation fails on Python 3.11
+If a connection hangs at pairing, the stale bond is on your computer — the device clears its own side automatically. Remove the pairing in your Bluetooth settings (on Linux: `bluetoothctl devices | grep -i grabette | cut -d' ' -f2 | xargs -rn1 bluetoothctl remove`), and *Forget* the device in `chrome://bluetooth-internals`.
 
-LeRobot 0.6 requires Python ≥ 3.12, so dataset generation, publishing and visualization do too. The device packages stay installable on 3.11 — the requirement is gated by environment markers — but the post-processing side needs the newer interpreter.
+## On Linux, the Bluetooth tool keeps saying "GATT Server is disconnected"
+
+The first connection to a device always triggers a Bluetooth pairing, and a Linux desktop without a registered pairing agent rejects it, so every attempt drops after a fraction of a second. Pair once from a terminal:
+
+```bash
+bluetoothctl
+# then, inside bluetoothctl:
+agent on
+default-agent
+scan on          # wait for the device to appear, note its address
+pair <device-mac>
+```
+
+Once bonded, Chrome connects without pairing again. Windows and macOS ship a pairing agent, so this only affects Linux.
 
 ## Recordings from two devices don't line up
 
@@ -50,4 +55,4 @@ Synchronized group recording works by having every device wait out a shared UTC 
 
 ## Can I use Grabette with my own robot?
 
-Yes — that's the design. The core packages carry no dependency on any particular arm; the OpenArm integration in the repository is a worked example, not a requirement. To target another platform, add your own integration alongside it.
+Yes — that's the design. The core packages carry no dependency on any particular arm; the OpenArm integration in the [grabette-policy](https://github.com/pollen-robotics/grabette-policy) repository is a worked example, not a requirement. To target another platform, add your own integration alongside it.

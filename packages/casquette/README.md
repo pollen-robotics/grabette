@@ -26,4 +26,4 @@ uv run --package casquette python main.py   # → http://localhost:8001
 
 On-device build, systemd, and API docs are intentionally omitted while the design
 is in flux. For a working device and the full capture → postprocess pipeline, see
-[grabette](../grabette) and [grabette-postprocess](../grabette-postprocess).
+[grabette](../grabette) and [grabette-postprocess](https://github.com/pollen-robotics/grabette-slam/tree/develop/grabette-postprocess).

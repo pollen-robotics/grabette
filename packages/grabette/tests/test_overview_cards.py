@@ -93,3 +93,112 @@ def test_button_variant_keeps_the_one_login_implementation():
 def test_other_skins_are_untouched():
     assert "button.oauth{width:100%" not in widget_page()
     assert "button.oauth{width:100%" not in widget_page(compact=True)
+
+
+# ── Pre-recording checks ──────────────────────────────────────────────
+
+from grabette.ui.app import (  # noqa: E402
+    _ov_checks, _ov_checks_html, _ov_problems_html, _ts_depth_html,
+    _ts_first_section, _ts_rgb_html, _ts_tabs_css,
+)
+
+CAP = {"is_capturing": False, "blocked_reason": "", "needs_calibration": False}
+CAM = {"connected": True, "reinitializing": False}
+DCAM = {"supported": True, "enabled": False, "initialized": False,
+        "initializing": False, "label": "Gemini 305", "connected": True,
+        "error": ""}
+ANGLE = {"enabled": True, "initialized": True, "error": ""}
+
+
+def test_a_healthy_device_is_ready():
+    issues = _ov_checks(CAP, CAM, DCAM, ANGLE)
+    assert issues == []
+    out = _ov_checks_html(issues)
+    assert "gb-checks-ok" in out
+    assert out.count("✓") == 3
+    assert "Ready to record" in out
+    # Refused for a reason no part shows, like the calibration.
+    assert "Cannot record" in _ov_checks_html(issues, blocked=True)
+
+
+def test_a_silent_device_is_unknown_not_healthy():
+    assert _ov_checks(None, None, None, None) is None
+    assert "gb-checks-unknown" in _ov_checks_html(None)
+
+
+def test_every_part_at_fault_is_named_with_its_section():
+    issues = _ov_checks(
+        {**CAP, "blocked_reason": "x", "needs_calibration": True},
+        {"connected": False, "reinitializing": False},
+        {**DCAM, "connected": False},
+        {**ANGLE, "error": "the gripper angle sensors stopped answering"})
+    assert [(lvl, sec) for lvl, sec, _ in issues] == [
+        ("fail", "rgb"), ("fail", "depth"), ("fail", "angle")]
+    out = _ov_checks_html(issues)
+    assert out.count("Not working") == 3
+    assert 'title="Gripper angle sensors not working"' in out
+    assert "gb-checks-fail" in out
+    assert "Cannot record" in out
+    assert "3 problems to fix before recording" in _ov_problems_html(issues)
+
+
+def test_the_depth_cameras_own_fault_is_quoted():
+    issues = _ov_checks(CAP, CAM, {**DCAM, "error": "calibration unreadable"},
+                        ANGLE)
+    assert issues == [("fail", "depth", "Gemini 305: calibration unreadable")]
+    assert "calibration unreadable" in _ts_depth_html(
+        {**DCAM, "error": "calibration unreadable"})
+
+
+def test_a_busy_device_only_waits():
+    # An upload refuses the recording, but no part is at fault.
+    issues = _ov_checks({**CAP, "blocked_reason": "an upload is running"},
+                        CAM, DCAM, ANGLE)
+    assert issues == [("warn", None,
+                       "Cannot record right now — an upload is running")]
+    assert "gb-checks-warn" in _ov_checks_html(issues)
+
+
+def test_troubleshooting_opens_on_the_first_part_at_fault():
+    assert _ts_first_section([]) == "rgb"
+    assert _ts_first_section(None) == "rgb"
+    assert _ts_first_section([("warn", "rgb", ""), ("fail", "angle", "")]) == "angle"
+    assert _ts_first_section([("warn", None, "busy")]) == "rgb"
+
+
+def test_tabs_take_the_colour_of_their_part():
+    css = _ts_tabs_css([("fail", "angle", ""), ("warn", "rgb", "")])
+    assert '[data-tab-id="angle"]{--gb-tab-c:#ef4444;--gb-tab-m:"✗";}' in css
+    assert '[data-tab-id="rgb"]{--gb-tab-c:#f59e0b;' in css
+    assert '[data-tab-id="depth"]{--gb-tab-c:#10b981;--gb-tab-m:"✓";}' in css
+    assert '[data-tab-id="depth"]{--gb-tab-c:#94a3b8;' in _ts_tabs_css(None)
+
+
+def test_an_unplugged_depth_camera_is_not_ready():
+    # Nothing past "Plugged in" can pass while it is unplugged.
+    out = _ts_depth_html({**DCAM, "connected": False})
+    assert "#10b981" not in out
+    assert "depth-camera-cable.gif" in out
+    assert "no need to restart" in out
+    assert "depth-camera-cable.gif" not in _ts_depth_html(DCAM)
+
+
+def test_the_calibration_is_left_to_its_own_callout():
+    # Not calibrated refuses the recording, but has its own callout.
+    issues = _ov_checks({**CAP, "needs_calibration": True,
+                         "blocked_reason": "your device is not calibrated"},
+                        CAM, DCAM, ANGLE)
+    assert issues == []
+
+
+def test_a_missing_rgb_camera_shows_where_its_cable_runs():
+    out = _ts_rgb_html({"connected": False, "reinitializing": False})
+    assert "rgb-camera-cable.gif" in out
+    assert "rgb-camera-cable.gif" not in _ts_rgb_html(CAM)
+
+
+def test_a_missing_rgb_camera_says_it_is_only_found_at_start_up():
+    out = _ts_rgb_html({"connected": False, "reinitializing": False})
+    assert "only looks for this camera when it starts" in out
+    assert "can damage the camera" in out
+    assert "Reboot it" in out

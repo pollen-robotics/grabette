@@ -5,9 +5,9 @@ deployed devices use `oakd_*`, and the dashboard (TaskManager) and replay engine
 directly — so if the fallback breaks, an operator's existing episodes start
 reporting "no IMU" and replaying without accelerometer data.
 
-Mirrors packages/grabette-postprocess/tests/test_episode_files.py; the two
-resolvers are deliberate duplicates because the packages are independent
-distributions, so both need their own coverage.
+Mirrors grabette-postprocess/tests/test_episode_files.py in the grabette-slam
+repo; the two resolvers are deliberate duplicates because the packages live in
+separate repositories, so both need their own coverage.
 """
 import json
 

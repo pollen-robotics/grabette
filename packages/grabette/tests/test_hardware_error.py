@@ -339,7 +339,8 @@ def test_angle_init_failure_latches_a_fault(monkeypatch):
     b._init_angle_sensors()
 
     assert "angle_data.json" in b.hardware_error
-    assert "I2C" in b.hardware_error  # names where to look
+    # Where to look is the dashboard's Diagnose popup, not the message.
+    assert "could not be initialised" in b.hardware_error
     assert b._angle is None
 
 
@@ -475,3 +476,154 @@ def test_a_camera_that_never_left_the_bus_keeps_its_fault(monkeypatch):
 
     asyncio.run(run())
     assert b.hardware_error
+
+
+# --- angle sensors unplugged while the device is up ---------------------------
+# Opening /dev/i2c-N succeeds with nothing on the bus, and the idle reads used to
+# swallow their errors: a sensor unplugged after boot showed as connected and
+# the next recording came out without angle data.
+
+class _FakeBus:
+    def __init__(self):
+        self.present = True
+
+    def writeto_then_readfrom(self, addr, out, buf):
+        if not self.present:
+            raise OSError(121, "Remote I/O error")
+        buf[0], buf[1] = 0x01, 0x00
+
+    def deinit(self):
+        pass
+
+
+def _real_angle(monkeypatch, buses):
+    """A real AngleCapture on fake buses, and a fake ExtendedI2C to open them."""
+    from grabette.hardware import angle as angle_mod
+    from grabette.hardware.sync import SyncManager
+
+    ext = types.ModuleType("adafruit_extended_bus")
+    ext.ExtendedI2C = lambda n: buses[n]
+    monkeypatch.setitem(sys.modules, "adafruit_extended_bus", ext)
+    monkeypatch.setattr(angle_mod, "CALIBRATION_FILE",
+                        angle_mod.Path("/nonexistent/angle_calibration.json"))
+    return angle_mod.AngleCapture(SyncManager())
+
+
+def test_init_fails_when_a_sensor_is_not_plugged(monkeypatch):
+    buses = {3: _FakeBus(), 4: _FakeBus()}
+    buses[4].present = False
+    a = _real_angle(monkeypatch, buses)
+
+    with pytest.raises(OSError, match="proximal sensor does not answer on /dev/i2c-4"):
+        a.init_sensors()
+
+
+def test_unplugging_a_sensor_raises_the_fault_and_replugging_clears_it(monkeypatch):
+    from grabette.backend import rpi
+    from grabette.hardware import angle as angle_mod
+
+    buses = {3: _FakeBus(), 4: _FakeBus()}
+    a = _real_angle(monkeypatch, buses)
+    a.init_sensors()
+    b = rpi.RpiBackend(enable_angle=True, enable_oakd=False)
+    b._angle = a
+
+    b.get_state()
+    assert b.hardware_error == ""
+    assert b.angle_sensors_status["error"] == ""
+
+    buses[3].present = False
+    clock = [angle_mod.time.monotonic() + a.STALE_S + 0.1]
+    monkeypatch.setattr(angle_mod.time, "monotonic", lambda: clock[0])
+    b.get_state()
+    assert "stopped answering (distal)" in b.hardware_error
+    with pytest.raises(RuntimeError, match="angle"):
+        b.raise_if_capture_blocked()
+
+    buses[3].present = True
+    b.get_state()
+    assert b.hardware_error == ""
+
+
+def test_sensors_missing_at_boot_come_up_once_plugged(monkeypatch):
+    from grabette.backend import rpi
+
+    buses = {3: _FakeBus(), 4: _FakeBus()}
+    buses[3].present = False
+    _real_angle(monkeypatch, buses)  # installs the fake bus module
+    b = rpi.RpiBackend(enable_angle=True, enable_oakd=False)
+    b._sync = None
+    b._init_angle_sensors()
+    assert b._angle is None and "distal sensor does not answer" in b.hardware_error
+
+    buses[3].present = True
+    b._angle_retry_at = 0.0  # the retry is due
+    b.get_state()
+
+    assert b._angle is not None
+    assert b.hardware_error == ""
+
+
+# --- the RGB camera: missing at boot ------------------------------------------
+# Picamera2() raises when no camera is on the ribbon. That used to escape
+# start(): nothing else was brought up, the daemon sat in ERROR and the
+# dashboard showed every part as "unknown" instead of naming the missing one.
+
+def _no_rgb_camera(monkeypatch):
+    from grabette.hardware import camera as camera_mod
+
+    class _NoCamera:
+        def __init__(self, sync, fps):
+            self.closed = False
+
+        def init_camera(self):
+            raise IndexError("list index out of range")
+
+        def close(self):
+            self.closed = True
+
+        is_open = False
+
+    monkeypatch.setattr(camera_mod, "VideoCapture", _NoCamera)
+
+
+def test_a_missing_rgb_camera_is_a_fault_not_a_crash(monkeypatch):
+    import asyncio
+    from grabette.backend import rpi
+    _no_rgb_camera(monkeypatch)
+    b = rpi.RpiBackend(enable_angle=True)
+    started = []
+    monkeypatch.setattr(b, "_init_angle_sensors", lambda: started.append("angle"))
+    monkeypatch.setattr(b, "_check_angle_calibration", lambda: None)
+    monkeypatch.setattr(b, "_init_oakd", lambda: started.append("depth"))
+    monkeypatch.setattr(b, "_init_speaker", lambda: None)
+
+    async def run():
+        await b.start()  # must not raise
+        b._depth_camera_watch_task.cancel()
+
+    asyncio.run(run())
+
+    assert started == ["angle", "depth"]  # the rest still comes up
+    assert not b.is_camera_connected
+    assert b._camera.closed
+    assert b.hardware_error.startswith("the RGB camera is not detected")
+    with pytest.raises(RuntimeError):
+        b.raise_if_capture_blocked()
+
+
+def test_the_rgb_camera_fault_clears_once_it_opens(monkeypatch):
+    from grabette.backend import rpi
+    from grabette.hardware import camera as camera_mod
+    _no_rgb_camera(monkeypatch)
+    b = rpi.RpiBackend(enable_oakd=False)
+    b._init_camera()
+    assert b.hardware_error
+
+    monkeypatch.setattr(camera_mod, "VideoCapture", lambda sync, fps:
+                        types.SimpleNamespace(init_camera=lambda: None,
+                                              is_open=True))
+    b._init_camera()
+
+    assert b.hardware_error == ""
+    assert b.is_camera_connected

@@ -39,6 +39,8 @@ _LONGPOLL_HOLD_HINT_S = 1.5
 # fleet's ONLINE_WINDOW instead of waiting out the long-poll hold. Keep in step
 # with the fleet's DEVICE_HEARTBEAT_S.
 _HEARTBEAT_INTERVAL_S = 5.0
+# A depth_warm change is sent at once: the fleet holds starts on it.
+_DEPTH_WARM_CHECK_S = 0.5
 # Battery is read on its OWN slow cadence, NOT inside the heartbeat: the read is
 # I2C (PiSugar) and I2C is contended during capture, so a read can stall for
 # seconds. Doing it in the heartbeat would stall liveness → the fleet would mark
@@ -51,6 +53,8 @@ _BATTERY_INTERVAL_S = 30.0
 # are dispatched immediately, concurrently with whatever is running. Only put
 # command types here that do no hardware work and return fast.
 _FAST_PATH_TYPES = frozenset({"cancel_dataset"})
+_REPORT_ATTEMPTS = 3
+_REPORT_RETRY_S = 5.0
 
 # Hardware-fault text is reported on the heartbeat, i.e. in a query string. The
 # messages name the fault, the consequence and the fix, so they are a sentence or
@@ -132,6 +136,11 @@ class RelayClient:
         # fault into the activity enum would have made it invisible to a fleet
         # that only knows the four activity values.
         fault_provider: Optional[Callable[[], Optional[str]]] = None,
+        # Optional callable returning whether the depth camera is warm, or None
+        # when unknown. Lets the fleet pick a group start's lead.
+        depth_warm_provider: Optional[Callable[[], Optional[bool]]] = None,
+        # (episode id, issues) of the last recording once saved, else None.
+        last_episode_provider: Optional[Callable[[], Optional[tuple[str, list[str]]]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -146,9 +155,32 @@ class RelayClient:
         self.tasks_rev_provider = tasks_rev_provider
         self.activity_provider = activity_provider
         self.fault_provider = fault_provider
+        self.depth_warm_provider = depth_warm_provider
+        self.last_episode_provider = last_episode_provider
         self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
+        # Token of the last register: on an account switch the fleet may hold a
+        # stale entry for us that polls fine, so a new token forces a re-register.
+        self._registered_token: Optional[str] = None
+        self._sent_depth_warm: Optional[bool] = None  # last depth_warm sent to the fleet
         self._battery: Optional[float] = None  # cached; refreshed off the heartbeat path
         self.status = "offline"
+
+    def _read_depth_warm(self) -> Optional[bool]:
+        if self.depth_warm_provider is None:
+            return None
+        try:
+            return self.depth_warm_provider()
+        except Exception:
+            return None
+
+    async def _sleep_until_beat(self) -> None:
+        """One heartbeat interval, cut short by a depth_warm change."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _HEARTBEAT_INTERVAL_S
+        while (left := deadline - loop.time()) > 0:
+            await asyncio.sleep(min(_DEPTH_WARM_CHECK_S, left))
+            if self._read_depth_warm() != self._sent_depth_warm:
+                return
 
     def _headers(self, token: str) -> dict[str, str]:
         return {"Authorization": f"Bearer {token}"}
@@ -191,6 +223,7 @@ class RelayClient:
             f"{self.base_url}/api/devices/register", json=body, headers=self._headers(token)
         ) as r:
             r.raise_for_status()
+        self._registered_token = token
 
     async def _poll(self, session: aiohttp.ClientSession, token: str) -> list[dict[str, Any]]:
         async with session.get(
@@ -248,12 +281,18 @@ class RelayClient:
                         res = await handler(cmd)
                     except Exception as e:  # noqa: BLE001
                         res = {"status": "error", "message": str(e)}
-                    token = self.token_provider()
-                    if token:
-                        try:
-                            await self._report(session, token, cmd["id"], res)
-                        except Exception:
-                            logger.warning("relay report failed for %s", cmd.get("id"), exc_info=True)
+                    for attempt in range(_REPORT_ATTEMPTS):
+                        token = self.token_provider()
+                        if token:
+                            try:
+                                await self._report(session, token, cmd["id"], res)
+                                break
+                            except Exception:
+                                logger.warning("relay report failed for %s (attempt %d/%d)",
+                                               cmd.get("id"), attempt + 1, _REPORT_ATTEMPTS,
+                                               exc_info=True)
+                        if attempt + 1 < _REPORT_ATTEMPTS:
+                            await asyncio.sleep(_REPORT_RETRY_S)
                 finally:
                     # Nothing can act on this command any more, so stop remembering
                     # a cancel for it.
@@ -274,7 +313,7 @@ class RelayClient:
                 real disconnect fast. Best-effort: a missed beat only delays
                 detection slightly; a 404 (not yet registered) is ignored."""
                 while True:
-                    await asyncio.sleep(_HEARTBEAT_INTERVAL_S)
+                    await self._sleep_until_beat()
                     token = self.token_provider()
                     if not token:
                         continue
@@ -298,6 +337,21 @@ class RelayClient:
                         # a field that only appears when broken can never say
                         # "fixed". Truncated because it rides in a query string.
                         params["error"] = (fault or "")[:_FAULT_MAX_CHARS]
+                    # Sent on every beat, empty included: lets the fleet spot a
+                    # command this device forgot (fast restart, lost result).
+                    params["running"] = ",".join(sorted(inflight))
+                    warm = self._read_depth_warm()
+                    self._sent_depth_warm = warm
+                    if warm is not None:
+                        params["depth_warm"] = "true" if warm else "false"
+                    if self.last_episode_provider is not None:
+                        try:
+                            last = self.last_episode_provider()
+                        except Exception:
+                            last = None
+                        if last:
+                            params["last_episode"] = last[0]
+                            params["last_issues"] = ",".join(last[1])
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",
@@ -353,6 +407,8 @@ class RelayClient:
                     # (held the connection) or handed us work — no throttling
                     # needed, the hold itself paced us.
                     delay = self.poll_interval
+                    if token != self._registered_token:
+                        registered = False  # account switched (see _registered_token)
                     try:
                         if not registered:
                             await self._register(session, token)
