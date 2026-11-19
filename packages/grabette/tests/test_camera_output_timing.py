@@ -166,6 +166,9 @@ def test_written_frames_retain_sensor_times_and_existing_fps_default(capture):
     frame(camera, hardware, 25_000, 1_035_000_456, keyframe=False)
     assert camera.stop() == [10.000123, 35.000456]
     assert camera.timestamp_alignment["valid"]
+    assert not path.with_suffix(".frames.json").exists()
+    assert path.with_suffix(".h264").exists()
+    assert camera.frame_provenance.save()
     assert not path.with_suffix(".h264").exists()
     provenance = json.loads(path.with_suffix(".frames.json").read_text())
     assert [f["sensor_timestamp_ns"] for f in provenance["frames"]] == [
@@ -311,9 +314,24 @@ def test_failed_provenance_write_preserves_source_and_reports_alignment_failure(
         raise OSError("injected provenance write failure")
 
     monkeypatch.setattr(camera_module, "write_json_atomic", fail)
-    with pytest.raises(FrameAlignmentError, match="provenance"):
-        camera.stop()
+    camera.stop()
+    assert camera.frame_provenance.save() is False
+    assert camera.timestamp_alignment["valid"] is False
+    assert "provenance" in camera.timestamp_alignment["errors"][-1]
+    assert camera.timestamp_alignment["error_count"] == 1
     assert path.with_suffix(".h264").exists()
+
+
+def test_alignment_error_message_is_readable_and_counts_every_error():
+    from grabette.hardware.frame_timing import FrameTiming, MAX_KEPT_ERRORS
+    timing = FrameTiming(sync=None)
+    for i in range(MAX_KEPT_ERRORS + 5):
+        timing.record_error(f"No camera frame for output PTS: {i}")
+    alignment = timing.result(0)
+    assert len(alignment["errors"]) == MAX_KEPT_ERRORS + 1  # + "no mapped frames"
+    assert alignment["error_count"] == MAX_KEPT_ERRORS + 6
+    message = camera_module.describe_alignment_errors(alignment)
+    assert message == f"No camera frame for output PTS: 0 (and {MAX_KEPT_ERRORS + 5} more errors)"
 
 
 def test_failed_encoder_start_restores_gc_and_closes_output(capture):
@@ -456,6 +474,7 @@ def test_software_versions_are_saved_with_the_alignment(monkeypatch, capture):
     try:
         frame(camera, hardware, 0, 1_010_000_123)
         camera.stop()
+        camera.frame_provenance.save()
         expected = {"picamera2": "0.3.36", "ffmpeg": "5.1.6-0+deb12u1+rpt3", "ffprobe": None}
         assert camera.timestamp_alignment["software_versions"] == expected
         provenance = json.loads(path.with_suffix(".frames.json").read_text())

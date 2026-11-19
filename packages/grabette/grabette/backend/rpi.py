@@ -471,14 +471,8 @@ class RpiBackend(Backend):
         if self._depth_camera_watch_task is not None:
             self._depth_camera_watch_task.cancel()
             self._depth_camera_watch_task = None
-        alignment_error = None
         if self._capturing:
-            try:
-                await self.stop_capture()
-            except FrameAlignmentError as exc:
-                # The take is stopped, but shutdown still owns the remaining
-                # peripherals. Release them before surfacing its validation error.
-                alignment_error = exc
+            await self.stop_capture()
         # After any stop_capture (which may re-arm the keep-alive), drop the
         # pending power-down — we're shutting the OAK down directly below.
         self._cancel_oakd_keepalive()
@@ -502,8 +496,6 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
-        if alignment_error is not None:
-            raise alignment_error
 
     @property
     def recording_started_utc(self) -> datetime | None:
@@ -970,15 +962,15 @@ class RpiBackend(Backend):
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         _t_cam = time.monotonic()
-        alignment_error = None
+        video_valid = True
         try:
             frame_timestamps = self._camera.stop()
         except FrameAlignmentError as exc:
-            # The camera has stopped. Finish the other streams and retain their
-            # sidecars before returning a failed video/timestamp alignment.
-            alignment_error = exc
+            # Not a failed stop: the take is kept, marked invalid.
+            video_valid = False
             frame_timestamps = self._camera.frame_timestamps
             logger.error("Video timestamp alignment failed: %s", exc)
+        frame_provenance = self._camera.frame_provenance
         t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
         self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
@@ -1012,6 +1004,7 @@ class RpiBackend(Backend):
             frame_count=self._camera.frame_count,
             imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
             angle_sample_count=angle_count,
+            valid=video_valid,
         )
 
         # Build the metadata dict now so all values are captured while state
@@ -1039,7 +1032,7 @@ class RpiBackend(Backend):
             # explicit for downstream traceability).
             "urdf": urdf_name,
         }
-        if alignment_error is not None:
+        if not video_valid:
             meta["valid"] = False
         if oakd_stats:
             # Per-stream capture stats. Key is "dcam" since the camera may be an
@@ -1083,6 +1076,7 @@ class RpiBackend(Backend):
         loop.call_soon(
             self._finalize_and_reinit,
             episode_dir, frame_timestamps, angle_samples, meta, urdf_path,
+            frame_provenance,
         )
 
         total_ms = t_phases.get("angle_stop", 0) + t_phases.get("muxes_wallclock", 0)
@@ -1091,9 +1085,6 @@ class RpiBackend(Backend):
             " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
             total_ms,
         )
-        if alignment_error is not None:
-            alignment_error.episode_id = status.episode_id
-            raise alignment_error
         return status
 
     def _finalize_and_reinit(
@@ -1103,6 +1094,7 @@ class RpiBackend(Backend):
         angle_samples,
         meta,
         urdf_path,
+        frame_provenance=None,
     ) -> None:
         """Deferred post-stop work: JSON writes + calibration + frames + reinit.
 
@@ -1145,6 +1137,8 @@ class RpiBackend(Backend):
                     logger.warning(
                         "URDF missing at %s — episode will lack frames.json", urdf_path,
                     )
+                if frame_provenance is not None and not frame_provenance.save():
+                    meta["valid"] = False
                 # metadata.json goes last so its presence signals the episode
                 # is fully saved to any watcher.
                 write_json_atomic(episode_dir / "metadata.json", meta)

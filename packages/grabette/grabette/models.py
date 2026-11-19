@@ -23,6 +23,8 @@ class CaptureStatus(BaseModel):
     frame_count: int = 0
     imu_sample_count: int = 0
     angle_sample_count: int = 0
+    # False when the take's video failed timestamp alignment.
+    valid: bool = True
     # Why a capture cannot start right now ("" = it can). Rides on the status the
     # dashboard already polls, so a device tied up by an upload reads as busy
     # instead of "Idle" — a device that looks free while it is not is how a

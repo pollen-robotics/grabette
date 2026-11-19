@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # least 12 us within 10 frames: no offset shifted by whole frames fits them.
 # Without the depth camera's load they can stay within 2 us (see above).
 LOCK_FRAMES = 10
+MAX_KEPT_ERRORS = 10
 # PTS and sensor times are compared in microseconds; allow for rounding.
 TOLERANCE_US = 2
 _DELTAS = sorted(range(-TOLERANCE_US, TOLERANCE_US + 1), key=abs)
@@ -44,6 +45,7 @@ class FrameTiming:
         self.timestamps = []
         self.frames = []
         self.errors = []
+        self.error_count = 0
         self.camera_frame_count = 0
         self.written_count = 0
         self.unwritten_camera_frame_count = 0
@@ -58,7 +60,8 @@ class FrameTiming:
         self._lock = Lock()
 
     def _error(self, message):
-        if len(self.errors) < 10:
+        self.error_count += 1
+        if len(self.errors) < MAX_KEPT_ERRORS:
             self.errors.append(message)
 
     def record_error(self, message):
@@ -188,11 +191,13 @@ class FrameTiming:
         # Caller must stop the encoder and call finish() before this snapshot.
         with self._lock:
             errors = list(self.errors)
+            error_count = self.error_count
             if not self.timestamps:
                 errors.append("Video contains no mapped frames")
             if video_frame_count != len(self.timestamps) or self.written_count != len(self.timestamps):
                 errors.append(f"Frame counts differ: video={video_frame_count}, "
                               f"written={self.written_count}, timestamps={len(self.timestamps)}")
+            error_count += len(errors) - len(self.errors)
             return dict(valid=not errors, source="encoded_output_pts_matched_sensor_timestamp_v2",
                         video_frame_count=video_frame_count,
                         timestamp_count=len(self.timestamps),
@@ -201,4 +206,5 @@ class FrameTiming:
                         unwritten_camera_frame_count=self.unwritten_camera_frame_count,
                         pts_offset_us=self.pts_offset_us,
                         pts_offset_source=self.pts_offset_source,
-                        pts_offset_candidates=self.pts_offset_candidates, errors=errors)
+                        pts_offset_candidates=self.pts_offset_candidates, errors=errors,
+                        error_count=error_count)
