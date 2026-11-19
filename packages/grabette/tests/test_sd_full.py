@@ -246,7 +246,8 @@ def test_a_full_card_is_not_ready_to_record():
 def test_the_health_card_shows_space_left_and_flags_a_full_card():
     ok = _ov_health_card({"disk_free_gb": 40.0, "disk_total_gb": 58.0,
                           "disk_min_free_gb": 2.0})
-    assert "40.0 GB left of 58 GB" in ok and "gb-health-ok" in ok
+    assert "Space left (card: 58 GB)" in ok and ">40.0 GB<" in ok
+    assert "gb-health-ok" in ok
 
     low = _ov_health_card({"disk_free_gb": 3.0, "disk_total_gb": 58.0,
                            "disk_min_free_gb": 2.0})
@@ -254,7 +255,7 @@ def test_the_health_card_shows_space_left_and_flags_a_full_card():
 
     full = _ov_health_card({"disk_free_gb": 0.0, "disk_total_gb": 58.0,
                             "disk_min_free_gb": 2.0})
-    assert "⚠ Full · 0.0 GB left of 58 GB" in full
+    assert "⚠ 0.0 GB · full" in full
     assert "border:2px solid #ef4444" in full
 
 

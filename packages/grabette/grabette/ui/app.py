@@ -1895,31 +1895,32 @@ def _ov_health_card(info: dict | None) -> str:
     info = info or {}
     batt, color = _ov_battery(info)
     temp = f"{info['cpu_temp_c']} °C" if "cpu_temp_c" in info else "—"
-    storage, storage_color, card = _ov_storage(info), "", _OV_CARD
+    (storage_label, storage), storage_color, card = _ov_storage(info), "", _OV_CARD
     level = storage_level(info.get("disk_free_gb"),
                           info.get("disk_min_free_gb", settings.min_free_disk_gb))
     if level == "low":
         storage_color = "#f97316"
     elif level == "full":
         # The device refuses to record: the card says so before anyone presses.
-        storage, storage_color = f"⚠ Full · {storage}", "#ef4444"
+        storage, storage_color = f"⚠ {storage} · full", "#ef4444"
         card += "border:2px solid #ef4444;"
     return (
         f'<div class="gb-health-{level}" style="{card}">'
         + _ov_row("Battery", batt, color)
         + _ov_row("Temperature", temp)
-        + _ov_row("Storage", storage, storage_color)
+        + _ov_row(storage_label, storage, storage_color)
         + "</div>"
     )
 
 
-def _ov_storage(info: dict) -> str:
-    """What is left on the card — what a recording can still land in."""
-    if "disk_free_gb" not in info:
-        return "—"
+def _ov_storage(info: dict) -> tuple[str, str]:
+    """(label, value) for what is left on the card — what a recording can
+    still land in. The card's size goes in the label to keep the value short."""
     total = info.get("disk_total_gb")
-    left = f"{info['disk_free_gb']:.1f} GB left"
-    return f"{left} of {total:g} GB" if total else left
+    label = f"Space left (card: {total:g} GB)" if total else "Space left"
+    if "disk_free_gb" not in info:
+        return label, "—"
+    return label, f"{info['disk_free_gb']:.1f} GB"
 
 
 def _storage_popup_card(info: dict | None) -> str:
