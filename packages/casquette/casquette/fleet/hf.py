@@ -13,7 +13,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-# Must match RAW_DOWNLOAD_NAME_RE in grabette-fleet app.py.
+# Must match grabette/hf.py, casquette/fleet/hf.py and grabette-fleet app.py.
 RAW_DOWNLOAD_NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*-rawdl-\d{8}-\d{6}-[0-9a-f]{8}")
 
 

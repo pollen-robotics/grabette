@@ -197,6 +197,20 @@ def _get_upload_executor():
                 max_workers=_UPLOAD_WORKERS, thread_name_prefix="hf-upload")
     return _upload_executor
 
+
+# Own thread: stalled uploads can hold the whole upload pool.
+_DELETE_RAW_TIMEOUT_S = 120.0
+_delete_executor: "concurrent.futures.ThreadPoolExecutor | None" = None
+
+
+def _get_delete_executor():
+    global _delete_executor
+    with _upload_executor_lock:
+        if _delete_executor is None:
+            _delete_executor = concurrent.futures.ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="hf-delete")
+    return _delete_executor
+
 # Probing the app is the authoritative readiness test, but it cannot tell apart
 # "still booting" from two states it will never get out of. When the fleet also
 # names the Space REPO (space_repo, optional), the Hub runtime resolves both:
@@ -677,8 +691,14 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
 
         repos = (cmd.get("args") or {}).get("repos") or []
         try:
-            res = await asyncio.get_running_loop().run_in_executor(
-                _get_upload_executor(), get_hf_client().delete_raw_download_repos, repos)
+            res = await asyncio.wait_for(
+                asyncio.get_running_loop().run_in_executor(
+                    _get_delete_executor(), get_hf_client().delete_raw_download_repos, repos),
+                timeout=_DELETE_RAW_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return {"status": "error",
+                    "message": f"deleting {len(repos)} repo(s) timed out after "
+                               f"{_DELETE_RAW_TIMEOUT_S:.0f}s"}
         except Exception as e:  # noqa: BLE001
             return {"status": "error", "message": _exc_text(e)}
         if res["refused"] or res["failed"]:

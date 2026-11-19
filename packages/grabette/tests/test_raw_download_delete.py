@@ -1,5 +1,6 @@
 """delete_raw_repos: only this user's raw-download repos are ever deleted."""
 import asyncio
+import threading
 
 from grabette import hf
 from grabette.app import main
@@ -63,3 +64,58 @@ def test_the_command_needs_no_daemon(monkeypatch):
     res = asyncio.run(main._dispatch_relay_command(
         {"type": "delete_raw_repos", "id": "c2", "args": {"repos": [OURS]}}))
     assert res["status"] == "ok" and api.deleted == [OURS]
+
+
+# Same cases as grabette-fleet's test_raw_download.py.
+FLEET_BUILT = [
+    "pick-and-place-rawdl-20261029-100000-aaaa1111",
+    "a" * 31 + "-rawdl-20261029-100000-aaaa1111",
+]
+NOT_A_DOWNLOAD = [
+    "pick-rawdl-20261029-100000-aaaa1111-backup",
+    "pick-rawdl-20261029-100000",
+    "pick-rawdl-20261029-100000-AAAA1111",
+    "my-dataset",
+]
+
+
+def test_the_name_pattern_agrees_with_the_fleet():
+    for name in FLEET_BUILT:
+        assert hf.RAW_DOWNLOAD_NAME_RE.fullmatch(name), name
+    for name in NOT_A_DOWNLOAD:
+        assert not hf.RAW_DOWNLOAD_NAME_RE.fullmatch(name), name
+
+
+def test_the_delete_skips_the_relay_queue():
+    from grabette.relay_client import _FAST_PATH_TYPES
+    assert "delete_raw_repos" in _FAST_PATH_TYPES
+
+
+def test_a_saturated_upload_pool_does_not_hold_up_the_delete(monkeypatch):
+    c, api = _client(monkeypatch)
+    monkeypatch.setattr("grabette.app.routers.huggingface.get_hf_client", lambda: c)
+    release = threading.Event()
+    pool = main._get_upload_executor()
+    stuck = [pool.submit(release.wait) for _ in range(main._UPLOAD_WORKERS)]
+    try:
+        res = asyncio.run(main._dispatch_relay_command(
+            {"type": "delete_raw_repos", "id": "c3", "args": {"repos": [OURS]}}))
+        assert res["status"] == "ok" and api.deleted == [OURS]
+    finally:
+        release.set()
+        for f in stuck:
+            f.result()
+
+
+def test_a_hung_delete_is_reported_not_waited_on(monkeypatch):
+    c, api = _client(monkeypatch)
+    release = threading.Event()
+    monkeypatch.setattr(api, "delete_repo", lambda repo, **kw: release.wait())
+    monkeypatch.setattr("grabette.app.routers.huggingface.get_hf_client", lambda: c)
+    monkeypatch.setattr(main, "_DELETE_RAW_TIMEOUT_S", 0.1)
+    try:
+        res = asyncio.run(main._dispatch_relay_command(
+            {"type": "delete_raw_repos", "id": "c4", "args": {"repos": [OURS]}}))
+        assert res["status"] == "error" and "timed out" in res["message"]
+    finally:
+        release.set()

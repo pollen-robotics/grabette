@@ -28,6 +28,8 @@ _daemon: Daemon | None = None
 # is too late to be usable as multi-device data — refuse rather than keep a
 # desynced episode. (Mirrors grabette's MAX_START_LATENESS_S.)
 MAX_START_LATENESS_S = 1.0
+# Under the fleet's RAW_DELETE_WAIT_S (300 s).
+_DELETE_RAW_TIMEOUT_S = 120.0
 
 
 def _exc_text(e: BaseException) -> str:
@@ -121,7 +123,13 @@ async def _handle_relay_command(cmd: dict) -> dict:
 
         repos = (cmd.get("args") or {}).get("repos") or []
         try:
-            res = await asyncio.to_thread(get_hf_client().delete_raw_download_repos, repos)
+            res = await asyncio.wait_for(
+                asyncio.to_thread(get_hf_client().delete_raw_download_repos, repos),
+                timeout=_DELETE_RAW_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            return {"status": "error",
+                    "message": f"deleting {len(repos)} repo(s) timed out after "
+                               f"{_DELETE_RAW_TIMEOUT_S:.0f}s"}
         except Exception as e:  # noqa: BLE001
             return {"status": "error", "message": _exc_text(e)}
         if res["refused"] or res["failed"]:

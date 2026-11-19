@@ -52,7 +52,7 @@ _BATTERY_INTERVAL_S = 30.0
 # would only run once that upload had finished — i.e. never cancel anything. These
 # are dispatched immediately, concurrently with whatever is running. Only put
 # command types here that do no hardware work and return fast.
-_FAST_PATH_TYPES = frozenset({"cancel_dataset"})
+_FAST_PATH_TYPES = frozenset({"cancel_dataset", "delete_raw_repos"})
 _REPORT_ATTEMPTS = 3
 _REPORT_RETRY_S = 5.0
 
