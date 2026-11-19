@@ -139,6 +139,8 @@ class RelayClient:
         # Optional callable returning whether the depth camera is warm, or None
         # when unknown. Lets the fleet pick a group start's lead.
         depth_warm_provider: Optional[Callable[[], Optional[bool]]] = None,
+        # (episode id, issues) of the last recording once saved, else None.
+        last_episode_provider: Optional[Callable[[], Optional[tuple[str, list[str]]]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -154,6 +156,7 @@ class RelayClient:
         self.activity_provider = activity_provider
         self.fault_provider = fault_provider
         self.depth_warm_provider = depth_warm_provider
+        self.last_episode_provider = last_episode_provider
         self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
         # Token of the last register: on an account switch the fleet may hold a
         # stale entry for us that polls fine, so a new token forces a re-register.
@@ -341,6 +344,14 @@ class RelayClient:
                     self._sent_depth_warm = warm
                     if warm is not None:
                         params["depth_warm"] = "true" if warm else "false"
+                    if self.last_episode_provider is not None:
+                        try:
+                            last = self.last_episode_provider()
+                        except Exception:
+                            last = None
+                        if last:
+                            params["last_episode"] = last[0]
+                            params["last_issues"] = ",".join(last[1])
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",

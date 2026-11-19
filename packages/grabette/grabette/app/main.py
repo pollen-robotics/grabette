@@ -670,6 +670,14 @@ async def _play_goal_when_saved(backend) -> None:
     get_speaker().play_goal()
 
 
+def _last_episode_report():
+    from grabette.app.routers.tasks import get_task_manager
+    backend = _daemon.backend if _daemon else None
+    if backend is None or backend.is_capturing or backend.is_finalizing:
+        return None
+    return get_task_manager().last_episode_issues()
+
+
 async def _dispatch_relay_command(cmd: dict) -> dict:
     """Map fleet commands to grabette daemon actions.
 
@@ -680,7 +688,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
     behaves identically to one triggered locally on this device.
     """
     from grabette.cancel import get_cancel_registry
-    from grabette.capture_scheduler import get_capture_scheduler
+    from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
     from grabette.daemon import DaemonState
     from grabette.task import episode_id_for
     from grabette.app.routers.tasks import get_task_manager
@@ -1215,8 +1223,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             await scheduler.schedule_stop(backend, tm, stop_target)
             return {"status": "scheduled_stop", "stop_at_utc": stop_target.isoformat()}
 
-        result = await backend.stop_capture()
-        tm.register_episode(getattr(result, "episode_id", None))
+        result = await stop_capture_and_register(backend, tm)
         # Return a plain dict, not the CaptureStatus model: the relay POSTs this
         # result as JSON, and json.dumps can't serialize a pydantic object — the
         # TypeError would escape the relay loop and kill it (the device then
@@ -1308,6 +1315,7 @@ async def lifespan(app: FastAPI):
             # LED will find it out too late.
             fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
             depth_warm_provider=lambda: getattr(_daemon.backend, "is_depth_camera_warm", None),
+            last_episode_provider=_last_episode_report,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

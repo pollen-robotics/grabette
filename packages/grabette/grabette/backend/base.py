@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
 
 from grabette.models import CaptureStatus, SensorState
@@ -33,6 +34,12 @@ class Backend(ABC):
         episodes by the common scheduled_start_utc and (b) convert each stream to
         absolute UTC to align them. Consumed once (cleared after)."""
         self._sync_metadata = dict(meta or {})
+
+    @property
+    def recording_started_utc(self) -> datetime | None:
+        """Wall-clock instant of the last recording's t=0 (the shared zero of
+        its stream timestamps), or None when the backend doesn't know it."""
+        return None
 
     def _take_sync_metadata(self) -> dict:
         """Return and clear the pending sync metadata (so a later solo capture

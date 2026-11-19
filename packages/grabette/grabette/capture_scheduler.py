@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 FLEET_WAIT_MAX_S = 30.0
 
 
+async def stop_capture_and_register(backend, task_manager):
+    """Stop and file the take, even an invalid one (valid=False)."""
+    result = await backend.stop_capture()
+    task_manager.register_episode(getattr(result, "episode_id", None),
+                                  valid=getattr(result, "valid", True))
+    return result
+
+
 class CaptureScheduler:
     def __init__(self) -> None:
         self._task: asyncio.Task | None = None
@@ -102,6 +110,10 @@ class CaptureScheduler:
                 wake = datetime.now(timezone.utc)
                 await backend.start_capture(episode_dir)
                 started = datetime.now(timezone.utc)
+                # The streams' t=0, not `started`: start_capture keeps running
+                # 60-120 ms past t=0 (encoder start, cue), by a different
+                # amount on each device, which misaligned the arms by as much.
+                t0 = backend.recording_started_utc or started
                 logger.info("Scheduled start fired (target %s)", target_utc.isoformat())
                 # Record multi-device sync info into the episode's metadata.json
                 # (folded in at stop): the shared target lets a workstation PAIR
@@ -110,7 +122,7 @@ class CaptureScheduler:
                 # expose the residual timing for diagnostics.
                 backend.set_sync_metadata({
                     "scheduled_start_utc": target_utc.isoformat(),
-                    "capture_started_utc": started.isoformat(),
+                    "capture_started_utc": t0.isoformat(),
                     "wake_skew_ms": round((wake - target_utc).total_seconds() * 1000, 1),
                     "start_capture_ms": round((started - wake).total_seconds() * 1000, 1),
                 })
@@ -143,8 +155,7 @@ class CaptureScheduler:
             if wait_s > 0:
                 await asyncio.sleep(wait_s)
             if backend.is_capturing:
-                result = await backend.stop_capture()
-                sm.register_episode(getattr(result, "episode_id", None))
+                await stop_capture_and_register(backend, sm)
                 logger.info("Scheduled stop fired (target %s)", stop_at_utc.isoformat())
         except asyncio.CancelledError:
             raise
