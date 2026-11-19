@@ -42,3 +42,23 @@ def test_the_backend_names_the_take_until_its_files_are_written(tmp_path):
 
     backend._finalizing = False
     assert backend.busy_episode_id is None
+
+
+def test_the_dashboard_cannot_delete_the_episode_being_saved(tmp_path):
+    from fastapi import HTTPException
+    import pytest
+    tm = TaskManager(data_dir=tmp_path)
+    saving = tm.create_episode(episode_id="saving-take")
+    tm.register_episode(saving)
+    old = tm.create_episode(episode_id="old-take")
+    tm.register_episode(old)
+    backend = SimpleNamespace(busy_episode_id="saving-take", is_capturing=False, is_finalizing=True)
+
+    with pytest.raises(HTTPException) as caught:
+        tasks.delete_episode("saving-take", backend=backend, tm=tm)
+    assert caught.value.status_code == 409
+    assert tasks.delete_episode("old-take", backend=backend, tm=tm) == {"deleted": "old-take"}
+
+    with pytest.raises(HTTPException):
+        tasks.delete_all_episodes(backend=backend, tm=tm)
+    assert tm.episode_dir(saving).is_dir()

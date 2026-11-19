@@ -359,7 +359,8 @@ def delete_all_episodes(
     backend: Backend = Depends(get_backend),
     tm: TaskManager = Depends(get_task_manager),
 ):
-    if backend.is_capturing or get_capture_scheduler().is_scheduled():
+    if (backend.is_capturing or backend.is_finalizing
+            or get_capture_scheduler().is_scheduled()):
         raise HTTPException(status_code=409, detail="A recording is in progress")
     try:
         count = tm.delete_all_episodes()
@@ -369,7 +370,13 @@ def delete_all_episodes(
 
 
 @router.delete("/api/episodes/{episode_id}")
-def delete_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+def delete_episode(
+    episode_id: str,
+    backend: Backend = Depends(get_backend),
+    tm: TaskManager = Depends(get_task_manager),
+):
+    if episode_id == backend.busy_episode_id:
+        raise HTTPException(status_code=409, detail="This episode is still being recorded or saved")
     try:
         tm.delete_episode(episode_id)
     except FileNotFoundError:
