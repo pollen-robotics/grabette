@@ -12,6 +12,7 @@ import json
 import pytest
 
 from grabette.backend import rpi
+from grabette.hardware.episode_files import invalid_reasons
 from grabette.output import write_json_atomic
 from grabette.task import episode_issues
 
@@ -72,6 +73,7 @@ def test_a_failed_teardown_still_ends_the_capture(monkeypatch, tmp_path):
     assert b._episode_dir is None
     # Returned, not raised: every caller files the episode like any other.
     assert status.episode_id == "ep"
+    assert status.valid is False
     assert status.duration_seconds == 4.2
     assert b._speaker.played == ["stop", "error"]
 
@@ -84,6 +86,8 @@ def test_the_failed_episode_says_why(monkeypatch, tmp_path):
     meta = json.loads((ep / "metadata.json").read_text())
     assert "No space left on device" in meta["stop_error"]
     assert episode_issues({"metadata_ok": True, **meta}) == ["stop_failed"]
+    assert meta["valid"] is False
+    assert invalid_reasons(ep) == ["stop_failed"]
 
 
 def test_a_full_card_is_named_as_the_cause(monkeypatch, tmp_path):
@@ -108,6 +112,7 @@ def test_a_failing_depth_mux_is_waited_for_and_survived(monkeypatch, tmp_path):
 
     class _OkCamera:
         frame_count = 10
+        frame_provenance = None
 
         def stop(self):
             return [0.0, 21.7]
