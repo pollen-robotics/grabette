@@ -1,0 +1,13 @@
+{
+    "configuration": "default",
+    "documentId": "0c6175c392788391992ff2ec",
+    "documentMicroversion": "80c8c6e43966a3da6997902f",
+    "elementId": "39f7c34630a2d229eb581a87",
+    "fullConfiguration": "default",
+    "id": "MF9sOCdAH/oF3zsSY",
+    "isStandardContent": false,
+    "name": "Raspi_Box_L <1>",
+    "partId": "RYCD",
+    "suppressed": false,
+    "type": "Part"
+}

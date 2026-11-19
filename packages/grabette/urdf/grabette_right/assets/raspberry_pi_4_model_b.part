@@ -1,0 +1,13 @@
+{
+    "configuration": "default",
+    "documentId": "8331f25f0267d98b9962a289",
+    "documentMicroversion": "f728a3354996701aab7516fb",
+    "elementId": "b7f3246a7f99adf791d28f75",
+    "fullConfiguration": "default",
+    "id": "M3SSk14qXQju93RJQ",
+    "isStandardContent": false,
+    "name": "Raspberry Pi 4 Model B <1>",
+    "partId": "KF3G",
+    "suppressed": false,
+    "type": "Part"
+}

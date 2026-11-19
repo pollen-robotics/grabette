@@ -1,0 +1,13 @@
+{
+    "configuration": "default",
+    "documentId": "0c6175c392788391992ff2ec",
+    "documentMicroversion": "80c8c6e43966a3da6997902f",
+    "elementId": "73aedc66a2a8459e006fa147",
+    "fullConfiguration": "default",
+    "id": "MBbaClCeGruq8ovm7",
+    "isStandardContent": false,
+    "name": "HMI <1>",
+    "partId": "JGD",
+    "suppressed": false,
+    "type": "Part"
+}

@@ -724,4 +724,19 @@
     <axis xyz="0 0 1" />
     <limit effort="10" velocity="10" lower="-0" upper="1.5708" />
   </joint>
+  <!-- Frame aruco (dummy link + fixed joint) -->
+  <link name="aruco">
+    <origin xyz="0 0 0" rpy="0 -0 0"/>
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="1e-9"/>
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0"/>
+    </inertial>
+  </link>
+  <joint name="aruco_frame" type="fixed">
+    <origin xyz="0.0408486 -0.101004 0.0941257" rpy="1.22173 -0 -0"/>
+    <parent link="grip_l"/>
+    <child link="aruco"/>
+    <axis xyz="0 0 0"/>
+  </joint>
 </robot>
