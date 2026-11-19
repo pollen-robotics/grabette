@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from grabette.app.dependencies import get_backend
 from grabette.backend.base import Backend
-from grabette.capture_scheduler import get_capture_scheduler
+from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
 from grabette.episode_check import missing_files
 from grabette.fleet_sync import notify_group_stop, request_group_start
 from grabette.hardware.episode_files import DCAM_LEFT, resolve
@@ -254,9 +254,7 @@ async def stop_capture(
     await notify_group_stop(
         should_abort=lambda: backend.is_capturing or scheduler.is_scheduled(),
     )
-    status = await backend.stop_capture()
-    # File the episode into its task only now that its data is written.
-    tm.register_episode(getattr(status, "episode_id", None))
+    status = await stop_capture_and_register(backend, tm)
     return status
 
 
@@ -361,7 +359,8 @@ def delete_all_episodes(
     backend: Backend = Depends(get_backend),
     tm: TaskManager = Depends(get_task_manager),
 ):
-    if backend.is_capturing or get_capture_scheduler().is_scheduled():
+    if (backend.is_capturing or backend.is_finalizing
+            or get_capture_scheduler().is_scheduled()):
         raise HTTPException(status_code=409, detail="A recording is in progress")
     try:
         count = tm.delete_all_episodes()
@@ -371,7 +370,13 @@ def delete_all_episodes(
 
 
 @router.delete("/api/episodes/{episode_id}")
-def delete_episode(episode_id: str, tm: TaskManager = Depends(get_task_manager)):
+def delete_episode(
+    episode_id: str,
+    backend: Backend = Depends(get_backend),
+    tm: TaskManager = Depends(get_task_manager),
+):
+    if episode_id == backend.busy_episode_id:
+        raise HTTPException(status_code=409, detail="This episode is still being recorded or saved")
     try:
         tm.delete_episode(episode_id)
     except FileNotFoundError:

@@ -18,8 +18,10 @@ from __future__ import annotations
 
 import json
 
-from grabette.hardware.episode_files import DCAM_IMU, metadata_stats, resolve
+from grabette.hardware.episode_files import (DCAM_IMU, episode_features, metadata_stats,
+                                             resolve, video_aligned)
 import logging
+import os
 import shutil
 import tarfile
 import tempfile
@@ -92,18 +94,24 @@ class EpisodeInfo(BaseModel):
     metadata_ok: bool = True
     # Streams that recorded well under their frame rate ("rgb", "depth").
     frame_drops: list[str] = []
+    # False when the saved video cannot be paired with its capture timestamps
+    # (metadata.json "valid", set from video_timestamp_alignment). The episode
+    # beeped at stop: it must not be listed as OK.
+    video_aligned: bool = True
     issues: list[str] = []  # see episode_issues()
 
 
 def episode_issues(ep: dict) -> list[str]:
-    """Episode faults, worst first: "metadata", "camera", "angles",
-    "<stream>_frames_dropped". Unreadable metadata stands alone (the other
+    """Episode faults, worst first: "metadata", "camera", "video_sync",
+    "angles", "<stream>_frames_dropped". Unreadable metadata stands alone (the other
     counters are then zeros)."""
     if not ep.get("metadata_ok", True):
         return ["metadata"]
     issues = []
     if not ep.get("has_video", True) or not ep.get("frame_count"):
         issues.append("camera")
+    elif not ep.get("video_aligned", True):
+        issues.append("video_sync")
     if not ep.get("angle_sample_count"):
         issues.append("angles")
     issues += [f"{stream}_frames_dropped" for stream in ep.get("frame_drops") or []]
@@ -133,6 +141,7 @@ class TaskManager:
         self._registry_path = self.data_dir / "tasks.json"
         self._legacy_registry_path = self.data_dir / "sessions.json"
         self._tasks: list[dict] = []
+        self._features: dict[str, dict] = {}
         self.active_task_id: str = UNASSIGNED_ID
         # Runtime session (a recording run for a task) — not persisted.
         self._session_active: bool = False
@@ -149,6 +158,7 @@ class TaskManager:
         # know when to re-report this device's tasks to the fleet.
         self._revision: int = 0
         self._last_episode_id: str | None = None
+        self._last_issues: tuple[str, list[str]] | None = None
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +166,7 @@ class TaskManager:
         self._load()
         self._migrate_legacy()
         self._ensure_unassigned()
+        self._backfill_features()
         self._save()
 
     # ── Persistence ───────────────────────────────────────────────────
@@ -169,9 +180,16 @@ class TaskManager:
                 data = json.loads(path.read_text())
                 # Legacy files use the "sessions" key; new ones use "tasks".
                 self._tasks = data.get("tasks", data.get("sessions", []))
-            except (json.JSONDecodeError, KeyError):
-                logger.warning("Corrupt task registry, starting fresh")
+                self._features = data.get("episode_features") or {}
+            except (ValueError, KeyError, AttributeError) as e:
+                # Keep the bad file for manual recovery instead of overwriting it.
+                backup = path.with_name(
+                    f"{path.name}.corrupt-{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                )
+                path.rename(backup)
+                logger.error("Corrupt task registry (%s), moved to %s, starting fresh", e, backup)
                 self._tasks = []
+                self._features = {}
         else:
             self._tasks = []
 
@@ -180,10 +198,34 @@ class TaskManager:
         # change-signal: the relay reports tasks to the fleet only when this
         # revision moves (see RelayClient), instead of resending on every beat.
         self._revision += 1
-        data = {"tasks": self._tasks}
+        data = {"tasks": self._tasks, "episode_features": self._features}
         tmp = self._registry_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
+        # fsync so a power cut can't leave a garbage tasks.json.
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, indent=2))
+            f.flush()
+            os.fsync(f.fileno())
         tmp.rename(self._registry_path)
+
+    def _backfill_features(self) -> None:
+        for t in self._tasks:
+            for eid in t.get("episode_ids", []):
+                if eid in self._features:
+                    continue
+                try:
+                    ep_dir = self.episode_dir(eid)
+                except FileNotFoundError:
+                    continue
+                if ep_dir.is_dir():
+                    self._features[eid] = episode_features(ep_dir)
+
+    @staticmethod
+    def _configured_camera() -> str | None:
+        try:
+            from grabette.config import settings
+            return settings.depth_camera
+        except Exception:
+            return None
 
     # ── Migration ─────────────────────────────────────────────────────
 
@@ -273,7 +315,7 @@ class TaskManager:
         self._pending_episode = (episode_id, task_id, members, signature)
         return episode_id
 
-    def register_episode(self, episode_id: str | None = None) -> None:
+    def register_episode(self, episode_id: str | None = None, valid: bool = True) -> None:
         """File the just-finished episode into its task and bump the count.
 
         Called after stop_capture has written the episode's files. Resolves
@@ -323,6 +365,12 @@ class TaskManager:
             target["device_signature"] = list(own_signature)
         if members:
             target.setdefault("episode_members", {})[eid] = members
+        # metadata.json isn't written yet: fall back to the configured camera.
+        ep_dir = self.episode_dir(eid)
+        if ep_dir.is_dir():
+            self._features[eid] = episode_features(ep_dir, self._configured_camera())
+            if not valid:
+                self._features[eid]["invalid"] = ["video_sync"]
         # active_task_id is deliberately NOT moved onto the task we just filed
         # into: it is the operator's EXPLICIT local selection (PUT
         # /api/tasks/active, start_session), never a side effect of recording.
@@ -344,6 +392,15 @@ class TaskManager:
         if eid is None or not self.episode_dir(eid).exists():
             return None
         return self._get_episode_info(eid)
+
+    def last_episode_issues(self) -> tuple[str, list[str]] | None:
+        """(id, issues) of the last episode, cached. Call only once its files are written."""
+        eid = self._last_episode_id
+        if eid is None or not self.episode_dir(eid).exists():
+            return None
+        if self._last_issues is None or self._last_issues[0] != eid:
+            self._last_issues = (eid, self._get_episode_info(eid).issues)
+        return self._last_issues
 
     def discard_pending_episode(self) -> None:
         """Drop a pending (created-but-never-registered) episode, removing its
@@ -413,6 +470,7 @@ class TaskManager:
             if episode_id in t["episode_ids"]:
                 t["episode_ids"].remove(episode_id)
                 t.get("episode_members", {}).pop(episode_id, None)
+                self._features.pop(episode_id, None)
                 if t["id"] != UNASSIGNED_ID and not t["episode_ids"]:
                     self._tasks.remove(t)
                 break
@@ -440,6 +498,7 @@ class TaskManager:
         for t in self._tasks:
             t["episode_ids"] = []
             t.pop("episode_members", None)
+        self._features = {}
         self._save()
         return len(dirs)
 
@@ -517,6 +576,7 @@ class TaskManager:
         imu_sample_count = 0
         angle_sample_count = 0
         frame_drops = []
+        aligned = True
         metadata_ok = True
         meta_path = ep_dir / "metadata.json"
         if meta_path.exists():
@@ -539,6 +599,7 @@ class TaskManager:
                                 or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
             frame_drops = meta.get("frame_drops", [])
+            aligned = video_aligned(meta)
         else:
             metadata_ok = False
 
@@ -553,6 +614,7 @@ class TaskManager:
             has_imu=imu_present,
             metadata_ok=metadata_ok,
             frame_drops=frame_drops,
+            video_aligned=aligned,
         )
         info.issues = episode_issues(info.model_dump())
         return info
@@ -586,10 +648,18 @@ class TaskManager:
             groups: dict[tuple, dict] = {}
             for eid in t["episode_ids"]:
                 m = members_by_ep.get(eid, {})
-                key = tuple(sorted((role, w.get("device_id")) for role, w in m.items()))
+                feat = self._features.get(eid)
+                key = (tuple(sorted((role, w.get("device_id")) for role, w in m.items())),
+                       (feat["camera"], tuple(feat["streams"]), tuple(feat.get("invalid", ())))
+                       if feat else None)
                 g = groups.get(key)
                 if g is None:
                     g = groups[key] = {"members": m, "episode_ids": []}
+                    if feat:
+                        g["features"] = {"camera": feat["camera"],
+                                         "streams": list(feat["streams"])}
+                        if feat.get("invalid"):
+                            g["features"]["invalid"] = list(feat["invalid"])
                 g["episode_ids"].append(eid)
             out.append({
                 "name": t["name"],
@@ -636,12 +706,15 @@ class TaskManager:
         episodes = []
         for eid in eids[-UNASSIGNED_REPORT_LIMIT:]:
             info = self._get_episode_info(eid)
-            episodes.append({
+            ep = {
                 "episode_id": eid,
                 "members": members_by_ep.get(eid) or own_members,
                 "duration_seconds": info.duration_seconds,
                 "has_video": info.has_video,
-            })
+            }
+            if not info.video_aligned:
+                ep["invalid"] = ["video_sync"]
+            episodes.append(ep)
         return {"total": len(eids), "episodes": episodes}
 
     # ── Task operations ────────────────────────────────────────────────

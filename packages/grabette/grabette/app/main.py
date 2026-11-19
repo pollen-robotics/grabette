@@ -172,6 +172,11 @@ _UPLOAD_WATCHDOG_POLL_S = 5.0       # how often staleness is judged. Costs nothi
 _UPLOAD_BLIND_ATTEMPT_TIMEOUT_S = 14400.0  # 4 h
 _UPLOAD_MAX_ATTEMPTS = 3
 _UPLOAD_RETRY_BASE_S = 5.0          # backoff: 5s, 10s (doubling per attempt)
+# Episodes per Hub commit (the Hub caps commits at 320/hour per repo).
+# Known limit: an episode whose depth PNGs could not be packed into
+# dcam_depth.mkv (or recorded before packing existed) keeps ~600 files, so a
+# batch of them can reach thousands of files in one commit.
+_UPLOAD_BATCH_EPISODES = 10
 # Deliberately narrow: uploads are sequential within a command, so one worker
 # does the work and the second is headroom for a single abandoned thread.
 _UPLOAD_WORKERS = 2
@@ -433,9 +438,25 @@ async def _await_upload(cf, dest: str, attempt: int) -> None:
         raise
 
 
-async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: bool,
-                              is_cancelled) -> None:
-    """Upload one episode dir, bounded and retried. Raises on final failure.
+class _RateLimited(Exception):
+    """Hub 429: not retried, the quota resets on the scale of an hour."""
+
+
+def _is_rate_limited(e: BaseException) -> bool:
+    """A 429 anywhere in the exception chain (duck-typed: no hub import here)."""
+    seen: set[int] = set()   # guards against cyclic chains
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if getattr(getattr(e, "response", None), "status_code", None) == 429:
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
+async def _upload_episode_batch(hf, batch: list[tuple], raw_repo: str, private: bool,
+                                is_cancelled, message: str | None = None) -> None:
+    """Upload a batch of (episode_dir, path_in_repo) as one Hub commit, bounded
+    and retried. Raises on final failure.
 
     Two distinct failures are handled here, and conflating them is what made a
     flaky link fatal:
@@ -456,7 +477,10 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
 
     Raises _CommandCancelled the moment the build is cancelled, including during
     a backoff wait: a cancel must not have to sit out a retry delay.
+
+    Raises _RateLimited on a 429, without retrying.
     """
+    dest = batch[0][1] if len(batch) == 1 else f"{batch[0][1]} (+{len(batch) - 1})"
     last: Exception | None = None
     for attempt in range(1, _UPLOAD_MAX_ATTEMPTS + 1):
         if is_cancelled():
@@ -473,8 +497,8 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
         # independent of the event loop. An asyncio future's callback is
         # scheduled ON the loop, so a loop that stops before the thread finishes
         # would leak the stall count permanently.
-        cf = _get_upload_executor().submit(
-            hf.upload_episode, ep_dir, raw_repo, None, dest, private)
+        cf = _get_upload_executor().submit(hf.upload_episodes, batch, raw_repo, private,
+                                                 message)
         try:
             await _await_upload(cf, dest, attempt)
             return
@@ -490,6 +514,11 @@ async def _upload_one_episode(hf, ep_dir, raw_repo: str, dest: str, private: boo
             logger.error("abandoning the upload thread for %s: %s (%d now stalled)",
                          dest, _exc_text(e), stalled)
         except Exception as e:  # noqa: BLE001 — retry whatever the Hub/network raised
+            if _is_rate_limited(e):
+                raise _RateLimited(
+                    "Hugging Face rate limit reached — not retried, it resets on "
+                    "the scale of an hour. Episodes already uploaded are kept. "
+                    f"Hub said: {_exc_text(e)}") from e
             last = e
             logger.warning("upload of %s failed (attempt %d/%d): %s",
                            dest, attempt, _UPLOAD_MAX_ATTEMPTS, _exc_text(e))
@@ -560,7 +589,7 @@ def _device_activity() -> str:
         return "processing"
     if "uploading" in kinds:
         return "uploading"
-    # An upload we stopped waiting on is still RUNNING (see _upload_one_episode):
+    # An upload we stopped waiting on is still RUNNING (see _upload_episode_batch):
     # the thread cannot be killed, and on a Pi it is hashing and chunking, not
     # idling on a socket. The device is not free just because we gave up on it.
     if _stalled_uploads:
@@ -641,6 +670,14 @@ async def _play_goal_when_saved(backend) -> None:
     get_speaker().play_goal()
 
 
+def _last_episode_report():
+    from grabette.app.routers.tasks import get_task_manager
+    backend = _daemon.backend if _daemon else None
+    if backend is None or backend.is_capturing or backend.is_finalizing:
+        return None
+    return get_task_manager().last_episode_issues()
+
+
 async def _dispatch_relay_command(cmd: dict) -> dict:
     """Map fleet commands to grabette daemon actions.
 
@@ -651,7 +688,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
     behaves identically to one triggered locally on this device.
     """
     from grabette.cancel import get_cancel_registry
-    from grabette.capture_scheduler import get_capture_scheduler
+    from grabette.capture_scheduler import get_capture_scheduler, stop_capture_and_register
     from grabette.daemon import DaemonState
     from grabette.task import episode_id_for
     from grabette.app.routers.tasks import get_task_manager
@@ -784,22 +821,38 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                                 f"episode(s) can be converted"),
                     "uploaded": uploaded, "missing": missing, "incomplete": incomplete}
 
-        for eid, ep_dir in present:
-            # Cancellation checkpoint, once per episode. Checked BEFORE the first
-            # upload too: the cancel may have landed while this command was still
-            # queued behind another one (the relay's worker is serial), in which
-            # case nothing should be uploaded at all. Per-episode is the finest
-            # granularity available — one episode is a single blocking
-            # api.upload_folder inside hf.upload_episode, which cannot be
-            # interrupted from outside (see _upload_one_episode for the bound we
-            # put on it).
+        # Skip episodes already on the Hub (saves hashing). Best-effort; not
+        # attempted when stalled threads hold every worker (it would never run).
+        already: list[str] = []
+        if (present and not cancels.is_cancelled(cmd_id)
+                and _stalled_uploads < _UPLOAD_WORKERS):
+            try:
+                on_hub = await asyncio.wrap_future(_get_upload_executor().submit(
+                    hf.already_uploaded,
+                    [(ep_dir, f"{eid}/{role}") for eid, ep_dir in present], raw_repo))
+                already = [eid for eid, _ in present if f"{eid}/{role}" in on_hub]
+                present = [(eid, d) for eid, d in present if f"{eid}/{role}" not in on_hub]
+                uploaded.extend(already)
+                if already:
+                    logger.info("%d episode(s) already on %s, not re-uploaded",
+                                len(already), raw_repo)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("could not list %s, uploading every episode: %s",
+                               raw_repo, _exc_text(e))
+
+        n_batches = -(-len(present) // _UPLOAD_BATCH_EPISODES)
+        for start in range(0, len(present), _UPLOAD_BATCH_EPISODES):
+            batch = present[start:start + _UPLOAD_BATCH_EPISODES]
+            message = f"batch {start // _UPLOAD_BATCH_EPISODES + 1}/{n_batches} ({role})"
+            # Cancellation checkpoint, once per batch (a commit can't be interrupted).
             if cancels.is_cancelled(cmd_id):
                 return {"status": "cancelled", "role": role, "uploaded": uploaded,
                         "missing": missing, "incomplete": incomplete}
             try:
-                await _upload_one_episode(hf, ep_dir, raw_repo, f"{eid}/{role}", private,
-                                          lambda: cancels.is_cancelled(cmd_id))
-                uploaded.append(eid)
+                await _upload_episode_batch(
+                    hf, [(ep_dir, f"{eid}/{role}") for eid, ep_dir in batch],
+                    raw_repo, private, lambda: cancels.is_cancelled(cmd_id), message)
+                uploaded.extend(eid for eid, _ in batch)
             except _CommandCancelled:
                 return {"status": "cancelled", "role": role, "uploaded": uploaded,
                         "missing": missing, "incomplete": incomplete}
@@ -808,7 +861,8 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
                     # Cancelled mid-upload: the failure is a consequence, not news.
                     return {"status": "cancelled", "role": role, "uploaded": uploaded,
                             "missing": missing, "incomplete": incomplete}
-                return {"status": "error", "message": f"upload failed for {eid}: {_exc_text(e)}",
+                which = batch[0][0] if len(batch) == 1 else f"{batch[0][0]}…{batch[-1][0]}"
+                return {"status": "error", "message": f"upload failed for {which}: {_exc_text(e)}",
                         "uploaded": uploaded, "missing": missing,
                         "incomplete": incomplete, "role": role}
         if cancels.is_cancelled(cmd_id):
@@ -857,6 +911,9 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             "keep_raw": bool(args.get("keep_raw", True)),
             "check_only": check_only,
         }
+        # Absent = the Space's default; [] would mean keep nothing.
+        if args.get("keep") is not None:
+            payload["keep"] = list(args["keep"])
         # Cancelled while this command sat in the relay's queue → never even start
         # the conversion (it would push a dataset nobody asked for any more).
         if cancels.is_cancelled(cmd_id):
@@ -989,8 +1046,13 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         if not eids:
             return {"status": "error", "message": "episode_id or episode_ids is required"}
         tm = get_task_manager()
+        daemon = get_daemon_instance()
+        busy = getattr(daemon.backend, "busy_episode_id", None) if daemon else None
         deleted, absent, errors = [], [], []
         for eid in eids:
+            if eid == busy:
+                errors.append(f"{eid}: still being recorded or saved")
+                continue
             try:
                 tm.delete_episode(eid)
                 deleted.append(eid)
@@ -1166,8 +1228,7 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
             await scheduler.schedule_stop(backend, tm, stop_target)
             return {"status": "scheduled_stop", "stop_at_utc": stop_target.isoformat()}
 
-        result = await backend.stop_capture()
-        tm.register_episode(getattr(result, "episode_id", None))
+        result = await stop_capture_and_register(backend, tm)
         # Return a plain dict, not the CaptureStatus model: the relay POSTs this
         # result as JSON, and json.dumps can't serialize a pydantic object — the
         # TypeError would escape the relay loop and kill it (the device then
@@ -1259,6 +1320,7 @@ async def lifespan(app: FastAPI):
             # LED will find it out too late.
             fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
             depth_warm_provider=lambda: getattr(_daemon.backend, "is_depth_camera_warm", None),
+            last_episode_provider=_last_episode_report,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

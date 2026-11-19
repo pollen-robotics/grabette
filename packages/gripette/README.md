@@ -36,7 +36,7 @@ uv run --package gripette python main.py
 
 ### Raspberry Pi Zero 2W
 
-**Recommended: flash the prebuilt image.** Download `image_<date>-gripetteos-<version>.zip` from the [latest grabette-os release](https://github.com/pollen-robotics/grabette-os/releases/latest) and flash it with the Raspberry Pi Imager ("Use custom"; no customisation is possible). Then set the WiFi with the [Bluetooth tool](https://pollen-robotics.github.io/grabette/#wifi), SSH in as `pollen` (password `root`), and give it a hostname containing `left` or `right`, from which the hand is read: `sudo hostnamectl set-hostname gripette-right-1f9a2b && sudo systemctl restart gripette`. Deps, UART, crash hardening and the systemd services are already baked in; only the [calibration](#calibration) is left to do.
+**Recommended: flash the prebuilt image.** Download `image_<date>-gripetteos-<version>.zip` from the [latest grabette-os release](https://github.com/pollen-robotics/grabette-os/releases/latest) and flash it with the Raspberry Pi Imager ("Use custom"; no customisation is possible). Then set the WiFi with the [Bluetooth tool](https://pollen-robotics.github.io/grabette/?device=gripette#wifi), SSH in as `pollen` (password `root`), and give it a hostname containing `left` or `right`, from which the hand is read: `sudo hostnamectl set-hostname gripette-right-1f9a2b && sudo systemctl restart gripette`. Deps, UART, crash hardening and the systemd services are already baked in; only the [calibration](#calibration) is left to do.
 
 The rest of this section is the **manual install** on a stock Raspberry Pi OS.
 
@@ -137,42 +137,58 @@ The `scripts/` directory holds CLI tools for teleoperation, diagnostics, motor/c
 
 ## systemd
 
-`make install-systemd` installs both services (`gripette.service`, the gRPC motor+camera server, and `gripette-bluetooth.service`), patching the hard-coded workspace path in each unit file to this device's actual root, then enables + starts both.
+`make install-systemd` installs the services (`gripette.service`, the gRPC motor+camera server, `gripette-bluetooth.service`, and the dashboard, `gripette-web.service` — see below), patching the hard-coded workspace path in each unit file to this device's actual root, then enables + starts them.
 
 ```bash
 make install-systemd
 journalctl -u gripette -f             # main service logs
 journalctl -u gripette-bluetooth -f   # BT WiFi-setup service logs
+journalctl -u gripette-web -f         # dashboard logs
 ```
 
-## Status web UI
+## Dashboard
 
 The quickest way to check that a gripette is healthy — and to restart the
-service or cleanly shut the device down — is its built-in status page:
+service or cleanly shut the device down — is its dashboard, laid out like the
+grabette dashboard's Overview. `make install-systemd` installs it; on a device
+set up before that, install it alone:
 
 ```bash
 make install-web      # once per device: sudoers drop-in + gripette-web.service
 ```
 
-Then browse to `http://<gripette-hostname>.local:8080` (the install prints
+Then browse to `http://<gripette-hostname>.local:8000` (the install prints
 this device's exact URL; the device IP works too). The page shows:
 
-- an **OK / failure banner** — green means service up, gRPC answering, and a
+- an **OK / failure badge** — green means service up, gRPC answering, and a
   fresh camera frame flowing through the real `StreamState` pipeline;
-- the **live camera view** (~1 Hz), motor positions, and the service's
-  auto-restart count (which counts camera-wedge self-heals);
-- system vitals (CPU temperature, throttling, WiFi signal, disk) and the
-  last journal lines with errors highlighted;
-- **Restart service** and **Shut down device** buttons. Both are gated by a
-  sudoers rule limited to those two exact commands; shutdown is the clean
-  way to power off a gripette (it has no power button).
+- the **live camera view** (~1 Hz) and a **3D model** of the gripette that
+  follows the motors (~4 Hz);
+- **Device** (hostname, side, IP, WiFi network) and **Health** (CPU
+  temperature, throttling, WiFi signal, storage) cards;
+- the service's state, auto-restart count (which counts camera-wedge
+  self-heals), motor positions, and the last journal lines with errors
+  highlighted;
+- **Restart service** and **Power off** buttons. Both are gated by a
+  sudoers rule limited to those two exact commands; power off is the clean
+  way to shut down a gripette (it has no power button).
 
-The UI is a separate process (`gripette-web.service`) and strictly
-pull-based: it does nothing while no browser is open, and costs the gripper
-service at most ~1 extra camera capture/s while a page is viewing — safe to
-leave enabled during data collection and evals. Port override:
-`GRIPPER_WEB_PORT` in `/etc/gripette/env`. Note there is no authentication:
-anyone on the local network can use the buttons.
+The UI is a separate process (`gripette-web.service`, at a lower CPU priority
+than the gripper service) and strictly pull-based: it does nothing while no
+browser is open (or the tab is hidden), and costs the gripper service at most
+~1 extra camera capture/s while a page is viewing. The 3D model reads the
+motor positions the service already caches, so it puts no traffic on the
+motor bus — safe to leave enabled during data collection and evals. Port
+override: `GRIPPER_WEB_PORT` in `/etc/gripette/env`. Note there is no
+authentication: anyone on the local network can use the buttons.
+
+The 3D model is the light copy in `urdf/gripette_<hand>_viewer/` (~4 MB
+instead of ~38 MB of CAD meshes, downloaded once per browser). Rebuild it
+whenever the CAD export in `urdf/gripette_<hand>/` changes:
+
+```bash
+uv run scripts/simplify_viewer_model.py
+```
 
 ## Documentation
 
