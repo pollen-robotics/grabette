@@ -8,7 +8,6 @@ had refused the start either, although the card was all but full.
 """
 import asyncio
 import json
-import types
 
 import pytest
 
