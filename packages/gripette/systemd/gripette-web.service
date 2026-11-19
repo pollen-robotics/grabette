@@ -1,5 +1,5 @@
 [Unit]
-Description=Gripette - status web UI
+Description=Gripette - dashboard (web UI)
 After=network.target
 
 [Service]
@@ -9,6 +9,9 @@ WorkingDirectory=/home/rasp/Project/Repo/gripette
 ExecStart=/home/rasp/Project/Repo/gripette/.venv/bin/python -m gripette.webui
 Restart=on-failure
 RestartSec=5
+# Lower CPU priority than gripette.service: on the Pi Zero 2W the gripper's
+# command and camera stream must win over page rendering.
+Nice=10
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Same per-device config as the main service (GRIPPER_WEB_PORT, GRIPPER_PORT).
