@@ -2265,6 +2265,7 @@ def _episode_status(ep: dict) -> str:
 
 _ISSUE_TEXT = {
     "metadata": "Its metadata.json is missing or unreadable.",
+    "stop_failed": "It could not be saved when it stopped (often a full SD card).",
     "camera": "The camera recorded no video.",
     "angles": "No gripper angles were recorded.",
 }
