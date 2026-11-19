@@ -34,6 +34,21 @@ def _exc_text(e: BaseException) -> str:
     return f"{type(e).__name__}: {e}"
 
 
+# Episodes per Hub commit (the Hub caps commits at 320/hour per repo).
+_UPLOAD_BATCH_EPISODES = 10
+
+
+def _is_rate_limited(e: BaseException) -> bool:
+    """A 429 anywhere in the exception chain (duck-typed: no hub import here)."""
+    seen: set[int] = set()   # guards against cyclic chains
+    while e is not None and id(e) not in seen:
+        seen.add(id(e))
+        if getattr(getattr(e, "response", None), "status_code", None) == 429:
+            return True
+        e = e.__cause__ or e.__context__
+    return False
+
+
 def _read_hf_token() -> str | None:
     """Read the HF token WITHOUT importing huggingface_hub.
 
@@ -179,7 +194,7 @@ async def _handle_relay_command(cmd: dict) -> dict:
         # Push THIS device's recorded streams for the given episodes into a
         # shared raw dataset, each under "{episode_id}/{role}" so peers' streams
         # for the same episode don't collide. Needs no capture hardware. Uploads
-        # run in a thread so the relay keeps heartbeating; per-episode cancel
+        # run in a thread so the relay keeps heartbeating; per-batch cancel
         # checkpoints let a fleet cancel_dataset stop it (see fleet/cancel.py).
         from casquette.fleet.hf import get_hf_client
 
@@ -193,25 +208,51 @@ async def _handle_relay_command(cmd: dict) -> dict:
         tm = get_task_manager()
         hf = get_hf_client()
         uploaded, missing = [], []
+        present = []
         for eid in episode_ids:
-            if cancels.is_cancelled(cmd_id):
-                return {"status": "cancelled", "role": role,
-                        "uploaded": uploaded, "missing": missing}
             ep_dir = tm.episode_dir(eid)
             if not ep_dir.exists():
                 missing.append(eid)
                 continue
+            present.append((eid, ep_dir))
+
+        # Skip episodes already on the Hub (saves hashing). Best-effort.
+        if present and not cancels.is_cancelled(cmd_id):
+            try:
+                on_hub = await asyncio.to_thread(
+                    hf.already_uploaded,
+                    [(ep_dir, f"{eid}/{role}") for eid, ep_dir in present], raw_repo)
+                uploaded.extend(eid for eid, _ in present if f"{eid}/{role}" in on_hub)
+                present = [(eid, d) for eid, d in present if f"{eid}/{role}" not in on_hub]
+            except Exception as e:  # noqa: BLE001
+                logger.warning("could not list %s, uploading every episode: %s",
+                               raw_repo, _exc_text(e))
+
+        n_batches = -(-len(present) // _UPLOAD_BATCH_EPISODES)
+        for start in range(0, len(present), _UPLOAD_BATCH_EPISODES):
+            batch = present[start:start + _UPLOAD_BATCH_EPISODES]
+            message = f"batch {start // _UPLOAD_BATCH_EPISODES + 1}/{n_batches} ({role})"
+            if cancels.is_cancelled(cmd_id):
+                return {"status": "cancelled", "role": role,
+                        "uploaded": uploaded, "missing": missing}
             try:
                 await asyncio.to_thread(
-                    hf.upload_episode, ep_dir, raw_repo, None, f"{eid}/{role}", private
-                )
-                uploaded.append(eid)
+                    hf.upload_episodes,
+                    [(ep_dir, f"{eid}/{role}") for eid, ep_dir in batch],
+                    raw_repo, private, message)
+                uploaded.extend(eid for eid, _ in batch)
             except Exception as e:  # noqa: BLE001
                 if cancels.is_cancelled(cmd_id):
                     return {"status": "cancelled", "role": role,
                             "uploaded": uploaded, "missing": missing}
+                which = batch[0][0] if len(batch) == 1 else f"{batch[0][0]}…{batch[-1][0]}"
+                detail = _exc_text(e)
+                if _is_rate_limited(e):
+                    detail = ("Hugging Face rate limit reached — it resets on the "
+                              "scale of an hour. Episodes already uploaded are kept. "
+                              f"Hub said: {detail}")
                 return {"status": "error",
-                        "message": f"upload failed for {eid}: {_exc_text(e)}",
+                        "message": f"upload failed for {which}: {detail}",
                         "uploaded": uploaded, "missing": missing, "role": role}
         if cancels.is_cancelled(cmd_id):
             return {"status": "cancelled", "role": role,
