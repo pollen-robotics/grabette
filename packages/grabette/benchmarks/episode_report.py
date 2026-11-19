@@ -36,7 +36,8 @@ Across devices (same episode id on several devices): spread of
 capture_started_utc, i.e. the t=0 gap the alignment would assume.
 Optional inputs: --run (a run_episodes.py folder: selects its episodes,
 counts the daemon / kernel log lines, the daemon's stop phases, how long each
-stop call took, and the Pi's clock synchronisation), --chrono (measure_chrono_sync.py
+stop call took, the Pi's clock synchronisation, and its temperature and
+throttling before each episode), --chrono (measure_chrono_sync.py
 results: RPi-Orbbec offset and drift, real t=0 gap, capture_started error),
 --i2c (bench_i2c_angles.py summaries).
 """
@@ -61,6 +62,7 @@ LATE_START_MS = 1000.0       # start_capture_ms above this: a visibly late start
 EARLY_STOP_MS = 500.0        # a stream whose last sample is this much before the others'
 WRITER_QUEUE_FULL = 300
 CLOCK_OFFSET_MS = 5.0        # NTP offset above this: capture_started_utc is off by as much
+HOT_C = 80.0                 # the Pi's soft temperature limit: the CPU slows down above it
 
 # Daemon / kernel log lines worth counting, by kind (substring match).
 LOG_PATTERNS = {
@@ -77,7 +79,8 @@ KERNEL_PATTERNS = {
     "usb_reset": "reset high-speed USB",
     "usb_disconnect": "USB disconnect",
     "mmc_error": "mmc0: ",
-    "under_voltage": "Under-voltage",
+    "under_voltage": "Under-voltage",      # older firmware message
+    "under_voltage_hwmon": "Undervoltage",  # raspberrypi-hwmon on current kernels
 }
 # "RpiBackend capture stopped [ms: angle_stop=12 camera_stop=1650 ... total_awaited=2100]"
 STOP_LINE = re.compile(r"capture stopped \[ms: ([^\]]*?)\s+total_awaited=([\d.]+)\]")
@@ -289,7 +292,9 @@ def measure_episode(ep: Path, decode: bool = False) -> dict:
         "start": start_measures(meta),
         "end": end_measures({"rgb": rgb, "depth": depth, "angle": angle}),
         "decode": decode_measures(ep, len(rgb_ts)) if decode else None,
-        "stop_call_s": None,  # filled from --run
+        "stop_call_s": None,  # filled from --run, as are the next two
+        "temp_c_before": None,
+        "throttled_before": None,
     }
 
 
@@ -403,6 +408,11 @@ def summarize(eps: list[dict]) -> dict:
             "stop_call_s_median": med(values(eps, "stop_call_s")),
             "stop_call_s_max": mx(values(eps, "stop_call_s")),
         },
+        # Only for the Pi that ran run_episodes.py (with --run).
+        "thermal": {
+            "temp_c_max": mx(values(eps, "temp_c_before")),
+            "episodes_throttled": sum(bool(e.get("throttled_before")) for e in eps),
+        },
     }
     return s
 
@@ -495,13 +505,35 @@ def clock_check(clock: dict | None) -> dict | None:
     return out
 
 
+def thermal_check(run: dict) -> dict | None:
+    """Hottest temperature and any throttling over a run: the start, the end
+    and before each episode. Since-boot flags count only if they appeared
+    during the run."""
+    samples = [t for t in (run.get("thermal") or {}).values() if isinstance(t, dict)]
+    samples += [e["thermal"] for e in run.get("episodes", []) if isinstance(e.get("thermal"), dict)]
+    if not samples:
+        return None
+    temps = [t["temp_c"] for t in samples if t.get("temp_c") is not None]
+    now = sorted({n for t in samples for n in t.get("now") or []})
+    start = set(((run.get("thermal") or {}).get("start") or {}).get("since_boot") or [])
+    end = set(((run.get("thermal") or {}).get("end") or {}).get("since_boot") or [])
+    out = {"temp_c_max": max(temps) if temps else None,
+           "temp_c_start": ((run.get("thermal") or {}).get("start") or {}).get("temp_c"),
+           "throttled_now": now,
+           "new_since_boot": sorted(end - start),
+           "samples": len(samples)}
+    out["ok"] = (out["temp_c_max"] or 0) < HOT_C and not now and not out["new_since_boot"]
+    return out
+
+
 def run_inputs(run_dir: Path) -> tuple[set[str] | None, dict, dict]:
     """Episode ids, log counts and per-episode entries of a run_episodes.py folder."""
     run = load_json(run_dir / "run.json") or {}
     entries = {e["episode_id"]: e for e in run.get("episodes", []) if e.get("episode_id")}
     logs = {"run": run.get("label") or run_dir.name, "requested_episodes": len(run.get("episodes", [])),
             "failed_episodes": sum(1 for e in run.get("episodes", []) if e.get("error")),
-            "clock": clock_check(run.get("clock"))}
+            "clock": clock_check(run.get("clock")),
+            "thermal": thermal_check(run)}
     for name, patterns in (("daemon.log", LOG_PATTERNS), ("kernel.log", KERNEL_PATTERNS)):
         f = run_dir / name
         if f.exists():
@@ -546,6 +578,11 @@ def print_summary(report: dict) -> None:
         if g["pts_offset_matched"] or g["pts_offset_ambiguous"]:
             print(f"    pts    offset from matching alone {g['pts_offset_matched']}, "
                   f"ambiguous by matching alone {g['pts_offset_ambiguous']}")
+        th = s["thermal"]
+        if th["temp_c_max"] is not None:
+            print(f"    heat   up to {th['temp_c_max']} °C before an episode, "
+                  f"throttled before {th['episodes_throttled']} episodes"
+                  + ("   HOT" if th["temp_c_max"] >= HOT_C or th["episodes_throttled"] else ""))
         if s["episodes_decoded"]:
             print(f"    decode {s['episodes_decoded']} episodes decoded, "
                   f"{s['invariants']['decoded_frame_mismatch']} with frames ≠ timestamps")
@@ -597,7 +634,11 @@ def main() -> int:
         if args.since and eid < args.since or args.until and eid >= args.until:
             continue
         e = measure_episode(f, decode=args.decode)
-        e["stop_call_s"] = (entries.get(eid) or {}).get("stop_call_s")
+        entry = entries.get(eid) or {}
+        e["stop_call_s"] = entry.get("stop_call_s")
+        th = entry.get("thermal") or {}
+        e["temp_c_before"] = th.get("temp_c")
+        e["throttled_before"] = th.get("now") or None
         eps.append(e)
     if not eps:
         print("No episode found (a folder with frame_timestamps.json)", file=sys.stderr)
@@ -614,7 +655,7 @@ def main() -> int:
         "thresholds_ms": {"rgb_hole": RGB_HOLE_MS, "startup": STARTUP_MS, "depth_hole": DEPTH_HOLE_MS,
                           "angle_stall": ANGLE_STALL_MS, "angle_timeout": ANGLE_TIMEOUT_MS,
                           "late_start": LATE_START_MS, "early_stop": EARLY_STOP_MS,
-                          "clock_offset": CLOCK_OFFSET_MS},
+                          "clock_offset": CLOCK_OFFSET_MS, "hot_c": HOT_C},
         "overall": summarize(eps),
         "devices": {d: summarize(v) for d, v in sorted(devices.items())},
         "groups": group_measures(eps),
@@ -631,6 +672,8 @@ def main() -> int:
             "errors": sum(sum((s.get("errors") or {}).values()) for s in sensors.values()),
             "reads_over_500ms": sum(s.get("reads_over_500ms", 0) for s in sensors.values()),
             "kernel_i2c_lines": b.get("kernel_i2c_lines"),
+            "temp_c_max": (b.get("thermal") or {}).get("temp_c_max"),
+            "throttled_now": (b.get("thermal") or {}).get("throttled_now"),
         })
     print_summary(report)
     if args.out:

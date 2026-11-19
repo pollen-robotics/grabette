@@ -22,12 +22,18 @@ of the data folder (when the daemon is local) and stops below --min-free-gb.
 
 Writes ~/benchmarks/<UTC start>_episodes/:
   run.json     plan; for every episode its id, requested length, start
-               status, how long the start and stop calls took, and any error;
-               this Pi's clock synchronisation at the start and the end
+               status, how long the start and stop calls took, the Pi's
+               temperature and throttling just before it, and any error;
+               this Pi's clock synchronisation and thermal state at the start
+               and the end
   daemon.log   the daemon's journal over the run, without HTTP access lines
   kernel.log   the kernel's (i2c, USB, mmc, under-voltage messages)
 Feed the folder to episode_report.py --run. Ctrl-C stops the current episode
 cleanly and still writes everything.
+
+Heat: a Pi over 80 °C slows its CPU down (vcgencmd get_throttled). One
+grabette at 82 °C lost depth frames and had more angle holes than another at
+78 °C on the same code (2026-11-10): compare_reports.py warns when a side ran hot.
 
 Clock: only this Pi's is recorded (timedatectl, or chronyc). With --group,
 run `timedatectl timesync-status` on the other members too: an unsynchronised
@@ -123,6 +129,29 @@ def parse_clock(show: str | None, timesync: str | None, chrony: str | None) -> d
     return out
 
 
+# vcgencmd get_throttled bits: now (low nibble) and since boot (<< 16).
+THROTTLE_BITS = {0x1: "under_voltage", 0x2: "arm_freq_capped", 0x4: "throttled", 0x8: "soft_temp_limit"}
+
+
+def parse_thermal(temp: str | None, throttled: str | None) -> dict:
+    """`vcgencmd measure_temp` and `vcgencmd get_throttled`."""
+    out: dict = {"temp_c": None, "throttled": None, "now": [], "since_boot": []}
+    m = re.search(r"temp=([\d.]+)", temp or "")
+    if m:
+        out["temp_c"] = float(m.group(1))
+    m = re.search(r"throttled=(0x[0-9a-fA-F]+)", throttled or "")
+    if m:
+        v = int(m.group(1), 16)
+        out["throttled"] = hex(v)
+        out["now"] = [name for bit, name in THROTTLE_BITS.items() if v & bit]
+        out["since_boot"] = [name for bit, name in THROTTLE_BITS.items() if v & (bit << 16)]
+    return out
+
+
+def thermal_status() -> dict:
+    return parse_thermal(_run(["vcgencmd", "measure_temp"]), _run(["vcgencmd", "get_throttled"]))
+
+
 def clock_status() -> dict:
     return {"utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             **parse_clock(_run(["timedatectl", "show"]), _run(["timedatectl", "timesync-status"]),
@@ -140,10 +169,12 @@ def wait_until(t_utc: datetime) -> None:
     stop.wait(max((t_utc - datetime.now(timezone.utc)).total_seconds(), 0))
 
 
-def record_one(base: str, seconds: float, group: bool) -> dict:
+def record_one(base: str, seconds: float, group: bool, thermal: bool = False) -> dict:
     """One episode; returns what to keep in run.json. Sets `stop` when the run
     cannot go on (fleet session in solo mode)."""
     entry = {"requested_s": seconds, "start_utc": datetime.now(timezone.utc).isoformat(timespec="milliseconds")}
+    if thermal:
+        entry["thermal"] = thermal_status()
     t = time.monotonic()
     try:
         started = call(base, "/api/episodes/start")
@@ -225,6 +256,11 @@ def main() -> int:
         if c["ntp_synchronized"] is False or abs(c["offset_ms"] or 0) > 5:
             log(f"WARNING clock not synchronised ({c}): capture_started_utc will be off. "
                 "Check `timedatectl timesync-status` before going on.")
+        run["thermal"] = {"start": thermal_status()}
+        t = run["thermal"]["start"]
+        if (t["temp_c"] or 0) >= 75 or t["now"]:
+            log(f"WARNING the Pi is already hot or throttled ({t}): let it cool down, "
+                "or the other side of the comparison must start as hot.")
     log(f"-> {out_dir}  ({'group' if args.group else 'solo'}, plan {plan} s, "
         f"{f'{args.total:.0f} s' if args.total else f'{args.count} episodes'})")
 
@@ -241,9 +277,11 @@ def main() -> int:
                 run["stopped_for_disk_space"] = True
                 break
         seconds = plan[i % len(plan)]
-        entry = record_one(base, seconds, args.group)
+        entry = record_one(base, seconds, args.group, thermal=local)
         run["episodes"].append(entry)
+        temp = (entry.get("thermal") or {}).get("temp_c")
         log(f"episode {entry.get('episode_id', '?')} ({seconds:.0f} s)"
+            + (f", {temp:.0f} °C before" if temp is not None else "")
             + (f"  ERROR {entry['error']}" if entry.get("error") else ""))
         i += 1
         stop.wait(args.pause)
@@ -251,6 +289,7 @@ def main() -> int:
     run["end_utc"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if local:
         run["clock"]["end"] = clock_status()
+        run["thermal"]["end"] = thermal_status()
         daemon = journal(t0_epoch, "-u", "grabette")
         (out_dir / "daemon.log").write_text(
             "\n".join(l for l in daemon.splitlines() if "HTTP/1.1" not in l) + "\n")

@@ -11,7 +11,7 @@ and on the branch, and compare the two.
 | `episode_report.py` | Pi or workstation | system `python3` | Measures every episode (RGB, depth, angles, start, sync) and sums up per device |
 | `compare_reports.py` | anywhere | system `python3` | Baseline vs candidate report: Markdown table for the PR, exit code 1 on regression |
 | `measure_chrono_sync.py` | workstation | `uv run` (installs RapidOCR in a throw-away env) | Real sync, from a chronometer filmed by every camera |
-| `bench_i2c_angles.py` | Pi, daemon stopped | grabette venv | Angle-sensor I2C reads under a chosen load (none, RPi camera, RPi recording, depth camera, depth recording) |
+| `bench_i2c_angles.py` | Pi, daemon stopped | grabette venv | Angle-sensor I2C reads under a chosen load (none, RPi camera, RPi recording, depth camera, depth recording, both recording) |
 | `monitor_capture.py` | Pi, during a session | system `python3` | Samples CPU, I/O, page cache, blocked threads, throttling |
 | `analyze_frame_gaps.py` | Pi or workstation | system `python3` | Explains each hole: which streams stopped, what the Pi was doing (`--monitor`, `--journal`) |
 
@@ -41,6 +41,7 @@ in the same conditions tells a regression from a difference of setup.
 | End: spread of the streams' last samples, a stream stopping > 0.5 s before the others | each stream's last timestamp | value / rate |
 | Stop: how long the stop call takes; the daemon's stop phases (`camera_stop`, muxes...) | `run_episodes` (`run.json`, `daemon.log`) | value / reported |
 | Clock: NTP synchronised and offset, at the start and end of a run | `run_episodes` (`timedatectl` or `chronyc`) | warning in the comparison |
+| Heat: the Pi's temperature and throttling at the start, the end and before each episode | `run_episodes` (`vcgencmd`) | warning in the comparison when a side reached 80 °C, was throttled, or the two sides differ by more than 5 °C |
 | Group: spread of `capture_started_utc` between devices of one episode | `metadata.sync` of each device | reported |
 | Real sync: RPi − Orbbec offset and its drift within an episode, real t=0 gap left/right, error of `capture_started_utc` | `measure_chrono_sync.py` → `episode_report --chrono` | value with tolerance and limit |
 | Daemon / kernel log lines: `Angle loop stalled`, I2C read failures, flagged frame holes, depth camera not ready, alignment errors, tracebacks, I2C / USB / mmc / under-voltage kernel messages | `run_episodes` logs → `episode_report --run` | reported |
@@ -54,7 +55,9 @@ tell; record about an hour per side when the PR could affect them.
 
 Same grabette(s), same place and scene for both sides (the depth camera needs
 a scene with valid depth, or every start waits up to 10 s for it). Before each
-side: dashboard closed (its camera preview loads the Pi), same Bluetooth state,
+side: Pi cooled down to the same temperature (`vcgencmd measure_temp`; over 80 °C
+it slows its CPU down: a grabette at 82 °C lost depth frames another at 78 °C
+did not, on 2026-11-10), dashboard closed (its camera preview loads the Pi), same Bluetooth state,
 clock synchronised (`timedatectl timesync-status`), enough free space
 (`df -h ~/grabette-data`), a throwaway task selected (see `run_episodes.py
 --help`), and run inside `tmux` (a dropped SSH session kills the script before
@@ -132,7 +135,7 @@ Paste `compare.md` in the PR. `--device <id>` compares one grabette only.
   `python3 benchmarks/analyze_frame_gaps.py ~/grabette-data/episodes/<id> --monitor /dev/shm/mon --journal`.
   `/dev/shm` is in RAM: copy the folder before rebooting.
 - **Angle holes**: the daemon logs each failed read with its errno and bus;
-  `bench_i2c_angles.py --mode i2c|camera|record|orbbec|orbbec-record`
+  `bench_i2c_angles.py --mode i2c|camera|record|orbbec|orbbec-record|both-record`
   reproduces the load without the daemon (stop it first) to find which part
   triggers them.
 - **Sync**: `chrono_sync/results.json` has each stream's offset per 5 s window.

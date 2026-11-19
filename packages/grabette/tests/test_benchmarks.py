@@ -214,3 +214,44 @@ def test_run_inputs_read_stop_calls_phases_and_clock(tmp_path):
 def test_parse_clock(show, timesync, chrony, expected):
     c = run_mod.parse_clock(show, timesync, chrony)
     assert (c["ntp_synchronized"], c["offset_ms"]) == expected
+
+
+@pytest.mark.parametrize("temp,throttled,expected", [
+    ("temp=82.3'C\n", "throttled=0x80008\n", (82.3, ["soft_temp_limit"], ["soft_temp_limit"])),
+    ("temp=77.9'C\n", "throttled=0x0\n", (77.9, [], [])),
+    ("temp=60.0'C\n", "throttled=0x50000\n", (60.0, [], ["under_voltage", "throttled"])),
+    (None, None, (None, [], [])),
+])
+def test_parse_thermal(temp, throttled, expected):
+    t = run_mod.parse_thermal(temp, throttled)
+    assert (t["temp_c"], t["now"], t["since_boot"]) == expected
+
+
+def _thermal(temp, now=(), since=()):
+    return {"temp_c": temp, "now": list(now), "since_boot": list(since)}
+
+
+def test_thermal_check_flags_heat_and_new_throttling():
+    cool = {"thermal": {"start": _thermal(60), "end": _thermal(70)},
+            "episodes": [{"thermal": _thermal(65)}]}
+    assert report_mod.thermal_check(cool)["ok"]
+    # Throttled since boot before the run started: not held against this run.
+    old = {"thermal": {"start": _thermal(60, since=["soft_temp_limit"]),
+                       "end": _thermal(70, since=["soft_temp_limit"])}, "episodes": []}
+    assert report_mod.thermal_check(old)["ok"]
+    hot = {"thermal": {"start": _thermal(70), "end": _thermal(79, since=["soft_temp_limit"])},
+           "episodes": [{"thermal": _thermal(82.3, now=["soft_temp_limit"])}]}
+    t = report_mod.thermal_check(hot)
+    assert not t["ok"] and t["temp_c_max"] == 82.3
+    assert t["throttled_now"] == ["soft_temp_limit"] and t["new_since_boot"] == ["soft_temp_limit"]
+
+
+def test_compare_warns_about_heat():
+    def rep(t):
+        return {"logs": {"run": {"thermal": t}}}
+    ok = {"temp_c_max": 70.0, "throttled_now": [], "new_since_boot": [], "ok": True}
+    hot = {"temp_c_max": 82.3, "throttled_now": ["soft_temp_limit"], "new_since_boot": [], "ok": False}
+    assert compare_mod.thermal_warnings(rep(ok), rep(ok)) == []
+    w = compare_mod.thermal_warnings(rep(ok), rep(hot))
+    assert any("Candidate" in x and "82.3" in x for x in w)
+    assert any("same temperature" in x for x in w)  # 70 vs 82.3

@@ -14,13 +14,16 @@ reads the sensors itself), from the daemon's directory (its .env is read):
     .venv/bin/python benchmarks/bench_i2c_angles.py --mode record         # C: + H.264 recordings, as in an episode
     .venv/bin/python benchmarks/bench_i2c_angles.py --mode orbbec-record  # E: depth camera recordings, no RPi camera
     .venv/bin/python benchmarks/bench_i2c_angles.py --mode orbbec         # F: depth camera streaming, nothing recorded
+    .venv/bin/python benchmarks/bench_i2c_angles.py --mode both-record    # G: both cameras recording, as in an episode
     sudo systemctl start grabette
 
 E records the depth camera as an episode does (x264 and FFV1 ffmpeg encoders,
 files on the SD card, deleted after each segment) with the daemon's Orbbec
 settings; F keeps only its USB stream and power draw, to tell those apart from
-the encoding load. On 2026-11-10, C gave no I2C error in 2 h on two grabettes
-while full episodes (D) gave one every 14-37 min.
+the encoding load. G records both cameras together, segment by segment (the
+depth camera streaming all along, as in the daemon): an episode without the
+daemon. On 2026-11-10, C and E gave no I2C error in 2 h each on two grabettes,
+while full episodes through the daemon gave one every 14-37 min.
 
 The daemon itself (D: full episodes) is driven by benchmarks/run_episodes.py.
 
@@ -28,7 +31,7 @@ Writes ~/benchmarks/<UTC start>_i2c_<mode>/:
   events.csv    every read over --slow-ms or failed, and every loop gap over
                 100 ms (UTC, CLOCK_BOOTTIME, sensor, duration, errno)
   summary.json  reads, loop rate, errors by errno, slow reads, max read,
-                shared-IRQ count
+                shared-IRQ count, temperature and throttling (every 30 s)
   kernel.log    kernel messages of the run (i2c-bcm2835 "unexpected interrupt")
   bench.log     everything printed during the run
 
@@ -41,6 +44,7 @@ import argparse
 import csv
 import errno
 import json
+import re
 import shutil
 import signal
 import subprocess
@@ -95,6 +99,54 @@ def daemon_active() -> bool:
         return subprocess.run(["systemctl", "is-active", "--quiet", "grabette"]).returncode == 0
     except FileNotFoundError:
         return False
+
+
+THERMAL_EVERY_S = 30
+# vcgencmd get_throttled bits: now (low nibble) and since boot (<< 16).
+THROTTLE_BITS = {0x1: "under_voltage", 0x2: "arm_freq_capped", 0x4: "throttled", 0x8: "soft_temp_limit"}
+
+
+def thermal_status() -> dict:
+    """Temperature and throttling (vcgencmd); None values when unavailable."""
+    out: dict = {"utc": utc_now(), "temp_c": None, "throttled": None, "now": []}
+    try:
+        t = subprocess.run(["vcgencmd", "measure_temp"], capture_output=True, text=True, timeout=5).stdout
+        th = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return out
+    m = re.search(r"temp=([\d.]+)", t)
+    if m:
+        out["temp_c"] = float(m.group(1))
+    m = re.search(r"throttled=(0x[0-9a-fA-F]+)", th)
+    if m:
+        v = int(m.group(1), 16)
+        out["throttled"] = hex(v)
+        out["now"] = [name for bit, name in THROTTLE_BITS.items() if v & bit]
+    return out
+
+
+def thermal_sampler(samples: list) -> None:
+    """Every THERMAL_EVERY_S, on its own thread so the read loop keeps its pace."""
+    was_throttled = False
+    while True:
+        t = thermal_status()
+        samples.append(t)
+        if bool(t["now"]) != was_throttled:
+            was_throttled = bool(t["now"])
+            log(f"{'THROTTLED' if was_throttled else 'no longer throttled'}: {t['temp_c']} °C, {t['throttled']}")
+        if stop.wait(THERMAL_EVERY_S):
+            break
+
+
+def thermal_summary(samples: list) -> dict:
+    temps = [t["temp_c"] for t in samples if t["temp_c"] is not None]
+    hot = [t for t in samples if t["now"]]
+    return {"temp_c_start": temps[0] if temps else None, "temp_c_max": max(temps) if temps else None,
+            "temp_c_end": temps[-1] if temps else None,
+            "throttled_now": sorted({n for t in hot for n in t["now"]}),
+            "throttled_samples": len(hot), "samples": len(samples),
+            "first_throttled_utc": hot[0]["utc"] if hot else None,
+            "throttled_end": samples[-1]["throttled"] if samples else None}
 
 
 def journal(since_epoch: float, *args: str) -> str:
@@ -196,9 +248,8 @@ def orbbec_load(sync, out_dir: Path, segment_s: float, pause_s: float,
         stop.set()
 
 
-def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
-    """The daemon's OrbbecCapture: its pipeline always streams (live view);
-    with `record`, back-to-back recordings deleted after each one."""
+def open_orbbec(sync):
+    """The daemon's OrbbecCapture with the daemon's settings (.env), streaming."""
     from grabette.hardware.orbbec import OrbbecCapture
 
     kwargs = {}
@@ -213,6 +264,20 @@ def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
     cam = OrbbecCapture(sync, **kwargs)
     cam.init_device()
     log(f"orbbec streaming {kwargs}")
+    return cam
+
+
+def orbbec_stats(st: dict, stats: Counter, prefix: str = "") -> str:
+    stats[prefix + "dropped_frames"] += st.get("dropped_frames") or 0
+    gap = round(st.get("left_max_gap_ms") or 0)
+    stats[prefix + "max_left_gap_ms"] = max(stats[prefix + "max_left_gap_ms"], gap)
+    return f"{st.get('left_frames')} left frames, max gap {gap} ms, {st.get('dropped_frames')} dropped"
+
+
+def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
+    """The daemon's OrbbecCapture: its pipeline always streams (live view);
+    with `record`, back-to-back recordings deleted after each one."""
+    cam = open_orbbec(sync)
     try:
         if not record:
             stop.wait()
@@ -230,11 +295,7 @@ def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
                 stop.wait(segment_s)
                 st = cam.stop_recording()
                 stats["segments_ok"] += 1
-                stats["dropped_frames"] += st.get("dropped_frames") or 0
-                gap = round(st.get("left_max_gap_ms") or 0)
-                stats["max_left_gap_ms"] = max(stats["max_left_gap_ms"], gap)
-                log(f"segment {n}: {st.get('left_frames')} left frames, "
-                    f"max gap {gap} ms, {st.get('dropped_frames')} dropped")
+                log(f"segment {n}: {orbbec_stats(st, stats)}")
             except Exception as e:
                 stats["segments_failed"] += 1
                 log(f"segment {n} failed: {type(e).__name__}: {e}")
@@ -247,6 +308,74 @@ def _orbbec_load(sync, out_dir, segment_s, pause_s, record, stats) -> None:
         shutil.rmtree(seg_dir, ignore_errors=True)
     finally:
         cam.shutdown()
+
+
+# ── Both cameras (mode both-record) ───────────────────────────────────
+
+
+def both_load(sync, out_dir: Path, segment_s: float, pause_s: float, stats: Counter) -> None:
+    try:
+        _both_load(sync, out_dir, segment_s, pause_s, stats)
+    except Exception as e:
+        stats["orbbec_failed"] += 1
+        log(f"orbbec failed, stopping the run: {type(e).__name__}: {e}")
+        stop.set()
+
+
+def _both_load(sync, out_dir, segment_s, pause_s, stats) -> None:
+    """Segments recorded by both cameras at once, deleted after each one: the
+    RPi camera opened per segment as in mode record, the depth camera streaming
+    all along as in the daemon and waited for before each start (depth first,
+    then RGB, the daemon's order)."""
+    dcam = open_orbbec(sync)
+    seg_dir = out_dir / "segments"
+    seg_dir.mkdir()
+    try:
+        n = 0
+        while not stop.is_set():
+            n += 1
+            seg = seg_dir / f"seg{n:03d}"
+            seg.mkdir()
+            dcam.wait_until_ready()
+            cam = make_camera(sync)
+            depth_on = rgb_on = False
+            try:
+                cam.init_camera()
+                dcam.start_recording(seg)
+                depth_on = True
+                cam.start_recording(seg / "raw_video.mp4")
+                rgb_on = True
+                log(f"recording segment {n}")
+                stop.wait(segment_s)
+            except Exception as e:
+                stats["segments_failed_start"] += 1
+                log(f"segment {n} failed to start: {type(e).__name__}: {e}")
+            # Stopped one after the other, each failure counted on its own.
+            if rgb_on:
+                try:
+                    cam.stop()
+                    stats["rgb_segments_ok"] += 1
+                except Exception as e:
+                    stats["rgb_segments_failed"] += 1
+                    log(f"segment {n} rgb failed: {type(e).__name__}: {e}")
+            else:
+                try:
+                    cam.close()
+                except Exception:
+                    pass
+            if depth_on:
+                try:
+                    st = dcam.stop_recording()
+                    stats["depth_segments_ok"] += 1
+                    log(f"segment {n} depth: {orbbec_stats(st, stats, 'depth_')}")
+                except Exception as e:
+                    stats["depth_segments_failed"] += 1
+                    log(f"segment {n} depth failed: {type(e).__name__}: {e}")
+            shutil.rmtree(seg, ignore_errors=True)
+            stop.wait(pause_s)
+    finally:
+        shutil.rmtree(seg_dir, ignore_errors=True)
+        dcam.shutdown()
 
 
 # ── I2C reads ─────────────────────────────────────────────────────────
@@ -298,15 +427,15 @@ def read_loop(cap, rate_hz: float, slow_s: float, writer, stats: dict) -> None:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--mode", required=True,
-                   choices=("i2c", "camera", "record", "orbbec", "orbbec-record"))
+                   choices=("i2c", "camera", "record", "orbbec", "orbbec-record", "both-record"))
     p.add_argument("--duration", type=float, default=3600, help="seconds (default 3600)")
     p.add_argument("--rate", type=float, default=100, help="I2C read loop, Hz (default 100)")
     p.add_argument("--slow-ms", type=float, default=50,
                    help="log reads slower than this (default 50; normal is 1-15 ms)")
     p.add_argument("--segment", type=float, default=120,
-                   help="record, orbbec-record: length of each recording, s (default 120)")
+                   help="record, orbbec-record, both-record: length of each recording, s (default 120)")
     p.add_argument("--pause", type=float, default=5,
-                   help="record, orbbec-record: pause between recordings, s (default 5)")
+                   help="record, orbbec-record, both-record: pause between recordings, s (default 5)")
     p.add_argument("--out", type=Path, default=Path.home() / "benchmarks")
     p.add_argument("--allow-daemon", action="store_true",
                    help="run even though the daemon is active")
@@ -331,6 +460,9 @@ def main() -> int:
     timer.start()
 
     irq_start = i2c_irq_count()
+    thermal: list = []
+    sampler = threading.Thread(target=thermal_sampler, args=(thermal,), daemon=True)
+    sampler.start()
     summary: dict = {"kind": "i2c_bench", "mode": args.mode, "start_utc": utc_now(),
                      "args": {k: str(v) for k, v in vars(args).items()}}
     load_stats: Counter = Counter()
@@ -349,6 +481,9 @@ def main() -> int:
     elif args.mode in ("orbbec", "orbbec-record"):
         load = threading.Thread(target=orbbec_load, daemon=True, args=(
             sync, out_dir, args.segment, args.pause, args.mode == "orbbec-record", load_stats))
+    elif args.mode == "both-record":
+        load = threading.Thread(target=both_load, daemon=True,
+                                args=(sync, out_dir, args.segment, args.pause, load_stats))
     if load is not None:
         load.start()
     stats = {"loops": 0, "loop_gaps": 0, "sensors": {n: {
@@ -380,6 +515,9 @@ def main() -> int:
     kernel = journal(t0_epoch, "-k")
     (out_dir / "kernel.log").write_text(kernel)
     summary["kernel_i2c_lines"] = sum("i2c" in l.lower() for l in kernel.splitlines())
+    stop.set()
+    sampler.join(timeout=10)
+    summary["thermal"] = thermal_summary(thermal)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
     return 0

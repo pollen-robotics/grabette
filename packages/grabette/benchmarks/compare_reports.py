@@ -191,6 +191,39 @@ def clock_warnings(report: dict, side: str) -> list[str]:
     return out
 
 
+HOT_C = 80.0
+TEMP_GAP_C = 5.0
+
+
+def thermal_of(report: dict) -> list[tuple[str, dict]]:
+    return [(run, lg["thermal"]) for run, lg in (report.get("logs") or {}).items()
+            if (lg or {}).get("thermal")]
+
+
+def thermal_warnings(base: dict, cand: dict) -> list[str]:
+    """A Pi over 80 °C slows its CPU down: holes, angle rate and stop times
+    then measure the heat as much as the branch."""
+    out = []
+    for side, report in (("Baseline", base), ("Candidate", cand)):
+        for run, t in thermal_of(report):
+            if not t.get("ok"):
+                why = []
+                if (t.get("temp_c_max") or 0) >= HOT_C:
+                    why.append(f"up to {t['temp_c_max']} °C")
+                if t.get("throttled_now"):
+                    why.append("throttled: " + ", ".join(t["throttled_now"]))
+                if t.get("new_since_boot"):
+                    why.append("during the run: " + ", ".join(t["new_since_boot"]))
+                out.append(f"> 🌡️ {side} run '{run}' ran hot ({'; '.join(why)}): the Pi slowed down, "
+                           "so its figures reflect the heat as well as the code. Let it cool and rerun.")
+    tb = [t["temp_c_max"] for _, t in thermal_of(base) if t.get("temp_c_max") is not None]
+    tc = [t["temp_c_max"] for _, t in thermal_of(cand) if t.get("temp_c_max") is not None]
+    if tb and tc and abs(max(tb) - max(tc)) > TEMP_GAP_C:
+        out.append(f"> 🌡️ The two sides did not run at the same temperature ({max(tb)} °C vs "
+                   f"{max(tc)} °C at most): start both from the same state.")
+    return out
+
+
 def markdown(base: dict, cand: dict, rows: list[dict], regressed: bool) -> str:
     def devs(r):
         return ", ".join(f"{d} ({s['episodes']} ep., {s['minutes']:.0f} min)" for d, s in r["devices"].items())
@@ -201,7 +234,8 @@ def markdown(base: dict, cand: dict, rows: list[dict], regressed: bool) -> str:
            f"- **Candidate**: {cand['label']} — {devs(cand)}", ""]
     if set(base["devices"]) != set(cand["devices"]):
         out += ["> ⚠️ Not the same grabettes on both sides: hardware differences can look like regressions.", ""]
-    warnings = clock_warnings(base, "Baseline") + clock_warnings(cand, "Candidate")
+    warnings = (clock_warnings(base, "Baseline") + clock_warnings(cand, "Candidate")
+                + thermal_warnings(base, cand))
     if warnings:
         out += warnings + [""]
     if bool(base["overall"].get("episodes_decoded")) != bool(cand["overall"].get("episodes_decoded")):
