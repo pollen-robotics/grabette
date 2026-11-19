@@ -175,6 +175,11 @@ class Backend(ABC):
         "saved" cue fires there). Default False for backends with none."""
         return False
 
+    @property
+    def busy_episode_id(self) -> str | None:
+        """The episode still being recorded or written, which must not be deleted."""
+        return None
+
     @abstractmethod
     def get_frame_jpeg(self) -> bytes | None: ...
 
