@@ -208,3 +208,68 @@ def test_a_failed_atomic_write_leaves_no_temp_file(tmp_path):
 
     assert not target.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+# --- the dashboard -------------------------------------------------------------
+
+from grabette.disk import storage_level  # noqa: E402
+from grabette.ui.app import (  # noqa: E402
+    _ov_checks, _ov_checks_html, _ov_health_card, _ov_problems_html,
+    _storage_popup_card,
+)
+
+_FULL = "SD card almost full (0.3 GB free, 2 GB needed): free some space"
+
+
+def test_storage_levels():
+    assert storage_level(None, 2.0) == "unknown"
+    assert storage_level(0.3, 2.0) == "full"
+    assert storage_level(3.0, 2.0) == "low"
+    assert storage_level(40.0, 2.0) == "ok"
+
+
+def test_a_full_card_is_not_ready_to_record():
+    cap = {"blocked_reason": _FULL, "storage_error": _FULL}
+    cam = {"connected": True, "reinitializing": False}
+    dcam = {"supported": True, "label": "Gemini 305", "connected": True, "error": ""}
+    issues = _ov_checks(cap, cam, dcam, {"enabled": True, "error": ""})
+
+    # A problem to fix, not "busy, wait": it does not clear on its own.
+    assert issues == [("fail", None, _FULL)]
+    out = _ov_checks_html(issues, blocked=True)
+    assert "Cannot record" in out and "Ready to record" not in out
+    assert out.count("✓") == 3  # every part is fine
+    assert "1 problem to fix before recording" in _ov_problems_html(issues)
+    assert "SD card almost full" in _ov_problems_html(issues)
+
+
+def test_the_health_card_shows_space_left_and_flags_a_full_card():
+    ok = _ov_health_card({"disk_free_gb": 40.0, "disk_total_gb": 58.0,
+                          "disk_min_free_gb": 2.0})
+    assert "40.0 GB left of 58 GB" in ok and "gb-health-ok" in ok
+
+    low = _ov_health_card({"disk_free_gb": 3.0, "disk_total_gb": 58.0,
+                           "disk_min_free_gb": 2.0})
+    assert "gb-health-low" in low and "#f97316" in low
+
+    full = _ov_health_card({"disk_free_gb": 0.0, "disk_total_gb": 58.0,
+                            "disk_min_free_gb": 2.0})
+    assert "⚠ Full · 0.0 GB left of 58 GB" in full
+    assert "border:2px solid #ef4444" in full
+
+
+def test_the_storage_popup_only_for_a_full_card():
+    assert _storage_popup_card(None) == ""
+    assert _storage_popup_card({"disk_free_gb": 3.0, "disk_min_free_gb": 2.0}) == ""
+    card = _storage_popup_card({"disk_free_gb": 0.0, "disk_min_free_gb": 2.0})
+    assert "SD card full" in card and "recording needs 2 GB" in card
+
+
+def test_the_capture_status_carries_the_storage_fault(monkeypatch):
+    monkeypatch.setattr(rpi, "_free_bytes", lambda path: 0)
+    b = rpi.RpiBackend(enable_oakd=False)
+
+    status = b.get_capture_status()
+
+    assert status.storage_error.startswith("SD card almost full")
+    assert status.blocked_reason.startswith("SD card almost full")

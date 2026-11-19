@@ -15,6 +15,8 @@ from pathlib import Path
 
 from grabette.backend.base import Backend
 from grabette.config import settings
+from grabette.disk import disk_space_message as _disk_space_message
+from grabette.disk import free_bytes as _free_bytes
 from grabette.errors import exc_text as _exc_text
 from grabette.hardware.frames import build_frames_payload
 from grabette.models import AngleSample, CaptureStatus, IMUSample, SensorState
@@ -105,29 +107,6 @@ _ANGLE_RETRY_S = 3.0
 # poll loop and the LED monitor; freeing space is noticed within this delay.
 _DISK_CHECK_S = 2.0
 
-
-def _free_bytes(path: Path) -> int | None:
-    """Free bytes on the filesystem holding `path` (None: cannot tell).
-
-    data_dir may not exist yet on a fresh device: measure its nearest existing
-    parent, which is the same card."""
-    import os
-    path = Path(path)
-    while not path.exists() and path != path.parent:
-        path = path.parent
-    try:
-        st = os.statvfs(path)
-    except OSError:
-        return None
-    return st.f_bavail * st.f_frsize
-
-
-def _disk_space_message(free: int | None, min_free_gb: float) -> str:
-    """The fault for `free` bytes left ("" = enough, or unknown)."""
-    if free is None or free >= min_free_gb * 1024**3:
-        return ""
-    return (f"SD card almost full ({free / 1024**3:.1f} GB free, "
-            f"{min_free_gb:g} GB needed): free some space")
 
 _ANGLE_FAULT_MSG = (
     "the gripper angle sensors {what}. Episodes would carry no angle_data.json "
@@ -1296,6 +1275,7 @@ class RpiBackend(Backend):
             is_starting=self._starting,
             blocked_reason=self.hardware_error or self.busy_reason,
             needs_calibration=self.needs_calibration,
+            storage_error=self.disk_space_error,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,

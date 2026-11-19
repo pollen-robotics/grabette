@@ -48,7 +48,7 @@ def test_health_card_shows_readings():
     out = _ov_health_card(INFO)
     assert "76 %" in out
     assert "47.8 °C" in out
-    assert "75.7 / 118.0 GB used" in out
+    assert "42.3 GB left of 118 GB" in out
 
 
 def test_battery_colours_follow_the_level():

@@ -17,6 +17,7 @@ import gradio as gr
 from PIL import Image, ImageSequence
 
 from grabette.config import settings
+from grabette.disk import storage_level
 from grabette.task import episode_issues
 from grabette.hardware import i2c_diag
 from grabette.ui.api_client import GrabetteClient
@@ -1527,6 +1528,10 @@ def _ov_checks(cap: dict | None, cam: dict | None, dcam: dict | None,
         issues.append(("warn", _TS_DEPTH, f"{label} starting"))
     if (angle or {}).get("error"):
         issues.append(("fail", _TS_ANGLE, "Gripper angle sensors not working"))
+    # No part at fault and nothing Troubleshooting can fix: no section, so it
+    # is listed as a problem without a chip or a tab of its own.
+    if cap.get("storage_error"):
+        issues.append(("fail", None, cap["storage_error"]))
     blocked = cap.get("blocked_reason")
     # The calibration has its own callout (_calibration_prompt).
     if (blocked and not cap.get("needs_calibration")
@@ -1582,11 +1587,12 @@ def _ov_checks_html(issues: list[tuple[str, str | None, str]] | None,
             f'<span style="color:{color};font-weight:700;">{mark}</span>'
             f'<span style="opacity:.75;">{html.escape(label)}</span>'
             + (f'<strong>{state}</strong>' if state else "") + '</span>')
-    # Refused with no part at fault: the device is busy.
+    # Refused with no part at fault: the device is busy. (A full card is a
+    # "fail": it is in the red problems callout instead, not repeated here.)
     notes = "".join(
         '<div style="font-size:.82rem;opacity:.75;margin-top:.35rem;">'
         f'{html.escape(t)}</div>'
-        for _, s, t in issues or () if s is None)
+        for level, s, t in issues or () if s is None and level != "fail")
     return (f'<div class="gb-checks-state gb-checks-{kind}">'
             '<div style="display:flex;flex-wrap:wrap;gap:.4rem;">'
             + "".join(chips) + f'</div>{notes}</div>')
@@ -1889,18 +1895,56 @@ def _ov_health_card(info: dict | None) -> str:
     info = info or {}
     batt, color = _ov_battery(info)
     temp = f"{info['cpu_temp_c']} °C" if "cpu_temp_c" in info else "—"
-    if "disk_free_gb" in info:
-        total = info.get("disk_total_gb")
-        storage = (f"{total - info['disk_free_gb']:.1f} / {total} GB used"
-                   if total else f"{info['disk_free_gb']} GB free")
-    else:
-        storage = "—"
+    storage, storage_color, card = _ov_storage(info), "", _OV_CARD
+    level = storage_level(info.get("disk_free_gb"),
+                          info.get("disk_min_free_gb", settings.min_free_disk_gb))
+    if level == "low":
+        storage_color = "#f97316"
+    elif level == "full":
+        # The device refuses to record: the card says so before anyone presses.
+        storage, storage_color = f"⚠ Full · {storage}", "#ef4444"
+        card += "border:2px solid #ef4444;"
     return (
-        f'<div style="{_OV_CARD}">'
+        f'<div class="gb-health-{level}" style="{card}">'
         + _ov_row("Battery", batt, color)
         + _ov_row("Temperature", temp)
-        + _ov_row("Storage", storage)
+        + _ov_row("Storage", storage, storage_color)
         + "</div>"
+    )
+
+
+def _ov_storage(info: dict) -> str:
+    """What is left on the card — what a recording can still land in."""
+    if "disk_free_gb" not in info:
+        return "—"
+    total = info.get("disk_total_gb")
+    left = f"{info['disk_free_gb']:.1f} GB left"
+    return f"{left} of {total:g} GB" if total else left
+
+
+def _storage_popup_card(info: dict | None) -> str:
+    """The "SD card full" popup card ("" = not full), shown on every page
+    next to the battery one: the device refuses to record until space is
+    freed, and the operator holding it may be looking at any page."""
+    info = info or {}
+    min_gb = info.get("disk_min_free_gb", settings.min_free_disk_gb)
+    if storage_level(info.get("disk_free_gb"), min_gb) != "full":
+        return ""
+    return _popup_card(
+        "SD card full",
+        f"{info['disk_free_gb']:.1f} GB left — recording needs {min_gb:g} GB. "
+        "Upload and delete episodes to free space.")
+
+
+def _popup_card(title: str, text: str) -> str:
+    """One red warning card of the bottom-right popup (battery, storage)."""
+    return (
+        "<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
+        "padding:16px 20px;max-width:260px;box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
+        "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
+        f"margin-bottom:4px;'>{html.escape(title)}</div>"
+        f"<div style='font-size:0.88rem;color:#7f1d1d;'>{html.escape(text)}</div>"
+        "</div>"
     )
 
 
@@ -2907,11 +2951,15 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         must_calib = bool((cap or {}).get("needs_calibration")
                           and not (angle or {}).get("error"))
         failing = any(level == "fail" for level, _, _ in issues or ())
+        # A full card has nothing to troubleshoot: listed, but no button.
+        part_failing = any(level == "fail" and section
+                           for level, section, _ in issues or ())
         return (_ov_checks_html(issues,
                                 bool((cap or {}).get("blocked_reason"))),
                 _ov_problems_html(issues),
                 gr.update(visible=failing),
-                gr.update(visible=must_calib))
+                gr.update(visible=must_calib),
+                gr.update(visible=part_failing))
 
     def _ts_gone(classes: list[str], shown: bool) -> dict:
         """Shown and hidden with a class, for the same reason as the
@@ -3593,6 +3641,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         The warning is suppressed while charging, so plugging Grabette back in
         clears the popup + chime even below the threshold.
         """
+        cards, beep = [], ""
         if (
             info
             and "battery_pct" in info
@@ -3601,18 +3650,19 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         ):
             pct = info["battery_pct"]
             _batt_beep["n"] += 1
-            html = (
-                "<div class='gb-batt' style='position:fixed;bottom:24px;right:24px;z-index:9999;"
-                "background:#fef2f2;border:1px solid #fca5a5;border-radius:12px;"
-                "padding:16px 20px;max-width:260px;"
-                "box-shadow:0 4px 20px rgba(0,0,0,0.15);'>"
-                "<div style='font-weight:700;color:#dc2626;font-size:1rem;"
-                "margin-bottom:4px;'>Battery low</div>"
-                f"<div style='font-size:0.88rem;color:#7f1d1d;'>{pct} % — please charge soon.</div>"
-                "</div>"
-            )
-            return gr.update(visible=True, value=html), f"{pct}|{_batt_beep['n']}"
-        return gr.update(visible=False), ""
+            cards.append(_popup_card("Battery low", f"{pct} % — please charge soon."))
+            beep = f"{pct}|{_batt_beep['n']}"
+        storage = _storage_popup_card(info)
+        if storage:
+            cards.append(storage)
+        if not cards:
+            return gr.update(visible=False), ""
+        html = (
+            "<div class='gb-batt' style='position:fixed;bottom:24px;right:24px;"
+            "z-index:9999;display:flex;flex-direction:column;gap:12px;'>"
+            + "".join(cards) + "</div>"
+        )
+        return gr.update(visible=True, value=html), beep
 
     def get_system_bar():
         """Returns (system_bar_html, battery_popup_update, beep_signal)."""
@@ -4028,7 +4078,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         ov_checks_timer = gr.Timer(3.0)
         ov_checks_outputs = [ov_checks_html, ov_problems_html, ov_ts_box,
-                             ov_calib_box]
+                             ov_calib_box, ov_ts_btn]
         ov_checks_timer.tick(fn=poll_ov_checks, outputs=ov_checks_outputs)
         demo.load(fn=poll_ov_checks, outputs=ov_checks_outputs)
 

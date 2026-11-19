@@ -32,6 +32,10 @@ class CaptureStatus(BaseModel):
     # blocked_reason; split out so the dashboard can offer the fix (the
     # "Calibrate my device" button) rather than only quote the refusal.
     needs_calibration: bool = False
+    # The SD card is too full to record on (see RpiBackend.disk_space_error).
+    # Also part of blocked_reason; split out so the dashboard shows it under
+    # Storage rather than as an unexplained refusal.
+    storage_error: str = ""
 
 
 class SensorState(BaseModel):

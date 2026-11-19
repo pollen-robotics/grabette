@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import platform
 import socket
 import time
@@ -149,15 +148,16 @@ def system_info():
 
     info["ip"] = get_route_ip() or "unknown"
 
-    # Disk usage
-    try:
-        stat = os.statvfs("/")
-        total = stat.f_frsize * stat.f_blocks
-        free = stat.f_frsize * stat.f_bavail
-        info["disk_total_gb"] = round(total / (1024**3), 1)
-        info["disk_free_gb"] = round(free / (1024**3), 1)
-    except Exception:
-        pass
+    # Disk usage — of the card recordings land on, measured the same way as
+    # the backend's free-space gate, with that gate's threshold, so the
+    # dashboard can show how close the device is to refusing a start.
+    from grabette.config import settings
+    from grabette.disk import GB, free_bytes, total_bytes
+    free, total = free_bytes(settings.data_dir), total_bytes(settings.data_dir)
+    if free is not None and total is not None:
+        info["disk_total_gb"] = round(total / GB, 1)
+        info["disk_free_gb"] = round(free / GB, 1)
+        info["disk_min_free_gb"] = settings.min_free_disk_gb
 
     # CPU temperature (RPi)
     try:
