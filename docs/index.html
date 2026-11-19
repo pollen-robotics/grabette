@@ -166,10 +166,39 @@
         .tab-dot[hidden] { display: none; }
         .tab-warn { display: flex; flex-shrink: 0; color: #fcd34d; }
         .tab-warn[hidden] { display: none; }
+        /* Locked until the device type is picked on the first tab: every
+           later step depends on it. */
+        .tab:disabled, .tab:disabled:hover { opacity: .35; background: none; color: #8b98ad; }
         .tab[aria-selected="true"] .tab-dot { background: #fff; box-shadow: none; }
         .tab[aria-selected="true"] .tab-warn { color: #fff; }
         .panel[hidden] { display: none; }
         .panel:focus { outline: none; }
+        /* Content for other device types than the one being set up
+           (data-only="Grabette Gripette"…). A class rather than [hidden], which
+           the steps' own progressive disclosure already drives. */
+        .dev-off { display: none !important; }
+        /* The device type picker, on the first tab: one button per type, the
+           picked one in the tabs' gradient. */
+        .device-card { margin-top: 1.2rem; }
+        .device-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; }
+        .device-btn {
+            margin: 0;
+            padding: .7rem .5rem;
+            background: rgba(255,255,255,.08);
+            border: 1px solid rgba(255,255,255,.15);
+            color: #c3cbe0;
+        }
+        .device-btn:hover { background: rgba(255,255,255,.14); opacity: 1; }
+        .device-btn[aria-pressed="true"],
+        .device-btn[aria-pressed="true"]:hover {
+            background: linear-gradient(135deg, #10b981, #3b82f6);
+            border-color: transparent;
+            color: #fff;
+        }
+        /* A step that exists for another device type but not yet for this one. */
+        .wip-title { color: #fcd34d; font-weight: 700; font-size: .95rem; margin: 0 0 .3rem; }
+        /* A step header that follows another step's text in the same card. */
+        .step-gap { margin-top: 1.2rem; }
 
         /* Steps beside the animation rather than under it: it halves the gif's
            width without shrinking the text, and the two read together. */
@@ -643,7 +672,7 @@
 <body>
     <div class="container">
         <div class="hero">
-            <h1>Get started with Grabette <span class="muted">— first run</span></h1>
+            <h1>Get started with <span class="dev-name">Grabette</span> <span class="muted">— first run</span></h1>
             <div class="lede-row">
                 <!-- The artwork is white fills with black outlines, so it reads
                      as-is on the dark backdrop — no inversion filter needed.
@@ -664,23 +693,25 @@
                     aria-controls="panel-video" onclick="selectTab('video')">
                 #1 Overview
             </button>
+            <!-- The next four stay disabled until the device type is picked
+                 on the first tab (setDeviceType). -->
             <button class="tab" id="tab-power" role="tab" aria-selected="false" tabindex="-1"
-                    aria-controls="panel-power" onclick="selectTab('power')">
+                    aria-controls="panel-power" onclick="selectTab('power')" disabled>
                 #2 Power on
             </button>
             <button class="tab" id="tab-wifi" role="tab" aria-selected="false" tabindex="-1"
-                    aria-controls="panel-wifi" onclick="selectTab('wifi')">
+                    aria-controls="panel-wifi" onclick="selectTab('wifi')" disabled>
                 #3 WiFi setup
                 <span class="tab-warn" id="wifiTabWarn" hidden role="img"
                       aria-label="this browser cannot run the tool"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span>
             </button>
             <button class="tab" id="tab-calib" role="tab" aria-selected="false" tabindex="-1"
-                    aria-controls="panel-calib" onclick="selectTab('calibration')">
+                    aria-controls="panel-calib" onclick="selectTab('calibration')" disabled>
                 #4 Calibration
                 <span class="tab-dot" id="calibDot" hidden aria-label="calibrated"></span>
             </button>
             <button class="tab" id="tab-dash" role="tab" aria-selected="false" tabindex="-1"
-                    aria-controls="panel-dash" onclick="selectTab('dashboard')">
+                    aria-controls="panel-dash" onclick="selectTab('dashboard')" disabled>
                 #5 Dashboard
                 <span class="tab-dot" id="dashDot" hidden aria-label="ready"></span>
             </button>
@@ -702,16 +733,32 @@
         </div>
         <p class="video-caption">An overview of what a Grabette is, what it's used for, and how to use it.</p>
 
-            <button class="btn-primary next-btn" onclick="selectTab('power')">Next →</button>
+        <!-- Every later tab depends on the device type, so the other tabs and
+             Next stay locked until one is picked. -->
+        <div class="card device-card">
+            <div class="step">Which device are you setting up?</div>
+            <div class="device-pick" role="group" aria-label="Type of device">
+                <button type="button" class="device-btn" data-type="Grabette" aria-pressed="false" onclick="setDeviceType('Grabette')">Grabette</button>
+                <button type="button" class="device-btn" data-type="Gripette" aria-pressed="false" onclick="setDeviceType('Gripette')">Gripette</button>
+                <button type="button" class="device-btn" data-type="Casquette" aria-pressed="false" onclick="setDeviceType('Casquette')">Casquette</button>
+            </div>
+        </div>
+
+            <button class="btn-primary next-btn" id="btnVideoNext" onclick="selectTab('power')" disabled
+                    title="Select your device first">Next →</button>
         </div>
 
         <!-- Tab 2 — powering the device on. Carried by the gif: the button is
              easier to point at than to describe. -->
         <div class="panel" id="panel-power" role="tabpanel" aria-labelledby="tab-power" tabindex="0">
         <div class="section-head">
-            <h2>Power on your Grabette</h2>
+            <h2>Power on your <span class="dev-name">Grabette</span></h2>
         </div>
-        <div class="power-row">
+        <div class="card" data-only="Gripette Casquette">
+            <p class="wip-title">Work in progress</p>
+            <p class="wait-note">The power-on steps for a <span class="dev-name"></span> are coming soon.</p>
+        </div>
+        <div class="power-row" data-only="Grabette">
             <div class="power-steps">
                 <ol class="steps">
                     <li>Press once</li>
@@ -739,8 +786,8 @@
              sense while a device is connected. -->
         <div class="panel" id="panel-wifi" role="tabpanel" aria-labelledby="tab-wifi" tabindex="0" hidden>
         <div class="section-head">
-            <h2>Connect your Grabette to WiFi</h2>
-            <p> Connect your Grabette to your usual Wi-Fi network using a Bluetooth pairing.<br> You only need to have your <b>Bluetooth on</b> and to be next to your Grabette.</p>
+            <h2>Connect your <span class="dev-name">Grabette</span> to WiFi</h2>
+            <p> Connect your <span class="dev-name">Grabette</span> to your usual Wi-Fi network using a Bluetooth pairing.<br> You only need to have your <b>Bluetooth on</b> and to be next to your <span class="dev-name">Grabette</span>.</p>
         </div>
 
         <!-- Shown when a search or a connection fails; the script below turns it
@@ -748,7 +795,7 @@
         <div class="browser-note" id="browserNote" hidden>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
             <div id="browserNoteText">
-                <span id="browserNoteHead"><b>No Grabette found, or the connection fails?</b></span>
+                <span id="browserNoteHead"><b>No <span class="dev-name">Grabette</span> found, or the connection fails?</b></span>
                 <ol class="trouble">
                     <li id="chromeFlagStep" hidden>If you're under Chrome, <b>enable</b> this flag, then <b>restart</b> the browser:
                         <button type="button" class="copy-url" id="copyFlag" onclick="copyCode(this)"
@@ -759,8 +806,9 @@
                     </li>
                     <li>Turn your computer's <b>Bluetooth off and on</b> again</li>
                     <li>Allow your browser to use <b>Bluetooth</b> in your system settings (macOS, Android)</li>
-                    <li>Close any other tab or device <b>already connected</b> to the Grabette</li>
-                    <li>Check that the Grabette is <b>switched on</b> and its battery is <b>charged</b>:
+                    <li>Close any other tab or device <b>already connected</b> to the <span class="dev-name">Grabette</span></li>
+                    <li data-only="Gripette Casquette">Check that the <span class="dev-name"></span> is <b>powered</b></li>
+                    <li data-only="Grabette">Check that the Grabette is <b>switched on</b> and its battery is <b>charged</b>:
                         <ul>
                             <li>the <b>blue LED</b> is on</li>
                             <li>at least <b>2 green lights</b> are on under it if you press the button</li>
@@ -776,31 +824,26 @@
                             <circle cx="98" cy="18" r="5" fill="none" stroke="#4b5563" stroke-width="1.5"/>
                         </svg>
                     </li>
-                    <li>Try to <b>restart</b> the Grabette</li>
-                    <li>Remove the <b>Bluetooth pairing </b>with the Grabette on your Bluetooth settings, then search again. <br><i>On Linux, you can execute:</i>
+                    <li>Try to <b>restart</b> the <span class="dev-name">Grabette</span></li>
+                    <li>Remove the <b>Bluetooth pairing </b>with the <span class="dev-name">Grabette</span> on your Bluetooth settings, then search again. <br><i>On Linux, you can execute:</i>
                         <button type="button" class="copy-url" onclick="copyCode(this)"
                                 title="Copy to clipboard">
-                            <code>bluetoothctl devices | grep -i grabette | cut -d' ' -f2 | xargs -rn1 bluetoothctl remove</code>
+                            <code id="btRemoveCmd">bluetoothctl devices | grep -i grabette | cut -d' ' -f2 | xargs -rn1 bluetoothctl remove</code>
                             <span class="copy-hint">Copy</span>
                         </button>
                     </li>
-                    <li>Still stuck? <b>Reload</b> the page, stay <b>close</b> to the Grabette, or try <b>another computer</b></li>
+                    <li>Still stuck? <b>Reload</b> the page, stay <b>close</b> to the <span class="dev-name">Grabette</span>, or try <b>another computer</b></li>
                 </ol>
             </div>
         </div>
 
-        <!-- Connection. Once the link is up the picker and Connect are dead
-             controls, so the card swaps to naming the device it is talking to,
-             with Disconnect as the only remaining action. -->
+        <!-- Connection, to the type picked on the first tab. Once the link is
+             up Search is a dead control, so the card swaps to naming the device
+             it is talking to, with Disconnect as the only remaining action. -->
         <div class="card">
-            <div class="step"><span class="step-num">1</span> <span id="step1Title">Select the type of device</span></div>
+            <div class="step"><span class="step-num">1</span> <span id="step1Title">Find your device</span></div>
 
             <div id="connectPick">
-                <select id="deviceSelect" onchange="updateConnectLabel()">
-                    <option value="Grabette">Grabette</option>
-                    <option value="Gripette">Gripette</option>
-                    <option value="Casquette">Casquette</option>
-                </select>
                 <button class="btn-primary" id="btnConnect" onclick="connectDevice()">
                     <span id="btnConnectLabel">Search for nearby devices</span>
                 </button>
@@ -890,17 +933,33 @@
              content), so the device's BLE service forwards CALIBRATE to it.
              Same steps as the dashboard's "Calibrate my device" popup. -->
         <div class="panel" id="panel-calib" role="tabpanel" aria-labelledby="tab-calib" tabindex="0" hidden>
-            <div class="section-head">
+            <div class="section-head" data-only="Grabette">
                 <h2>Calibrate the gripper sensors</h2>
                 <p>Sets the gripper's fully open position, so its opening is measured right. Your Grabette will not record until it is calibrated.</p>
             </div>
+            <div class="section-head" data-only="Gripette">
+                <h2>Calibrate the motors</h2>
+                <p>Sets the motors' zero on the gripper's fully open position, so the robot commands it right. Do it once after assembly.</p>
+            </div>
+            <div class="section-head" data-only="Casquette">
+                <h2>Calibration</h2>
+            </div>
 
+            <div class="card" data-only="Casquette">
+                <p class="wip-title">Work in progress</p>
+                <p class="wait-note">The calibration steps for a Casquette are coming soon.</p>
+            </div>
+
+            <!-- Grabette and Gripette calibrate over the Bluetooth link, with the
+                 same cards: only their steps differ (data-only below). -->
+            <div data-only="Grabette Gripette">
             <div class="card" id="calibWait">
-                <p class="wait-note" id="calibWaitText">Connect to your Grabette in <b>WiFi setup</b>
+                <p class="wait-note" id="calibWaitText">Connect to your device in <b>WiFi setup</b>
                     first — the calibration goes over the same Bluetooth link.</p>
             </div>
 
             <div class="card step-card" id="card-calib" hidden>
+                <div data-only="Grabette">
                 <div class="step"><span class="step-num">1</span> Open the gripper fully</div>
                 <p class="step-hint">Open the fingers all the way, until they are against their stop.</p>
                 <figure class="calib-figure">
@@ -913,6 +972,23 @@
 
                 <div class="step"><span class="step-num">2</span> Calibrate the sensors</div>
                 <p class="step-hint">Keep the gripper fully open while it runs.</p>
+                </div>
+
+                <!-- A Gripette's fingers are held by their motors: they only
+                     move by hand once the motors are released (RELEASE). -->
+                <div data-only="Gripette">
+                <div class="step"><span class="step-num">1</span> Release the motors</div>
+                <p class="step-hint">The motors stop holding the fingers, so you can move them by hand. Hold the gripper if it hangs on a robot arm.</p>
+                <button class="btn-secondary" id="btnRelease" onclick="releaseMotors()">Release the motors</button>
+                <div class="step-msg" id="msgRelease"></div>
+
+                <div class="step step-gap"><span class="step-num">2</span> Open the gripper fully</div>
+                <p class="step-hint">Open both fingers by hand, all the way, until they are against their stop.</p>
+
+                <div class="step step-gap"><span class="step-num">3</span> Calibrate the motors</div>
+                <p class="step-hint">Keep the gripper fully open while it runs. The Gripette restarts its service: it takes a few seconds.</p>
+                </div>
+
                 <button class="btn-primary" id="btnCalib" onclick="runCalibration()">Start calibration</button>
                 <div class="step-msg" id="msgCalib"></div>
             </div>
@@ -930,6 +1006,7 @@
             <div class="card step-card" id="card-check" hidden>
                 <div class="step"><span class="step-num" id="checkNum">3</span> <span id="checkTitle">Check the result</span></div>
                 <p class="step-hint">Move the moving parts of the gripper: the position of the 3D model should match your device.</p>
+                <p class="step-hint" data-only="Gripette">The motors are released while you check: move the fingers by hand. They hold again once the robot's program turns them on.</p>
                 <p class="step-hint check-note">
                     <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 7v4.5M8 4.5v.01" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
                     <span>The model only updates twice a second, so it moves in small jumps.</span>
@@ -938,6 +1015,7 @@
                 <div class="step-msg" id="msgCheck"></div>
                 <button class="btn-primary" onclick="confirmCheck()">All good, continue →</button>
                 <button class="btn-secondary" onclick="recalibrate()">Calibrate again</button>
+            </div>
             </div>
 
             <button class="btn-primary next-btn" id="btnCalibNext" hidden
@@ -951,10 +1029,30 @@
              one that is dead. -->
         <div class="panel" id="panel-dash" role="tabpanel" aria-labelledby="tab-dash" tabindex="0" hidden>
             <div class="section-head">
-                <h2>Open your Grabette dashboard</h2>
+                <h2>Open your <span class="dev-name">Grabette</span> dashboard</h2>
             </div>
 
-                <ul class="features">
+            <div class="card" data-only="Casquette">
+                <p class="wip-title">Work in progress</p>
+                <p class="wait-note">The Casquette dashboard is coming soon.</p>
+            </div>
+
+                <ul class="features" data-only="Gripette">
+                    <li class="feature">
+                        <span class="feature-icon feature-icon-live"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
+                        <div><div class="feature-title">Live view</div><div class="feature-sub">Camera &amp; 3D model of the fingers</div></div>
+                    </li>
+                    <li class="feature">
+                        <span class="feature-icon feature-icon-check"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+                        <div><div class="feature-title">Health</div><div class="feature-sub">Service, temperature, WiFi, storage</div></div>
+                    </li>
+                    <li class="feature">
+                        <span class="feature-icon feature-icon-rec"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></span>
+                        <div><div class="feature-title">Restart &amp; power off</div><div class="feature-sub">The clean way to shut it down</div></div>
+                    </li>
+                </ul>
+
+                <ul class="features" data-only="Grabette">
                     <li class="feature">
                         <span class="feature-icon feature-icon-live"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg></span>
                         <div><div class="feature-title">Live view</div><div class="feature-sub">Cameras &amp; gripper joints</div></div>
@@ -973,8 +1071,9 @@
                     </li>
                 </ul>
 
+            <div data-only="Grabette Gripette">
             <div class="card" id="dashWait">
-                <p class="wait-note">Finish <b>WiFi setup</b> — the link appears once the Grabette
+                <p class="wait-note">Finish <b>WiFi setup</b> — the link appears once the <span class="dev-name">Grabette</span>
                  reports its IP address.<br> Or you can also use : <a class="bookmark-url" id="dashMdns" target="_blank" rel="noopener">http://&lt;hostname&gt;.local:8000/</a> </p>
             </div>
 
@@ -984,6 +1083,7 @@
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </a>
                 <div class="dash-note" id="dashNote"></div>
+            </div>
             </div>
         </div>
 
@@ -1001,9 +1101,11 @@
     const HKDF_INFO = 'grabette-wifi-psk-v1';
 
     // Each product serves its dashboard on its own port: grabette/config.py and
-    // casquette/config.py default to 8000 and 8001, gripette's webui.py to 8080.
-    const DASHBOARD_PORTS = { Grabette: 8000, Casquette: 8001, Gripette: 8080 };
+    // gripette's webui.py default to 8000 (never on the same device), and
+    // casquette/config.py to 8001.
+    const DASHBOARD_PORTS = { Grabette: 8000, Casquette: 8001, Gripette: 8000 };
 
+    let selectedType = null;    // picked on the first tab; null locks the others
     let connectedType = null;   // 'Grabette' | 'Gripette' | 'Casquette'
     let connectedHost = null;   // hostname from the advertised "Type (hostname)"
     let device = null;
@@ -1021,8 +1123,14 @@
                        calibration: 'panel-calib', dashboard: 'panel-dash' };
     let currentTab = 'video';
 
+    // Only the overview until a device type is picked: the other tabs are
+    // disabled, and a deep link to one lands on the overview instead.
+    function availableTabs() {
+        return selectedType ? TABS : ['video'];
+    }
+
     function selectTab(name, moveFocus) {
-        if (!TABS.includes(name)) name = 'video';
+        if (!availableTabs().includes(name)) name = 'video';
         currentTab = name;
         for (const t of TABS) {
             const tab = document.getElementById(TAB_ID[t]);
@@ -1044,12 +1152,13 @@
     }
 
     document.querySelector('.tabs').addEventListener('keydown', (e) => {
-        const i = TABS.indexOf(currentTab);
+        const tabs = availableTabs();
+        const i = tabs.indexOf(currentTab);
         let next = null;
-        if (e.key === 'ArrowRight') next = TABS[(i + 1) % TABS.length];
-        else if (e.key === 'ArrowLeft') next = TABS[(i - 1 + TABS.length) % TABS.length];
-        else if (e.key === 'Home') next = TABS[0];
-        else if (e.key === 'End') next = TABS[TABS.length - 1];
+        if (e.key === 'ArrowRight') next = tabs[(i + 1) % tabs.length];
+        else if (e.key === 'ArrowLeft') next = tabs[(i - 1 + tabs.length) % tabs.length];
+        else if (e.key === 'Home') next = tabs[0];
+        else if (e.key === 'End') next = tabs[tabs.length - 1];
         if (!next) return;
         e.preventDefault();
         selectTab(next, true);
@@ -1151,15 +1260,57 @@
     // "Scan" — step 2 already owns "Scan", for WiFi.
     function updateConnectLabel() {
         document.getElementById('btnConnectLabel').textContent =
-            'Search for a ' + document.getElementById('deviceSelect').value + ' nearby';
+            'Search for a ' + (selectedType || 'device') + ' nearby';
+    }
+
+    // ---- Device type (first tab) ----
+    //
+    // Picked before anything else, with the buttons under the video: the later
+    // tabs only show the steps for that type (the elements marked
+    // data-only="…"), and stay disabled until then.
+    const DEVICE_TYPES = ['Grabette', 'Gripette', 'Casquette'];
+
+    function setDeviceType(type) {
+        if (!DEVICE_TYPES.includes(type)) return;
+        // The Bluetooth link belongs to the type it was opened for.
+        if (device && device.gatt.connected && connectedType !== type) disconnectDevice();
+        // And so does the host it named, kept after a disconnect for the
+        // dashboard's .local link.
+        if (connectedType !== type) connectedType = connectedHost = null;
+
+        selectedType = type;
+        for (const t of TABS) {
+            if (t !== 'video') document.getElementById(TAB_ID[t]).disabled = false;
+        }
+        const next = document.getElementById('btnVideoNext');
+        next.disabled = false;
+        next.title = '';
+        for (const btn of document.querySelectorAll('.device-btn')) {
+            btn.setAttribute('aria-pressed', btn.dataset.type === type ? 'true' : 'false');
+        }
+
+        for (const el of document.querySelectorAll('.dev-name')) el.textContent = type;
+        for (const el of document.querySelectorAll('[data-only]')) {
+            el.classList.toggle('dev-off', !el.dataset.only.split(' ').includes(type));
+        }
+        // Gone when the browser has no Web Bluetooth (blockTool drops it).
+        const removeCmd = document.getElementById('btRemoveCmd');
+        if (removeCmd) removeCmd.textContent = 'bluetoothctl devices | grep -i '
+            + type.toLowerCase() + " | cut -d' ' -f2 | xargs -rn1 bluetoothctl remove";
+        if (!document.getElementById('connectPick').hidden) {
+            document.getElementById('step1Title').textContent = 'Find your ' + type;
+        }
+        updateConnectLabel();
+        setMdnsLink();
+        resetCalibration();
     }
 
     function setConnected(connected, deviceName) {
-        // Card 1 swaps between the picker and the connected identity.
+        // Card 1 swaps between the search and the connected identity.
         document.getElementById('connectPick').hidden = connected;
         document.getElementById('connectedBox').hidden = !connected;
         document.getElementById('step1Title').textContent =
-            connected ? 'Selected device' : 'Select the type of device';
+            connected ? 'Selected device' : 'Find your ' + selectedType;
         if (connected) document.getElementById('statusText').textContent = deviceName || '?';
 
         reveal('card-wifi', connected);
@@ -1192,7 +1343,8 @@
     }
 
     async function connectDevice() {
-        const targetName = document.getElementById('deviceSelect').value;
+        const targetName = selectedType;
+        if (!targetName) return;
         // Block a second click while the first is still connecting: opening the
         // chooser again starts a scan, and that scan aborts the connection
         // already in flight (BlueZ reports le-connection-abort-by-local), so the
@@ -1616,8 +1768,9 @@
     // "<hostname>.local" would go nowhere.
     function setMdnsLink() {
         const a = document.getElementById('dashMdns');
-        const port = DASHBOARD_PORTS[connectedType];
-        if (!connectedHost || !port) return;
+        const port = DASHBOARD_PORTS[connectedType || selectedType];
+        if (!port) return;
+        if (!connectedHost) { a.textContent = 'http://<hostname>.local:' + port + '/'; return; }
         const url = 'http://' + connectedHost + '.local:' + port + '/';
         a.href = url;
         a.textContent = url;
@@ -1772,18 +1925,25 @@
 
     // ---- Angle-sensor calibration (tab 4) ----
     //
-    // CALIB_STATUS / CALIBRATE are forwarded by the device's BLE service to the
-    // dashboard's own /api/calibration, so this runs the very zeroing the
-    // dashboard's "Calibrate my device" does. Both need the PIN, neither
+    // On a Grabette, CALIB_STATUS / CALIBRATE are forwarded by the device's BLE
+    // service to the dashboard's own /api/calibration, so this runs the very
+    // zeroing the dashboard's "Calibrate my device" does. A Gripette's BLE
+    // service answers the same commands through its gRPC service, plus RELEASE
+    // (motors off, so the fingers move by hand). All need the PIN, none
     // consumes it. Firmware older than this step answers "Unknown command".
+    const BLE_CALIB_TYPES = ['Grabette', 'Gripette'];
     let calibChecked = false;   // CALIB_STATUS asked for the device now connected
     let calibBusy = false;      // a calibration step is running (its button is busy)
 
-    const CALIB_TOO_OLD = "This Grabette's software is too old to calibrate from here — " +
-        'use "Calibrate my device" in its dashboard instead.';
+    const CALIB_TOO_OLD = {
+        Grabette: "This Grabette's software is too old to calibrate from here — "
+            + 'use "Calibrate my device" in its dashboard instead.',
+        Gripette: "This Gripette's software is too old to calibrate from here — "
+            + 'update it, or follow the calibration page of the Gripette docs.',
+    };
 
     function calibReplyText(resp) {
-        return /Unknown command/i.test(resp) ? CALIB_TOO_OLD : replyText(resp);
+        return /Unknown command/i.test(resp) ? CALIB_TOO_OLD[connectedType] : replyText(resp);
     }
 
     // Done: the dashboard is next. Calibrating again stays possible, as the
@@ -1802,25 +1962,30 @@
         stopCheck();
         reveal('card-check', false);
         reveal('calibDone', false);
-        clearMsg('msgCalib');
+        clearMsg('msgCalib', 'msgRelease');
         setCalibrated(false);
-        const connected = !!(device && device.gatt.connected && commandChar);
-        const grabette = connected && connectedType === 'Grabette';
-        reveal('card-calib', grabette);
-        document.getElementById('calibWait').hidden = grabette;
-        document.getElementById('calibWaitText').innerHTML = connected
-            ? 'Only a <b>Grabette</b> has gripper sensors to calibrate — nothing to do here for a '
-              + escapeHtml(connectedType) + '.'
-            : 'Connect to your Grabette in <b>WiFi setup</b> first — the calibration goes over '
-              + 'the same Bluetooth link.';
-        document.getElementById('btnCalibNext').hidden = !(connected && !grabette);
+        // Types that don't calibrate over Bluetooth have nothing to wait for
+        // here (data-only steps), so the way on is always open.
+        if (!BLE_CALIB_TYPES.includes(selectedType)) {
+            document.getElementById('btnCalibNext').hidden = false;
+            return;
+        }
+        const connected = !!(device && device.gatt.connected && commandChar)
+            && connectedType === selectedType;
+        reveal('card-calib', connected);
+        document.getElementById('calibWait').hidden = connected;
+        document.getElementById('calibWaitText').innerHTML =
+            'Connect to your ' + selectedType + ' in <b>WiFi setup</b> first — the calibration '
+            + 'goes over the same Bluetooth link.';
+        // The check comes after the steps: 3rd on a Grabette, 4th on a Gripette.
+        document.getElementById('checkNum').textContent = selectedType === 'Gripette' ? '4' : '3';
         if (currentTab === 'calibration') checkCalibration();
     }
 
     // Asked once per connection, when the tab is opened: a Grabette that is
     // already calibrated skips the steps and goes straight to checking it.
     async function checkCalibration() {
-        if (calibChecked || calibBusy || connectedType !== 'Grabette'
+        if (calibChecked || calibBusy || !BLE_CALIB_TYPES.includes(connectedType)
             || !device || !device.gatt.connected) return;
         calibChecked = true;
         calibBusy = true;
@@ -1841,7 +2006,7 @@
             calibBusy = false;
             document.getElementById('calibWait').hidden = true;
             if (calibrated) {
-                showCalibrated('✓ Your Grabette is already calibrated');
+                showCalibrated('✓ Your ' + connectedType + ' is already calibrated');
                 setCheckHeading(true);
                 startCheck();
             } else {
@@ -1862,11 +2027,28 @@
             if (resp === null) { stepMsg('msgCalib', 'No response from the device', 'err'); return; }
             if (resp.startsWith('ERROR')) { stepMsg('msgCalib', calibReplyText(resp), 'err'); return; }
             clearMsg('msgCalib');
-            showCalibrated('✓ Your Grabette is calibrated');
+            showCalibrated('✓ Your ' + connectedType + ' is calibrated');
             setCheckHeading(false);
             startCheck();
         } finally {
             calibBusy = false;
+            btn.disabled = false;
+        }
+    }
+
+    // Gripette, step 1: the fingers only move by hand with the motors off.
+    async function releaseMotors() {
+        const btn = document.getElementById('btnRelease');
+        btn.disabled = true;
+        try {
+            stepMsg('msgRelease', 'Releasing the motors…');
+            if (!await authenticate('msgRelease')) return;
+            const resp = await sendCommand('RELEASE');
+            if (resp === null) { stepMsg('msgRelease', 'No response from the device', 'err'); return; }
+            stepMsg('msgRelease', resp.startsWith('ERROR') ? calibReplyText(resp)
+                    : 'Motors released: you can move the fingers by hand.',
+                    resp.startsWith('ERROR') ? 'err' : 'ok');
+        } finally {
             btn.disabled = false;
         }
     }
@@ -1879,7 +2061,7 @@
     const CHECK_PERIOD_MS = 500;
     let checkRun = 0;           // bumped to stop the loop
     let checkLoop = null;       // the running loop, to wait for its last command
-    let checkHand = null;       // the model the viewer has loaded
+    let checkModel = null;      // the model the viewer has loaded ("<type>_<hand>")
 
     function showCalibrated(title) {
         document.getElementById('calibDoneTitle').textContent = title;
@@ -1903,6 +2085,12 @@
         stepMsg('msgCheck', 'Reading the gripper sensors…');
         checkLoop = (async () => {
             if (!await authenticate('msgCheck')) return;
+            // A Gripette is checked by moving its fingers by hand, so the
+            // motors are released for it, calibrated just now or long ago.
+            if (connectedType === 'Gripette') {
+                const resp = await sendCommand('RELEASE', true);
+                if (resp && resp.startsWith('ERROR')) { stepMsg('msgCheck', calibReplyText(resp), 'err'); return; }
+            }
             while (run === checkRun) {
                 const t0 = Date.now();
                 const resp = await sendCommand('ANGLES', true);
@@ -1935,12 +2123,17 @@
         return loop || Promise.resolve();
     }
 
+    // Each product's own viewer, as its dashboard has it: the Gripette's
+    // frames its model to the view, which the Grabette's fixed camera crops.
+    const CHECK_VIEWERS = { Grabette: 'viewer.html', Gripette: 'gripette-viewer.html' };
+
     function showAngles(hand, proximal, distal) {
         const frame = document.getElementById('checkViewer');
-        if (hand !== checkHand) {
-            checkHand = hand;
-            frame.src = 'viewer.html?feed=message&yaw=180&urdf='
-                + encodeURIComponent('urdf/grabette_' + hand + '_viewer/robot.urdf');
+        const model = connectedType.toLowerCase() + '_' + hand;
+        if (model !== checkModel) {
+            checkModel = model;
+            frame.src = CHECK_VIEWERS[connectedType] + '?feed=message&yaw=180&urdf='
+                + encodeURIComponent('urdf/' + model + '_viewer/robot.urdf');
             frame.hidden = false;
         }
         frame.contentWindow.postMessage({ proximal, distal }, location.origin);
@@ -1970,6 +2163,11 @@
     }
 
     resetCalibration();
+    // ?device=gripette confirms the type up front, so a link can lead straight
+    // to a later tab (e.g. ?device=gripette#wifi from the Gripette docs).
+    const linkedType = DEVICE_TYPES.find(t =>
+        t.toLowerCase() === (new URLSearchParams(location.search).get('device') || '').toLowerCase());
+    if (linkedType) setDeviceType(linkedType);
     selectTab(location.hash.slice(1) || 'video');
 
     async function readNetworkStatus() {
