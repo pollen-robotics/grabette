@@ -1046,8 +1046,13 @@ async def _dispatch_relay_command(cmd: dict) -> dict:
         if not eids:
             return {"status": "error", "message": "episode_id or episode_ids is required"}
         tm = get_task_manager()
+        daemon = get_daemon_instance()
+        busy = getattr(daemon.backend, "busy_episode_id", None) if daemon else None
         deleted, absent, errors = [], [], []
         for eid in eids:
+            if eid == busy:
+                errors.append(f"{eid}: still being recorded or saved")
+                continue
             try:
                 tm.delete_episode(eid)
                 deleted.append(eid)

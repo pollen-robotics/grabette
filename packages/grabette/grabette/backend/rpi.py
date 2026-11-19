@@ -134,6 +134,7 @@ class RpiBackend(Backend):
         self._stopping = False  # True during stop_capture teardown (drives the fast-blink LED)
         self._stop_task: asyncio.Task | None = None
         self._finalizing = False  # True from a stop until its deferred writes are done
+        self._finalizing_episode: str | None = None
         # True while the OAK-D device is being brought up (init in progress).
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
@@ -1083,6 +1084,7 @@ class RpiBackend(Backend):
         # returns, on the same event loop — the caller (button listener /
         # REST endpoint) sees stop_capture complete immediately.
         self._finalizing = True
+        self._finalizing_episode = episode_dir.name if episode_dir else None
         loop.call_soon(
             self._finalize_and_reinit,
             episode_dir, frame_timestamps, angle_samples, meta, urdf_path,
@@ -1173,6 +1175,7 @@ class RpiBackend(Backend):
         # The episode is on disk and its cue is out: a waiting goal cue may go
         # (see app.main._play_goal_when_saved). The re-init below is for the next take.
         self._finalizing = False
+        self._finalizing_episode = None
 
         _t = time.monotonic()
         try:
@@ -1239,6 +1242,12 @@ class RpiBackend(Backend):
     @property
     def is_finalizing(self) -> bool:
         return self._finalizing
+
+    @property
+    def busy_episode_id(self) -> str | None:
+        if self._capturing and self._episode_dir is not None:
+            return self._episode_dir.name
+        return self._finalizing_episode if self._finalizing else None
 
     def _note_angle_output(self, angle_samples) -> None:
         """Record whether the finished recording actually produced angle data.
