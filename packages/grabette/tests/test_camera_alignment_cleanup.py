@@ -70,6 +70,7 @@ def test_stop_drains_other_streams_and_files_an_invalid_take_without_raising(
     backend._capturing = True
     backend._starting = True
     backend._stopping = False
+    backend._stop_task = None
     backend._needs_reinit = False
     backend._speaker = None
     backend._angle = None
@@ -89,7 +90,8 @@ def test_stop_drains_other_streams_and_files_an_invalid_take_without_raising(
     status = asyncio.run(backend.stop_capture())
     assert status.episode_id == episode.name
     assert status.valid is not alignment_fails
-    assert events == ["camera_closed", "oak_drained", "sync_reset", "finalizer_scheduled"]
+    assert sorted(events[:2]) == ["camera_closed", "oak_drained"]
+    assert events[2:] == ["sync_reset", "finalizer_scheduled"]
     assert not backend._capturing and not backend._stopping and not backend._starting
     assert backend._needs_reinit and backend._finalizing
     assert backend._episode_dir is None

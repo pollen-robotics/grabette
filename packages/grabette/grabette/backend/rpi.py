@@ -132,6 +132,7 @@ class RpiBackend(Backend):
         self._capturing = False
         self._starting = False
         self._stopping = False  # True during stop_capture teardown (drives the fast-blink LED)
+        self._stop_task: asyncio.Task | None = None
         self._finalizing = False  # True from a stop until its deferred writes are done
         # True while the OAK-D device is being brought up (init in progress).
         # Distinguishes the normal warm-up window from a genuine init failure
@@ -906,6 +907,17 @@ class RpiBackend(Backend):
         logger.info("RpiBackend capture started → %s", episode_dir)
 
     async def stop_capture(self) -> CaptureStatus:
+        # The mux no longer blocks the loop, so a second stop can arrive mid-stop: it joins this one.
+        if self._stop_task is None:
+            self._stop_task = asyncio.ensure_future(self._stop_capture())
+            self._stop_task.add_done_callback(self._clear_stop_task)
+        return await asyncio.shield(self._stop_task)
+
+    def _clear_stop_task(self, task) -> None:
+        if self._stop_task is task:
+            self._stop_task = None
+
+    async def _stop_capture(self) -> CaptureStatus:
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
@@ -928,8 +940,7 @@ class RpiBackend(Backend):
         # Audible cue (descending, mirroring the ascending one at start) — HERE,
         # at the top of the teardown: the stream stops below flip their recording
         # flag at once and only THEN spend ~1-2s muxing, so this is the instant
-        # frames stop being saved. Being a detached subprocess, it is heard
-        # during that mux even though the mux blocks the event loop. Placing it
+        # frames stop being saved. Placing it
         # after the muxes instead would report "episode written", a second or two
         # after the take actually ended.
         if self._speaker is not None:
@@ -950,8 +961,7 @@ class RpiBackend(Backend):
 
         # Finalize OAK and RPi camera concurrently. Both flip their "recording"
         # flag immediately (capture stops at once) and then spend ~1-2s muxing
-        # H.264 → mp4. Running the OAK finalize in an executor while the camera
-        # finalize runs here overlaps the muxes (the OAK also muxes left/right
+        # H.264 → mp4. Running both finalizes in executors overlaps the muxes (the OAK also muxes left/right
         # in parallel internally), cutting the stop/save time to ~the single
         # longest mux. Angle is already stopped above, so the "angle must stop
         # before the camera mux" ordering still holds.
@@ -962,9 +972,10 @@ class RpiBackend(Backend):
         if self._oakd and self._oakd.is_recording:
             oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
         _t_cam = time.monotonic()
+        self._needs_reinit = True  # the camera is being closed
         video_valid = True
         try:
-            frame_timestamps = self._camera.stop()
+            frame_timestamps = await loop.run_in_executor(None, self._camera.stop)
         except FrameAlignmentError as exc:
             # Not a failed stop: the take is kept, marked invalid.
             video_valid = False
@@ -972,7 +983,6 @@ class RpiBackend(Backend):
             logger.error("Video timestamp alignment failed: %s", exc)
         frame_provenance = self._camera.frame_provenance
         t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
-        self._needs_reinit = True  # camera is closed; flag before yielding to event loop
         oakd_stats = await oakd_fut if oakd_fut is not None else None
         t_phases["muxes_wallclock"] = (time.monotonic() - _t_muxes) * 1000
 
