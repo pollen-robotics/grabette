@@ -11,6 +11,8 @@ import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from grabette.backend.base import Backend
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/system", tags=["system"])
@@ -18,9 +20,9 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 # Exact command the sudoers drop-in (see `make install-poweroff`) grants the
 # unprivileged service user. The pre-check, the permission rule, and the actual
 # dispatch must all use this identical string or the NOPASSWD match fails.
-_POWEROFF_CMD = ("/usr/bin/systemctl", "poweroff")
+POWEROFF_CMD = ("/usr/bin/systemctl", "poweroff")
 # Same, for `make install-reboot`.
-_REBOOT_CMD = ("/usr/bin/systemctl", "reboot")
+REBOOT_CMD = ("/usr/bin/systemctl", "reboot")
 
 # A runas list then the commands of one `sudo -l` entry: "(root) NOPASSWD: /x y".
 _SUDO_ENTRY_RE = re.compile(r"^\s*\(([^)]*)\)\s*(.*)$")
@@ -75,15 +77,8 @@ async def sudo_without_password(cmd: tuple[str, ...]) -> bool:
     fails on the password. The whole listing names the NOPASSWD grants; it is
     readable without a password as soon as the user holds one (listpw=any),
     and when it is not, there is no grant to find."""
-    proc = await asyncio.create_subprocess_exec(
-        "sudo", "-n", "-l",
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    out, _ = await proc.communicate()
-    return proc.returncode == 0 and sudo_grants_without_password(
-        out.decode(errors="replace"), cmd)
+    listing = await asyncio.to_thread(sudo_listing)
+    return sudo_grants_without_password(listing, cmd)
 
 
 async def _sudo_after(cmd: tuple[str, ...], delay_s: float) -> None:
@@ -109,26 +104,27 @@ def sudo_later(cmd: tuple[str, ...], delay_s: float = 1.0) -> None:
     task.add_done_callback(_pending_sudo.discard)
 
 
-def refuse_while_recording(action: str) -> None:
-    """409 mid-recording: powering off or rebooting would truncate the
-    episode. If the daemon isn't running (mock backend / not yet initialised)
-    there's nothing to protect — allow it."""
-    try:
-        from grabette.app.main import get_daemon_instance
+def refuse_while_recording(action: str, backend: Backend | None = None) -> None:
+    """409 mid-recording: powering off, rebooting or touching the I2C stack
+    would spoil the episode. Without ``backend``, the running daemon's; if the
+    daemon isn't running (mock backend / not yet initialised) there's nothing
+    to protect — allow it."""
+    if backend is None:
+        try:
+            from grabette.app.main import get_daemon_instance
 
-        daemon = get_daemon_instance()
-        if daemon is not None and daemon.state.value == "running":
-            cap = daemon.backend.get_state().capture
-            if cap.is_capturing or cap.is_starting:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"A recording is in progress. Stop the capture "
-                           f"before {action}.",
-                )
-    except HTTPException:
-        raise
-    except Exception:
-        pass
+            daemon = get_daemon_instance()
+            if daemon is None or daemon.state.value != "running":
+                return
+            backend = daemon.backend
+        except Exception:
+            return
+    cap = backend.get_capture_status()
+    if cap.is_capturing or cap.is_starting:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A recording is in progress. Stop the capture before {action}.",
+        )
 
 # PiSugar 3 power-management registers (I2C 0x57). Confirmed against the
 # pisugar-power-manager-rs driver and validated on-device: the P3 has no
@@ -329,7 +325,7 @@ async def system_shutdown():
     server down.
     """
     refuse_while_recording("powering off")
-    if not await sudo_without_password(_POWEROFF_CMD):
+    if not await sudo_without_password(POWEROFF_CMD):
         raise HTTPException(
             status_code=500,
             detail="Shutdown not permitted. Run 'make install-poweroff' on the device.",
@@ -341,7 +337,7 @@ async def system_shutdown():
     # No-op (harmless) on devices without a PiSugar.
     _pisugar_cut_power(30)
 
-    sudo_later(_POWEROFF_CMD)
+    sudo_later(POWEROFF_CMD)
     return {"status": "shutting_down"}
 
 
@@ -354,12 +350,12 @@ async def system_reboot():
     (`make install-reboot`): never a password asked in the browser.
     """
     refuse_while_recording("rebooting")
-    if not await sudo_without_password(_REBOOT_CMD):
+    if not await sudo_without_password(REBOOT_CMD):
         raise HTTPException(
             status_code=500,
             detail="Reboot not permitted. Run 'make install-reboot' on the device.",
         )
-    sudo_later(_REBOOT_CMD)
+    sudo_later(REBOOT_CMD)
     return {"status": "rebooting"}
 
 

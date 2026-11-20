@@ -49,7 +49,7 @@ def test_listing_parse(line, granted):
 def test_sudo_group_alone_is_not_a_grant():
     assert not system.sudo_grants_without_password(_SUDO_GROUP_LISTING, REBOOT)
     assert system.sudo_grants_without_password(_SUDO_GROUP_LISTING,
-                                               system._POWEROFF_CMD)
+                                               system.POWEROFF_CMD)
 
 
 def _fake_sudo(tmp_path, monkeypatch, listing: str | None):

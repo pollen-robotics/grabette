@@ -44,13 +44,6 @@ class NotPermitted(Exception):
     """sudo refused: the grants of `make install-i2c-fix` are not installed."""
 
 
-def _refuse_while_recording(backend: Backend) -> None:
-    cap = backend.get_capture_status()
-    if cap.is_capturing or cap.is_starting:
-        raise HTTPException(status_code=409,
-                            detail="A recording is in progress — stop it first.")
-
-
 async def _helper(action: str) -> str:
     """Run one action of the root helper, return what it printed, or raise
     NotPermitted (sudo refused) / RuntimeError (the action failed)."""
@@ -85,7 +78,7 @@ _FIX_GRANTS = {
     i2c_diag.FIX_LOAD_I2C_DEV: ([(_HELPER, "load"), (_HELPER, "persist")],
                                 "install-i2c"),
     i2c_diag.FIX_PERSIST_I2C_DEV: ([(_HELPER, "persist")], "install-i2c"),
-    i2c_diag.FIX_REBOOT: ([system._REBOOT_CMD], "install-reboot"),
+    i2c_diag.FIX_REBOOT: ([system.REBOOT_CMD], "install-reboot"),
 }
 
 # The open popup runs the diagnosis every 2 s, and sudo logs each listing:
@@ -142,7 +135,7 @@ def angle_status(backend: Backend = Depends(get_backend)):
 @router.post("/diagnose")
 async def angle_diagnose(backend: Backend = Depends(get_backend)):
     # The sensor probe is a real I2C read: never alongside the capture thread.
-    _refuse_while_recording(backend)
+    system.refuse_while_recording("running the diagnostic", backend)
     return await asyncio.get_running_loop().run_in_executor(
         None, _diagnose, backend)
 
@@ -151,7 +144,7 @@ async def angle_diagnose(backend: Backend = Depends(get_backend)):
 async def angle_fix(req: FixRequest, backend: Backend = Depends(get_backend)):
     """Apply one fix. Returns {"done": <what happened>, "reboot": bool,
     "diagnosis": <the walk run again>} so the popup shows the result at once."""
-    _refuse_while_recording(backend)
+    system.refuse_while_recording("applying a fix", backend)
     loop = asyncio.get_running_loop()
     reboot = False
     try:
@@ -168,9 +161,6 @@ async def angle_fix(req: FixRequest, backend: Backend = Depends(get_backend)):
             await loop.run_in_executor(None, backend.reinit_angle_sensors)
             done = "The grabette reconnected to the sensors."
         elif req.fix == i2c_diag.FIX_ENABLE_OVERLAYS:
-            if i2c_diag.find_boot_config(Path("/")) is None:
-                raise HTTPException(status_code=404,
-                                    detail="No boot configuration found.")
             cfg = Path(await _helper("enable-overlays"))
             done = (f"The I2C buses are enabled in {cfg} (previous version kept "
                     f"as {cfg.name}.grabette-bak). Reboot to apply.")

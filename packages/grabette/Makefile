@@ -253,7 +253,9 @@ install-i2c-fix:
 install-i2c: install-i2c-fix
 	sudo $(I2C_FIX_HELPER) persist
 	sudo $(I2C_FIX_HELPER) load
-	@if missing=$$($(I2C_FIX_HELPER) check-overlays); then \
+	@if [ -z "$(BOOT_CONFIG)" ]; then \
+		echo "WARNING: no boot config.txt found, the angle sensor buses were not checked."; \
+	elif missing=$$($(I2C_FIX_HELPER) check-overlays); then \
 		echo "Angle sensor buses enabled in the boot config."; \
 	else \
 		echo "WARNING: the boot config does not enable the angle sensor buses:"; \
