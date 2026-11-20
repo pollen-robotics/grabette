@@ -2642,8 +2642,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         rather than on the next poll when the sensors came back.
 
         Outputs: report, fix button, fix id, Close button, message, callout
-        box, the last diagnosis and the live-refresh timer. No password: the
-        fixes run through the sudoers grants of `make install-i2c-fix`."""
+        box, the last diagnosis and the live-refresh timer."""
         res = client.angle_fix(fix)
         status = client.get_angle_status() or {}
         box = gr.update(visible=bool(status.get("error")))
@@ -2974,8 +2973,8 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         return (msg, *ts_sections()[:-1])
 
     def on_ts_rgb_reboot():
-        """Reboot so the firmware looks for the RGB camera again. No password:
-        the sudoers grant of `make install-reboot`, like Power off.
+        """Reboot so the firmware looks for the RGB camera again
+        (`make install-reboot` grants it, like Power off).
 
         Outputs: message, Reboot button."""
         res = client.reboot()

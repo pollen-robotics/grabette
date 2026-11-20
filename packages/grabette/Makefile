@@ -228,9 +228,8 @@ install-reboot:
 # copied to /usr/local/sbin so the service user cannot edit it), and sudoers
 # grants each action with its exact argument. Not rules on `tee`/`cp`: sudo
 # checks the command, not what goes in on stdin, so `tee -a config.txt` would
-# let its holder append anything to the boot config. Replaces the drop-in of
-# the earlier tee/cp version (same file). Validated with `visudo -c`, like
-# install-poweroff.
+# let its holder append anything to the boot config. Validated with
+# `visudo -c`, like install-poweroff.
 I2C_FIX_HELPER := /usr/local/sbin/grabette-i2c-fix
 
 install-i2c-fix:

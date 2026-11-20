@@ -66,32 +66,24 @@ Tested on **Raspberry Pi OS Bookworm (Debian 12)** and **Trixie (Debian 13)**. N
 </details>
 
 
-2. Install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (requires reboot):
+2. Install [`uv`](https://docs.astral.sh/uv/), then enable the V2 hardware overlays once and grant rights for network scanning (applied by the reboot at the end of the bring-up below):
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh 
 sudo cp config/config.txt /boot/firmware
-make install-audio                 # builds the speaker's devicetree overlay — before the reboot
 make install-netdev
-make install-i2c                   # i2c-dev at every boot + the angle-sensor "Diagnose" popup's fixes
-make install-poweroff install-reboot  # lets the dashboard's Power off and Reboot buttons work
-sudo reboot
 ```
 
 > The `sudo cp` above is the **only** thing that puts `config.txt` in place —
 > no Make target writes it, because that file is this device's boot config and
 > may carry per-device edits (`diff` it against the package copy before
-> overwriting). `make install-audio` must run **before** the reboot: `config.txt`
-> enables `dtoverlay=tlv320aic3104`, which is not a stock Pi overlay — the target
-> compiles it from `config/overlays/` into `/boot/firmware/overlays/`, and warns
-> you if `config.txt` doesn't actually enable it. Without either half the line is
-> silently ignored and there's no speaker (everything else still works). See
-> [Speaker](#speaker-audible-recording-cue-make-install-audio).
+> overwriting).
 
 #### One-shot bringup
 A grabette is built as either a **left** or **right** hand — the angle sensors are mounted mirrored, so the daemon needs to know which one this device is. Pick at install time:
 ```bash
 make install-rpi HAND=right                  # or HAND=left
 make install-rpi HAND=right CAMERA=oakd      # on a grabette that carries an OAK-D SR
+sudo reboot                                  # applies config.txt and the speaker overlay
 uv run python -m grabette
 ```
 
@@ -109,9 +101,17 @@ uv run python -m grabette
 - Runs `install-orbbec-sdk` when `CAMERA=gemini305` (`pyorbbecsdk2` is not in the `rpi` extra — see below).
 - Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` and `GRABETTE_DEPTH_CAMERA=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
 - Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
-- Runs `install-audio` (below) so the HAT speaker's overlay + mixer init are in place.
-- Runs `install-i2c`: loads `i2c-dev` now and at every boot, checks that the boot config enables the two angle-sensor buses (warns, never edits it), and installs the root-owned `/usr/local/sbin/grabette-i2c-fix` with the sudoers grants that let the dashboard's angle-sensor "Diagnose" popup apply its fixes — no password is ever asked in the browser.
-- Runs `install-poweroff` and `install-reboot` so the dashboard's Power off and Reboot buttons work (each grants exactly one `systemctl` command).
+- Runs `install-audio`, `install-i2c`, `install-poweroff` and `install-reboot` (details below).
+
+<details>
+<summary>Speaker, angle sensors, Power off / Reboot buttons</summary>
+
+- `install-audio` compiles the speaker's `dtoverlay=tlv320aic3104` (not a stock Pi overlay) from `config/overlays/` into `/boot/firmware/overlays/`, and warns if `config.txt` doesn't enable it. It must run **before** the reboot: without either half the line is silently ignored and there's no speaker (everything else still works). See [Speaker](#speaker-audible-recording-cue-make-install-audio).
+- `install-i2c` loads `i2c-dev` now and at every boot, checks that the boot config enables the two angle-sensor buses (warns, never edits it), and installs the root-owned `/usr/local/sbin/grabette-i2c-fix` with the sudoers grants that let the dashboard's angle-sensor "Diagnose" popup apply its fixes — no password is ever asked in the browser.
+- `install-poweroff` and `install-reboot` make the dashboard's Power off and Reboot buttons work (each grants exactly one `systemctl` command).
+
+Each can be re-run on its own, e.g. after a `git pull` that changes one of them.
+</details>
 
 Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
 

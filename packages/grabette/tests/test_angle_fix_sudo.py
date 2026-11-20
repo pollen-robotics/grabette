@@ -89,7 +89,7 @@ def test_fix_without_the_grant_says_what_to_install(device):
         asyncio.run(angle.angle_fix(
             angle.FixRequest(fix=i2c_diag.FIX_PERSIST_I2C_DEV), _Backend()))
     assert e.value.status_code == 500
-    assert "make install-i2c-fix" in e.value.detail
+    assert "make install-i2c" in e.value.detail
 
 
 def test_fix_with_the_grant_runs_the_helper(device, monkeypatch):
@@ -123,9 +123,34 @@ def test_ungranted_fix_is_replaced_by_its_make_target():
     diag = angle._without_ungranted_fix(_diag(i2c_diag.FIX_LOAD_I2C_DEV),
                                         _listing(f"{angle._HELPER} load"))
     assert diag["fix"] is None and diag["fix_label"] == ""
-    assert "make install-i2c-fix" in diag["summary"]
-    assert diag["manual"][0] == i2c_diag.make_cmd("install-i2c-fix")
+    assert "make install-i2c" in diag["summary"]
+    assert diag["manual"][0] == i2c_diag.make_cmd("install-i2c")
     assert diag["manual"][-1] == "sudo reboot"  # the by-hand steps stay
+
+
+def test_make_target_already_in_the_manual_is_not_repeated():
+    make = i2c_diag.make_cmd("install-i2c")
+    manual = [make, "# or by hand:", "sudo modprobe i2c-dev"]
+    diag = angle._without_ungranted_fix(
+        _diag(i2c_diag.FIX_LOAD_I2C_DEV, manual), "")
+    assert diag["fix"] is None
+    assert diag["manual"] == manual
+
+
+def test_sudo_listing_is_reused_while_the_popup_polls(monkeypatch):
+    calls = []
+    monkeypatch.setattr(angle.system, "sudo_listing",
+                        lambda: calls.append(1) or "listing")
+    monkeypatch.setattr(angle, "_listing_cache", None)
+    clock = [100.0]
+    monkeypatch.setattr(angle.time, "monotonic", lambda: clock[0])
+    assert angle._sudo_listing() == "listing"
+    clock[0] += angle._LISTING_TTL_S / 2
+    angle._sudo_listing()
+    assert len(calls) == 1
+    clock[0] += angle._LISTING_TTL_S
+    angle._sudo_listing()
+    assert len(calls) == 2
 
 
 def test_granted_fix_keeps_its_button():

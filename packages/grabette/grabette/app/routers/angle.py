@@ -81,31 +81,48 @@ def _wait_for_nodes(timeout_s: float = 3.0) -> None:
 # it. A fix missing here (reconnecting the sensors) needs no root.
 _FIX_GRANTS = {
     i2c_diag.FIX_ENABLE_OVERLAYS: ([(_HELPER, "enable-overlays")],
-                                   "install-i2c-fix"),
+                                   "install-i2c"),
     i2c_diag.FIX_LOAD_I2C_DEV: ([(_HELPER, "load"), (_HELPER, "persist")],
-                                "install-i2c-fix"),
-    i2c_diag.FIX_PERSIST_I2C_DEV: ([(_HELPER, "persist")], "install-i2c-fix"),
+                                "install-i2c"),
+    i2c_diag.FIX_PERSIST_I2C_DEV: ([(_HELPER, "persist")], "install-i2c"),
     i2c_diag.FIX_REBOOT: ([system._REBOOT_CMD], "install-reboot"),
 }
+
+# The open popup runs the diagnosis every 2 s, and sudo logs each listing:
+# reuse it for a while. Long enough to keep the journal quiet, short enough
+# that a `make install-i2c` just run shows up on the next walks.
+_LISTING_TTL_S = 15.0
+_listing_cache: tuple[float, str] | None = None
+
+
+def _sudo_listing() -> str:
+    global _listing_cache
+    now = time.monotonic()
+    if _listing_cache is None or now - _listing_cache[0] > _LISTING_TTL_S:
+        _listing_cache = (now, system.sudo_listing())
+    return _listing_cache[1]
 
 
 def _without_ungranted_fix(diag: dict, listing: str) -> dict:
     """No fix button the device is not allowed to apply: a click would only
     fail on sudo. The diagnosis says which make target grants it instead, and
-    puts it first in the by-hand commands."""
+    puts it first in the by-hand commands (unless they already start with it)."""
     grant = _FIX_GRANTS.get(diag.get("fix"))
     if grant is None:
         return diag
     cmds, target = grant
     if all(system.sudo_grants_without_password(listing, c) for c in cmds):
         return diag
+    make = i2c_diag.make_cmd(target)
+    manual = diag.get("manual", [])
+    if make not in manual:
+        manual = [make, "# then run the diagnostic again — or, by hand:",
+                  *manual]
     return {**diag, "fix": None, "fix_label": "",
             "summary": (f"{diag['summary']} The dashboard is not allowed to "
                         f"fix it: run `make {target}` on the grabette once, "
                         "or fix it by hand."),
-            "manual": [i2c_diag.make_cmd(target),
-                       "# then run the diagnostic again — or, by hand:",
-                       *diag.get("manual", [])]}
+            "manual": manual}
 
 
 def _diagnose(backend: Backend) -> dict:
@@ -113,7 +130,7 @@ def _diagnose(backend: Backend) -> dict:
     diag = i2c_diag.diagnose(backend_error=status.get("error", ""),
                              user=getpass.getuser()).to_dict()
     if diag.get("fix") in _FIX_GRANTS:
-        diag = _without_ungranted_fix(diag, system.sudo_listing())
+        diag = _without_ungranted_fix(diag, _sudo_listing())
     return diag
 
 
@@ -169,7 +186,7 @@ async def angle_fix(req: FixRequest, backend: Backend = Depends(get_backend)):
         logger.warning("Angle sensors fix %s refused by sudo: %s", req.fix, e)
         raise HTTPException(
             status_code=500,
-            detail="This fix is not permitted. Run `make install-i2c-fix` on "
+            detail="This fix is not permitted. Run `make install-i2c` on "
                    "the device.")
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
