@@ -9,6 +9,9 @@ when the sudoers drop-in of `make install-i2c-fix` grants the exact command,
 otherwise with the grabette's password typed in the popup and passed to
 `sudo -S` on stdin. The password is used for that one call and never stored or
 logged.
+
+Rebooting is not one of them: it goes through the system router's reboot
+(`make install-reboot`), and never asks for the password.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from grabette.app.dependencies import get_backend
+from grabette.app.routers import system
 from grabette.backend.base import Backend
 from grabette.hardware import i2c_diag
 
@@ -34,7 +38,6 @@ router = APIRouter(prefix="/api/angle", tags=["angle"])
 # argument and the NOPASSWD rule no longer matches.
 _MODPROBE_CMD = ("/usr/sbin/modprobe", "i2c-dev")
 _PERSIST_CMD = ("/usr/bin/tee", i2c_diag.MODULES_LOAD_CONF)
-_REBOOT_CMD = ("/usr/bin/systemctl", "reboot")
 
 
 def _backup_cmd(cfg: str) -> tuple[str, ...]:
@@ -94,17 +97,6 @@ async def _sudo(cmd: tuple[str, ...], stdin: str | None = None,
         text = err.decode(errors="replace").strip()
         raise _password_error(text, password) or RuntimeError(
             f"{' '.join(cmd)} failed: {text}")
-
-
-async def _sudo_reboot(password: str | None) -> None:
-    """Reboot, run in the request so a refusal reaches the popup.
-
-    No pre-check: `sudo -n -l <cmd>` only says the command is allowed, not
-    that it is allowed without a password (a user in the sudo group passes it,
-    then `sudo -n` asks for the password). `systemctl reboot` returns once the
-    job is queued, and the service's graceful stop lets this reply out."""
-    await _sudo(_REBOOT_CMD, password=password)
-    logger.info("Reboot requested")
 
 
 def _wait_for_nodes(timeout_s: float = 3.0) -> None:
@@ -169,7 +161,7 @@ async def angle_fix(req: FixRequest, backend: Backend = Depends(get_backend)):
                     f"as {cfg.name}.grabette-bak). Reboot to apply.")
             reboot = True
         elif req.fix == i2c_diag.FIX_REBOOT:
-            await _sudo_reboot(pw)
+            await system.system_reboot()
             return {"done": "The grabette is rebooting — reload this page in "
                             "a minute.", "reboot": False, "rebooting": True,
                     "diagnosis": None}
