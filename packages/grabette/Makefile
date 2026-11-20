@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand check-camera write-env install-udev install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-reboot install-i2c-fix install-ntp install-audio install-asound-conf ensure-ble-only help
+.PHONY: install-rpi check-hand check-camera write-env install-udev install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-reboot install-i2c-fix install-i2c install-ntp install-audio install-asound-conf ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -35,7 +35,8 @@ help:
 	@echo "  install-netdev        Allow the service user to scan and connect to WiFi networks via nmcli"
 	@echo "  install-poweroff      Allow the service user to power off the Pi from the web UI"
 	@echo "  install-reboot        Allow the service user to reboot the Pi from the web UI"
-	@echo "  install-i2c-fix      Allow the web UI's angle-sensor Diagnose popup to apply its fixes"
+	@echo "  install-i2c-fix       Allow the web UI's angle-sensor Diagnose popup to apply its fixes"
+	@echo "  install-i2c           install-i2c-fix, load i2c-dev at boot, check the sensor buses"
 	@echo "  install-ntp           Pin NTP to a shared time service (tight multi-device start sync)"
 	@echo "  install-audio         Build+install the TLV320AIC3104 overlay & mixer init (optional HAT speaker)"
 	@echo ""
@@ -50,7 +51,8 @@ help:
 # One-shot bring-up for a fresh Raspberry Pi (Bookworm or Trixie).
 # Handles the apt-package + correct-Python + system-site-packages combo that's
 # easy to get wrong by hand and silently falls back to MockBackend on failure.
-install-rpi: check-hand check-camera install-udev install-ntp install-audio
+install-rpi: check-hand check-camera install-udev install-ntp install-audio \
+             install-i2c install-poweroff install-reboot
 	@command -v uv >/dev/null || { echo "Install uv first: https://docs.astral.sh/uv/"; exit 1; }
 	sudo apt update
 	sudo apt install -y python3-libcamera python3-picamera2 libcap-dev ffmpeg \
@@ -218,20 +220,25 @@ install-reboot:
 	rm -f $$tmp
 
 # Lets the dashboard's angle-sensor "Diagnose" popup apply the fixes it finds
-# (routers/angle.py): load i2c-dev now and at every boot, enable the two sensor
-# buses in the boot config (backup first, append only). Its reboot needs
-# install-reboot. Each grant is
-# the exact command the router runs, arguments included, and nothing else.
-# Validated with `visudo -c` before install, like install-poweroff.
+# (routers/angle.py) without a password: load i2c-dev now and at every boot,
+# enable the two sensor buses in the boot config (backup first, append only).
+# Its reboot needs install-reboot.
+#
+# The fixes are the actions of one root-owned script (scripts/grabette-i2c-fix,
+# copied to /usr/local/sbin so the service user cannot edit it), and sudoers
+# grants each action with its exact argument. Not rules on `tee`/`cp`: sudo
+# checks the command, not what goes in on stdin, so `tee -a config.txt` would
+# let its holder append anything to the boot config. Replaces the drop-in of
+# the earlier tee/cp version (same file). Validated with `visudo -c`, like
+# install-poweroff.
+I2C_FIX_HELPER := /usr/local/sbin/grabette-i2c-fix
+
 install-i2c-fix:
-	@test -n "$(BOOT_CONFIG)" || { echo "No boot config.txt found"; exit 1; }
+	sudo install -m 0755 -o root -g root scripts/grabette-i2c-fix $(I2C_FIX_HELPER)
 	@tmp=$$(mktemp); \
-	{ \
-	echo 'rasp ALL=(root) NOPASSWD: /usr/sbin/modprobe i2c-dev'; \
-	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/tee /etc/modules-load.d/i2c-dev.conf'; \
-	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/cp $(BOOT_CONFIG) $(BOOT_CONFIG).grabette-bak'; \
-	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/tee -a $(BOOT_CONFIG)'; \
-	} > $$tmp; \
+	for action in load persist enable-overlays; do \
+		echo "$(SERVICE_USER) ALL=(root) NOPASSWD: $(I2C_FIX_HELPER) $$action"; \
+	done > $$tmp; \
 	if sudo visudo -cf $$tmp; then \
 		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/grabette-i2c; \
 		echo "Installed /etc/sudoers.d/grabette-i2c"; \
@@ -239,6 +246,21 @@ install-i2c-fix:
 		echo "sudoers syntax check failed, aborting"; rm -f $$tmp; exit 1; \
 	fi; \
 	rm -f $$tmp
+
+# What the Diagnose popup would otherwise find out in the field: i2c-dev loaded
+# now and at every boot (nothing else in the install sets it up), and the two
+# sensor buses present in the boot config. That file is only checked, never
+# written — see install-audio and the README's `sudo cp config/config.txt`.
+install-i2c: install-i2c-fix
+	sudo $(I2C_FIX_HELPER) persist
+	sudo $(I2C_FIX_HELPER) load
+	@if missing=$$($(I2C_FIX_HELPER) check-overlays); then \
+		echo "Angle sensor buses enabled in the boot config."; \
+	else \
+		echo "WARNING: the boot config does not enable the angle sensor buses:"; \
+		echo "$$missing" | sed 's/^/    /'; \
+		echo "  Copy config/config.txt to /boot/firmware (see the README), then reboot."; \
+	fi
 
 # Pin systemd-timesyncd to a single coordinated (anycast) time service, shared
 # by every grabette, so their clocks track each other tightly — required for

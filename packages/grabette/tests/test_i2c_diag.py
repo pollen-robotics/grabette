@@ -207,3 +207,72 @@ def test_report_pages_through_several_faults(tmp_path):
     assert both.count('class="gb-fault gb-on"') == 1
     assert both.index("gb-on") < both.index("distal-sensor-cable.gif") \
         < both.index("proximal-sensor-cable.gif")
+
+
+# ── A reboot that cannot help ─────────────────────────────────────────
+# Buses absent although config.txt asks for them: a reboot fixes it only when
+# the config changed since the last boot. Otherwise the firmware ignored the
+# lines (typically under a [filter] for another board), and offering a reboot
+# again would loop forever.
+
+def _booted(root: Path, config_age: float) -> None:
+    """The system booted `config_age` seconds after config.txt last changed
+    (negative: the config changed after the boot)."""
+    import os
+    cfg = root / "boot/firmware/config.txt"
+    mtime = cfg.stat().st_mtime
+    _touch(root, "proc/stat", f"cpu  1 2 3\nbtime {int(mtime + config_age)}\n")
+    os.utime(cfg, (mtime, mtime))
+
+
+def test_config_changed_since_boot_wants_a_reboot(tmp_path):
+    root = _healthy_root(tmp_path)
+    (root / "sys/bus/i2c/devices/i2c-4").rmdir()
+    _booted(root, config_age=-60)
+    assert d.diagnose(root, _BOTH_OK).fix == d.FIX_REBOOT
+
+
+def test_config_already_applied_at_boot_is_not_a_reboot(tmp_path):
+    root = _healthy_root(tmp_path)
+    (root / "sys/bus/i2c/devices/i2c-4").rmdir()
+    _booted(root, config_age=600)
+    diag = d.diagnose(root, _BOTH_OK)
+    assert diag.fix is None and not diag.healthy
+    assert "a reboot will not change that" in diag.summary
+    assert "sudo reboot" not in diag.manual[:1]
+
+
+def test_lines_under_another_boards_filter_are_named(tmp_path):
+    root = _healthy_root(tmp_path)
+    _touch(root, "boot/firmware/config.txt",
+           "dtparam=i2c_arm=on\n[cm4]\ndtoverlay=i2c3,pins_4_5\n"
+           "dtoverlay=i2c4,pins_8_9\n[all]\ndtoverlay=vc4-kms-v3d\n")
+    for b in (3, 4):
+        (root / f"sys/bus/i2c/devices/i2c-{b}").rmdir()
+    _booted(root, config_age=600)
+    diag = d.diagnose(root, _BOTH_OK)
+    assert "under [cm4]" in diag.summary and "move them under [all]" in diag.summary
+
+
+def test_lines_under_all_name_no_filter(tmp_path):
+    assert d._overlay_filters(_CONFIG) == []
+    assert d._overlay_filters("[pi5]\ndtoverlay=i2c3,pins_4_5\n[all]\n"
+                              "dtoverlay=i2c4,pins_8_9\n") == ["[pi5]"]
+
+
+# ── By-hand commands match what the button does ───────────────────────
+
+def test_manual_commands_start_with_the_make_target(tmp_path):
+    root = _healthy_root(tmp_path)
+    (root / "etc/modules-load.d/i2c-dev.conf").unlink()
+    manual = d.diagnose(root, _BOTH_OK).manual
+    assert manual[0] == d.make_cmd("install-i2c")
+    assert (d.PACKAGE_DIR / "Makefile").is_file()
+
+
+def test_manual_overlay_fix_keeps_a_backup_like_the_button(tmp_path):
+    root = _healthy_root(tmp_path)
+    _touch(root, "boot/firmware/config.txt", "dtparam=i2c_arm=on\n")
+    manual = d.diagnose(root, _BOTH_OK).manual
+    assert manual[0] == ("sudo cp /boot/firmware/config.txt "
+                         "/boot/firmware/config.txt.grabette-bak")

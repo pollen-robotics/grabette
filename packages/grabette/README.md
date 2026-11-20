@@ -72,7 +72,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 sudo cp config/config.txt /boot/firmware
 make install-audio                 # builds the speaker's devicetree overlay — before the reboot
 make install-netdev
-make install-i2c-fix               # lets the dashboard's angle-sensor "Diagnose" popup apply its fixes
+make install-i2c                   # i2c-dev at every boot + the angle-sensor "Diagnose" popup's fixes
 make install-poweroff install-reboot  # lets the dashboard's Power off and Reboot buttons work
 sudo reboot
 ```
@@ -110,6 +110,8 @@ uv run python -m grabette
 - Writes `/etc/grabette/env` with `GRABETTE_HAND=<value>` and `GRABETTE_DEPTH_CAMERA=<value>` (preserving any prior `GRABETTE_*_SIGN` overrides).
 - Runs `install-ntp` (below) so the device's clock is disciplined against a shared time service.
 - Runs `install-audio` (below) so the HAT speaker's overlay + mixer init are in place.
+- Runs `install-i2c`: loads `i2c-dev` now and at every boot, checks that the boot config enables the two angle-sensor buses (warns, never edits it), and installs the root-owned `/usr/local/sbin/grabette-i2c-fix` with the sudoers grants that let the dashboard's angle-sensor "Diagnose" popup apply its fixes — no password is ever asked in the browser.
+- Runs `install-poweroff` and `install-reboot` so the dashboard's Power off and Reboot buttons work (each grants exactly one `systemctl` command).
 
 Note: `install-rpi` does **not** install or start the systemd services — that's `make install-systemd` (next section).
 

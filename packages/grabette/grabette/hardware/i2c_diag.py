@@ -39,6 +39,14 @@ STATUS_MD = 0x20  # magnet detected
 BOOT_CONFIGS = ("boot/firmware/config.txt", "boot/config.txt")
 MODULES_LOAD_CONF = "/etc/modules-load.d/i2c-dev.conf"
 
+# This package's checkout, where `make install-i2c` & co. run from.
+PACKAGE_DIR = Path(__file__).resolve().parents[2]
+
+
+def make_cmd(target: str) -> str:
+    """The by-hand command that runs one of the Makefile's install targets."""
+    return f"make -C {PACKAGE_DIR} {target}"
+
 # Fix ids — the vocabulary shared with routers/angle.py and the dashboard.
 FIX_ENABLE_OVERLAYS = "enable_overlays"
 FIX_REBOOT = "reboot"
@@ -124,16 +132,47 @@ def _active_lines(text: str) -> list[str]:
     return out
 
 
-def _overlay_present(lines: list[str], wanted: str) -> bool:
-    """`dtoverlay=i2c3,pins_4_5` present, in whatever parameter order."""
+def _overlay_matches(line: str, wanted: str) -> bool:
+    """`line` (an active line) is `wanted`, in whatever parameter order."""
+    if not line.startswith("dtoverlay="):
+        return False
     name, _, params = wanted.partition("=")[2].partition(",")
-    for line in lines:
-        if not line.startswith("dtoverlay="):
-            continue
-        got_name, _, got_params = line.partition("=")[2].partition(",")
-        if got_name == name and params in got_params.split(","):
-            return True
-    return False
+    got_name, _, got_params = line.partition("=")[2].partition(",")
+    return got_name == name and params in got_params.split(",")
+
+
+def _overlay_present(lines: list[str], wanted: str) -> bool:
+    """`dtoverlay=i2c3,pins_4_5` present, in whatever parameter order. Under
+    any [filter]: which boards a filter matches is the firmware's business,
+    so a line under the wrong one shows up later, as buses the kernel never
+    created (see _overlay_filters)."""
+    return any(_overlay_matches(line, wanted) for line in lines)
+
+
+def _overlay_filters(config_text: str) -> list[str]:
+    """The [filter] sections the sensor overlay lines sit under, [all] left
+    out: the usual suspect when the buses never appear (a [cm4] line on a
+    Pi 5 is ignored by its firmware)."""
+    section, found = "all", []
+    for line in _active_lines(config_text):
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+        elif section.lower() != "all" and any(
+                _overlay_matches(line, ov) for _, _, ov, _ in SENSOR_BUSES):
+            if f"[{section}]" not in found:
+                found.append(f"[{section}]")
+    return found
+
+
+def _boot_time(root: Path) -> float | None:
+    """When the system booted (epoch seconds), from /proc/stat's btime."""
+    try:
+        for line in (root / "proc/stat").read_text().splitlines():
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
 
 
 def missing_overlays(config_text: str) -> list[str]:
@@ -194,7 +233,10 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
                      "boot configuration.")
         d.fix = FIX_ENABLE_OVERLAYS
         lines = "\\n".join(missing)
-        d.manual = [f"printf '\\n[all]\\n{lines}\\n' | sudo tee -a {cfg_shown}",
+        # What the button does: backup, then append under [all]. No make
+        # target for this one: none writes the boot config (see install-i2c).
+        d.manual = [f"sudo cp {cfg_shown} {cfg_shown}.grabette-bak",
+                    f"printf '\\n[all]\\n{lines}\\n' | sudo tee -a {cfg_shown}",
                     "sudo reboot"]
         return _finish(d)
     d.checks.append(Check("boot_config", "Boot configuration", OK,
@@ -203,6 +245,28 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
     # 2 — the kernel created them (the overlays were applied at boot).
     absent = [b for _, b, _, _ in SENSOR_BUSES
               if not (root / f"sys/bus/i2c/devices/i2c-{b}").exists()]
+    booted = _boot_time(root) if absent else None
+    if absent and booted is not None and cfg_path.stat().st_mtime < booted:
+        # The config already asked for them at the last boot: rebooting again
+        # would only loop. The firmware ignored the lines.
+        filters = _overlay_filters(cfg_path.read_text(errors="replace"))
+        d.checks.append(Check("kernel_buses", "I2C buses", FAIL,
+                              "Bus " + ", ".join(map(str, absent))
+                              + " not created at the last boot, although "
+                              f"{cfg_shown} already asked for it"))
+        d.summary = ("The boot configuration enables the I2C buses, but the "
+                     "last boot did not create them — a reboot will not "
+                     "change that.")
+        if filters:
+            d.summary += (" Their lines are under " + ", ".join(filters)
+                          + ", which may not match this board: move them "
+                          "under [all].")
+        else:
+            d.summary += (" Check the overlay lines and that this board has "
+                          "the I2C controllers they name.")
+        d.manual = [f"grep -n -e '^\\[' -e 'dtoverlay=i2c' {cfg_shown}",
+                    f"sudo nano {cfg_shown}", "sudo reboot"]
+        return _finish(d)
     if absent:
         d.checks.append(Check("kernel_buses", "I2C buses", FAIL,
                               "Bus " + ", ".join(map(str, absent))
@@ -224,7 +288,10 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
         d.summary = ("The i2c-dev driver is not loaded, so the sensors' buses "
                      "have no /dev/i2c-* file to open.")
         d.fix = FIX_LOAD_I2C_DEV
-        d.manual = ["sudo modprobe i2c-dev",
+        d.manual = [make_cmd("install-i2c"),
+                    "sudo systemctl restart grabette",
+                    "# or by hand:",
+                    "sudo modprobe i2c-dev",
                     f"echo i2c-dev | sudo tee {MODULES_LOAD_CONF}",
                     "sudo systemctl restart grabette"]
         return _finish(d)
@@ -295,7 +362,9 @@ def diagnose(root: Path = Path("/"), probe: Probe = i2c_probe,
         d.summary = ("The sensors work, but the I2C driver will not be loaded "
                      "after the next reboot.")
         d.fix = FIX_PERSIST_I2C_DEV
-        d.manual = [f"echo i2c-dev | sudo tee {MODULES_LOAD_CONF}"]
+        d.manual = [make_cmd("install-i2c"),
+                    "# or by hand:",
+                    f"echo i2c-dev | sudo tee {MODULES_LOAD_CONF}"]
         return _finish(d)
     d.summary = "The angle sensors are working."
     d.healthy = True

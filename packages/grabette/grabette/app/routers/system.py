@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import socket
+import subprocess
 import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -53,6 +54,17 @@ def sudo_grants_without_password(listing: str, cmd: tuple[str, ...]) -> bool:
             if nopasswd and item in ("ALL", full, program):
                 return True
     return False
+
+
+def sudo_listing() -> str:
+    """`sudo -n -l` as a string, "" when sudo will not list (no NOPASSWD grant
+    at all). Blocking: for code already off the event loop."""
+    try:
+        res = subprocess.run(["sudo", "-n", "-l"], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return res.stdout if res.returncode == 0 else ""
 
 
 async def sudo_without_password(cmd: tuple[str, ...]) -> bool:

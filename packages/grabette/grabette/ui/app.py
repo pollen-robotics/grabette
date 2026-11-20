@@ -1261,9 +1261,7 @@ def _tr_cameras(rgb: str, depth: str, depth_label: str,
 # Diagnose popup walks the I2C stack on the device (hardware/i2c_diag.py) and
 # offers the fix for the first broken layer.
 _DIAG_FIX_CLASSES = ["gb-diag-fix"]
-_DIAG_PW_CLASSES = ["gb-diag-pw"]
 _DIAG_DONE_CLASSES = ["gb-diag-done"]
-_DIAG_PW_HINT = "Default password: rasp"
 
 _DIAG_MARKS = {
     "ok": ("#10b981", "✓"),
@@ -2639,49 +2637,31 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         # button under the "Working…" the click just put there.
         return gr.update(value="Working…", interactive=False), gr.Timer(active=False)
 
-    def _diag_pw(shown: bool, **kw):
-        """The password field, shown with a class for the same reason as the
-        fix button."""
-        return gr.update(elem_classes=_DIAG_PW_CLASSES + ([] if shown else
-                                                          ["gb-diag-gone"]),
-                         **kw)
-
-    def on_diag_fix(fix, report, password):
+    def on_diag_fix(fix, report):
         """Apply it, show the walk run again, and drop the callout at once
         rather than on the next poll when the sensors came back.
 
         Outputs: report, fix button, fix id, Close button, message, callout
-        box, the last diagnosis, the live-refresh timer and the password field.
-
-        The password stays in its field (the browser) until the popup closes,
-        so a fix followed by a reboot asks for it once."""
-        res = client.angle_fix(fix, password)
+        box, the last diagnosis and the live-refresh timer. No password: the
+        fixes run through the sudoers grants of `make install-i2c-fix`."""
+        res = client.angle_fix(fix)
         status = client.get_angle_status() or {}
         box = gr.update(visible=bool(status.get("error")))
         live = gr.Timer(active=True)
-        keep_pw = gr.update()
-        if res.get("needs_password"):
-            # Ask, and keep the refresh off: it would redraw the button and the
-            # message while they type.
-            return (report, _diag_fix_btn(True, value="Apply with this password"),
-                    fix, _diag_done_btn(False), f"🔒 {res['error']}", box, gr.update(),
-                    gr.Timer(active=False), _diag_pw(True, value=""))
         if "error" in res:
             return (report, gr.update(value="Try again", interactive=True), fix,
-                    _diag_done_btn(False), f"⛔ {res['error']}", box, gr.update(), live, keep_pw)
+                    _diag_done_btn(False), f"⛔ {res['error']}", box, gr.update(), live)
         if res.get("rebooting"):
             return (report, _diag_fix_btn(False), None, _diag_done_btn(False),
-                    f"🔄 {res['done']}", box, None, gr.Timer(active=False),
-                    _diag_pw(False, value=""))
+                    f"🔄 {res['done']}", box, None, gr.Timer(active=False))
         if res.get("reboot"):
             # last=None + fix "reboot" is what holds the refresh off.
             return (report, _diag_fix_btn(True, value="Reboot the grabette"),
                     i2c_diag.FIX_REBOOT, _diag_done_btn(False),
-                    f"✓ {res['done']}", box, None, live,
-                    keep_pw)
+                    f"✓ {res['done']}", box, None, live)
         diag = res.get("diagnosis")
         return (_diag_report_html(diag), *_diag_fix_update(diag),
-                f"✓ {res['done']}", box, diag, live, _diag_pw(False))
+                f"✓ {res['done']}", box, diag, live)
 
     def _angle_diag_body(box=None, live=False):
         """The report, its fix buttons and its live refresh, built where it is
@@ -2692,16 +2672,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
 
         Returns the parts the container wires: `reset` and `run` (the outputs
         of on_diag_again and on_diag_run, which start a walk), the live
-        `timer`, the `done` button, the `live` view (None without one) and
-        the `password` field (cleared on close)."""
+        `timer`, the `done` button and the `live` view (None without one)."""
         report = gr.HTML(_diag_report_html(None))
         live_view = gr.HTML("") if live else None
         msg = gr.Markdown("")
-        # Shown when sudo asks for it (see on_diag_fix).
-        password = gr.Textbox(
-            type="password", label="Grabette password",
-            info=_DIAG_PW_HINT,
-            elem_classes=_DIAG_PW_CLASSES + ["gb-diag-gone"])
         with gr.Row(elem_classes="gb-diag-actions"):
             fix_btn = gr.Button(
                 "Fix it", variant="primary", scale=0, min_width=0,
@@ -2721,7 +2695,7 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                        last_diag, live_timer]
         tick_outputs = [report, fix_btn, fix_state, done_btn, msg, last_diag]
         fix_outputs = [report, fix_btn, fix_state, done_btn, msg, last_diag,
-                       live_timer, password]
+                       live_timer]
         tick_fn, fix_fn = on_diag_tick, on_diag_fix
         if box is None:
             tick_fn, fix_fn = _without(on_diag_tick, 6), _without(on_diag_fix, 5)
@@ -2735,16 +2709,11 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                         outputs=tick_outputs)
         fix_btn.click(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
                       queue=False).then(
-            fn=fix_fn, inputs=[fix_state, report, password],
-            outputs=fix_outputs)
-        # Enter in the field applies the fix, like the button.
-        password.submit(fn=on_diag_fix_start, outputs=[fix_btn, live_timer],
-                        queue=False).then(
-            fn=fix_fn, inputs=[fix_state, report, password],
+            fn=fix_fn, inputs=[fix_state, report],
             outputs=fix_outputs)
         return SimpleNamespace(reset=reset_outputs, run=run_outputs,
                                timer=live_timer, done=done_btn,
-                               live=live_view, password=password)
+                               live=live_view)
 
     def _angle_diag_prompt():
         """The "Diagnose" button and the popup it opens. Returns the box
@@ -2770,12 +2739,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
             outputs=[modal, *body.reset],
             queue=False,
         ).then(fn=on_diag_run, outputs=body.run)
-        # Closing forgets the password.
         for _btn in (close_btn, body.done):
             _btn.click(fn=lambda: (gr.update(visible=False),
-                                   gr.Timer(active=False),
-                                   _diag_pw(False, value="")),
-                       outputs=[modal, body.timer, body.password], queue=False)
+                                   gr.Timer(active=False)),
+                       outputs=[modal, body.timer], queue=False)
         return box
 
     # ── Calibration prompt (Overview + Test Recording) ────────────────
@@ -3099,15 +3066,14 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                               interactive=False),
                          outputs=rgb_reboot, queue=False
         ).then(fn=on_ts_rgb_reboot, outputs=[rgb_msg, rgb_reboot])
-        # Closing stops both refreshes and forgets the password.
+        # Closing stops both refreshes.
         for _btn in (close_btn, foot_close, angle.done):
             # The live view goes too: a closed popup polls nothing.
             _btn.click(fn=lambda: (gr.update(visible=False),
                                    gr.Timer(active=False),
                                    gr.Timer(active=False),
-                                   _diag_pw(False, value=""),
                                    "", ""),
-                       outputs=[modal, timer, angle.timer, angle.password,
+                       outputs=[modal, timer, angle.timer,
                                 rgb_msg, angle.live],
                        queue=False)
         return bind_open

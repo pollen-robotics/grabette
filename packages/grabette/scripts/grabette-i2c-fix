@@ -1,0 +1,125 @@
+#!/usr/bin/python3 -I
+"""Root side of the angle-sensor fixes: a fixed set of actions, nothing else.
+
+Installed root-owned as /usr/local/sbin/grabette-i2c-fix by
+`make install-i2c-fix`, which lets the service user run each action below
+through `sudo -n` without a password. The dashboard's Diagnose popup
+(routers/angle.py) calls it.
+
+Why a script rather than sudo rules on `tee`/`cp`: a rule on
+`tee -a config.txt` lets its holder append *any* text to the boot config,
+since sudo checks the command, not what goes in on stdin. Here every byte
+written is decided by this file, which `rasp` cannot modify. Standard library
+only, run with -I: nothing is imported from the repo or the venv, which the
+service user owns.
+
+    grabette-i2c-fix load              load i2c-dev now
+    grabette-i2c-fix persist           load i2c-dev at every boot
+    grabette-i2c-fix enable-overlays   add the sensor buses to config.txt
+    grabette-i2c-fix check-overlays    list the missing ones (read only)
+
+A second argument roots the paths elsewhere, for the tests. sudo cannot be
+made to pass it: a sudoers command given with arguments matches those exact
+arguments only.
+
+The overlay lines and their parsing mirror grabette/hardware/i2c_diag.py
+(tests/test_i2c_fix_helper.py holds them together).
+"""
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+OVERLAYS = ("dtoverlay=i2c3,pins_4_5", "dtoverlay=i2c4,pins_8_9")
+BOOT_CONFIGS = ("boot/firmware/config.txt", "boot/config.txt")
+MODULES_LOAD_CONF = "etc/modules-load.d/i2c-dev.conf"
+
+
+def find_boot_config(root: Path):
+    for rel in BOOT_CONFIGS:
+        p = root / rel
+        if p.is_file():
+            return p
+    return None
+
+
+def _active_lines(text: str) -> list:
+    out = []
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip().replace(" ", "")
+        if line:
+            out.append(line)
+    return out
+
+
+def _overlay_present(lines: list, wanted: str) -> bool:
+    name, _, params = wanted.partition("=")[2].partition(",")
+    for line in lines:
+        if not line.startswith("dtoverlay="):
+            continue
+        got_name, _, got_params = line.partition("=")[2].partition(",")
+        if got_name == name and params in got_params.split(","):
+            return True
+    return False
+
+
+def missing_overlays(config_text: str) -> list:
+    lines = _active_lines(config_text)
+    return [ov for ov in OVERLAYS if not _overlay_present(lines, ov)]
+
+
+def append_text(missing: list) -> str:
+    # Under [all]: the file may end inside a [pi5]/[cm4] filter, and lines
+    # landing there would be silently ignored.
+    return ("\n[all]\n# Grabette gripper angle sensors (added by the dashboard)\n"
+            + "".join(f"{ov}\n" for ov in missing))
+
+
+def _boot_config(root: Path) -> Path:
+    cfg = find_boot_config(root)
+    if cfg is None:
+        sys.exit("No boot configuration found.")
+    return cfg
+
+
+def load(root: Path) -> None:
+    subprocess.run(["/usr/sbin/modprobe", "i2c-dev"], check=True)
+
+
+def persist(root: Path) -> None:
+    conf = root / MODULES_LOAD_CONF
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    conf.write_text("i2c-dev\n")
+
+
+def enable_overlays(root: Path) -> None:
+    cfg = _boot_config(root)
+    missing = missing_overlays(cfg.read_text(errors="replace"))
+    if missing:
+        shutil.copy2(cfg, cfg.with_name(cfg.name + ".grabette-bak"))
+        with cfg.open("a") as f:
+            f.write(append_text(missing))
+    print(cfg)
+
+
+def check_overlays(root: Path) -> None:
+    cfg = _boot_config(root)
+    missing = missing_overlays(cfg.read_text(errors="replace"))
+    for ov in missing:
+        print(ov)
+    sys.exit(1 if missing else 0)
+
+
+ACTIONS = {"load": load, "persist": persist,
+           "enable-overlays": enable_overlays, "check-overlays": check_overlays}
+
+
+def main(argv: list) -> None:
+    if len(argv) not in (2, 3) or argv[1] not in ACTIONS:
+        sys.exit(f"usage: {Path(argv[0]).name} {{{'|'.join(ACTIONS)}}}")
+    ACTIONS[argv[1]](Path(argv[2]) if len(argv) == 3 else Path("/"))
+
+
+if __name__ == "__main__":
+    main(sys.argv)
