@@ -94,6 +94,9 @@ class EpisodeInfo(BaseModel):
     metadata_ok: bool = True
     # Streams that recorded well under their frame rate ("rgb", "depth").
     frame_drops: list[str] = []
+    # Why the stop could not save the take ("" = it did): the mux failed, most
+    # often because the SD card was full. Written by RpiBackend._abort_stop.
+    stop_error: str = ""
     # False when the saved video cannot be paired with its capture timestamps
     # (metadata.json "valid", set from video_timestamp_alignment). The episode
     # beeped at stop: it must not be listed as OK.
@@ -102,11 +105,13 @@ class EpisodeInfo(BaseModel):
 
 
 def episode_issues(ep: dict) -> list[str]:
-    """Episode faults, worst first: "metadata", "camera", "video_sync",
-    "angles", "<stream>_frames_dropped". Unreadable metadata stands alone (the other
-    counters are then zeros)."""
+    """Episode faults, worst first: "metadata", "stop_failed", "camera",
+    "video_sync", "angles", "<stream>_frames_dropped". Unreadable metadata and
+    a failed stop stand alone (the other counters are then zeros)."""
     if not ep.get("metadata_ok", True):
         return ["metadata"]
+    if ep.get("stop_error"):
+        return ["stop_failed"]
     issues = []
     if not ep.get("has_video", True) or not ep.get("frame_count"):
         issues.append("camera")
@@ -370,7 +375,9 @@ class TaskManager:
         if ep_dir.is_dir():
             self._features[eid] = episode_features(ep_dir, self._configured_camera())
             if not valid:
-                self._features[eid]["invalid"] = ["video_sync"]
+                # metadata.json, when already written, knows why (a failed
+                # stop); otherwise its deferred write will say video_sync.
+                self._features[eid].setdefault("invalid", ["video_sync"])
         # active_task_id is deliberately NOT moved onto the task we just filed
         # into: it is the operator's EXPLICIT local selection (PUT
         # /api/tasks/active, start_session), never a side effect of recording.
@@ -576,6 +583,7 @@ class TaskManager:
         imu_sample_count = 0
         angle_sample_count = 0
         frame_drops = []
+        stop_error = ""
         aligned = True
         metadata_ok = True
         meta_path = ep_dir / "metadata.json"
@@ -599,6 +607,7 @@ class TaskManager:
                                 or metadata_stats(meta).get("imu_samples", 0))
             angle_sample_count = meta.get("angle_sample_count", 0)
             frame_drops = meta.get("frame_drops", [])
+            stop_error = meta.get("stop_error", "")
             aligned = video_aligned(meta)
         else:
             metadata_ok = False
@@ -614,6 +623,7 @@ class TaskManager:
             has_imu=imu_present,
             metadata_ok=metadata_ok,
             frame_drops=frame_drops,
+            stop_error=stop_error,
             video_aligned=aligned,
         )
         info.issues = episode_issues(info.model_dump())

@@ -670,6 +670,12 @@ async def _play_goal_when_saved(backend) -> None:
     get_speaker().play_goal()
 
 
+def _storage_report() -> tuple[float, float] | None:
+    from grabette.disk import GB, free_bytes
+    free = free_bytes(settings.data_dir)
+    return None if free is None else (free / GB, settings.min_free_disk_gb)
+
+
 def _last_episode_report():
     from grabette.app.routers.tasks import get_task_manager
     backend = _daemon.backend if _daemon else None
@@ -1321,6 +1327,7 @@ async def lifespan(app: FastAPI):
             fault_provider=lambda: getattr(_daemon.backend, "hardware_error", ""),
             depth_warm_provider=lambda: getattr(_daemon.backend, "is_depth_camera_warm", None),
             last_episode_provider=_last_episode_report,
+            storage_provider=_storage_report,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)

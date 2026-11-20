@@ -142,7 +142,11 @@ def invalid_reasons(ep_dir: Path) -> list[str]:
         meta = json.loads((Path(ep_dir) / "metadata.json").read_text())
     except (OSError, ValueError):
         return []
-    return [] if not isinstance(meta, dict) or video_aligned(meta) else ["video_sync"]
+    if not isinstance(meta, dict):
+        return []
+    if meta.get("stop_error"):
+        return ["stop_failed"]
+    return [] if video_aligned(meta) else ["video_sync"]
 
 
 def episode_features(ep_dir: Path, camera_fallback: str | None = None) -> dict:

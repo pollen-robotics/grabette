@@ -125,3 +125,38 @@ def test_a_failed_result_is_retried_and_stays_listed_meanwhile(monkeypatch):
     asyncio.run(go())
 
     assert session.report_calls == 3
+
+
+def test_the_space_left_on_the_card_rides_on_the_heartbeat(monkeypatch):
+    session = _Session([])
+    client = _client(monkeypatch, session)
+    client.storage_provider = lambda: (0.34, 2.0)
+
+    async def go():
+        task = asyncio.create_task(client.run(lambda cmd: None))
+        try:
+            await _until(lambda: len(session.beats) >= 2)
+        finally:
+            task.cancel()
+
+    asyncio.run(go())
+
+    assert session.beats[-1]["disk_free"] == 0.3
+    assert session.beats[-1]["disk_min"] == 2.0
+
+
+def test_an_unknown_card_sends_nothing(monkeypatch):
+    session = _Session([])
+    client = _client(monkeypatch, session)
+    client.storage_provider = lambda: None
+
+    async def go():
+        task = asyncio.create_task(client.run(lambda cmd: None))
+        try:
+            await _until(lambda: len(session.beats) >= 2)
+        finally:
+            task.cancel()
+
+    asyncio.run(go())
+
+    assert "disk_free" not in session.beats[-1]
