@@ -96,36 +96,15 @@ async def _sudo(cmd: tuple[str, ...], stdin: str | None = None,
             f"{' '.join(cmd)} failed: {text}")
 
 
-# Keeps the pending reboot task referenced: the loop holds tasks weakly.
-_reboot_tasks: set[asyncio.Task] = set()
-
-
-async def _reboot_later(password: str | None) -> None:
-    """Reboot a second from now, so the reply reaches the browser first. A
-    failure goes to the journal: the browser was already told "rebooting"."""
-    await asyncio.sleep(1)
-    try:
-        await _sudo(_REBOOT_CMD, password=password)
-        logger.info("Reboot requested")
-    except Exception as e:
-        logger.error("Reboot failed: %s", e)
-
-
 async def _sudo_reboot(password: str | None) -> None:
-    """Check the right to reboot, then reboot a second later (_reboot_later)."""
-    data = f"{password}\n" if password else ""
-    check = await asyncio.create_subprocess_exec(
-        *_sudo_args(password), "-v" if password else "-l", *(
-            () if password else _REBOOT_CMD),
-        stdin=asyncio.subprocess.PIPE if data else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-    _, err = await check.communicate(data.encode() if data else None)
-    if check.returncode != 0:
-        text = err.decode(errors="replace").strip()
-        raise _password_error(text, password) or PasswordRequired(wrong=False)
-    task = asyncio.create_task(_reboot_later(password))
-    _reboot_tasks.add(task)
-    task.add_done_callback(_reboot_tasks.discard)
+    """Reboot, run in the request so a refusal reaches the popup.
+
+    No pre-check: `sudo -n -l <cmd>` only says the command is allowed, not
+    that it is allowed without a password (a user in the sudo group passes it,
+    then `sudo -n` asks for the password). `systemctl reboot` returns once the
+    job is queued, and the service's graceful stop lets this reply out."""
+    await _sudo(_REBOOT_CMD, password=password)
+    logger.info("Reboot requested")
 
 
 def _wait_for_nodes(timeout_s: float = 3.0) -> None:
