@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import os
+import logging
 import platform
+import re
 import socket
 import time
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/system", tags=["system"])
 
@@ -14,6 +17,105 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 # unprivileged service user. The pre-check, the permission rule, and the actual
 # dispatch must all use this identical string or the NOPASSWD match fails.
 _POWEROFF_CMD = ("/usr/bin/systemctl", "poweroff")
+# Same, for `make install-reboot`.
+_REBOOT_CMD = ("/usr/bin/systemctl", "reboot")
+
+# A runas list then the commands of one `sudo -l` entry: "(root) NOPASSWD: /x y".
+_SUDO_ENTRY_RE = re.compile(r"^\s*\(([^)]*)\)\s*(.*)$")
+# One leading tag of a command: "NOPASSWD: ", "SETENV: "…
+_SUDO_TAG_RE = re.compile(r"^([A-Z_]+):\s*(.*)$")
+
+# Keeps the pending dispatches referenced: the loop holds tasks weakly.
+_pending_sudo: set[asyncio.Task] = set()
+
+
+def sudo_grants_without_password(listing: str, cmd: tuple[str, ...]) -> bool:
+    """Whether a `sudo -l` listing lets this user run ``cmd`` as root without
+    a password: a NOPASSWD entry for ALL, for the exact command, or for the
+    program with any arguments. A tag holds for the commands after it in its
+    entry, until PASSWD: undoes it."""
+    full, program = " ".join(cmd), cmd[0]
+    for line in listing.splitlines():
+        entry = _SUDO_ENTRY_RE.match(line)
+        if not entry:
+            continue
+        users = entry.group(1).split(":")[0]
+        if not {u.strip() for u in users.split(",")} & {"root", "ALL"}:
+            continue
+        nopasswd = False
+        for item in entry.group(2).split(","):
+            item = item.strip()
+            while tag := _SUDO_TAG_RE.match(item):
+                if tag.group(1) in ("NOPASSWD", "PASSWD"):
+                    nopasswd = tag.group(1) == "NOPASSWD"
+                item = tag.group(2)
+            if nopasswd and item in ("ALL", full, program):
+                return True
+    return False
+
+
+async def sudo_without_password(cmd: tuple[str, ...]) -> bool:
+    """Whether the service user may run ``cmd`` as root with no password.
+
+    Not `sudo -n -l <cmd>`: it answers whether the command is *allowed*, so a
+    user in the sudo group passes it, and the `sudo -n` that follows then
+    fails on the password. The whole listing names the NOPASSWD grants; it is
+    readable without a password as soon as the user holds one (listpw=any),
+    and when it is not, there is no grant to find."""
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "-n", "-l",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    out, _ = await proc.communicate()
+    return proc.returncode == 0 and sudo_grants_without_password(
+        out.decode(errors="replace"), cmd)
+
+
+async def _sudo_after(cmd: tuple[str, ...], delay_s: float) -> None:
+    await asyncio.sleep(delay_s)
+    proc = await asyncio.create_subprocess_exec(
+        "sudo", "-n", *cmd,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, err = await proc.communicate()
+    if proc.returncode != 0:
+        # The caller was already told it worked: the journal is all that's left.
+        logger.error("%s failed: %s", " ".join(cmd),
+                     err.decode(errors="replace").strip())
+
+
+def sudo_later(cmd: tuple[str, ...], delay_s: float = 1.0) -> None:
+    """Run ``cmd`` through `sudo -n` a little later, so the reply announcing it
+    reaches the browser (or the fleet) before systemd stops this service."""
+    task = asyncio.create_task(_sudo_after(cmd, delay_s))
+    _pending_sudo.add(task)
+    task.add_done_callback(_pending_sudo.discard)
+
+
+def refuse_while_recording(action: str) -> None:
+    """409 mid-recording: powering off or rebooting would truncate the
+    episode. If the daemon isn't running (mock backend / not yet initialised)
+    there's nothing to protect — allow it."""
+    try:
+        from grabette.app.main import get_daemon_instance
+
+        daemon = get_daemon_instance()
+        if daemon is not None and daemon.state.value == "running":
+            cap = daemon.backend.get_state().capture
+            if cap.is_capturing or cap.is_starting:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A recording is in progress. Stop the capture "
+                           f"before {action}.",
+                )
+    except HTTPException:
+        raise
+    except Exception:
+        pass
 
 # PiSugar 3 power-management registers (I2C 0x57). Confirmed against the
 # pisugar-power-manager-rs driver and validated on-device: the P3 has no
@@ -149,15 +251,16 @@ def system_info():
 
     info["ip"] = get_route_ip() or "unknown"
 
-    # Disk usage
-    try:
-        stat = os.statvfs("/")
-        total = stat.f_frsize * stat.f_blocks
-        free = stat.f_frsize * stat.f_bavail
-        info["disk_total_gb"] = round(total / (1024**3), 1)
-        info["disk_free_gb"] = round(free / (1024**3), 1)
-    except Exception:
-        pass
+    # Disk usage — of the card recordings land on, measured the same way as
+    # the backend's free-space gate, with that gate's threshold, so the
+    # dashboard can show how close the device is to refusing a start.
+    from grabette.config import settings
+    from grabette.disk import GB, free_bytes, total_bytes
+    free, total = free_bytes(settings.data_dir), total_bytes(settings.data_dir)
+    if free is not None and total is not None:
+        info["disk_total_gb"] = round(total / GB, 1)
+        info["disk_free_gb"] = round(free / GB, 1)
+        info["disk_min_free_gb"] = settings.min_free_disk_gb
 
     # CPU temperature (RPi)
     try:
@@ -213,33 +316,8 @@ async def system_shutdown():
     delay so this HTTP response reaches the browser before systemd tears the
     server down.
     """
-    # Guard: never power off mid-recording. If the daemon isn't running (mock
-    # backend / not yet initialised) there's nothing to protect — allow it.
-    try:
-        from grabette.app.main import get_daemon_instance
-
-        daemon = get_daemon_instance()
-        if daemon is not None and daemon.state.value == "running":
-            cap = daemon.backend.get_state().capture
-            if cap.is_capturing or cap.is_starting:
-                raise HTTPException(
-                    status_code=409,
-                    detail="A recording is in progress. Stop the capture before powering off.",
-                )
-    except HTTPException:
-        raise
-    except Exception:
-        pass
-
-    # Permission pre-check: `sudo -n -l <cmd>` reports whether the command is
-    # permitted without running it or prompting for a password.
-    check = await asyncio.create_subprocess_exec(
-        "sudo", "-n", "-l", *_POWEROFF_CMD,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
-    await check.wait()
-    if check.returncode != 0:
+    refuse_while_recording("powering off")
+    if not await sudo_without_password(_POWEROFF_CMD):
         raise HTTPException(
             status_code=500,
             detail="Shutdown not permitted. Run 'make install-poweroff' on the device.",
@@ -251,13 +329,26 @@ async def system_shutdown():
     # No-op (harmless) on devices without a PiSugar.
     _pisugar_cut_power(30)
 
-    # Dispatch detached so the 200 below is sent before the box goes down.
-    await asyncio.create_subprocess_exec(
-        "sh", "-c", f"sleep 1; sudo -n {' '.join(_POWEROFF_CMD)}",
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.DEVNULL,
-    )
+    sudo_later(_POWEROFF_CMD)
     return {"status": "shutting_down"}
+
+
+@router.post("/reboot")
+async def system_reboot():
+    """Reboot the Raspberry Pi — the dashboard's way to make the firmware look
+    for an RGB camera plugged back in, or to apply a boot config change.
+
+    Same guards and dispatch as the shutdown, with its own sudoers grant
+    (`make install-reboot`): never a password asked in the browser.
+    """
+    refuse_while_recording("rebooting")
+    if not await sudo_without_password(_REBOOT_CMD):
+        raise HTTPException(
+            status_code=500,
+            detail="Reboot not permitted. Run 'make install-reboot' on the device.",
+        )
+    sudo_later(_REBOOT_CMD)
+    return {"status": "rebooting"}
 
 
 @router.post("/update")

@@ -16,6 +16,8 @@ from pathlib import Path
 
 from grabette.backend.base import Backend
 from grabette.config import settings
+from grabette.disk import disk_space_message as _disk_space_message
+from grabette.disk import free_bytes as _free_bytes
 from grabette.errors import exc_text as _exc_text
 from grabette.hardware.frames import build_frames_payload
 from grabette.hardware.camera import FrameAlignmentError
@@ -103,6 +105,11 @@ _HW_ORDER = (_HW_CAMERA, _HW_OAKD, _HW_ANGLE, _HW_CALIB)
 # How often the idle watch retries sensors that never came up.
 _ANGLE_RETRY_S = 3.0
 
+# How long a free-space reading is reused. hardware_error is read by the 50 Hz
+# poll loop and the LED monitor; freeing space is noticed within this delay.
+_DISK_CHECK_S = 2.0
+
+
 _ANGLE_FAULT_MSG = (
     "the gripper angle sensors {what}. Episodes would carry no angle_data.json "
     "and could never be converted."
@@ -132,7 +139,9 @@ class RpiBackend(Backend):
         self._capturing = False
         self._starting = False
         self._stopping = False  # True during stop_capture teardown (drives the fast-blink LED)
+        self._stop_task: asyncio.Task | None = None
         self._finalizing = False  # True from a stop until its deferred writes are done
+        self._finalizing_episode: str | None = None
         # True while the OAK-D device is being brought up (init in progress).
         # Distinguishes the normal warm-up window from a genuine init failure
         # so the UI can show "Starting…" instead of "Error".
@@ -147,6 +156,9 @@ class RpiBackend(Backend):
         # angle sensors). Any of them BLOCKS capture and drives the error LED —
         # see hardware_error.
         self._hw_faults: dict[str, str] = {}
+        # Cached free-space fault (see disk_space_error).
+        self._disk_error = ""
+        self._disk_checked_at: float | None = None
         self._episode_dir: Path | None = None
         self._enable_angle = enable_angle
         # Last bring-up retry from the idle watch (_watch_angle_sensors).
@@ -471,14 +483,8 @@ class RpiBackend(Backend):
         if self._depth_camera_watch_task is not None:
             self._depth_camera_watch_task.cancel()
             self._depth_camera_watch_task = None
-        alignment_error = None
         if self._capturing:
-            try:
-                await self.stop_capture()
-            except FrameAlignmentError as exc:
-                # The take is stopped, but shutdown still owns the remaining
-                # peripherals. Release them before surfacing its validation error.
-                alignment_error = exc
+            await self.stop_capture()
         # After any stop_capture (which may re-arm the keep-alive), drop the
         # pending power-down — we're shutting the OAK down directly below.
         self._cancel_oakd_keepalive()
@@ -502,8 +508,6 @@ class RpiBackend(Backend):
         self._running = False
         self._start_time = None
         logger.info("RpiBackend stopped")
-        if alignment_error is not None:
-            raise alignment_error
 
     @property
     def recording_started_utc(self) -> datetime | None:
@@ -914,6 +918,17 @@ class RpiBackend(Backend):
         logger.info("RpiBackend capture started → %s", episode_dir)
 
     async def stop_capture(self) -> CaptureStatus:
+        # The mux no longer blocks the loop, so a second stop can arrive mid-stop: it joins this one.
+        if self._stop_task is None:
+            self._stop_task = asyncio.ensure_future(self._stop_capture())
+            self._stop_task.add_done_callback(self._clear_stop_task)
+        return await asyncio.shield(self._stop_task)
+
+    def _clear_stop_task(self, task) -> None:
+        if self._stop_task is task:
+            self._stop_task = None
+
+    async def _stop_capture(self) -> CaptureStatus:
         if not self._capturing:
             raise RuntimeError("Not capturing")
 
@@ -936,57 +951,65 @@ class RpiBackend(Backend):
         # Audible cue (descending, mirroring the ascending one at start) — HERE,
         # at the top of the teardown: the stream stops below flip their recording
         # flag at once and only THEN spend ~1-2s muxing, so this is the instant
-        # frames stop being saved. Being a detached subprocess, it is heard
-        # during that mux even though the mux blocks the event loop. Placing it
+        # frames stop being saved. Placing it
         # after the muxes instead would report "episode written", a second or two
         # after the take actually ended.
         if self._speaker is not None:
             self._speaker.play_stop()
 
-        # Stop angle BEFORE camera. camera.stop() runs ffmpeg muxing
-        # which takes ~1-2s — if angle capture is still running during
-        # muxing, samples extend past the video duration.
-        _t = time.monotonic()
-        angle_samples = None
-        angle_count = 0
-        if self._angle:
-            angle_data = self._angle.stop()
-            angle_count = len(angle_data.samples)
-            angle_samples = angle_data.samples if angle_data.samples else None
-        self._note_angle_output(angle_samples)
-        t_phases["angle_stop"] = (time.monotonic() - _t) * 1000
-
-        # Finalize OAK and RPi camera concurrently. Both flip their "recording"
-        # flag immediately (capture stops at once) and then spend ~1-2s muxing
-        # H.264 → mp4. Running the OAK finalize in an executor while the camera
-        # finalize runs here overlaps the muxes (the OAK also muxes left/right
-        # in parallel internally), cutting the stop/save time to ~the single
-        # longest mux. Angle is already stopped above, so the "angle must stop
-        # before the camera mux" ordering still holds.
-        import asyncio
-        loop = asyncio.get_event_loop()
-        _t_muxes = time.monotonic()
+        # A teardown that raises (the mux fails on a full SD card, picamera2
+        # errors out...) must still end the capture: otherwise _stopping stays
+        # True (the LED fast-blinks forever) and _capturing too, so only a
+        # second press got the device out — with an episode left behind
+        # without metadata.json. See _abort_stop. (A FrameAlignmentError is
+        # not such a failure: the take is saved, marked invalid, below.)
         oakd_fut = None
-        if self._oakd and self._oakd.is_recording:
-            oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
-        _t_cam = time.monotonic()
-        alignment_error = None
         try:
-            frame_timestamps = self._camera.stop()
-        except FrameAlignmentError as exc:
-            # The camera has stopped. Finish the other streams and retain their
-            # sidecars before returning a failed video/timestamp alignment.
-            alignment_error = exc
-            frame_timestamps = self._camera.frame_timestamps
-            logger.error("Video timestamp alignment failed: %s", exc)
-        t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
-        self._needs_reinit = True  # camera is closed; flag before yielding to event loop
-        oakd_stats = await oakd_fut if oakd_fut is not None else None
-        t_phases["muxes_wallclock"] = (time.monotonic() - _t_muxes) * 1000
+            # Stop angle BEFORE camera. camera.stop() runs ffmpeg muxing
+            # which takes ~1-2s — if angle capture is still running during
+            # muxing, samples extend past the video duration.
+            _t = time.monotonic()
+            angle_samples = None
+            angle_count = 0
+            if self._angle:
+                angle_data = self._angle.stop()
+                angle_count = len(angle_data.samples)
+                angle_samples = angle_data.samples if angle_data.samples else None
+            self._note_angle_output(angle_samples)
+            t_phases["angle_stop"] = (time.monotonic() - _t) * 1000
+
+            # Finalize OAK and RPi camera concurrently. Both flip their "recording"
+            # flag immediately (capture stops at once) and then spend ~1-2s muxing
+            # H.264 → mp4. Running both finalizes in executors overlaps the muxes (the OAK also muxes left/right
+            # in parallel internally), cutting the stop/save time to ~the single
+            # longest mux. Angle is already stopped above, so the "angle must stop
+            # before the camera mux" ordering still holds.
+            import asyncio
+            loop = asyncio.get_event_loop()
+            _t_muxes = time.monotonic()
+            if self._oakd and self._oakd.is_recording:
+                oakd_fut = loop.run_in_executor(None, self._oakd.stop_recording)
+            _t_cam = time.monotonic()
+            self._needs_reinit = True  # the camera is being closed
+            video_valid = True
+            try:
+                frame_timestamps = await loop.run_in_executor(None, self._camera.stop)
+            except FrameAlignmentError as exc:
+                # Not a failed stop: the take is kept, marked invalid.
+                video_valid = False
+                frame_timestamps = self._camera.frame_timestamps
+                logger.error("Video timestamp alignment failed: %s", exc)
+            frame_provenance = self._camera.frame_provenance
+            t_phases["camera_stop"] = (time.monotonic() - _t_cam) * 1000
+            oakd_stats = await oakd_fut if oakd_fut is not None else None
+            t_phases["muxes_wallclock"] = (time.monotonic() - _t_muxes) * 1000
+        except Exception as exc:
+            return await self._abort_stop(exc, oakd_fut, duration_ms)
 
         # NOW safe to clear flag — all streams stopped, no I2C contention.
         self._capturing = False
         self._stopping = False  # teardown done → LED goes off (idle)
+        self._disk_checked_at = None  # re-measure: this take used up space
 
         # If the daemon auto-enabled the OAK-D for this capture, keep it warm
         # for the grace period so a back-to-back recording starts instantly,
@@ -1012,6 +1035,7 @@ class RpiBackend(Backend):
             frame_count=self._camera.frame_count,
             imu_sample_count=oakd_stats.get("imu_samples", 0) if oakd_stats else 0,
             angle_sample_count=angle_count,
+            valid=video_valid,
         )
 
         # Build the metadata dict now so all values are captured while state
@@ -1039,7 +1063,7 @@ class RpiBackend(Backend):
             # explicit for downstream traceability).
             "urdf": urdf_name,
         }
-        if alignment_error is not None:
+        if not video_valid:
             meta["valid"] = False
         if oakd_stats:
             # Per-stream capture stats. Key is "dcam" since the camera may be an
@@ -1080,9 +1104,11 @@ class RpiBackend(Backend):
         # returns, on the same event loop — the caller (button listener /
         # REST endpoint) sees stop_capture complete immediately.
         self._finalizing = True
+        self._finalizing_episode = episode_dir.name if episode_dir else None
         loop.call_soon(
             self._finalize_and_reinit,
             episode_dir, frame_timestamps, angle_samples, meta, urdf_path,
+            frame_provenance,
         )
 
         total_ms = t_phases.get("angle_stop", 0) + t_phases.get("muxes_wallclock", 0)
@@ -1091,10 +1117,80 @@ class RpiBackend(Backend):
             " ".join(f"{k}={v:.0f}" for k, v in t_phases.items()),
             total_ms,
         )
-        if alignment_error is not None:
-            alignment_error.episode_id = status.episode_id
-            raise alignment_error
         return status
+
+    async def _abort_stop(self, exc: Exception, oakd_fut, duration_ms: float) -> CaptureStatus:
+        """End a capture whose stream teardown raised.
+
+        The take is lost, but the device must not be: back to idle (the LED stops
+        fast-blinking), cameras re-created before the next start, the error cue
+        played here — the stop then RETURNS normally, so every caller files the
+        episode like any other and the dashboard reports it as failed, with the
+        reason in its metadata.json when the card still takes the write. Nothing
+        is deferred: there is nothing left to save.
+        """
+        logger.exception("Capture teardown failed — episode marked as failed")
+        # The OAK-D mux runs in an executor and may still be writing: let it
+        # finish (or fail) before declaring the device idle.
+        if oakd_fut is not None:
+            try:
+                await oakd_fut
+            except Exception:
+                logger.exception("Depth camera teardown failed too")
+        self._needs_reinit = True
+        self._capturing = False
+        self._stopping = False
+        if self._oakd_auto_enabled and self.is_oakd_initialized:
+            self._schedule_oakd_keepalive()
+
+        episode_dir = self._episode_dir
+        self._episode_dir = None
+        self._sync.reset()
+        self._take_sync_metadata()  # belongs to this episode; never to the next
+
+        reason = _exc_text(exc)
+        if len(reason) > 300:  # ffmpeg's stderr: its banner first, the error last
+            reason = "…" + reason[-300:]
+        self._disk_checked_at = None  # the take may well have filled the card
+        if self.disk_space_error:
+            reason = f"{self.disk_space_error} ({reason})"
+        status = CaptureStatus(
+            is_capturing=False,
+            episode_id=episode_dir.name if episode_dir else None,
+            duration_seconds=round(duration_ms / 1000.0, 2),
+            valid=False,
+        )
+        if episode_dir is not None:
+            try:
+                write_json_atomic(episode_dir / "metadata.json", {
+                    "duration_seconds": status.duration_seconds,
+                    "frame_count": 0,
+                    "imu_sample_count": 0,
+                    "angle_sample_count": 0,
+                    "backend": "rpi",
+                    "hand": settings.hand,
+                    "device_id": settings.device_id,
+                    "valid": False,
+                    "stop_error": reason,
+                })
+            except Exception:
+                # Typically the full card that broke the teardown in the first
+                # place: the episode then reads as "metadata missing".
+                logger.exception("Could not write metadata.json for failed episode %s",
+                                 episode_dir.name)
+        if self._speaker is not None:
+            self._speaker.play_error()
+
+        # Same as the deferred finalize of a normal stop: ready the hardware
+        # for the next take, off the stop path.
+        asyncio.get_event_loop().call_soon(self._reinit_after_failed_stop)
+        return status
+
+    def _reinit_after_failed_stop(self) -> None:
+        try:
+            self._reinit_hardware()
+        except Exception:
+            logger.exception("Hardware re-init after a failed stop failed")
 
     def _finalize_and_reinit(
         self,
@@ -1103,6 +1199,7 @@ class RpiBackend(Backend):
         angle_samples,
         meta,
         urdf_path,
+        frame_provenance=None,
     ) -> None:
         """Deferred post-stop work: JSON writes + calibration + frames + reinit.
 
@@ -1145,6 +1242,8 @@ class RpiBackend(Backend):
                     logger.warning(
                         "URDF missing at %s — episode will lack frames.json", urdf_path,
                     )
+                if frame_provenance is not None and not frame_provenance.save():
+                    meta["valid"] = False
                 # metadata.json goes last so its presence signals the episode
                 # is fully saved to any watcher.
                 write_json_atomic(episode_dir / "metadata.json", meta)
@@ -1169,6 +1268,7 @@ class RpiBackend(Backend):
         # The episode is on disk and its cue is out: a waiting goal cue may go
         # (see app.main._play_goal_when_saved). The re-init below is for the next take.
         self._finalizing = False
+        self._finalizing_episode = None
 
         _t = time.monotonic()
         try:
@@ -1213,6 +1313,7 @@ class RpiBackend(Backend):
             is_starting=self._starting,
             blocked_reason=self.hardware_error or self.busy_reason,
             needs_calibration=self.needs_calibration,
+            storage_error=self.disk_space_error,
             episode_id=self._episode_dir.name if self._episode_dir else None,
             duration_seconds=round(duration, 2),
             frame_count=frame_count,
@@ -1235,6 +1336,12 @@ class RpiBackend(Backend):
     @property
     def is_finalizing(self) -> bool:
         return self._finalizing
+
+    @property
+    def busy_episode_id(self) -> str | None:
+        if self._capturing and self._episode_dir is not None:
+            return self._episode_dir.name
+        return self._finalizing_episode if self._finalizing else None
 
     def _note_angle_output(self, angle_samples) -> None:
         """Record whether the finished recording actually produced angle data.
@@ -1289,9 +1396,32 @@ class RpiBackend(Backend):
         (which blinks the error pattern), so a fault is visible on the device
         itself and not only in the logs. Every live fault is reported, in a fixed
         order: fixing one and still being refused, with no clue about the other,
-        is a maddening way to spend an afternoon."""
-        return " / ".join(self._hw_faults[k] for k in _HW_ORDER
-                          if k in self._hw_faults)
+        is a maddening way to spend an afternoon.
+
+        A nearly full SD card comes first: it is not latched like the others but
+        measured live (disk_space_error), and clears as soon as space is freed."""
+        faults = [self._hw_faults[k] for k in _HW_ORDER if k in self._hw_faults]
+        disk = self.disk_space_error
+        if disk:
+            faults.insert(0, disk)
+        return " / ".join(faults)
+
+    @property
+    def disk_space_error(self) -> str:
+        """Why the SD card cannot take a recording ("" = enough free space).
+
+        Not reported while a capture runs or stops: crossing the threshold
+        mid-take does not stop it from saving, and the error LED would hide the
+        recording state. The stop path re-reads it so a take that DID fill the
+        card shows the fault straight away."""
+        if self._capturing or self._stopping:
+            return ""
+        now = time.monotonic()
+        if self._disk_checked_at is None or now - self._disk_checked_at >= _DISK_CHECK_S:
+            self._disk_checked_at = now
+            self._disk_error = _disk_space_message(
+                _free_bytes(settings.data_dir), settings.min_free_disk_gb)
+        return self._disk_error
 
     def get_frame_jpeg(self) -> bytes | None:
         """Capture a JPEG frame from picamera2.

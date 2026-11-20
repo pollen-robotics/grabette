@@ -292,6 +292,16 @@ class GrabetteClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def reboot(self) -> dict:
+        try:
+            r = self._http.post("/api/system/reboot")
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            return {"error": _error_detail(e)}
+        except Exception as e:
+            return {"error": str(e)}
+
     # -- Sound --
 
     def get_sound(self) -> dict | None:

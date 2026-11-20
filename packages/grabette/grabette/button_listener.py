@@ -375,7 +375,8 @@ class ButtonListener:
         self._stop_ack_until = time.monotonic() + STOP_ACK_S
         future = asyncio.run_coroutine_threadsafe(self._stop_capture_coro(), self._loop)
         try:
-            future.result(timeout=30.0)
+            # No timeout: the stop includes the mux, which grows with the take.
+            future.result()
         except Exception:
             logger.exception("Button stop_capture failed")
             cue_error()

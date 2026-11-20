@@ -10,6 +10,7 @@ import logging
 import queue
 import subprocess
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 from grabette.output import write_json_atomic
@@ -212,11 +213,35 @@ def software_versions() -> dict[str, str | None]:
 class FrameAlignmentError(RuntimeError):
     """The saved video cannot safely be paired with its capture timestamps."""
 
-    def __init__(self, message: str, *, episode_id: str | None = None):
-        super().__init__(message)
-        # Set by the backend only after all streams and capture state are down.
-        # Stop consumers can then retain this exact failed take in the registry.
-        self.episode_id = episode_id
+
+def describe_alignment_errors(alignment: dict) -> str:
+    errors = alignment.get("errors") or []
+    count = max(alignment.get("error_count") or 0, len(errors))
+    if not errors:
+        return "video timestamps could not be checked"
+    more = count - 1
+    return errors[0] + (f" (and {more} more error{'s' if more > 1 else ''})" if more else "")
+
+
+@dataclass
+class FrameProvenance:
+    """raw_video.frames.json, written after the stop to keep it off the stop path."""
+    path: Path
+    h264_path: Path
+    alignment: dict
+    frames: list
+
+    def save(self) -> bool:
+        """Write the file and drop the .h264 if the take is valid. Returns validity."""
+        try:
+            write_json_atomic(self.path, {"alignment": self.alignment, "frames": self.frames})
+        except OSError as exc:
+            self.alignment["valid"] = False
+            self.alignment["errors"].append(f"Cannot save frame provenance: {exc}")
+            self.alignment["error_count"] = self.alignment.get("error_count", 0) + 1
+        if self.alignment["valid"]:
+            self.h264_path.unlink(missing_ok=True)
+        return self.alignment["valid"]
 
 
 class VideoCapture:
@@ -260,6 +285,7 @@ class VideoCapture:
         self._frame_count: int = 0
         self._timing = FrameTiming(self.sync)
         self.timestamp_alignment: dict = {}
+        self.frame_provenance: FrameProvenance | None = None
         self._output = None
 
     def init_camera(self) -> None:
@@ -333,6 +359,7 @@ class VideoCapture:
         self._timing = FrameTiming(self.sync, pts_origin_us=self._encoder_pts_origin)
         self._frame_timestamps = self._timing.timestamps
         self.timestamp_alignment = {}
+        self.frame_provenance = None
         self._frame_count = 0
 
         output = _h264_file_output(self._h264_path, self._timing)
@@ -395,17 +422,11 @@ class VideoCapture:
         self.timestamp_alignment["reordered_output_count"] = getattr(self._output, "reordered_count", None)
         self.timestamp_alignment["camera_buffer_count"] = self.buffer_count
         self.timestamp_alignment["software_versions"] = dict(software_versions())
-        try:
-            write_json_atomic(self._output_path.with_suffix(".frames.json"), {
-                "alignment": self.timestamp_alignment, "frames": self._timing.frames,
-            })
-        except OSError as exc:
-            self.timestamp_alignment["valid"] = False
-            self.timestamp_alignment["errors"].append(f"Cannot save frame provenance: {exc}")
+        self.frame_provenance = FrameProvenance(
+            self._output_path.with_suffix(".frames.json"), self._h264_path,
+            self.timestamp_alignment, self._timing.frames)
         if not self.timestamp_alignment["valid"]:
-            raise FrameAlignmentError(str(self.timestamp_alignment["errors"]))
-        # Only discard the intermediate stream after successful validation.
-        self._h264_path.unlink()
+            raise FrameAlignmentError(describe_alignment_errors(self.timestamp_alignment))
         return self._frame_timestamps
 
     def _mux_to_mp4(self) -> None:

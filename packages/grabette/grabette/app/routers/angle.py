@@ -9,6 +9,9 @@ when the sudoers drop-in of `make install-i2c-fix` grants the exact command,
 otherwise with the grabette's password typed in the popup and passed to
 `sudo -S` on stdin. The password is used for that one call and never stored or
 logged.
+
+Rebooting is not one of them: it goes through the system router's reboot
+(`make install-reboot`), and never asks for the password.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from grabette.app.dependencies import get_backend
+from grabette.app.routers import system
 from grabette.backend.base import Backend
 from grabette.hardware import i2c_diag
 
@@ -34,7 +38,6 @@ router = APIRouter(prefix="/api/angle", tags=["angle"])
 # argument and the NOPASSWD rule no longer matches.
 _MODPROBE_CMD = ("/usr/sbin/modprobe", "i2c-dev")
 _PERSIST_CMD = ("/usr/bin/tee", i2c_diag.MODULES_LOAD_CONF)
-_REBOOT_CMD = ("/usr/bin/systemctl", "reboot")
 
 
 def _backup_cmd(cfg: str) -> tuple[str, ...]:
@@ -94,31 +97,6 @@ async def _sudo(cmd: tuple[str, ...], stdin: str | None = None,
         text = err.decode(errors="replace").strip()
         raise _password_error(text, password) or RuntimeError(
             f"{' '.join(cmd)} failed: {text}")
-
-
-async def _sudo_reboot(password: str | None) -> None:
-    """Check the right to reboot, then reboot detached, a second later, so the
-    reply reaches the browser first."""
-    data = f"{password}\n" if password else ""
-    check = await asyncio.create_subprocess_exec(
-        *_sudo_args(password), "-v" if password else "-l", *(
-            () if password else _REBOOT_CMD),
-        stdin=asyncio.subprocess.PIPE if data else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
-    _, err = await check.communicate(data.encode() if data else None)
-    if check.returncode != 0:
-        text = err.decode(errors="replace").strip()
-        raise _password_error(text, password) or PasswordRequired(wrong=False)
-    proc = await asyncio.create_subprocess_exec(
-        "sh", "-c", f'sleep 1; exec {" ".join(_sudo_args(password))} '
-                    f'{" ".join(_REBOOT_CMD)}',
-        stdin=asyncio.subprocess.PIPE if data else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        start_new_session=True)
-    if data:
-        proc.stdin.write(data.encode())
-        await proc.stdin.drain()
-        proc.stdin.close()
 
 
 def _wait_for_nodes(timeout_s: float = 3.0) -> None:
@@ -183,7 +161,7 @@ async def angle_fix(req: FixRequest, backend: Backend = Depends(get_backend)):
                     f"as {cfg.name}.grabette-bak). Reboot to apply.")
             reboot = True
         elif req.fix == i2c_diag.FIX_REBOOT:
-            await _sudo_reboot(pw)
+            await system.system_reboot()
             return {"done": "The grabette is rebooting — reload this page in "
                             "a minute.", "reboot": False, "rebooting": True,
                     "diagnosis": None}

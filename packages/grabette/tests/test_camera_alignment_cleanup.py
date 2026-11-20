@@ -1,4 +1,4 @@
-"""An alignment failure must not leave other streams or capture state live."""
+"""An alignment failure is a normal stop: every stream down, take kept as invalid."""
 import asyncio
 import json
 from types import SimpleNamespace
@@ -12,7 +12,7 @@ from grabette.hardware.camera import FrameAlignmentError
 
 
 @pytest.mark.parametrize("alignment_fails", [False, True])
-def test_stop_drains_other_streams_and_defers_diagnostics_before_reporting_error(
+def test_stop_drains_other_streams_and_files_an_invalid_take_without_raising(
     monkeypatch, tmp_path, alignment_fails,
 ):
     backend = object.__new__(RpiBackend)
@@ -33,6 +33,7 @@ def test_stop_drains_other_streams_and_defers_diagnostics_before_reporting_error
         frame_count = 2
         frame_timestamps = [10.0, 35.0]
         timestamp_alignment = {"valid": not alignment_fails, "errors": []}
+        frame_provenance = object()
 
         def stop(self):
             events.append("camera_closed")
@@ -69,6 +70,7 @@ def test_stop_drains_other_streams_and_defers_diagnostics_before_reporting_error
     backend._capturing = True
     backend._starting = True
     backend._stopping = False
+    backend._stop_task = None
     backend._needs_reinit = False
     backend._speaker = None
     backend._angle = None
@@ -85,21 +87,18 @@ def test_stop_drains_other_streams_and_defers_diagnostics_before_reporting_error
     backend._finalize_and_reinit = Mock()
     monkeypatch.setattr(rpi, "settings", SimpleNamespace(hand="left", device_id="test-left"))
     monkeypatch.setattr(asyncio, "get_event_loop", lambda: Loop())
-    if alignment_fails:
-        with pytest.raises(FrameAlignmentError) as caught:
-            asyncio.run(backend.stop_capture())
-        assert caught.value is failure
-        assert failure.episode_id == episode.name
-    else:
-        status = asyncio.run(backend.stop_capture())
-        assert status.episode_id == episode.name
-    assert events == ["camera_closed", "oak_drained", "sync_reset", "finalizer_scheduled"]
+    status = asyncio.run(backend.stop_capture())
+    assert status.episode_id == episode.name
+    assert status.valid is not alignment_fails
+    assert sorted(events[:2]) == ["camera_closed", "oak_drained"]
+    assert events[2:] == ["sync_reset", "finalizer_scheduled"]
     assert not backend._capturing and not backend._stopping and not backend._starting
     assert backend._needs_reinit and backend._finalizing
     assert backend._episode_dir is None
     assert len(scheduled) == 1
     callback, args = scheduled[0]
-    saved_episode, timestamps, angles, metadata, urdf = args
+    saved_episode, timestamps, angles, metadata, urdf, provenance = args
+    assert provenance is backend._camera.frame_provenance
     assert callback is backend._finalize_and_reinit
     assert saved_episode == episode
     assert timestamps == [10.0, 35.0]
@@ -131,9 +130,30 @@ def test_invalid_alignment_is_persisted_without_the_successful_save_cue(monkeypa
     backend._reinit_hardware.assert_called_once_with()
 
 
-def test_shutdown_releases_peripherals_before_reraising_alignment_error():
+def test_finalizer_saves_frame_provenance_before_metadata(tmp_path):
     backend = object.__new__(RpiBackend)
-    failure = FrameAlignmentError("invalid stopped take", episode_id="test-episode")
+    backend._speaker = Mock()
+    backend._finalizing = True
+    backend._reinit_hardware = Mock()
+    order = []
+
+    class Provenance:
+        def save(self):
+            order.append("provenance")
+            assert not (tmp_path / "metadata.json").exists()
+            return False
+
+    metadata = {"video_timestamp_alignment": {"valid": True}}
+    backend._finalize_and_reinit(
+        tmp_path, [10.0], None, metadata, tmp_path / "missing-robot.urdf", Provenance())
+    assert order == ["provenance"]
+    assert json.loads((tmp_path / "metadata.json").read_text())["valid"] is False
+    backend._speaker.play_error.assert_called_once_with()
+    backend._speaker.play_saved.assert_not_called()
+
+
+def test_shutdown_stops_an_invalid_take_and_releases_peripherals():
+    backend = object.__new__(RpiBackend)
     backend._depth_camera_watch_task = None
     backend._capturing = True
     backend._cancel_oakd_keepalive = Mock()
@@ -143,12 +163,10 @@ def test_shutdown_releases_peripherals_before_reraising_alignment_error():
 
     async def stop_capture():
         backend._capturing = False
-        raise failure
+        return SimpleNamespace(valid=False)
 
     backend.stop_capture = stop_capture
-    with pytest.raises(FrameAlignmentError) as caught:
-        asyncio.run(backend.stop())
-    assert caught.value is failure
+    asyncio.run(backend.stop())
     teleop.shutdown.assert_called_once_with()
     oakd.shutdown.assert_called_once_with()
     speaker.close.assert_called_once_with()

@@ -130,14 +130,18 @@ B-frame, makes alignment invalid.
 take was recorded with (`null` when one could not be read), so that invalid
 takes can be traced to an update of one of them.
 
-An unknown output PTS, non-increasing mapped times, failed output writes, or a
-count/order mismatch makes alignment invalid. The raw `.h264` is retained for
-diagnosis, other sensor streams are stopped, and diagnostic metadata is saved
-by the deferred finalizer with `valid: false`. The stop caller receives the
-error after stream teardown and capture-state cleanup have completed.
-REST, physical-button, fleet, and scheduled stops retain that failed episode
-in its task's registry while still reporting the alignment error, so starting
-the next take does not hide the retained files.
+`errors` keeps the text of the first 10 errors; `error_count` counts them all.
+
+An unknown output PTS, non-increasing mapped times, failed output writes, a
+`raw_video.frames.json` that cannot be written, or a count/order mismatch makes
+alignment invalid. The take is still a normal stop: every stream is stopped,
+the episode is filed in its task, and the deferred finalizer writes its files
+with `valid: false` and plays the error cue once. The stop returns a status
+with `valid: false` instead of an error, whether it came from the REST API, the
+button, the fleet or a scheduled stop. The raw `.h264` is kept for diagnosis
+(on a valid take it is deleted once `raw_video.frames.json` is written). The
+dashboard shows the episode with the `video_sync` issue, and the upload
+screens it out (reported as missing `valid video timestamps`).
 This checks frame-to-timestamp correspondence; it does not prevent capture
 gaps or turn the MP4 into a variable-frame-rate recording.
 
