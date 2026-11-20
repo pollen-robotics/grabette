@@ -96,9 +96,23 @@ async def _sudo(cmd: tuple[str, ...], stdin: str | None = None,
             f"{' '.join(cmd)} failed: {text}")
 
 
+# Keeps the pending reboot task referenced: the loop holds tasks weakly.
+_reboot_tasks: set[asyncio.Task] = set()
+
+
+async def _reboot_later(password: str | None) -> None:
+    """Reboot a second from now, so the reply reaches the browser first. A
+    failure goes to the journal: the browser was already told "rebooting"."""
+    await asyncio.sleep(1)
+    try:
+        await _sudo(_REBOOT_CMD, password=password)
+        logger.info("Reboot requested")
+    except Exception as e:
+        logger.error("Reboot failed: %s", e)
+
+
 async def _sudo_reboot(password: str | None) -> None:
-    """Check the right to reboot, then reboot detached, a second later, so the
-    reply reaches the browser first."""
+    """Check the right to reboot, then reboot a second later (_reboot_later)."""
     data = f"{password}\n" if password else ""
     check = await asyncio.create_subprocess_exec(
         *_sudo_args(password), "-v" if password else "-l", *(
@@ -109,16 +123,9 @@ async def _sudo_reboot(password: str | None) -> None:
     if check.returncode != 0:
         text = err.decode(errors="replace").strip()
         raise _password_error(text, password) or PasswordRequired(wrong=False)
-    proc = await asyncio.create_subprocess_exec(
-        "sh", "-c", f'sleep 1; exec {" ".join(_sudo_args(password))} '
-                    f'{" ".join(_REBOOT_CMD)}',
-        stdin=asyncio.subprocess.PIPE if data else asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        start_new_session=True)
-    if data:
-        proc.stdin.write(data.encode())
-        await proc.stdin.drain()
-        proc.stdin.close()
+    task = asyncio.create_task(_reboot_later(password))
+    _reboot_tasks.add(task)
+    task.add_done_callback(_reboot_tasks.discard)
 
 
 def _wait_for_nodes(timeout_s: float = 3.0) -> None:
