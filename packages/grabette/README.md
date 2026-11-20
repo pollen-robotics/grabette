@@ -73,6 +73,7 @@ sudo cp config/config.txt /boot/firmware
 make install-audio                 # builds the speaker's devicetree overlay — before the reboot
 make install-netdev
 make install-i2c-fix               # lets the dashboard's angle-sensor "Diagnose" popup apply its fixes
+make install-poweroff install-reboot  # lets the dashboard's Power off and Reboot buttons work
 sudo reboot
 ```
 

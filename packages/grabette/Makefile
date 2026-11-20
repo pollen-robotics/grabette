@@ -1,4 +1,4 @@
-.PHONY: install-rpi check-hand check-camera write-env install-udev install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-i2c-fix install-ntp install-audio install-asound-conf ensure-ble-only help
+.PHONY: install-rpi check-hand check-camera write-env install-udev install-udev-oak install-udev-orbbec install-orbbec-sdk install-systemd install-netdev install-poweroff install-reboot install-i2c-fix install-ntp install-audio install-asound-conf ensure-ble-only help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -34,7 +34,8 @@ help:
 	@echo "  ensure-ble-only       Force BlueZ into BLE-only mode (ControllerMode = le)"
 	@echo "  install-netdev        Allow the service user to scan and connect to WiFi networks via nmcli"
 	@echo "  install-poweroff      Allow the service user to power off the Pi from the web UI"
-	@echo "  install-i2c-fix       Allow the web UI's angle-sensor Diagnose popup to apply its fixes"
+	@echo "  install-reboot        Allow the service user to reboot the Pi from the web UI"
+	@echo "  install-i2c-fix      Allow the web UI's angle-sensor Diagnose popup to apply its fixes"
 	@echo "  install-ntp           Pin NTP to a shared time service (tight multi-device start sync)"
 	@echo "  install-audio         Build+install the TLV320AIC3104 overlay & mixer init (optional HAT speaker)"
 	@echo ""
@@ -202,9 +203,24 @@ install-poweroff:
 	fi; \
 	rm -f $$tmp
 
+# Lets the web UI's Reboot buttons (Troubleshooting's RGB camera section, the
+# angle-sensor Diagnose popup) restart the Pi, like install-poweroff for Power
+# Off: exactly `systemctl reboot`, nothing else, without a password.
+install-reboot:
+	@tmp=$$(mktemp); \
+	echo '$(SERVICE_USER) ALL=(root) NOPASSWD: /usr/bin/systemctl reboot' > $$tmp; \
+	if sudo visudo -cf $$tmp; then \
+		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/grabette-reboot; \
+		echo "Installed /etc/sudoers.d/grabette-reboot"; \
+	else \
+		echo "sudoers syntax check failed, aborting"; rm -f $$tmp; exit 1; \
+	fi; \
+	rm -f $$tmp
+
 # Lets the dashboard's angle-sensor "Diagnose" popup apply the fixes it finds
 # (routers/angle.py): load i2c-dev now and at every boot, enable the two sensor
-# buses in the boot config (backup first, append only), reboot. Each grant is
+# buses in the boot config (backup first, append only). Its reboot needs
+# install-reboot. Each grant is
 # the exact command the router runs, arguments included, and nothing else.
 # Validated with `visudo -c` before install, like install-poweroff.
 install-i2c-fix:
@@ -215,7 +231,6 @@ install-i2c-fix:
 	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/tee /etc/modules-load.d/i2c-dev.conf'; \
 	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/cp $(BOOT_CONFIG) $(BOOT_CONFIG).grabette-bak'; \
 	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/tee -a $(BOOT_CONFIG)'; \
-	echo 'rasp ALL=(root) NOPASSWD: /usr/bin/systemctl reboot'; \
 	} > $$tmp; \
 	if sudo visudo -cf $$tmp; then \
 		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/grabette-i2c; \
