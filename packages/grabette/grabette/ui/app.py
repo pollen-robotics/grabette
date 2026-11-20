@@ -3056,28 +3056,17 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
         msg = f"⛔ {res['error']}" if failed else ""
         return (msg, *ts_sections()[:-1])
 
-    def _ts_pw(shown: bool, **kw):
-        return gr.update(**_ts_gone(["gb-ts-pw"], shown), **kw)
+    def on_ts_rgb_reboot():
+        """Reboot so the firmware looks for the RGB camera again. No password:
+        the sudoers grant of `make install-reboot`, like Power off.
 
-    def on_ts_rgb_reboot(password):
-        """Reboot so the firmware looks for the RGB camera again. Through the
-        angle sensors' fix route: the same sudo rule (make install-i2c-fix)
-        and the same password prompt when there is none.
-
-        Outputs: message, Reboot button, password field."""
-        res = client.angle_fix(i2c_diag.FIX_REBOOT, password)
-        if res.get("needs_password"):
-            return (f"🔒 {res['error']}",
-                    gr.update(value="Reboot with this password",
-                              interactive=True),
-                    _ts_pw(True, value=""))
+        Outputs: message, Reboot button."""
+        res = client.reboot()
         if "error" in res:
             return (f"⛔ {res['error']}",
-                    gr.update(value="Reboot the grabette", interactive=True),
-                    gr.update())
-        return (f"🔄 {res['done']}",
-                gr.update(value="Rebooting…", interactive=False),
-                _ts_pw(False, value=""))
+                    gr.update(value="Reboot the grabette", interactive=True))
+        return ("🔄 The grabette is rebooting — reload this page in a minute.",
+                gr.update(value="Rebooting…", interactive=False))
 
     def _troubleshooting():
         """The Troubleshooting popup: one section per part of the grabette,
@@ -3103,11 +3092,6 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                            buttons=[], elem_classes=[
                                                "gb-ts-img", "gb-diag-gone"])
                         rgb_msg = gr.Markdown("")
-                        # Shown when sudo asks for it (see on_ts_rgb_reboot).
-                        rgb_pw = gr.Textbox(
-                            type="password", label="Grabette password",
-                            info=_DIAG_PW_HINT,
-                            elem_classes=["gb-ts-pw", "gb-diag-gone"])
                         with gr.Row(elem_classes="gb-diag-actions"):
                             rgb_reboot = gr.Button(
                                 "Reboot the grabette", variant="primary",
@@ -3161,12 +3145,10 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                              interactive=False),
                         outputs=depth_btn, queue=False
         ).then(fn=on_ts_depth_start, outputs=[depth_msg, *outputs])
-        # Enter in the password field reboots, like the button.
-        for trigger in (rgb_reboot.click, rgb_pw.submit):
-            trigger(fn=lambda: gr.update(value="Working…", interactive=False),
-                    outputs=rgb_reboot, queue=False
-            ).then(fn=on_ts_rgb_reboot, inputs=rgb_pw,
-                   outputs=[rgb_msg, rgb_reboot, rgb_pw])
+        rgb_reboot.click(fn=lambda: gr.update(value="Working…",
+                                              interactive=False),
+                         outputs=rgb_reboot, queue=False
+        ).then(fn=on_ts_rgb_reboot, outputs=[rgb_msg, rgb_reboot])
         # Closing stops both refreshes and forgets the password.
         for _btn in (close_btn, foot_close, angle.done):
             # The live view goes too: a closed popup polls nothing.
@@ -3174,9 +3156,9 @@ def create_ui(api_url: str | None = None) -> gr.Blocks:
                                    gr.Timer(active=False),
                                    gr.Timer(active=False),
                                    _diag_pw(False, value=""),
-                                   _ts_pw(False, value=""), "", ""),
+                                   "", ""),
                        outputs=[modal, timer, angle.timer, angle.password,
-                                rgb_pw, rgb_msg, angle.live],
+                                rgb_msg, angle.live],
                        queue=False)
         return bind_open
 
