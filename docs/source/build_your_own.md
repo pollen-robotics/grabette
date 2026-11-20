@@ -32,7 +32,6 @@ git clone https://github.com/pollen-robotics/grabette.git
 cd grabette/packages/grabette
 
 sudo cp config/config.txt /boot/firmware   # hardware overlays
-make install-audio                         # speaker overlay, must be built before the reboot
 make install-netdev                        # rights for WiFi scanning
 sudo reboot
 ```
@@ -42,9 +41,10 @@ After the reboot, run the one-shot bringup. A Grabette is built as either a **le
 ```bash
 make install-rpi HAND=right              # or HAND=left; Gemini 305
 make install-rpi HAND=right CAMERA=oakd  # on a Grabette with an OAK-D SR
+sudo reboot                              # applies config.txt and the speaker overlay
 ```
 
-`install-rpi` installs the apt-managed `picamera2` stack, the udev rule for the chosen camera, and a `--system-site-packages` virtualenv against the system Python, and writes `HAND` and `CAMERA` to `/etc/grabette/env`.
+`install-rpi` installs the apt-managed `picamera2` stack, the udev rule for the chosen camera, and a `--system-site-packages` virtualenv against the system Python, and writes `HAND` and `CAMERA` to `/etc/grabette/env`. It also builds the speaker overlay, loads the angle sensors' I2C driver at every boot, and grants the dashboard's Power off and Reboot buttons and angle-sensor fixes, so no password is ever asked in the browser.
 
 <Tip>
 
