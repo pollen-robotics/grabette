@@ -58,8 +58,10 @@ class FakeSts3215:
         return (self.actual[i] - decode_sts_offset(self.reg_offset[i])) % 4096
 
     # --- the rustypot calls MotorController makes ---------------------------
+    # Single-servo reads return a list, as rustypot does on hardware (a bare
+    # int here hid a TypeError that the first real calibration hit).
     def read_raw_present_position(self, i):
-        return self._present(i)
+        return [self._present(i)]
 
     def sync_read_present_position(self, ids):
         return [steps_to_rad(self._present(i)) for i in ids]
@@ -70,7 +72,7 @@ class FakeSts3215:
     def read_raw_data(self, i, addr, length):
         assert (addr, length) == (m.STS_ADDR_OFFSET, 2)
         raw = self.reg_offset[i]
-        return [raw & 0xFF, raw >> 8]
+        return [[raw & 0xFF, raw >> 8]]
 
     def write_raw_data(self, i, addr, data):
         if addr == m.STS_ADDR_LOCK:

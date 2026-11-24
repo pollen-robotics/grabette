@@ -87,6 +87,20 @@ CENTER_TOLERANCE_STEPS = 32
 CENTER_TIMEOUT_S = 5.0
 
 
+def _flat(value) -> list[int]:
+    """rustypot single-servo reads come back wrapped in a list (one entry per
+    servo, e.g. [2031] or [[lo, hi]]); flatten to the bare register values."""
+    if isinstance(value, (list, tuple)):
+        return [v for item in value for v in _flat(item)]
+    return [int(value)]
+
+
+def _single(value) -> int:
+    """One register value from a single-servo read (see _flat)."""
+    (v,) = _flat(value)
+    return v
+
+
 def closing_travel(offset: float, sign: int) -> float:
     """Robot-frame closing travel (rad) left before the encoder seam, for a
     software offset/sign: goals go to encoder = robot * sign + offset, which
@@ -453,9 +467,9 @@ class MotorController:
         time.sleep(0.05)
         old, new, present = [], [], []
         for motor_id in self.ids:
-            raw_ofs = c.read_raw_data(motor_id, STS_ADDR_OFFSET, 2)
-            cur = decode_sts_offset(raw_ofs[0] | (raw_ofs[1] << 8))
-            pos = int(c.read_raw_present_position(motor_id))
+            lo, hi = _flat(c.read_raw_data(motor_id, STS_ADDR_OFFSET, 2))
+            cur = decode_sts_offset(lo | (hi << 8))
+            pos = _single(c.read_raw_present_position(motor_id))
             old.append(cur)
             present.append(pos)
             if abs(pos - STS_CENTER_STEPS) <= CENTER_TOLERANCE_STEPS:
@@ -464,7 +478,7 @@ class MotorController:
             wanted = centering_offset(pos, cur)
             self._write_sts_offset(motor_id, wanted)
             time.sleep(0.05)
-            after = int(c.read_raw_present_position(motor_id))
+            after = _single(c.read_raw_present_position(motor_id))
             if abs(after - STS_CENTER_STEPS) > CENTER_TOLERANCE_STEPS:
                 self._write_sts_offset(motor_id, cur)  # roll back
                 raise RuntimeError(
