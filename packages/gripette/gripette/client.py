@@ -78,6 +78,17 @@ class GripperClient:
         resp = self._stub.ReadMotors(gripper_pb2.ReadMotorsRequest())
         return (resp.motor1_position, resp.motor2_position)
 
+    def center_servos(self) -> dict:
+        """Zero calibration only: re-centre the servos' own zero on the current
+        (fully open) pose. Recalibrate the offsets and restart the service
+        right after. Returns {"changed", "old_offsets", "new_offsets"} (steps)."""
+        resp = self._stub.CenterServos(gripper_pb2.CenterServosRequest(), timeout=10.0)
+        if not resp.success:
+            raise RuntimeError(f"Servo re-centring failed: {resp.error}")
+        return {"changed": resp.changed,
+                "old_offsets": list(resp.old_offset_steps),
+                "new_offsets": list(resp.new_offset_steps)}
+
     def move(self, motor1: float, motor2: float) -> bool:
         """Send goal positions (radians) to both motors. Returns success."""
         resp = self._stub.SendMotorCommand(

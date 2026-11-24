@@ -1,9 +1,28 @@
+from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Mapping as _Mapping
+from collections.abc import Iterable as _Iterable, Mapping as _Mapping
 from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
+
+class CenterServosRequest(_message.Message):
+    __slots__ = ()
+    def __init__(self) -> None: ...
+
+class CenterServosResponse(_message.Message):
+    __slots__ = ("success", "error", "changed", "old_offset_steps", "new_offset_steps")
+    SUCCESS_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
+    CHANGED_FIELD_NUMBER: _ClassVar[int]
+    OLD_OFFSET_STEPS_FIELD_NUMBER: _ClassVar[int]
+    NEW_OFFSET_STEPS_FIELD_NUMBER: _ClassVar[int]
+    success: bool
+    error: str
+    changed: bool
+    old_offset_steps: _containers.RepeatedScalarFieldContainer[int]
+    new_offset_steps: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, success: _Optional[bool] = ..., error: _Optional[str] = ..., changed: _Optional[bool] = ..., old_offset_steps: _Optional[_Iterable[int]] = ..., new_offset_steps: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class StreamRequest(_message.Message):
     __slots__ = ()

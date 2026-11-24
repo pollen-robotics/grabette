@@ -33,7 +33,7 @@ All settings via environment variables with `GRIPPER_` prefix. Persistent per-de
 | `GRIPPER_MOTOR_ID_1` | `1` | First servo ID |
 | `GRIPPER_MOTOR_ID_2` | `2` | Second servo ID |
 | `GRIPPER_HAND` | `right` | `left` or `right` — determines default `motor*_sign`. Written by `make install-rpi HAND=…` |
-| `GRIPPER_MOTOR1_OFFSET` | `0.0` | Encoder reading (rad) at robot-frame zero. Written by `scripts/calibrate_zero_local.py` |
+| `GRIPPER_MOTOR1_OFFSET` | `0.0` | Encoder reading (rad) at robot-frame zero, after the servo zero was re-centred on it (so normally close to 0). Written by the calibration ([Calibration](calibration.md)) |
 | `GRIPPER_MOTOR2_OFFSET` | `0.0` | Same, motor 2 |
 | `GRIPPER_MOTOR1_SIGN` | (from `hand`) | Override the hand-derived sign for motor 1. Use only if a hardware revision is asymmetric. ±1 |
 | `GRIPPER_MOTOR2_SIGN` | (from `hand`) | Same, motor 2 |

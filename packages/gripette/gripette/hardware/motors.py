@@ -19,6 +19,7 @@ Rustypot API:
 """
 
 import logging
+import math
 import serial
 import threading
 import time
@@ -59,6 +60,97 @@ TORQUE_LIMIT_MAX = 1000
 # Calibrated on a RIGHT unit (commanded close drives decoded load negative, so
 # we flip). VERIFY this polarity on a LEFT unit before trusting its load sign.
 LOAD_CLOSING_SIGN = -1
+
+# --- Servo-side zero re-centring (STS3215 EEPROM "Ofs" register) ----------
+#
+# The STS3215 position register spans one turn, 0..4095 (rustypot maps it to
+# -pi..+pi rad, 2048 = 0 rad), and in position mode a goal cannot cross the
+# 0/4095 seam. If the gripper's open pose lands near that seam (encoder
+# reading close to +-pi), the closing travel runs into it: an open pose at
+# +2.908 rad leaves only pi - 2.908 = 13 deg of travel, and the motor stops
+# there whatever goal it is sent.
+#
+# The servo's offset register shifts its own position frame (present = actual
+# - Ofs, goals and the seam move with it), so writing it moves the open pose
+# to mid-range (2048) without remounting the horn. The software offset
+# (GRIPPER_MOTOR*_OFFSET) then only carries the residual of a few steps.
+STS_STEPS_PER_TURN = 4096
+STS_CENTER_STEPS = 2048          # raw position read as 0 rad by rustypot
+STS_ADDR_OFFSET = 31             # EEPROM, 2 bytes, sign-magnitude (bit 11)
+STS_ADDR_LOCK = 55               # 0 = EEPROM writable, 1 = locked
+STS_OFFSET_SIGN_BIT = 1 << 11
+STS_OFFSET_MAX = STS_OFFSET_SIGN_BIT - 1   # +-2047 steps
+# An open pose already within this of mid-range is left alone (saves an EEPROM
+# write); the post-write check also accepts this much (the fingers are held by
+# hand while it runs). 32 steps = 2.8 deg, against >=64 deg of spare travel.
+CENTER_TOLERANCE_STEPS = 32
+CENTER_TIMEOUT_S = 5.0
+
+
+def _flat(value) -> list[int]:
+    """rustypot single-servo reads come back wrapped in a list (one entry per
+    servo, e.g. [2031] or [[lo, hi]]); flatten to the bare register values."""
+    if isinstance(value, (list, tuple)):
+        return [v for item in value for v in _flat(item)]
+    return [int(value)]
+
+
+def _single(value) -> int:
+    """One register value from a single-servo read (see _flat)."""
+    (v,) = _flat(value)
+    return v
+
+
+def closing_travel(offset: float, sign: int) -> float:
+    """Robot-frame closing travel (rad) left before the encoder seam, for a
+    software offset/sign: goals go to encoder = robot * sign + offset, which
+    must stay within +-pi."""
+    return math.pi - offset * sign
+
+
+def travel_problem(offsets, signs, maxima) -> str | None:
+    """Explain why calibration offsets cannot reach the closing limits, or None.
+
+    Guards the calibration: an offset leaving less travel than the joint limit
+    looks fine at rest and only shows up as a gripper that stops closing early.
+    """
+    short = []
+    for i, (off, sign, lim) in enumerate(zip(offsets, signs, maxima), start=1):
+        travel = closing_travel(off, sign)
+        if travel < lim:
+            short.append(f"motor {i} can only close {math.degrees(travel):.1f} deg "
+                         f"of {math.degrees(lim):.1f} deg (offset {off:+.3f} rad)")
+    if not short:
+        return None
+    return ("; ".join(short) + ". The open pose sits too close to the servo's "
+            "encoder seam: re-centre the servo zero (CenterServos) and calibrate again.")
+
+
+def encode_sts_offset(steps: int) -> int:
+    """Signed steps -> STS3215 Ofs register value (sign-magnitude, bit 11)."""
+    if not -STS_OFFSET_MAX <= steps <= STS_OFFSET_MAX:
+        raise ValueError(f"servo offset {steps} outside +-{STS_OFFSET_MAX} steps")
+    return (STS_OFFSET_SIGN_BIT | -steps) if steps < 0 else steps
+
+
+def decode_sts_offset(raw: int) -> int:
+    """STS3215 Ofs register value -> signed steps."""
+    mag = raw & STS_OFFSET_MAX
+    return -mag if raw & STS_OFFSET_SIGN_BIT else mag
+
+
+def centering_offset(present_raw: int, current_offset: int) -> int:
+    """Servo offset that makes the current pose read STS_CENTER_STEPS.
+
+    present = actual - offset (mod one turn), so actual = present + offset and
+    the wanted offset is actual - center, wrapped to a single turn. -2048 and
+    +2048 are the same turn but neither fits the 11-bit magnitude; 2047 is one
+    step off, which the software offset absorbs.
+    """
+    actual = present_raw + current_offset
+    half = STS_STEPS_PER_TURN // 2
+    wanted = (actual - STS_CENTER_STEPS + half) % STS_STEPS_PER_TURN - half
+    return max(-STS_OFFSET_MAX, min(STS_OFFSET_MAX, wanted))
 
 try:
     from rustypot import Sts3215PyController
@@ -138,6 +230,14 @@ class MotorController:
         # applied only when it changed (dedup) so we never write per-tick.
         self._pending_torque_limit: tuple[int, int] | None = None
         self._last_torque_limit: tuple[int, int] | None = None
+        # Servo re-centring request: (done Event, result holder), run by the
+        # bus thread because it is the only code allowed on the serial bus.
+        self._pending_center: tuple[threading.Event, dict] | None = None
+        # Set once a re-centring changed a servo's frame: the software offsets
+        # this process runs with no longer match the encoder, so goals and
+        # torque-on are refused until the offsets are recalibrated and the
+        # service restarted. Reads keep working (calibration needs them).
+        self._frame_changed = False
 
         # Bus thread lifecycle.
         self._running = False
@@ -267,6 +367,7 @@ class MotorController:
 
         Last-wins: if a previous goal hasn't been applied yet, it's overwritten.
         """
+        self._refuse_if_frame_changed("goal")
         # Clamped, not just checked: a goal exactly AT the limit arrives from the
         # wire as float32 and can land a hair outside it.
         pos1, pos2 = self._check_limits(pos1, pos2)
@@ -288,6 +389,8 @@ class MotorController:
 
         Last-wins: a previous pending torque request is overwritten.
         """
+        if enable:
+            self._refuse_if_frame_changed("torque on")
         if self._mock:
             logger.debug("Mock motors → torque %s", "on" if enable else "off")
             return
@@ -315,6 +418,105 @@ class MotorController:
             return
         with self._slot_lock:
             self._pending_torque_limit = raw
+
+    def _refuse_if_frame_changed(self, what: str) -> None:
+        if self._frame_changed:
+            raise RuntimeError(
+                f"{what} refused: the servo zero was re-centred, so the "
+                "calibration offsets in use are stale. Finish the calibration "
+                "(record the new offsets) and restart the gripette service."
+            )
+
+    def center_servo_offsets(self, timeout: float = CENTER_TIMEOUT_S) -> dict:
+        """Re-centre each servo's own zero on the CURRENT pose (EEPROM write).
+
+        Meant for zero calibration only, with the gripper held fully open and
+        torque off: afterwards that pose reads ~0 rad on the raw encoder, so
+        the full closing travel sits away from the 0/4095 seam. The software
+        offsets must then be recalibrated (the existing calibration math does
+        it: it reads the pose through the old offsets and absorbs the shift),
+        and the service restarted; until then goals and torque-on are refused.
+
+        Torque is turned off first. A servo already within
+        CENTER_TOLERANCE_STEPS of mid-range is not rewritten.
+
+        Returns {"changed": bool, "old_offsets": [..], "new_offsets": [..],
+        "present": [..]} (steps). Raises RuntimeError if the bus fails or the
+        servo does not read mid-range after the write (the old offset is
+        restored in that case).
+        """
+        if self._mock:
+            return {"changed": False, "old_offsets": [0, 0],
+                    "new_offsets": [0, 0], "present": [STS_CENTER_STEPS] * 2}
+        if self._thread is None:
+            raise RuntimeError("motor bus is not running")
+        done, result = threading.Event(), {}
+        with self._slot_lock:
+            self._pending_center = (done, result)
+        if not done.wait(timeout):
+            raise RuntimeError("servo re-centring timed out")
+        if "error" in result:
+            raise RuntimeError(result["error"])
+        return result["value"]
+
+    def _do_center(self) -> dict:
+        """Bus-thread body of center_servo_offsets(). Only the bus thread may
+        call this."""
+        c = self._controller
+        c.sync_write_torque_enable(self.ids, [False] * len(self.ids))
+        time.sleep(0.05)
+        old, new, present = [], [], []
+        for motor_id in self.ids:
+            lo, hi = _flat(c.read_raw_data(motor_id, STS_ADDR_OFFSET, 2))
+            cur = decode_sts_offset(lo | (hi << 8))
+            pos = _single(c.read_raw_present_position(motor_id))
+            old.append(cur)
+            present.append(pos)
+            if abs(pos - STS_CENTER_STEPS) <= CENTER_TOLERANCE_STEPS:
+                new.append(cur)
+                continue
+            wanted = centering_offset(pos, cur)
+            self._write_sts_offset(motor_id, wanted)
+            time.sleep(0.05)
+            after = _single(c.read_raw_present_position(motor_id))
+            if abs(after - STS_CENTER_STEPS) > CENTER_TOLERANCE_STEPS:
+                self._write_sts_offset(motor_id, cur)  # roll back
+                raise RuntimeError(
+                    f"servo {motor_id}: offset {cur} -> {wanted} steps should "
+                    f"read {STS_CENTER_STEPS}, read {after} (was {pos}); "
+                    "offset restored. Was the gripper held still?"
+                )
+            # From here this servo's frame changed: refuse goals in the old one.
+            self._frame_changed = True
+            # Park the goal register on the new reading, so a later torque-on
+            # cannot jump to a goal expressed in the old frame.
+            c.write_raw_goal_position(motor_id, after)
+            new.append(wanted)
+            present[-1] = after
+            logger.warning(
+                "Servo %d zero re-centred: offset %d -> %d steps (read %d -> %d)",
+                motor_id, cur, wanted, pos, after,
+            )
+        # Refresh the cache before the caller is released: the calibration
+        # samples positions right after this returns, and a pre-shift reading
+        # would corrupt its average.
+        pos = c.sync_read_present_position(self.ids)
+        with self._pos_lock:
+            self._cached_positions = (
+                (pos[0] - self.offsets[0]) * self.signs[0],
+                (pos[1] - self.offsets[1]) * self.signs[1],
+            )
+        return {"changed": old != new, "old_offsets": old,
+                "new_offsets": new, "present": present}
+
+    def _write_sts_offset(self, motor_id: int, steps: int) -> None:
+        raw = encode_sts_offset(steps)
+        c = self._controller
+        c.write_raw_data(motor_id, STS_ADDR_LOCK, [0])
+        try:
+            c.write_raw_data(motor_id, STS_ADDR_OFFSET, [raw & 0xFF, raw >> 8])
+        finally:
+            c.write_raw_data(motor_id, STS_ADDR_LOCK, [1])
 
     @staticmethod
     def _decode_load(raw: int) -> float:
@@ -390,6 +592,21 @@ class MotorController:
                 self._pending_torque = None
                 tl_req = self._pending_torque_limit
                 self._pending_torque_limit = None
+                center_req = self._pending_center
+                self._pending_center = None
+
+            if center_req is not None:
+                # Exclusive: a goal or torque-on queued alongside would be in
+                # the frame being replaced. Drop them.
+                goal, torque_req = None, None  # _do_center turns torque off
+                done, result = center_req
+                try:
+                    result["value"] = self._do_center()
+                except Exception as e:
+                    logger.exception("Servo re-centring failed")
+                    result["error"] = str(e)
+                finally:
+                    done.set()
 
             if goal is not None:
                 try:

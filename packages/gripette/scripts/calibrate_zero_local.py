@@ -6,9 +6,13 @@ Workflow:
     2. Run this script.
     3. With motors torque-off, manually move the gripper to its TRUE zero
        (fully open, robot frame = 0).
-    4. Confirm. The script reads the raw encoder positions and writes them
-       as GRIPPER_MOTOR1_OFFSET / GRIPPER_MOTOR2_OFFSET into /etc/gripette/env,
-       preserving any other lines in the file (notably GRIPPER_HAND).
+    4. Confirm. The script first re-centres each servo's own zero on this
+       pose (EEPROM offset register), so the closing travel never runs into
+       the encoder's 0/4095 seam, then reads the raw encoder positions and
+       writes them as GRIPPER_MOTOR1_OFFSET / GRIPPER_MOTOR2_OFFSET into
+       /etc/gripette/env, preserving any other lines in the file (notably
+       GRIPPER_HAND). Offsets that would still cap the closing travel below
+       the joint limits are refused.
     5. Restart the service:
            sudo systemctl start gripette
 
@@ -20,6 +24,7 @@ Usage:
     uv run python scripts/calibrate_zero_local.py
     uv run python scripts/calibrate_zero_local.py --yes        # skip prompts
     uv run python scripts/calibrate_zero_local.py --dry-run    # print, don't write
+    uv run python scripts/calibrate_zero_local.py --no-center  # keep the servo zero as is
 """
 
 import argparse
@@ -30,10 +35,15 @@ import time
 from pathlib import Path
 
 from gripette.config import settings
-from gripette.hardware.motors import MotorController
+from gripette.hardware.motors import MotorController, travel_problem
 
 ENV_FILE = Path("/etc/gripette/env")
 SAMPLES = 10  # average a few readings to suppress encoder jitter
+STALE_WARNING = (
+    "WARNING: the servo zero WAS re-centred, so the offsets currently in "
+    f"{ENV_FILE} no longer match the motors. Do not start the gripette "
+    "service before running this calibration to the end."
+)
 
 
 def read_raw_encoder(motors: MotorController) -> tuple[float, float]:
@@ -47,6 +57,22 @@ def read_raw_encoder(motors: MotorController) -> tuple[float, float]:
         sum2 += m2
         time.sleep(0.05)
     return (sum1 / SAMPLES, sum2 / SAMPLES)
+
+
+def device_signs(path: Path) -> tuple[int, int]:
+    """Robot <-> encoder signs the service will run with: the hand (and any
+    sign override) from the env file, falling back to this shell's settings.
+    The script itself runs with an identity transform, so it can't use those."""
+    env = {}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            m = re.match(r"^\s*([A-Z_][A-Z0-9_]*)=(.*)$", line)
+            if m:
+                env[m.group(1)] = m.group(2).strip()
+    hand = env.get("GRIPPER_HAND", settings.hand)
+    default = (+1, +1) if hand == "right" else (-1, -1)
+    return (int(env.get("GRIPPER_MOTOR1_SIGN", default[0])),
+            int(env.get("GRIPPER_MOTOR2_SIGN", default[1])))
 
 
 def merge_env_file(path: Path, new_offsets: dict[str, str]) -> str:
@@ -97,7 +123,11 @@ def main():
     parser.add_argument("--yes", "-y", action="store_true",
                         help="Skip the 'apply?' confirmation prompt.")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Print what would be written, but don't touch the env file.")
+                        help="Print what would be written, but don't touch the env file "
+                             "or the servos (implies --no-center).")
+    parser.add_argument("--no-center", action="store_true",
+                        help="Don't re-centre the servos' own zero (EEPROM) on the open "
+                             "pose; only record the encoder readings.")
     args = parser.parse_args()
 
     # Identity controller (no sign/offset) so read_positions = raw encoder.
@@ -130,6 +160,21 @@ def main():
             motors.stop()
             sys.exit(1)
 
+    centred = False
+    if not (args.dry_run or args.no_center):
+        print("\nRe-centring the servo zero on this pose (keep the gripper still)...")
+        try:
+            r = motors.center_servo_offsets()
+        except RuntimeError as e:
+            motors.stop()
+            print(f"ERROR: {e}", file=sys.stderr)
+            sys.exit(1)
+        centred = r["changed"]
+        if centred:
+            print(f"  servo offsets {r['old_offsets']} -> {r['new_offsets']} steps")
+        else:
+            print("  already centred, nothing written")
+
     print(f"\nReading encoder positions (averaging {SAMPLES} samples)...")
     m1, m2 = read_raw_encoder(motors)
     motors.stop()
@@ -137,6 +182,17 @@ def main():
     print(f"  m1 encoder = {m1:+.4f} rad")
     print(f"  m2 encoder = {m2:+.4f} rad")
     print()
+
+    problem = travel_problem((m1, m2), device_signs(ENV_FILE),
+                             (settings.motor1_max, settings.motor2_max))
+    if problem:
+        print(f"ERROR: {problem}", file=sys.stderr)
+        if centred:
+            print(STALE_WARNING, file=sys.stderr)
+        if args.dry_run or args.no_center:
+            print("Run again without --dry-run / --no-center to re-centre.",
+                  file=sys.stderr)
+        sys.exit(1)
 
     new_offsets = {
         "GRIPPER_MOTOR1_OFFSET": f"{m1:.6f}",
@@ -156,11 +212,13 @@ def main():
 
     if not args.yes:
         try:
-            if input("Apply? [y/N]: ").strip().lower() not in ("y", "yes"):
-                print("Aborted.")
-                return
+            answer = input("Apply? [y/N]: ").strip().lower()
         except (KeyboardInterrupt, EOFError):
+            answer = ""
+        if answer not in ("y", "yes"):
             print("\nAborted.")
+            if centred:
+                print(STALE_WARNING, file=sys.stderr)
             return
 
     write_env_with_sudo(ENV_FILE, new_content)
