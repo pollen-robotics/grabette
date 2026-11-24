@@ -46,6 +46,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from gi.repository import GLib
 import grpc
 
+from ..config import settings
+from ..hardware.motors import travel_problem
 from ..proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
@@ -899,10 +901,25 @@ def _release() -> str:
 def _calibrate() -> str:
     """Take the current pose (fully open, by hand) as the robot-frame zero.
 
+    First the servos' own zero is re-centred on this pose (EEPROM offset), so
+    the closing travel can never run into the encoder's 0/4095 seam: an open
+    pose near that seam used to cap the close at a few degrees.
+
     robot = (encoder - offset) * sign, so the encoder reading at this pose,
     the new offset, is offset + robot * sign, with the service's own sign
-    and offset."""
+    and offset. Read after the re-centring, that reading already includes
+    the shift, so the same math yields the residual offset."""
     env = _service_env()
+    try:
+        r = _motors().CenterServos(gripper_pb2.CenterServosRequest(),
+                                   timeout=10.0)
+    except grpc.RpcError:
+        return _SERVICE_DOWN
+    if not r.success:
+        return f"ERROR: Could not re-centre the motors: {r.error}"
+    if r.changed:
+        logger.info("Servo zero re-centred: %s -> %s steps",
+                    list(r.old_offset_steps), list(r.new_offset_steps))
     try:
         samples = []
         for _ in range(_CALIB_SAMPLES):
@@ -916,6 +933,12 @@ def _calibrate() -> str:
     for i, (key, sign) in enumerate(zip(_OFFSET_KEYS, _signs(env))):
         robot = sum(s[i] for s in samples) / len(samples)
         offsets[key] = f"{float(env.get(key, 0.0)) + robot * sign:.6f}"
+    problem = travel_problem(
+        [float(offsets[k]) for k in _OFFSET_KEYS], _signs(env),
+        [float(env.get(f"GRIPPER_MOTOR{i}_MAX", d))
+         for i, d in ((1, settings.motor1_max), (2, settings.motor2_max))])
+    if problem:
+        return f"ERROR: Calibration not saved. {problem}"
     try:
         _write_offsets(offsets)
     except OSError as e:
