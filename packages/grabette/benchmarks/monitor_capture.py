@@ -1,11 +1,11 @@
 """Sample the Pi's load while recording, to explain holes in the RPi camera.
 
 Run on the Pi, with the SYSTEM python, in a second shell, BEFORE recording:
-    python3 scripts/monitor_capture.py            # writes ~/capture_monitor/<date>/
-    python3 scripts/monitor_capture.py --period 0.02 --out /tmp/mon
+    python3 benchmarks/monitor_capture.py            # writes ~/capture_monitor/<date>/
+    python3 benchmarks/monitor_capture.py --period 0.02 --out /tmp/mon
 
 Leave it running for the whole session, then Ctrl-C. Feed its folder to
-scripts/analyze_frame_gaps.py --monitor <folder> to see what the Pi was doing
+benchmarks/analyze_frame_gaps.py --monitor <folder> to see what the Pi was doing
 during each hole.
 
 Every --period (default 25 ms) it writes one row of monitor.csv:

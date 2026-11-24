@@ -1,9 +1,9 @@
 """Find the holes in an episode's streams and what the Pi was doing during them.
 
 Runs anywhere (Pi or workstation), stdlib only:
-    python3 scripts/analyze_frame_gaps.py <episode or folder>...
-    python3 scripts/analyze_frame_gaps.py ~/Downloads/sync-review-* --monitor ~/capture_monitor/20261105_101500
-    python3 scripts/analyze_frame_gaps.py /data/episodes --journal      # on the Pi
+    python3 benchmarks/analyze_frame_gaps.py <episode or folder>...
+    python3 benchmarks/analyze_frame_gaps.py ~/Downloads/sync-review-* --monitor ~/capture_monitor/20261105_101500
+    python3 benchmarks/analyze_frame_gaps.py /data/episodes --journal      # on the Pi
 
 For every episode found (a folder with frame_timestamps.json) it reports:
   1. the holes of each stream: RPi camera, depth camera (left IR), angles;
@@ -26,22 +26,17 @@ metadata sync.capture_started_utc (group starts), else (--journal) from the
 import argparse
 import bisect
 import csv
-import json
 import statistics
-import subprocess
 from datetime import datetime, timedelta, timezone
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # _common.py, also when loaded by the tests
+from _common import episode_time, find_episodes, journal, load_json, parse_utc  # noqa: E402
 
 # Context shown around a hole, and the daemon's detection threshold.
 MARGIN_MS = 300.0
 DAEMON_THRESHOLD_MS = 250.0
-
-
-def load_json(path: Path):
-    try:
-        return json.loads(path.read_text())
-    except (OSError, ValueError):
-        return None
 
 
 def streams_of(ep: Path) -> dict[str, list[float]]:
@@ -91,26 +86,10 @@ def t0_utc(ep: Path, meta: dict, use_journal: bool) -> tuple[datetime | None, st
     if use_journal:
         out = journal(["--grep", f"capture started.*{ep.name}", "-n", "1"])
         for line in out.splitlines():
-            ts = parse_iso(line.split(" ", 1)[0])
+            ts = parse_utc(line.split(" ", 1)[0])
             if ts:
                 return ts, "journal 'capture started' line (≈ t=0 + 0.1 s)"
     return None, ""
-
-
-def parse_iso(s: str) -> datetime | None:
-    try:
-        d = datetime.fromisoformat(s)
-    except ValueError:
-        return None
-    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
-
-
-def journal(args: list[str]) -> str:
-    try:
-        return subprocess.run(["journalctl", "--no-pager", "-o", "short-iso-precise", *args],
-                              capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        return ""
 
 
 # ── monitor_capture.py output ───────────────────────────────────────────
@@ -126,7 +105,7 @@ class Monitor:
         with open(csv_path) as f:
             for r in csv.DictReader(f):
                 r["boottime_s"] = float(r["boottime_s"])
-                r["utc"] = parse_iso(r["utc"])
+                r["utc"] = parse_utc(r["utc"])
                 for k in self.NUM:
                     r[k] = float(r[k] or 0)
                 self.rows.append(r)
@@ -135,7 +114,7 @@ class Monitor:
         klog = csv_path.parent / "kernel.log"
         if klog.exists():
             for line in klog.read_text(errors="replace").splitlines():
-                ts = parse_iso(line.split(" ", 1)[0])
+                ts = parse_utc(line.split(" ", 1)[0])
                 if ts:
                     self.kernel.append((ts, line))
         # Offset boottime → UTC, to place a UTC-anchored episode.
@@ -213,23 +192,11 @@ def print_monitor(mon: Monitor, b_start: float, b_end: float, a: float, b: float
 
 # ── report ──────────────────────────────────────────────────────────────
 
-def episode_time(ep: Path) -> datetime | None:
-    """Creation time from the episode id (YYYYMMDD_HHMMSS in UTC, see
-    grabette.task.episode_id_for). The parent folder holds it for a
-    left/right download layout."""
-    for name in (ep.name, ep.parent.name):
-        try:
-            return datetime.strptime(name, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
-        except ValueError:
-            continue
-    return None
-
-
 def outside_monitor(ep: Path, mon: Monitor) -> bool:
     """True when the episode was recorded while the monitor wasn't running.
     By wall clock: CLOCK_BOOTTIME restarts at every reboot, so an older
     episode's sensor times could fall in the monitor's range by coincidence."""
-    t = episode_time(ep)
+    t = episode_time(ep.name) or episode_time(ep.parent.name)
     if t is None or not mon.rows:
         return False
     margin = timedelta(minutes=2)
@@ -274,6 +241,9 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
     t0u, how = (None, "")
     if t0b is not None:
         how = "raw_video.frames.json sensor timestamps (exact)"
+        if mon is None and args.journal:
+            # The journal is on the UTC clock: anchor it on the metadata (or its own line).
+            t0u, _ = t0_utc(ep, meta, True)
     else:
         t0u, how = t0_utc(ep, meta, args.journal)
         if t0u is not None and mon is not None:
@@ -334,12 +304,18 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
             d = load_json(ep / "raw_video.frames.json") or {}
             frames = d.get("frames") or []
             k = next((i for i, f in enumerate(frames) if f.get("timestamp_ms", 0) > a), None)
-            if k:
+            if k == 0:
+                print("      encoder: the hole is before the video's first frame")
+            elif k:
                 f0, f1 = frames[k - 1], frames[k]
-                pts = (f1["encoder_pts_us"] - f0["encoder_pts_us"]) / 1000
-                print(f"      encoder: frames {k - 1}->{k} consecutive in the video; sensor "
-                      f"timestamps {(f1['sensor_timestamp_ns'] - f0['sensor_timestamp_ns']) / 1e6:.0f} ms "
-                      f"apart, PTS {pts:.0f} ms apart → the lost frames never reached the encoder")
+                keys = ("encoder_pts_us", "sensor_timestamp_ns")
+                if any(f.get(key) is None for f in (f0, f1) for key in keys):
+                    print(f"      encoder: frames {k - 1}->{k} lack PTS or sensor timestamps")
+                else:
+                    pts = (f1["encoder_pts_us"] - f0["encoder_pts_us"]) / 1000
+                    print(f"      encoder: frames {k - 1}->{k} consecutive in the video; sensor "
+                          f"timestamps {(f1['sensor_timestamp_ns'] - f0['sensor_timestamp_ns']) / 1e6:.0f} ms "
+                          f"apart, PTS {pts:.0f} ms apart → the lost frames never reached the encoder")
         if mon is not None and t0b is not None:
             print_monitor(mon, t0b, t0b + rgb[-1] / 1000, a, b, t0b)
         if args.journal and t0u is not None:
@@ -355,23 +331,6 @@ def analyze(ep: Path, args, mon: Monitor | None) -> list[float] | None:
             for l in lines[-40:]:
                 print(f"        {l}")
     return sizes
-
-
-def find_episodes(paths: list[Path]) -> list[Path]:
-    eps = []
-    for p in paths:
-        if not p.exists():
-            # An unmatched shell glob arrives here verbatim.
-            print(f"warning: {p} does not exist")
-            continue
-        if (p / "frame_timestamps.json").exists():
-            eps.append(p)
-        else:
-            found = sorted(f.parent for f in p.rglob("frame_timestamps.json"))
-            if not found:
-                print(f"warning: no episode (frame_timestamps.json) under {p}")
-            eps += found
-    return eps
 
 
 def main() -> int:
