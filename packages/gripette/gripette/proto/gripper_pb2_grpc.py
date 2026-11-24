@@ -59,6 +59,11 @@ class GripperServiceStub:
                 request_serializer=gripper__pb2.PingRequest.SerializeToString,
                 response_deserializer=gripper__pb2.PingResponse.FromString,
                 _registered_method=True)
+        self.CenterServos = channel.unary_unary(
+                '/gripette.GripperService/CenterServos',
+                request_serializer=gripper__pb2.CenterServosRequest.SerializeToString,
+                response_deserializer=gripper__pb2.CenterServosResponse.FromString,
+                _registered_method=True)
 
 
 class GripperServiceServicer:
@@ -99,6 +104,17 @@ class GripperServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CenterServos(self, request, context):
+        """Unary: zero calibration only. Re-centre each servo's own zero (EEPROM
+        offset) on the current pose, which must be fully open, so the closing
+        travel never crosses the encoder's 0/4095 seam. Turns torque off. The
+        GRIPPER_MOTOR*_OFFSET values must be recalibrated right after and the
+        service restarted; until then goals and torque-on are refused.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_GripperServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -126,6 +142,11 @@ def add_GripperServiceServicer_to_server(servicer, server):
                     servicer.Ping,
                     request_deserializer=gripper__pb2.PingRequest.FromString,
                     response_serializer=gripper__pb2.PingResponse.SerializeToString,
+            ),
+            'CenterServos': grpc.unary_unary_rpc_method_handler(
+                    servicer.CenterServos,
+                    request_deserializer=gripper__pb2.CenterServosRequest.FromString,
+                    response_serializer=gripper__pb2.CenterServosResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -263,6 +284,33 @@ class GripperService:
             '/gripette.GripperService/Ping',
             gripper__pb2.PingRequest.SerializeToString,
             gripper__pb2.PingResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CenterServos(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/gripette.GripperService/CenterServos',
+            gripper__pb2.CenterServosRequest.SerializeToString,
+            gripper__pb2.CenterServosResponse.FromString,
             options,
             channel_credentials,
             insecure,

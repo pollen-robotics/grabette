@@ -12,6 +12,22 @@ service GripperService {
   rpc SetTorque (TorqueCommand) returns (TorqueResponse);
   // Unary: health check
   rpc Ping (PingRequest) returns (PingResponse);
+  // Unary: zero calibration only. Re-centre each servo's own zero (EEPROM
+  // offset) on the current pose, which must be fully open, so the closing
+  // travel never crosses the encoder's 0/4095 seam. Turns torque off. The
+  // GRIPPER_MOTOR*_OFFSET values must be recalibrated right after and the
+  // service restarted; until then goals and torque-on are refused.
+  rpc CenterServos (CenterServosRequest) returns (CenterServosResponse);
+}
+
+message CenterServosRequest {}
+
+message CenterServosResponse {
+  bool success = 1;
+  string error = 2;
+  bool changed = 3;                    // false: already centred, nothing written
+  repeated int32 old_offset_steps = 4; // per motor, servo offset before
+  repeated int32 new_offset_steps = 5; // per motor, servo offset after
 }
 
 message StreamRequest {}

@@ -1,8 +1,9 @@
-"""Gripette status web UI — a tiny, isolated health page.
+"""Gripette dashboard — a tiny, isolated status page.
 
-Answers "is the gripette OK?" at a glance: service state, live camera view,
-motor positions, system vitals, journal tail — plus Restart-service and
-Shutdown buttons (sudoers-gated, see `make install-web`).
+Answers "is the gripette OK?" at a glance, laid out like the grabette
+dashboard's Overview: live camera view, 3D model following the motors,
+device and health cards, service state and journal tail — plus Restart-service
+and Power-off buttons (sudoers-gated, see `make install-web`).
 
 Design constraints (why this looks the way it does):
   - SEPARATE process from the gripette service: a UI bug can never take down
@@ -10,6 +11,10 @@ Design constraints (why this looks the way it does):
   - Strictly PULL-based: zero work when no browser is open. No background
     polling threads, no persistent camera stream.
   - Plain stdlib http.server: no new dependencies on the Pi Zero 2W.
+  - The 3D viewer loads the light urdf/gripette_<hand>_viewer/ model (~4 MB,
+    built by scripts/simplify_viewer_model.py), which the browser caches, and
+    reads motor positions through ReadMotors — the service answers it from its
+    position cache, so the viewer adds no traffic on the motor bus.
   - Health is measured through the SAME gRPC API the eval client uses
     (Ping / ReadMotors / StreamState), so "the page shows an image" proves
     the real pipeline end-to-end. Camera frames are grabbed one at a time
@@ -35,7 +40,7 @@ from .proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
 
-WEB_PORT = int(os.environ.get("GRIPPER_WEB_PORT", "8080"))
+WEB_PORT = int(os.environ.get("GRIPPER_WEB_PORT", "8000"))
 # The gripette gRPC service on this same device.
 GRPC_TARGET = f"127.0.0.1:{os.environ.get('GRIPPER_PORT', '50051')}"
 GRPC_TIMEOUT_S = 2.0
@@ -45,6 +50,15 @@ FRAME_TIMEOUT_S = 8.0
 FRAME_CACHE_S = 1.0
 JOURNAL_LINES = 25
 STATIC_DIR = Path(__file__).parent / "static"
+URDF_DIR = Path(__file__).resolve().parent.parent / "urdf"
+# Same per-device env file as the service (EnvironmentFile=/etc/gripette/env).
+HAND = os.environ.get("GRIPPER_HAND", "right")
+# The meshes only change with a new checkout; let the browser keep them.
+URDF_MAX_AGE_S = 86400
+URDF_TYPES = {".stl": "model/stl", ".urdf": "application/xml"}
+# The network name is a subprocess call; it barely changes, so don't spawn
+# one per status poll on the Pi Zero.
+NETWORK_CACHE_S = 30.0
 
 # Exact commands granted by the sudoers drop-in (make install-web). The
 # pre-check, the sudoers rule, and the dispatch must use these identical
@@ -168,8 +182,23 @@ def motors_status() -> dict:
                 "error": _rpc_error_detail(e)}
 
 
+_network_cache = {"name": None, "mono": float("-inf")}
+
+
+def network_name() -> str | None:
+    """Name of the active WiFi connection (NetworkManager), cached."""
+    if time.monotonic() - _network_cache["mono"] >= NETWORK_CACHE_S:
+        out = _run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show", "--active"])
+        names = [line.rsplit(":", 1)[0] for line in (out or "").splitlines()
+                 if line.endswith(":802-11-wireless")]
+        _network_cache["name"] = names[0] if names else None
+        _network_cache["mono"] = time.monotonic()
+    return _network_cache["name"]
+
+
 def system_info() -> dict:
-    info = {"hostname": socket.gethostname()}
+    info = {"hostname": socket.gethostname(), "hand": HAND,
+            "network": network_name()}
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -188,8 +217,9 @@ def system_info() -> dict:
     try:
         st = os.statvfs("/")
         info["disk_free_gb"] = round(st.f_frsize * st.f_bavail / 1024**3, 1)
+        info["disk_total_gb"] = round(st.f_frsize * st.f_blocks / 1024**3, 1)
     except Exception:
-        info["disk_free_gb"] = None
+        info["disk_free_gb"] = info["disk_total_gb"] = None
     # /proc/net/wireless: "wlan0: 0000   52.  -58.  ..." → link quality, dBm
     try:
         info["wifi_signal_dbm"] = None
@@ -228,6 +258,30 @@ def full_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 3D viewer
+# ---------------------------------------------------------------------------
+
+def _viewer_page() -> bytes:
+    """The viewer page, pointed at this gripette's hand: the light copy
+    scripts/simplify_viewer_model.py builds, or the full model when that is
+    absent."""
+    model = f"gripette_{HAND}"
+    if (URDF_DIR / f"{model}_viewer" / "robot.urdf").is_file():
+        model += "_viewer"
+    html = (STATIC_DIR / "viewer.html").read_text()
+    return html.replace("__URDF_PATH__", f"/urdf/{model}/robot.urdf").encode()
+
+
+def _urdf_file(path: str) -> Path | None:
+    """Map /urdf/<rel> to a file under URDF_DIR, refusing anything outside."""
+    target = (URDF_DIR / path.removeprefix("/urdf/")).resolve()
+    if (target.is_relative_to(URDF_DIR) and target.is_file()
+            and target.suffix in URDF_TYPES):
+        return target
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Privileged actions (sudoers-gated, same pattern as grabette's shutdown)
 # ---------------------------------------------------------------------------
 
@@ -252,11 +306,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # 1 Hz polling would flood the journal
 
-    def _send(self, code: int, body: bytes, ctype: str):
+    def _send(self, code: int, body: bytes, ctype: str, cache: str = "no-store"):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         self.end_headers()
         self.wfile.write(body)
 
@@ -269,8 +323,19 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/":
                 html = (STATIC_DIR / "status.html").read_bytes()
                 self._send(200, html, "text/html; charset=utf-8")
+            elif path == "/viewer":
+                self._send(200, _viewer_page(), "text/html; charset=utf-8")
+            elif path.startswith("/urdf/"):
+                f = _urdf_file(path)
+                if f is None:
+                    self._send_json(404, {"error": "not found"})
+                else:
+                    self._send(200, f.read_bytes(), URDF_TYPES[f.suffix],
+                               cache=f"max-age={URDF_MAX_AGE_S}")
             elif path == "/api/status":
                 self._send_json(200, full_status())
+            elif path == "/api/motors":
+                self._send_json(200, motors_status())
             elif path == "/api/frame.jpg":
                 frame = get_frame()
                 if frame["jpeg"] is not None:

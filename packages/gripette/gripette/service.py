@@ -156,6 +156,20 @@ class GripperServicer(gripper_pb2_grpc.GripperServiceServicer):
             logger.exception("Torque command failed")
             return gripper_pb2.TorqueResponse(success=False, error=str(e))
 
+    def CenterServos(self, request, context):
+        """Unary: re-centre the servos' own zero on the current (open) pose."""
+        try:
+            r = self._motors.center_servo_offsets()
+        except Exception as e:
+            logger.exception("Servo re-centring failed")
+            return gripper_pb2.CenterServosResponse(success=False, error=str(e))
+        return gripper_pb2.CenterServosResponse(
+            success=True,
+            changed=r["changed"],
+            old_offset_steps=r["old_offsets"],
+            new_offset_steps=r["new_offsets"],
+        )
+
     def Ping(self, request, context):
         """Unary: health check."""
         uptime = self._sync.get_timestamp_ms() / 1000.0

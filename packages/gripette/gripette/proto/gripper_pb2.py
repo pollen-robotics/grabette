@@ -24,33 +24,37 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rgripper.proto\x12\x08gripette\"\x0f\n\rStreamRequest\"t\n\x0cGripperFrame\x12\x11\n\tjpeg_data\x18\x01 \x01(\x0c\x12)\n\x0bmotor_state\x18\x02 \x01(\x0b\x32\x14.gripette.MotorState\x12\x14\n\x0ctimestamp_ms\x18\x03 \x01(\x01\x12\x10\n\x08sequence\x18\x04 \x01(\x04\"h\n\nMotorState\x12\x17\n\x0fmotor1_position\x18\x01 \x01(\x02\x12\x17\n\x0fmotor2_position\x18\x02 \x01(\x02\x12\x13\n\x0bmotor1_load\x18\x03 \x01(\x02\x12\x13\n\x0bmotor2_load\x18\x04 \x01(\x02\"r\n\x0cMotorCommand\x12\x13\n\x0bmotor1_goal\x18\x01 \x01(\x02\x12\x13\n\x0bmotor2_goal\x18\x02 \x01(\x02\x12\x1b\n\x13motor1_torque_limit\x18\x03 \x01(\x02\x12\x1b\n\x13motor2_torque_limit\x18\x04 \x01(\x02\"6\n\x14MotorCommandResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\"\x1f\n\rTorqueCommand\x12\x0e\n\x06\x65nable\x18\x01 \x01(\x08\"0\n\x0eTorqueResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\"\x13\n\x11ReadMotorsRequest\"\r\n\x0bPingRequest\"6\n\x0cPingResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x16\n\x0euptime_seconds\x18\x02 \x01(\x01\x32\xd6\x02\n\x0eGripperService\x12@\n\x0bStreamState\x12\x17.gripette.StreamRequest\x1a\x16.gripette.GripperFrame0\x01\x12J\n\x10SendMotorCommand\x12\x16.gripette.MotorCommand\x1a\x1e.gripette.MotorCommandResponse\x12?\n\nReadMotors\x12\x1b.gripette.ReadMotorsRequest\x1a\x14.gripette.MotorState\x12>\n\tSetTorque\x12\x17.gripette.TorqueCommand\x1a\x18.gripette.TorqueResponse\x12\x35\n\x04Ping\x12\x15.gripette.PingRequest\x1a\x16.gripette.PingResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\rgripper.proto\x12\x08gripette\"\x15\n\x13\x43\x65nterServosRequest\"{\n\x14\x43\x65nterServosResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\x12\x0f\n\x07\x63hanged\x18\x03 \x01(\x08\x12\x18\n\x10old_offset_steps\x18\x04 \x03(\x05\x12\x18\n\x10new_offset_steps\x18\x05 \x03(\x05\"\x0f\n\rStreamRequest\"t\n\x0cGripperFrame\x12\x11\n\tjpeg_data\x18\x01 \x01(\x0c\x12)\n\x0bmotor_state\x18\x02 \x01(\x0b\x32\x14.gripette.MotorState\x12\x14\n\x0ctimestamp_ms\x18\x03 \x01(\x01\x12\x10\n\x08sequence\x18\x04 \x01(\x04\"h\n\nMotorState\x12\x17\n\x0fmotor1_position\x18\x01 \x01(\x02\x12\x17\n\x0fmotor2_position\x18\x02 \x01(\x02\x12\x13\n\x0bmotor1_load\x18\x03 \x01(\x02\x12\x13\n\x0bmotor2_load\x18\x04 \x01(\x02\"r\n\x0cMotorCommand\x12\x13\n\x0bmotor1_goal\x18\x01 \x01(\x02\x12\x13\n\x0bmotor2_goal\x18\x02 \x01(\x02\x12\x1b\n\x13motor1_torque_limit\x18\x03 \x01(\x02\x12\x1b\n\x13motor2_torque_limit\x18\x04 \x01(\x02\"6\n\x14MotorCommandResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\"\x1f\n\rTorqueCommand\x12\x0e\n\x06\x65nable\x18\x01 \x01(\x08\"0\n\x0eTorqueResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\"\x13\n\x11ReadMotorsRequest\"\r\n\x0bPingRequest\"6\n\x0cPingResponse\x12\x0e\n\x06status\x18\x01 \x01(\t\x12\x16\n\x0euptime_seconds\x18\x02 \x01(\x01\x32\xa5\x03\n\x0eGripperService\x12@\n\x0bStreamState\x12\x17.gripette.StreamRequest\x1a\x16.gripette.GripperFrame0\x01\x12J\n\x10SendMotorCommand\x12\x16.gripette.MotorCommand\x1a\x1e.gripette.MotorCommandResponse\x12?\n\nReadMotors\x12\x1b.gripette.ReadMotorsRequest\x1a\x14.gripette.MotorState\x12>\n\tSetTorque\x12\x17.gripette.TorqueCommand\x1a\x18.gripette.TorqueResponse\x12\x35\n\x04Ping\x12\x15.gripette.PingRequest\x1a\x16.gripette.PingResponse\x12M\n\x0c\x43\x65nterServos\x12\x1d.gripette.CenterServosRequest\x1a\x1e.gripette.CenterServosResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'gripper_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_STREAMREQUEST']._serialized_start=27
-  _globals['_STREAMREQUEST']._serialized_end=42
-  _globals['_GRIPPERFRAME']._serialized_start=44
-  _globals['_GRIPPERFRAME']._serialized_end=160
-  _globals['_MOTORSTATE']._serialized_start=162
-  _globals['_MOTORSTATE']._serialized_end=266
-  _globals['_MOTORCOMMAND']._serialized_start=268
-  _globals['_MOTORCOMMAND']._serialized_end=382
-  _globals['_MOTORCOMMANDRESPONSE']._serialized_start=384
-  _globals['_MOTORCOMMANDRESPONSE']._serialized_end=438
-  _globals['_TORQUECOMMAND']._serialized_start=440
-  _globals['_TORQUECOMMAND']._serialized_end=471
-  _globals['_TORQUERESPONSE']._serialized_start=473
-  _globals['_TORQUERESPONSE']._serialized_end=521
-  _globals['_READMOTORSREQUEST']._serialized_start=523
-  _globals['_READMOTORSREQUEST']._serialized_end=542
-  _globals['_PINGREQUEST']._serialized_start=544
-  _globals['_PINGREQUEST']._serialized_end=557
-  _globals['_PINGRESPONSE']._serialized_start=559
-  _globals['_PINGRESPONSE']._serialized_end=613
-  _globals['_GRIPPERSERVICE']._serialized_start=616
-  _globals['_GRIPPERSERVICE']._serialized_end=958
+  _globals['_CENTERSERVOSREQUEST']._serialized_start=27
+  _globals['_CENTERSERVOSREQUEST']._serialized_end=48
+  _globals['_CENTERSERVOSRESPONSE']._serialized_start=50
+  _globals['_CENTERSERVOSRESPONSE']._serialized_end=173
+  _globals['_STREAMREQUEST']._serialized_start=175
+  _globals['_STREAMREQUEST']._serialized_end=190
+  _globals['_GRIPPERFRAME']._serialized_start=192
+  _globals['_GRIPPERFRAME']._serialized_end=308
+  _globals['_MOTORSTATE']._serialized_start=310
+  _globals['_MOTORSTATE']._serialized_end=414
+  _globals['_MOTORCOMMAND']._serialized_start=416
+  _globals['_MOTORCOMMAND']._serialized_end=530
+  _globals['_MOTORCOMMANDRESPONSE']._serialized_start=532
+  _globals['_MOTORCOMMANDRESPONSE']._serialized_end=586
+  _globals['_TORQUECOMMAND']._serialized_start=588
+  _globals['_TORQUECOMMAND']._serialized_end=619
+  _globals['_TORQUERESPONSE']._serialized_start=621
+  _globals['_TORQUERESPONSE']._serialized_end=669
+  _globals['_READMOTORSREQUEST']._serialized_start=671
+  _globals['_READMOTORSREQUEST']._serialized_end=690
+  _globals['_PINGREQUEST']._serialized_start=692
+  _globals['_PINGREQUEST']._serialized_end=705
+  _globals['_PINGRESPONSE']._serialized_start=707
+  _globals['_PINGRESPONSE']._serialized_end=761
+  _globals['_GRIPPERSERVICE']._serialized_start=764
+  _globals['_GRIPPERSERVICE']._serialized_end=1185
 # @@protoc_insertion_point(module_scope)

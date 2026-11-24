@@ -4,6 +4,7 @@ Ported from grabette-capture/grabette_capture/sync.py.
 """
 
 import time
+from datetime import datetime, timezone
 
 
 class SyncManager:
@@ -16,6 +17,13 @@ class SyncManager:
 
     def __init__(self):
         self._start_time: float | None = None
+        self._start_utc: datetime | None = None
+
+    @property
+    def start_utc(self) -> datetime | None:
+        """Wall-clock instant of t=0, read with the monotonic one — what
+        places this device's streams on the UTC timeline shared with its peers."""
+        return self._start_utc
 
     @property
     def is_started(self) -> bool:
@@ -23,6 +31,7 @@ class SyncManager:
 
     def start(self) -> None:
         self._start_time = time.monotonic()
+        self._start_utc = datetime.now(timezone.utc)
 
     def get_timestamp_ms(self) -> float:
         if self._start_time is None:
@@ -31,3 +40,4 @@ class SyncManager:
 
     def reset(self) -> None:
         self._start_time = None
+        self._start_utc = None

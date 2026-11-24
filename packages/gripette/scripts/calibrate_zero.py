@@ -17,6 +17,11 @@ Math (per motor):
 So the printed delta works whether the gripette is freshly installed
 (offset_old = 0, new = delta) or being re-calibrated (just add to existing).
 
+Before reading, the servos' own zero is re-centred on the open pose
+(CenterServos RPC, EEPROM offset) so the closing travel never runs into the
+encoder's 0/4095 seam. Positions are read through the service's old offsets
+after that shift, so the same delta math absorbs it. --no-center skips it.
+
 Usage:
     uv run python scripts/calibrate_zero.py <target> --hand {left,right}
     uv run python scripts/calibrate_zero.py 192.168.1.36 --hand right
@@ -42,6 +47,9 @@ def main():
                              "value on the Pi.")
     parser.add_argument("--yes", "-y", action="store_true",
                         help="Skip the 'press enter when ready' prompt.")
+    parser.add_argument("--no-center", action="store_true",
+                        help="Don't re-centre the servos' own zero (EEPROM) on the open "
+                             "pose; only print the offset deltas.")
     args = parser.parse_args()
 
     target = args.target if ":" in args.target else f"{args.target}:{settings.port}"
@@ -63,6 +71,20 @@ def main():
             except (KeyboardInterrupt, EOFError):
                 print("\nCanceled.")
                 sys.exit(1)
+
+        centred = False
+        if not args.no_center:
+            print("\nRe-centring the servo zero on this pose (keep the gripper still)...")
+            try:
+                r = g.center_servos()
+            except RuntimeError as e:
+                print(f"ERROR: {e}", file=sys.stderr)
+                sys.exit(1)
+            centred = r["changed"]
+            if centred:
+                print(f"  servo offsets {r['old_offsets']} -> {r['new_offsets']} steps")
+            else:
+                print("  already centred, nothing written")
 
         print(f"\nReading positions (averaging {SAMPLES} samples)...")
         readings = []
@@ -89,6 +111,11 @@ def main():
     print(f"  GRIPPER_MOTOR2_OFFSET=<existing> + {delta2:+.6f}")
     print()
     print("Then on the Pi:  sudo systemctl restart gripette")
+    if centred:
+        print()
+        print("The servo zero WAS re-centred: until the offsets are updated and the")
+        print("service restarted, it refuses goals and torque-on (the old offsets no")
+        print("longer match the motors). Don't skip the update.")
 
 
 if __name__ == "__main__":

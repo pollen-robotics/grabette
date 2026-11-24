@@ -22,11 +22,16 @@ def write_json_atomic(path: Path, payload) -> None:
     either no file or a complete one.
     """
     tmp = path.with_name(path.name + ".tmp")
-    with open(tmp, "w") as f:
-        json.dump(payload, f, indent=2)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w") as f:
+            json.dump(payload, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        # A full card fails mid-write: don't leave the partial temp file behind.
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 class IMUSampleDict(TypedDict):

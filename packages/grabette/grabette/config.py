@@ -48,6 +48,9 @@ class Settings(BaseSettings):
 
     # Data
     data_dir: Path = Path.home() / "grabette-data"
+    # Recording is refused below this much free space on the data_dir card: a
+    # take that fills the card fails its mux at stop and is lost.
+    min_free_disk_gb: float = 2.0
 
     # Camera
     camera_fps: int = 46

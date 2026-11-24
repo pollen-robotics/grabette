@@ -127,8 +127,30 @@ def depth_camera_model(ep_dir: Path, fallback: str | None = None) -> str:
     return UNKNOWN_CAMERA
 
 
+def video_aligned(meta: dict) -> bool:
+    """False when metadata.json marks the video as not matched to its capture times."""
+    alignment = meta.get("video_timestamp_alignment")
+    return (meta.get("valid", True) is not False
+            and not (isinstance(alignment, dict) and alignment.get("valid") is False))
+
+
+def invalid_reasons(ep_dir: Path) -> list[str]:
+    """Why the episode cannot go into a dataset, from its metadata.json ([] = valid)."""
+    import json
+
+    try:
+        meta = json.loads((Path(ep_dir) / "metadata.json").read_text())
+    except (OSError, ValueError):
+        return []
+    if not isinstance(meta, dict):
+        return []
+    if meta.get("stop_error"):
+        return ["stop_failed"]
+    return [] if video_aligned(meta) else ["video_sync"]
+
+
 def episode_features(ep_dir: Path, camera_fallback: str | None = None) -> dict:
-    """{"camera", "streams"}: what the LeRobot conversion can keep (file presence only)."""
+    """{"camera", "streams"[, "invalid"]}: what the LeRobot conversion can keep."""
     ep_dir = Path(ep_dir)
     present = {
         "depth": ((resolve(ep_dir, DCAM_DEPTH_VIDEO).is_file()
@@ -138,5 +160,9 @@ def episode_features(ep_dir: Path, camera_fallback: str | None = None) -> dict:
                   and resolve(ep_dir, DCAM_RIGHT_TS).is_file()),
         "imu": resolve(ep_dir, DCAM_IMU).is_file(),
     }
-    return {"camera": depth_camera_model(ep_dir, camera_fallback),
-            "streams": [k for k in FEATURE_KEYS if present[k]]}
+    features = {"camera": depth_camera_model(ep_dir, camera_fallback),
+                "streams": [k for k in FEATURE_KEYS if present[k]]}
+    invalid = invalid_reasons(ep_dir)
+    if invalid:
+        features["invalid"] = invalid
+    return features

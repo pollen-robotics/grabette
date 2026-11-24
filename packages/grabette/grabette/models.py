@@ -23,6 +23,8 @@ class CaptureStatus(BaseModel):
     frame_count: int = 0
     imu_sample_count: int = 0
     angle_sample_count: int = 0
+    # False when the take's video failed timestamp alignment.
+    valid: bool = True
     # Why a capture cannot start right now ("" = it can). Rides on the status the
     # dashboard already polls, so a device tied up by an upload reads as busy
     # instead of "Idle" — a device that looks free while it is not is how a
@@ -32,6 +34,10 @@ class CaptureStatus(BaseModel):
     # blocked_reason; split out so the dashboard can offer the fix (the
     # "Calibrate my device" button) rather than only quote the refusal.
     needs_calibration: bool = False
+    # The SD card is too full to record on (see RpiBackend.disk_space_error).
+    # Also part of blocked_reason; split out so the dashboard shows it under
+    # Storage rather than as an unexplained refusal.
+    storage_error: str = ""
 
 
 class SensorState(BaseModel):

@@ -6,7 +6,10 @@ rejected on the Space, and — in a bimanual build — takes the peer arm's good
 recording down with it. The screen has to catch that before the upload, so the
 required set is pinned here against the pipeline's own contract.
 """
-from grabette.episode_check import _FRAME_SIDECARS, REQUIRED_FILES, missing_files
+import pytest
+
+from grabette.episode_check import (_FRAME_SIDECARS, REQUIRED_FILES, VALID_VIDEO_TIMESTAMPS,
+                                    missing_files)
 
 
 def _write_episode(tmp_path, *, skip=(), depth="mkv"):
@@ -142,3 +145,19 @@ def test_unreadable_depth_sidecar_is_missing(tmp_path):
     ep = _write_episode(tmp_path)
     (ep / "dcam_left_timestamps.json").write_text("{not json")
     assert missing_files(ep) == ["dcam_left_timestamps.json"]
+
+
+@pytest.mark.parametrize("meta", [
+    {"valid": False},
+    {"video_timestamp_alignment": {"valid": False}},
+])
+def test_invalid_video_alignment_is_screened_out(tmp_path, meta):
+    ep = _write_episode(tmp_path)
+    _write_json(ep / "metadata.json", {"depth_camera": {"imu": "BMI270"}, **meta})
+    assert missing_files(ep) == [VALID_VIDEO_TIMESTAMPS]
+
+
+def test_valid_or_older_metadata_passes_the_alignment_screen(tmp_path):
+    ep = _write_episode(tmp_path)
+    _write_json(ep / "metadata.json", {"video_timestamp_alignment": {"valid": True}})
+    assert missing_files(ep) == []
