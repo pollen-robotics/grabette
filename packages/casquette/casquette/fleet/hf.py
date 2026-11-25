@@ -1,14 +1,25 @@
 # Copied from grabette/hf.py (develop @089f1d6) for the casquette fleet
 # prototype. Deviations: added get_hf_client() singleton (grabette keeps that in
-# its app/routers/huggingface.py), no upload-heartbeat marks. The client itself
-# is generic (stdlib + huggingface_hub only). Keep in sync until extracted to a shared package.
+# its app/routers/huggingface.py), no upload-heartbeat marks, xet disabled (see
+# below). The client itself is generic (stdlib + huggingface_hub only). Keep in
+# sync until extracted to a shared package.
 """HuggingFace Hub client — episode upload to a shared raw dataset."""
 
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
+
+# Upload over plain LFS HTTP, not hf_xet. On a Pi Zero 2 W (416 MB RAM) hf_xet's
+# parallel chunking/compression drove the process past available memory within
+# ~10 s of an upload starting, and the kernel OOM-killed the whole service: the
+# fleet saw the device go offline and the upload was lost. LFS streams each file
+# from disk instead. Must be set before huggingface_hub is imported (it reads it
+# into constants at import) — every import of it in casquette goes through this
+# module, lazily. setdefault: HF_HUB_DISABLE_XET=0 in the env re-enables xet.
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 logger = logging.getLogger(__name__)
 
