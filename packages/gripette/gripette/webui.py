@@ -3,7 +3,8 @@
 Answers "is the gripette OK?" at a glance, laid out like the grabette
 dashboard's Overview: live camera view, 3D model following the motors,
 device and health cards, service state and journal tail — plus Restart-service
-and Power-off buttons (sudoers-gated, see `make install-web`).
+and Power-off buttons (sudoers-gated, see `make install-web`), and Open/Close
+buttons that move the gripper through the same gRPC API.
 
 Design constraints (why this looks the way it does):
   - SEPARATE process from the gripette service: a UI bug can never take down
@@ -36,6 +37,7 @@ from pathlib import Path
 
 import grpc
 
+from .config import settings
 from .proto import gripper_pb2, gripper_pb2_grpc
 
 logger = logging.getLogger(__name__)
@@ -299,6 +301,60 @@ def _sudo_action(cmd: tuple[str, ...], delay_s: float) -> tuple[int, dict]:
 
 
 # ---------------------------------------------------------------------------
+# Open / Close buttons
+# ---------------------------------------------------------------------------
+
+# Gentle enough for a hand caught between the fingers. A close drives to the
+# position limits and lets this torque stop the fingers at contact, as a full
+# close is meant to (config.py); the service caps it at settings.torque_ceiling.
+GRIPPER_TORQUE = 0.3
+# The goal is stepped over ~1.5 s instead of sent at once, so the fingers
+# don't snap shut.
+RAMP_STEPS = 30
+RAMP_STEP_S = 0.05
+
+# One move at a time: two interleaved ramps would fight over the goal.
+_move_lock = threading.Lock()
+
+
+def move_gripper(action: str) -> tuple[int, dict]:
+    """Ramp both fingers to fully open or fully closed, torque on."""
+    targets = {"open": (0.0, 0.0),
+               "close": (settings.motor1_max, settings.motor2_max)}
+    if action not in targets:
+        return 404, {"error": "not found"}
+    if not _move_lock.acquire(blocking=False):
+        return 409, {"status": "busy", "detail": "The gripper is already moving."}
+    try:
+        s = stub()
+        m = s.ReadMotors(gripper_pb2.ReadMotorsRequest(), timeout=GRPC_TIMEOUT_S)
+        # Start from where the fingers are, clamped into the limits: a reading
+        # a hair below 0 would otherwise make the first goals out of range.
+        start = (min(max(m.motor1_position, settings.motor1_min), settings.motor1_max),
+                 min(max(m.motor2_position, settings.motor2_min), settings.motor2_max))
+        goal = targets[action]
+        r = s.SetTorque(gripper_pb2.TorqueCommand(enable=True), timeout=GRPC_TIMEOUT_S)
+        if not r.success:
+            return 500, {"status": "error", "detail": r.error}
+        for i in range(1, RAMP_STEPS + 1):
+            t = i / RAMP_STEPS
+            r = s.SendMotorCommand(gripper_pb2.MotorCommand(
+                motor1_goal=start[0] + (goal[0] - start[0]) * t,
+                motor2_goal=start[1] + (goal[1] - start[1]) * t,
+                motor1_torque_limit=GRIPPER_TORQUE,
+                motor2_torque_limit=GRIPPER_TORQUE,
+            ), timeout=GRPC_TIMEOUT_S)
+            if not r.success:
+                return 500, {"status": "error", "detail": r.error}
+            time.sleep(RAMP_STEP_S)
+        return 200, {"status": "done"}
+    except grpc.RpcError as e:
+        return 503, {"status": "error", "detail": _rpc_error_detail(e)}
+    finally:
+        _move_lock.release()
+
+
+# ---------------------------------------------------------------------------
 # HTTP server
 # ---------------------------------------------------------------------------
 
@@ -359,6 +415,8 @@ class Handler(BaseHTTPRequestHandler):
                 code, body = _sudo_action(RESTART_CMD, delay_s=0.5)
             elif self.path == "/api/shutdown":
                 code, body = _sudo_action(POWEROFF_CMD, delay_s=1.0)
+            elif self.path.startswith("/api/gripper/"):
+                code, body = move_gripper(self.path.removeprefix("/api/gripper/"))
             else:
                 code, body = 404, {"error": "not found"}
             self._send_json(code, body)
