@@ -24,6 +24,17 @@ def _stable_device_id() -> str:
     return did
 
 
+# IMU sensors probed in order at start; the first that answers is used, so one
+# image runs on either HAT (older BMI088, newer LSM6DSV16X) and on a device with
+# neither. Each entry is (sensor, i2c_bus, driver_kwargs). On the casquette HAT
+# both sit on bus 1 and the BMI088 gyro is strapped high (0x69, the driver
+# default), so no address override is needed.
+DEFAULT_IMU_CANDIDATES: list[tuple[str, int, dict]] = [
+    ("lsm6dsv16x", 1, {}),
+    ("bmi088", 1, {}),
+]
+
+
 class Settings(BaseSettings):
     # extra="ignore" so a stray/mis-prefixed .env key doesn't kill startup.
     model_config = {
@@ -53,9 +64,11 @@ class Settings(BaseSettings):
     # exposures in dim scenes — visibly more motion blur).
     camera_exposure_us: int = 8000
 
-    # IMU
+    # IMU. imu_hz is the capture/poll target (BMI088 polls at it; the LSM6DSV16X
+    # ignores it for pacing and runs its FIFO at 240 Hz). Override the probe list
+    # per unit via CASQUETTE_IMU_CANDIDATES (JSON; hex addrs as decimal).
     imu_hz: int = 200
-    imu_i2c_bus: int = 1  # Pi Zero 2W: hw bus 1
+    imu_candidates: list[tuple[str, int, dict]] = DEFAULT_IMU_CANDIDATES
 
     # Device identification. Empty device_id → resolved to a stable persisted
     # id (~/.cache/casquette/device_id); empty device_name → hostname.

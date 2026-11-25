@@ -9,25 +9,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from casquette.backend.base import Backend
-from casquette.config import settings
+from casquette.config import DEFAULT_IMU_CANDIDATES, settings
 from casquette.models import CaptureStatus, IMUSample, SensorState
 from casquette.output import write_imu_json
 
 logger = logging.getLogger(__name__)
 
 FPS = 46
-IMU_HZ = 200
 
 
 class RpiBackend(Backend):
     """Backend using real RPi camera and BMI088 IMU hardware."""
 
-    def __init__(self, imu_i2c_bus: int = 1) -> None:
+    def __init__(
+        self, imu_hz: int = 200,
+        imu_candidates: list[tuple[str, int, dict]] | None = None,
+    ) -> None:
         self._running = False
         self._start_time: float | None = None
         self._capturing = False
         self._capture_session_dir: Path | None = None
-        self._imu_i2c_bus = imu_i2c_bus
+        self._imu_hz = imu_hz
+        self._imu_candidates = (
+            imu_candidates if imu_candidates is not None else DEFAULT_IMU_CANDIDATES
+        )
         self._wall_clock_start: str | None = None
         self._imu_init_error: str = ""  # why the IMU failed to init at startup
 
@@ -38,39 +43,43 @@ class RpiBackend(Backend):
     async def start(self) -> None:
         from casquette.hardware.sync import SyncManager
         from casquette.hardware.camera import VideoCapture
-        from casquette.hardware.imu import BMI088Capture
 
         self._sync = SyncManager()
         self._camera = VideoCapture(
             self._sync, fps=FPS, exposure_us=settings.camera_exposure_us,
         )
-        self._imu = BMI088Capture(self._sync, sample_rate_hz=IMU_HZ, i2c_bus=self._imu_i2c_bus)
 
         logger.info("Initializing camera...")
         self._camera.init_camera()
 
-        # IMU init is best-effort. The HAT-integrated BMI088 may be absent,
-        # mis-wired, or returning unexpected chip IDs during early bring-up
-        # of a fresh hardware build. Failing here used to kill the whole
-        # daemon (and hence the camera stream + REST API). We log + continue
-        # with self._imu = None instead — get_state() already handles that
-        # path (returns imu=None), and start_capture() will refuse if the
-        # caller tries to actually record without an IMU.
+        # IMU init is best-effort. The HAT IMU may be absent, mis-wired, or a
+        # different chip across hardware revisions (older BMI088, newer
+        # LSM6DSV16X). Failing here used to kill the whole daemon (and hence the
+        # camera stream + REST API). _detect_imu auto-detects whichever is
+        # present and returns None otherwise, so bring-up never crashes;
+        # get_state() handles imu=None and start_capture() refuses to record
+        # without one.
         logger.info("Initializing IMU...")
-        try:
-            self._imu.init_sensor()
-        except Exception as e:
-            logger.warning(
-                "IMU init failed (%s) — continuing in camera-only mode. "
-                "Capture endpoints will refuse until the IMU is fixed.",
-                e,
-            )
-            self._imu = None
-            self._imu_init_error = str(e)
+        self._imu = self._detect_imu()
 
         self._running = True
         self._start_time = time.time()
-        logger.info("RpiBackend started (IMU=%s)", "ok" if self._imu else "DISABLED")
+        logger.info("RpiBackend started (IMU=%s)",
+                    self._imu.sensor if self._imu else "DISABLED")
+
+    def _detect_imu(self):
+        """Auto-detect the HAT IMU (LSM6DSV16X or BMI088) on the IMU I2C bus.
+
+        Returns an initialized ImuCapture, or None when no IMU answers — so a
+        mixed fleet (old BMI088 units, new LSM6DSV16X ones) and a device with no
+        working IMU both bring up cleanly. Never raises.
+        """
+        from casquette.hardware.imu import detect_imu_capture
+        imu = detect_imu_capture(self._sync, self._imu_candidates, self._imu_hz)
+        # Remembered for hardware_error, which the fleet shows the operator.
+        tried = ", ".join(f"{sensor} on bus {bus}" for sensor, bus, _ in self._imu_candidates)
+        self._imu_init_error = "" if imu is not None else f"no IMU answered on I2C; tried {tried}"
+        return imu
 
     async def stop(self) -> None:
         if self._capturing:
@@ -92,17 +101,17 @@ class RpiBackend(Backend):
                     gyro=tuple(last_gyro["value"]),
                 )
         else:
-            if self._imu and self._imu._bmi088:
+            if self._imu is not None:
                 try:
-                    accel = self._imu._bmi088.read_accel()
-                    gyro = self._imu._bmi088.read_gyro()
+                    live = self._imu.read_live()
+                except Exception:
+                    live = None
+                if live is not None:
                     imu = IMUSample(
                         timestamp_ms=time.time() * 1000,
-                        accel=accel,
-                        gyro=gyro,
+                        accel=live[0],
+                        gyro=live[1],
                     )
-                except Exception:
-                    pass
 
         return SensorState(imu=imu, capture=self.get_capture_status())
 
@@ -151,6 +160,7 @@ class RpiBackend(Backend):
 
         # Stop IMU before camera (camera stop backgrounds the ffmpeg mux).
         _t = time.monotonic()
+        imu_sensor = self._imu.sensor
         imu_samples = self._imu.stop()
         t_phases["imu_stop"] = (time.monotonic() - _t) * 1000
         _t = time.monotonic()
@@ -221,7 +231,8 @@ class RpiBackend(Backend):
                 "frame_count": status.frame_count,
                 "imu_sample_count": status.imu_sample_count,
                 "fps": actual_fps,
-                "imu_hz": IMU_HZ,
+                "imu_hz": self._imu_hz,
+                "imu_sensor": imu_sensor,
                 "backend": "rpi",
                 "device_id": settings.device_id,
                 "wall_clock_start_utc": self._wall_clock_start,
@@ -241,16 +252,15 @@ class RpiBackend(Backend):
         # DEBUG timing below shows this dominates the stop budget, it could be
         # deferred off the event loop (grabette does this via loop.call_soon).
         _t = time.monotonic()
-        from casquette.hardware.imu import BMI088Capture
         from casquette.hardware.camera import VideoCapture
         self._camera = VideoCapture(
             self._sync, fps=FPS, exposure_us=settings.camera_exposure_us,
         )
-        self._imu = BMI088Capture(self._sync, sample_rate_hz=IMU_HZ, i2c_bus=self._imu_i2c_bus)
         self._camera.init_camera()
         t_phases["camera_reinit"] = (time.monotonic() - _t) * 1000
         _t = time.monotonic()
-        self._imu.init_sensor()
+        # Re-detect (already initialized on return); graceful None if it vanished.
+        self._imu = self._detect_imu()
         t_phases["imu_reinit"] = (time.monotonic() - _t) * 1000
 
         self._capture_session_dir = None

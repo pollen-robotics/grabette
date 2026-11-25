@@ -74,6 +74,7 @@ def test_stop_drains_other_streams_and_files_an_invalid_take_without_raising(
     backend._needs_reinit = False
     backend._speaker = None
     backend._angle = None
+    backend._imu = None
     backend._sync = Sync()
     backend._camera = Camera()
     backend._oakd = Oak()
@@ -97,7 +98,8 @@ def test_stop_drains_other_streams_and_files_an_invalid_take_without_raising(
     assert backend._episode_dir is None
     assert len(scheduled) == 1
     callback, args = scheduled[0]
-    saved_episode, timestamps, angles, metadata, urdf, provenance = args
+    saved_episode, timestamps, angles, metadata, urdf, provenance, imu = args
+    assert imu is None
     assert provenance is backend._camera.frame_provenance
     assert callback is backend._finalize_and_reinit
     assert saved_episode == episode

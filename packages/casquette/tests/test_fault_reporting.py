@@ -50,6 +50,18 @@ def test_rpi_backend_without_imu_reports_a_hardware_error():
     assert "IMU" in b.hardware_error and "[Errno 5]" in b.hardware_error
 
 
+def test_rpi_backend_names_the_imus_it_tried_when_none_is_detected(monkeypatch):
+    import casquette.hardware.imu as imu_mod
+    monkeypatch.setattr(imu_mod, "detect_imu_capture", lambda *a: None)
+    b = RpiBackend(imu_candidates=[("lsm6dsv16x", 1, {}), ("bmi088", 1, {})])
+    b._running, b._imu = True, b._detect_imu()
+    assert "lsm6dsv16x on bus 1" in b.hardware_error and "bmi088 on bus 1" in b.hardware_error
+
+    monkeypatch.setattr(imu_mod, "detect_imu_capture", lambda *a: object())
+    b._imu = b._detect_imu()  # e.g. the re-detection after a stop finds it again
+    assert b.hardware_error == ""
+
+
 def test_rpi_backend_with_imu_or_not_running_is_healthy():
     b = RpiBackend()
     assert b.hardware_error == ""  # not started yet

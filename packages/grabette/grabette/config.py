@@ -21,6 +21,17 @@ def _stable_device_id() -> str:
     return did
 
 
+# IMU sensors probed in order at start; the first that answers is used, so one
+# image runs on either HAT and on a device with neither. Each entry is
+# (sensor, i2c_bus, driver_kwargs): the LSM6DSV16X sits at 0x6A on bus 1; the
+# older BMI088 HAT puts accel at 0x19 and gyro strapped low at 0x68 on bus 1
+# (so gyro_addr=0x68 — that HAT needs the PiSugar RTC moved off 0x68 first).
+DEFAULT_IMU_CANDIDATES: list[tuple[str, int, dict]] = [
+    ("lsm6dsv16x", 1, {}),
+    ("bmi088", 1, {"gyro_addr": 0x68}),
+]
+
+
 class Settings(BaseSettings):
     model_config = {
         "env_prefix": "GRABETTE_",
@@ -46,8 +57,17 @@ class Settings(BaseSettings):
     camera_resolution_w: int = 1296
     camera_resolution_h: int = 972
 
-    # IMU
+    # IMU. The sensor is auto-detected at start (LSM6DSV16X on newer HATs,
+    # BMI088 on older ones); a device with neither records without IMU. Set
+    # enable_imu=False to skip the probe entirely. This is the capture target
+    # and the BMI088's poll rate, so it matches the BMI088's native 200 Hz ODR
+    # (polling a 200 Hz sensor at 240 just re-reads duplicates). The LSM6DSV16X
+    # ignores it for pacing: it batches into its hardware FIFO at 240 Hz (its
+    # grid has no 200 Hz) and is drained from there, so it still delivers 240 Hz.
+    enable_imu: bool = True
     imu_hz: int = 200
+    # Override per unit via GRABETTE_IMU_CANDIDATES (JSON; hex addrs as decimal).
+    imu_candidates: list[tuple[str, int, dict]] = DEFAULT_IMU_CANDIDATES
 
     # Angle sensors (AS5600 on I2C buses 4 & 5)
     angle_sensors: bool = True

@@ -360,6 +360,7 @@ Tasks, recording sessions, uploads and dataset creation (SLAM → LeRobot) are d
 - [Data format](docs/data_format.md) — episode layout, calibration & geometry, IMU format, synchronization.
 - [Bluetooth WiFi setup](docs/bluetooth_setup.md) — headless WiFi provisioning over BLE.
 - [Benchmarks](benchmarks/README.md) — checking a capture PR against develop on real grabettes: holes, angles, start, sync.
+- [PiSugar RTC address](docs/pisugar_rtc_address.md) — move the PiSugar RTC off 0x68 so the BMI088 HAT's gyro works.
 
 ## Related packages
 
