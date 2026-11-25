@@ -26,6 +26,14 @@ class Backend(ABC):
     def get_sync_metadata(self) -> dict:
         return getattr(self, "_sync_metadata", {}) or {}
 
+    # Why this device must not record right now ("" = fine). Reported to the
+    # fleet on every heartbeat (fault_provider), which then refuses a start
+    # naming the fault — instead of the device acking a scheduled start and
+    # only failing at T0, where nobody but the journal sees it.
+    @property
+    def hardware_error(self) -> str:
+        return ""
+
     # Wall-clock instant of the last recording's t=0 (the shared zero of its
     # stream timestamps), or None when the backend doesn't know it.
     @property

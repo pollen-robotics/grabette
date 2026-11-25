@@ -120,6 +120,11 @@ class TaskManager:
         # Bumped on every _save (i.e. every mutation). The relay watches it to
         # know when to re-report this device's tasks to the fleet.
         self._revision: int = 0
+        # The last take this device was part of, reported to the fleet on the
+        # heartbeat (see last_episode_issues): (episode_id, start_failed). Not
+        # persisted — the fleet only cares about the take that just happened.
+        self._last_take: tuple[str, bool] | None = None
+        self._last_issues: tuple[str, list[str]] | None = None  # cache
 
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.episodes_dir.mkdir(parents=True, exist_ok=True)
@@ -276,6 +281,7 @@ class TaskManager:
         self.active_task_id = target["id"]
         if self._session_active:
             self._session_count += 1
+        self._last_take = (eid, False)
         self._save()
 
     @property
@@ -300,14 +306,21 @@ class TaskManager:
         self._save()
         return count
 
-    def discard_pending_episode(self) -> None:
+    def discard_pending_episode(self, start_failed: bool = False) -> None:
         """Drop a pending (created-but-never-registered) episode, removing its
         directory. Used when a capture fails to start so no empty episode is
-        left behind."""
+        left behind.
+
+        start_failed=True when the capture was SUPPOSED to run but could not
+        start (as opposed to a start cancelled before T0): the take is then
+        reported to the fleet with the "start_failed" issue, so the operator
+        learns this device is missing from it."""
         pending = self._pending_episode
         self._pending_episode = None
         if pending is None:
             return
+        if start_failed:
+            self._last_take = (pending[0], True)
         ep_dir = self.episode_dir(pending[0])
         if ep_dir.exists():
             shutil.rmtree(ep_dir, ignore_errors=True)
@@ -451,6 +464,40 @@ class TaskManager:
             has_video=video_path.exists(),
             has_imu=imu_path.exists(),
         )
+
+    def last_episode_issues(self) -> tuple[str, list[str]] | None:
+        """(episode id, issues) of the last take, for the fleet heartbeat.
+
+        Issues: "start_failed" (the capture never started — nothing recorded),
+        "metadata" (no readable metadata.json), "camera" (0 video frames),
+        "imu" (0 IMU samples). Empty list = take saved fine. None when there is
+        no take to report (none yet, or the episode was since deleted).
+        Call only once the take's files are written (i.e. not while capturing).
+        """
+        if self._last_take is None:
+            return None
+        eid, start_failed = self._last_take
+        if start_failed:
+            return (eid, ["start_failed"])
+        ep_dir = self.episode_dir(eid)
+        if not ep_dir.exists():
+            return None
+        if self._last_issues is None or self._last_issues[0] != eid:
+            self._last_issues = (eid, self._episode_issues(ep_dir))
+        return self._last_issues
+
+    @staticmethod
+    def _episode_issues(ep_dir: Path) -> list[str]:
+        try:
+            meta = json.loads((ep_dir / "metadata.json").read_text())
+        except (OSError, ValueError):
+            return ["metadata"]
+        issues = []
+        if not meta.get("frame_count"):
+            issues.append("camera")
+        if not meta.get("imu_sample_count"):
+            issues.append("imu")
+        return issues
 
     def revision(self) -> int:
         """Monotonic counter bumped on every task-registry change. The relay

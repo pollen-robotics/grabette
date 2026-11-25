@@ -1,6 +1,9 @@
 # Copied from grabette/relay_client.py (develop @0cb3453) for the casquette
 # fleet prototype. Deviations: imports point at casquette.fleet.{wifi,cancel};
-# logger name is "casquette.relay_client". Everything else (config + providers)
+# logger name is "casquette.relay_client". fault_provider / last_episode_provider
+# (and the heartbeat fields they feed) were ported later from grabette's
+# current relay_client; its other providers (depth_warm, storage, unassigned)
+# have no casquette counterpart yet. Everything else (config + providers)
 # is constructor-injected, so nothing else changes. Keep in sync until extracted
 # to a shared package. See casquette/fleet/__init__.py.
 """Device-side relay client — talks to the Docker fleet Space over HTTP.
@@ -56,6 +59,10 @@ _BATTERY_INTERVAL_S = 30.0
 # are dispatched immediately, concurrently with whatever is running. Only put
 # command types here that do no hardware work and return fast.
 _FAST_PATH_TYPES = frozenset({"cancel_dataset"})
+# Hardware-fault text is reported on the heartbeat, i.e. in a query string. The
+# messages name the fault, the consequence and the fix, so they are a sentence or
+# two — long enough to be worth capping, short enough that the cap never bites.
+_FAULT_MAX_CHARS = 300
 
 logger = logging.getLogger("casquette.relay_client")
 
@@ -117,6 +124,15 @@ class RelayClient:
         # recording while the device is busy. In-memory & fast (unlike battery's
         # I2C), so it's read inline on the heartbeat path.
         activity_provider: Optional[Callable[[], Optional[str]]] = None,
+        # Optional callable returning why this device is in a HARDWARE FAULT — a
+        # state where it refuses to record (e.g. no IMU) — or "" when healthy.
+        # The fleet refuses a start naming the fault instead of letting the
+        # device ack it and fail silently at T0.
+        fault_provider: Optional[Callable[[], Optional[str]]] = None,
+        # (episode id, issues) of the last take once settled, else None. A start
+        # that failed at T0 is reported too (issue "start_failed"), so the fleet
+        # can tell the operator this device is missing from the take.
+        last_episode_provider: Optional[Callable[[], Optional[tuple[str, list[str]]]]] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.token_provider = token_provider
@@ -129,6 +145,8 @@ class RelayClient:
         self.tasks_provider = tasks_provider
         self.tasks_rev_provider = tasks_rev_provider
         self.activity_provider = activity_provider
+        self.fault_provider = fault_provider
+        self.last_episode_provider = last_episode_provider
         self._last_reported_rev: Optional[int] = None  # last task revision sent to the fleet
         # Token of the last register: on an account switch the fleet may hold a
         # stale entry for us that polls fine, so a new token forces a re-register.
@@ -270,6 +288,24 @@ class RelayClient:
                             act = None
                         if act:
                             params["status"] = act
+                    if self.fault_provider is not None:  # in-memory, safe inline
+                        try:
+                            fault = self.fault_provider()
+                        except Exception:
+                            fault = None
+                        # Sent on EVERY beat, empty included: the fleet must learn
+                        # that a fault cleared as promptly as it learned of it, and
+                        # a field that only appears when broken can never say
+                        # "fixed". Truncated because it rides in a query string.
+                        params["error"] = (fault or "")[:_FAULT_MAX_CHARS]
+                    if self.last_episode_provider is not None:
+                        try:
+                            last = self.last_episode_provider()
+                        except Exception:
+                            last = None
+                        if last:
+                            params["last_episode"] = last[0]
+                            params["last_issues"] = ",".join(last[1])
                     try:
                         async with session.post(
                             f"{self.base_url}/api/devices/heartbeat",

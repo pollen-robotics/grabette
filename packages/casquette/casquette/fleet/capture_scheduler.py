@@ -1,6 +1,7 @@
-# Copied VERBATIM from grabette/capture_scheduler.py (develop @0cb3453) for the
-# casquette fleet prototype — no deviations (it depends only on the injected
-# backend + record-store interfaces, stdlib only). Keep in sync until extracted
+# Copied from grabette/capture_scheduler.py (develop @0cb3453) for the
+# casquette fleet prototype. One deviation: a failed scheduled start discards
+# the pending episode with start_failed=True, so the take is reported to the
+# fleet as failed (casquette TaskManager.last_episode_issues). Keep in sync until extracted
 # to a shared package. See casquette/fleet/__init__.py.
 """Schedules a capture start at a future UTC instant, for synchronized
 multi-device group recordings.
@@ -97,7 +98,11 @@ class CaptureScheduler:
             raise
         except Exception:
             logger.exception("Scheduled start failed; discarding pending episode")
-            sm.discard_pending_episode()
+            # The device already acked this start as "scheduled", so the fleet
+            # believes it is recording: flag the take as start_failed — the
+            # heartbeat reports it (last_episode), and that is how the operator
+            # learns this device is missing from it.
+            sm.discard_pending_episode(start_failed=True)
         finally:
             self._task = None
             self._start_at_utc = None

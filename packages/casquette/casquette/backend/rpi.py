@@ -29,6 +29,7 @@ class RpiBackend(Backend):
         self._capture_session_dir: Path | None = None
         self._imu_i2c_bus = imu_i2c_bus
         self._wall_clock_start: str | None = None
+        self._imu_init_error: str = ""  # why the IMU failed to init at startup
 
         self._sync = None
         self._camera = None
@@ -65,6 +66,7 @@ class RpiBackend(Backend):
                 e,
             )
             self._imu = None
+            self._imu_init_error = str(e)
 
         self._running = True
         self._start_time = time.time()
@@ -103,6 +105,14 @@ class RpiBackend(Backend):
                     pass
 
         return SensorState(imu=imu, capture=self.get_capture_status())
+
+    @property
+    def hardware_error(self) -> str:
+        if self._running and self._imu is None:
+            why = f" ({self._imu_init_error})" if self._imu_init_error else ""
+            return (f"IMU not detected at startup{why}: recording is impossible. "
+                    "Check the IMU wiring, then restart the casquette service.")
+        return ""
 
     async def start_capture(self, session_dir: Path) -> None:
         if self._capturing:

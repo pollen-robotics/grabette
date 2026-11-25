@@ -281,6 +281,11 @@ async def _handle_relay_command(cmd: dict) -> dict:
             return {"status": "error", "message": "already capturing"}
         if scheduler.is_scheduled():
             return {"status": "error", "message": "a start is already scheduled"}
+        # A known hardware fault fails the start NOW, in the command result the
+        # fleet shows ("did not start: …"), instead of acking "scheduled" and
+        # failing at T0 where only the journal sees it.
+        if backend.hardware_error:
+            return {"status": "error", "message": backend.hardware_error}
         tm = get_task_manager()
         args = cmd.get("args", {})
         task_name = args.get("task_name")
@@ -436,6 +441,13 @@ async def lifespan(app: FastAPI):
                 pass
             return "idle"
 
+        def _last_episode_report():
+            """(episode id, issues) of the last take, once settled."""
+            d = get_daemon_instance()
+            if d is None or d.backend.is_capturing:
+                return None
+            return tm.last_episode_issues()
+
         tm = get_task_manager()
         relay = RelayClient(
             base_url=settings.relay_url,
@@ -448,6 +460,10 @@ async def lifespan(app: FastAPI):
             tasks_provider=tm.report_tasks,
             tasks_rev_provider=tm.revision,
             activity_provider=_device_activity,
+            # Hardware faults (no IMU): the device refuses to record, and the
+            # fleet must know BEFORE a start, not discover it from missing data.
+            fault_provider=lambda: getattr(_daemon.backend, "hardware_error", "") if _daemon else "",
+            last_episode_provider=_last_episode_report,
         )
         relay_task = asyncio.create_task(relay.run(_handle_relay_command))
         logger.info("Relay started → %s (device: %s)", settings.relay_url, settings.device_id)
