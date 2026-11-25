@@ -35,7 +35,8 @@
   button { border:0; border-radius:8px; font:600 14px system-ui,sans-serif; cursor:pointer; padding:10px 18px; }
   button:disabled { opacity:.5; cursor:default; }
   #shutdown { background:#000; color:#fff; font-size:17px; padding:12px 20px; display:flex; align-items:center; gap:8px; }
-  #restart { background:#e5e7eb; color:var(--fg); }
+  #restart, #gopen, #gclose { background:#e5e7eb; color:var(--fg); }
+  .btns { display:flex; gap:8px; flex-wrap:wrap; }
   #actionmsg { color:var(--dim); font-size:13px; margin-top:8px; min-height:1em; }
   details { margin-top:20px; }
   summary { cursor:pointer; color:var(--dim); font-size:13px; }
@@ -98,7 +99,11 @@
         <h2>Gripette service</h2>
         <p class="sub">The gRPC service the robot talks to: motors and camera.</p>
       </div>
-      <button id="restart">Restart service</button>
+      <div class="btns">
+        <button id="gopen">Open gripper</button>
+        <button id="gclose">Close gripper</button>
+        <button id="restart">Restart service</button>
+      </div>
     </div>
     <div class="grid4">
       <div class="kv"><b>State</b><span id="svc">—</span></div>
@@ -199,6 +204,24 @@ async function action(path, confirmMsg, btn) {
   setTimeout(() => { btn.disabled = false; }, 3000);
 }
 
+// Open/Close: no confirm, the move is gentle (ramped, low torque). Both
+// buttons stay disabled until the ~1.5 s move is over.
+async function moveGripper(which) {
+  const btns = [$("gopen"), $("gclose")];
+  btns.forEach(b => b.disabled = true);
+  $("actionmsg").textContent = which === "open" ? "Opening the gripper…" : "Closing the gripper…";
+  try {
+    const r = await fetch("/api/gripper/" + which, {method: "POST"});
+    const body = await r.json();
+    $("actionmsg").textContent = r.ok ? "" : (body.detail || body.error || "failed");
+  } catch (e) {
+    $("actionmsg").textContent = "request failed: " + e;
+  }
+  btns.forEach(b => b.disabled = false);
+}
+
+$("gopen").onclick    = () => moveGripper("open");
+$("gclose").onclick   = () => moveGripper("close");
 $("restart").onclick  = () => action("/api/restart-service", "Restart the gripette service?", $("restart"));
 $("shutdown").onclick = () => action("/api/shutdown", "Shut down the gripette device?", $("shutdown"));
 
