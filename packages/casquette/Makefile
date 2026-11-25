@@ -76,6 +76,19 @@ install-systemd: ensure-ble-only
 	  | sudo tee /etc/systemd/system/casquette.service >/dev/null
 	sed -e 's#/home/rasp/Project/Repo/casquette#$(WORKSPACE_ROOT)#g' -e 's#^User=rasp$$#User=$(SERVICE_USER)#' systemd/casquette-bluetooth.service \
 	  | sudo tee /etc/systemd/system/casquette-bluetooth.service >/dev/null
+	@# Per-device config read by the unit (EnvironmentFile=-/etc/casquette/env).
+	@# Seeded with commented examples only when missing: never overwrites edits.
+	@if [ ! -f /etc/casquette/env ]; then \
+		sudo mkdir -p /etc/casquette; \
+		printf '%s\n' \
+		  '# /etc/casquette/env - per-device config, read by casquette.service.' \
+		  '# Uncomment and edit, then: sudo systemctl restart casquette' \
+		  '#CASQUETTE_RELAY_URL=https://pollen-robotics-grabette-fleet.hf.space' \
+		  '#CASQUETTE_DEVICE_NAME=casquette-1' \
+		  '#HF_OAUTH_CLIENT_ID=' \
+		  | sudo tee /etc/casquette/env >/dev/null; \
+		echo "Created /etc/casquette/env (all settings commented out)"; \
+	fi
 	sudo systemctl daemon-reload
 	sudo systemctl enable --now casquette
 	sudo systemctl enable --now casquette-bluetooth
