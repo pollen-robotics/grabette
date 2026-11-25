@@ -58,26 +58,30 @@ def _read_hf_token() -> str | None:
     camera (frontend timeout). Mirror huggingface_hub.get_token()'s resolution:
     HF_TOKEN env var, else the token file at {HF_HOME or ~/.cache/huggingface}/token
     (honoring HF_TOKEN_PATH). The full library is still used lazily for the actual
-    upload (fleet/hf.py) and the logout handler — just not at startup.
+    upload (fleet/hf.py) — just not at startup. Read on every call, so a token
+    renewed by the OAuth refresh loop is picked up at once.
     """
-    tok = os.environ.get("HF_TOKEN")
-    if tok and tok.strip():
-        return tok.strip()
-    path = os.environ.get("HF_TOKEN_PATH")
-    if not path:
-        hf_home = os.environ.get("HF_HOME")
-        if not hf_home:
-            cache = os.environ.get("XDG_CACHE_HOME") or os.path.join(
-                os.path.expanduser("~"), ".cache"
-            )
-            hf_home = os.path.join(cache, "huggingface")
-        path = os.path.join(hf_home, "token")
-    try:
-        with open(path) as f:
-            tok = f.read().strip()
-        return tok or None
-    except OSError:
-        return None
+    from casquette.fleet.auth import read_token
+
+    return read_token()
+
+
+# How often to renew the HF OAuth access token from the stored refresh token.
+# Below the token's ~1h lifetime and below fleet.auth._REFRESH_MARGIN_S, so a
+# tick always lands inside the pre-expiry window. (Same as grabette.)
+_TOKEN_REFRESH_INTERVAL_S = 600
+
+
+async def _token_refresh_loop() -> None:
+    from casquette.fleet.auth import get_hf_auth
+
+    auth = get_hf_auth()
+    while True:
+        try:
+            await asyncio.to_thread(auth.ensure_authenticated)
+        except Exception:  # noqa: BLE001
+            logger.debug("HF token refresh failed", exc_info=True)
+        await asyncio.sleep(_TOKEN_REFRESH_INTERVAL_S)
 
 
 def get_daemon_instance() -> Daemon | None:
@@ -142,8 +146,10 @@ async def _handle_relay_command(cmd: dict) -> dict:
         return {"status": "ok", "state": status}
 
     if ctype == "logout":
-        from huggingface_hub import logout as hf_logout
-        hf_logout()
+        # Drops the refresh token too: otherwise the refresh loop would log
+        # the device straight back in.
+        from casquette.fleet.auth import get_hf_auth
+        get_hf_auth().delete_token()
         return {"status": "ok"}
 
     if ctype == "delete_episode":
@@ -400,15 +406,17 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_loop_lag_watchdog())
         logger.info("Loop-lag watchdog enabled (CASQUETTE_LOOP_WATCHDOG=1)")
 
-    # HF auth (PAT-only): best-effort check that a token is present so the relay
-    # can authenticate. No periodic refresh — a PAT is long-lived. Read the token
-    # directly (not via huggingface_hub / auth.py) to keep that heavy import out
-    # of the startup + steady-state path — see _read_hf_token.
+    # HF auth: an OAuth login's access token lasts ~1h, so renew it from the
+    # stored refresh token now (covers a reboot) and every 10 min (covers long
+    # uptimes). No-op for a manual token. fleet.auth stays clear of
+    # huggingface_hub, keeping that heavy import out of the steady state.
+    token_refresh_task = None
     if settings.relay_enabled:
+        token_refresh_task = asyncio.create_task(_token_refresh_loop())
         if not _read_hf_token():
             logger.warning(
                 "no HF token — fleet relay will idle until one is set "
-                "(save a PAT or run `huggingface-cli login` on the device)"
+                "(sign in from the dashboard, or run `huggingface-cli login` on the device)"
             )
 
     # Fleet relay loop. Casquette is a pure peer — NO button listener, and no
@@ -446,10 +454,11 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    if relay_task is not None:
-        relay_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await relay_task
+    for task in (relay_task, token_refresh_task):
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
     await _daemon.stop()
     _daemon = None
 
@@ -457,8 +466,12 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     from casquette.app.routers.camera import router as camera_router
     from casquette.app.routers.daemon import router as daemon_router
+    from casquette.app.routers.hf_auth import router as hf_auth_router
     from casquette.app.routers.state import router as state_router
     from casquette.app.routers.system import router as system_router
+    from casquette.app.routers.tasks import router as tasks_router
+    from casquette.app.routers.ui import router as ui_router
+    from casquette.app.routers.wifi import router as wifi_router
 
     app = FastAPI(
         title="Casquette",
@@ -487,7 +500,10 @@ def create_app() -> FastAPI:
     app.include_router(state_router)
     app.include_router(camera_router)
     app.include_router(system_router)
-    # NOTE: the local "sessions" router is intentionally dropped in this fleet
-    # prototype (record store moved to the task model; local web UI deferred).
+    app.include_router(tasks_router)
+    app.include_router(wifi_router)
+    app.include_router(hf_auth_router)
+    # The dashboard (Overview / Episodes / Network) at "/".
+    app.include_router(ui_router)
 
     return app

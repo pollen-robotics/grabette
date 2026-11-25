@@ -58,7 +58,7 @@ def camera_snapshot(backend: Backend = Depends(get_backend)):
 async def camera_stream():
     """Browser-renderable MJPEG stream.
 
-    Open `http://<host>:8001/api/camera/stream` directly in a browser and
+    Open `http://<host>:8000/api/camera/stream` directly in a browser and
     you'll see a live feed — works in Chrome/Firefox/Safari without any
     extra page or JavaScript. Useful for FOV/exposure experimentation.
 

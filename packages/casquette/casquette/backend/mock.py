@@ -166,6 +166,9 @@ class MockBackend(Backend):
         write_imu_json(accel_samples, gyro_samples, FPS, session_dir / "imu_data.json")
 
         (session_dir / "raw_video.mp4").write_bytes(b"MOCK_VIDEO")
+        # Same per-frame timestamps file the RPi backend writes (ms from start).
+        (session_dir / "frame_timestamps.json").write_text(json.dumps(
+            [i * 1000.0 / FPS for i in range(status.frame_count)]))
 
         meta = {
             "duration_seconds": status.duration_seconds,

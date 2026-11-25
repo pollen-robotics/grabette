@@ -1100,10 +1100,9 @@
     // HKDF context string — must match HKDF_INFO in bluetooth_service.py exactly.
     const HKDF_INFO = 'grabette-wifi-psk-v1';
 
-    // Each product serves its dashboard on its own port: grabette/config.py and
-    // gripette's webui.py default to 8000 (never on the same device), and
-    // casquette/config.py to 8001.
-    const DASHBOARD_PORTS = { Grabette: 8000, Casquette: 8001, Gripette: 8000 };
+    // Each product serves its dashboard on port 8000 (grabette/config.py,
+    // casquette/config.py, gripette's webui.py) — never two on the same device.
+    const DASHBOARD_PORTS = { Grabette: 8000, Casquette: 8000, Gripette: 8000 };
 
     let selectedType = null;    // picked on the first tab; null locks the others
     let connectedType = null;   // 'Grabette' | 'Gripette' | 'Casquette'

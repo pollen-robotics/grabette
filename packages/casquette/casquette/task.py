@@ -278,6 +278,28 @@ class TaskManager:
             self._session_count += 1
         self._save()
 
+    @property
+    def pending_episode_id(self) -> str | None:
+        """The episode a capture in progress is writing to, if any."""
+        return self._pending_episode[0] if self._pending_episode else None
+
+    def delete_all_episodes(self) -> int:
+        """Delete every filed episode and every named task (they would all be
+        empty). Leaves a pending capture alone. Returns how many were deleted."""
+        count = 0
+        for t in self._tasks:
+            for eid in t["episode_ids"]:
+                ep_dir = self.episode_dir(eid)
+                if ep_dir.exists():
+                    shutil.rmtree(ep_dir)
+                    count += 1
+            t["episode_ids"] = []
+            t.pop("episode_members", None)
+        self._tasks = [t for t in self._tasks if t["id"] == UNASSIGNED_ID]
+        self.active_task_id = UNASSIGNED_ID
+        self._save()
+        return count
+
     def discard_pending_episode(self) -> None:
         """Drop a pending (created-but-never-registered) episode, removing its
         directory. Used when a capture fails to start so no empty episode is

@@ -1,4 +1,4 @@
-.PHONY: install-rpi enable-i2c install-systemd ensure-ble-only check help
+.PHONY: install-rpi enable-i2c install-systemd install-poweroff ensure-ble-only check help
 
 # This package is a uv workspace member; the environment uv actually uses
 # lives at the workspace ROOT, not here. All venv ops target that root.
@@ -13,8 +13,9 @@ help:
 	@echo "  install-rpi       One-shot bring-up: apt deps + I2C enable + venv + sync + verify"
 	@echo "  enable-i2c        Enable hardware I2C bus 1 (GPIO 2/3) via raspi-config nonint"
 	@echo "  install-systemd   Install + enable casquette.service and casquette-bluetooth.service"
+	@echo "  install-poweroff  Allow the service user to power off the Pi from the dashboard"
 	@echo "  ensure-ble-only   Force BlueZ into BLE-only mode (ControllerMode = le)"
-	@echo "  check             Run scripts/check_hardware.py against current install"
+	@echo "  check            Run scripts/check_hardware.py against current install"
 	@echo ""
 	@echo "Prereqs before 'install-rpi':"
 	@echo "  - uv installed (https://docs.astral.sh/uv/)"
@@ -81,6 +82,19 @@ install-systemd: ensure-ble-only
 	@echo "Logs:"
 	@echo "  journalctl -u casquette -f"
 	@echo "  journalctl -u casquette-bluetooth -f"
+
+# Lets the dashboard's Power off button shut the Pi down: exactly
+# `systemctl poweroff`, nothing else, without a password. Same as grabette's.
+install-poweroff:
+	@tmp=$$(mktemp); \
+	echo '$(SERVICE_USER) ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff' > $$tmp; \
+	if sudo visudo -cf $$tmp; then \
+		sudo install -m 0440 -o root -g root $$tmp /etc/sudoers.d/casquette-poweroff; \
+		echo "Installed /etc/sudoers.d/casquette-poweroff"; \
+	else \
+		echo "sudoers syntax check failed, aborting"; rm -f $$tmp; exit 1; \
+	fi; \
+	rm -f $$tmp
 
 check:
 	@if [ ! -x $(WORKSPACE_ROOT)/.venv/bin/python ]; then \

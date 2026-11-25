@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # Server
     host: str = "0.0.0.0"
-    port: int = 8001
+    port: int = 8000
 
     # Backend
     backend: str = "auto"  # "auto", "mock", or "rpi"

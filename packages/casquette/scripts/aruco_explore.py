@@ -21,7 +21,7 @@ and observe.
 Usage:
     python scripts/aruco_explore.py
     python scripts/aruco_explore.py --size-mm 40 --focal-px 850
-    python scripts/aruco_explore.py --api http://casquette.local:8001
+    python scripts/aruco_explore.py --api http://casquette.local:8000
 """
 
 from __future__ import annotations
@@ -70,7 +70,7 @@ def pinhole_distance_mm(marker_size_mm: float, marker_px: float, focal_px: float
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--api", default="http://casquette.local:8001",
+    p.add_argument("--api", default="http://casquette.local:8000",
                    help="Base URL of the casquette daemon")
     p.add_argument("--size-mm", type=float, default=50.0,
                    help="Physical size of the printed marker, mm "

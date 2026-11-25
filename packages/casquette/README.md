@@ -21,7 +21,7 @@ You can run the service against a mock backend to explore the code:
 
 ```bash
 uv sync --package casquette
-uv run --package casquette python main.py   # → http://localhost:8001
+uv run --package casquette python main.py   # → http://localhost:8000
 ```
 
 On-device build, systemd, and API docs are intentionally omitted while the design

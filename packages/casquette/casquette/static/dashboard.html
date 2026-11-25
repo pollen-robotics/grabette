@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Casquette</title>
+<link rel="icon" href="data:,">
+<style>
+  /* Same look as the grabette dashboard and gripette's status page. Plain
+     HTML + JS: Gradio is too heavy for the Pi Zero 2W. */
+  :root { --fg:#1f2937; --dim:#6b7280; --label:#8a94a6; --line:#e5e7eb; --card:#fafafa;
+          --ok:#16a34a; --bad:#dc2626; --warn:#d97706; --accent:#2563eb; --tile-h:200px; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#fff; color:var(--fg); font:15px/1.45 system-ui,sans-serif; }
+  .wrap { max-width:1400px; margin:0 auto; padding:24px 32px 48px; }
+  .titlebar { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:12px; }
+  h1 { margin:0; font-size:28px; font-weight:800; letter-spacing:.01em; }
+  h2 { margin:0; font-size:18px; font-weight:700; }
+  .sub { color:var(--dim); font-size:13px; margin:2px 0 0; }
+  nav { display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:24px; overflow-x:auto; }
+  nav a { padding:10px 16px; color:var(--dim); text-decoration:none; font-weight:600; border-bottom:2px solid transparent; margin-bottom:-1px; white-space:nowrap; }
+  nav a.on { color:var(--fg); border-bottom-color:var(--fg); }
+  .page { display:none; } .page.on { display:block; }
+  .section { padding:8px 0 28px; }
+  .section + .section { border-top:1px solid var(--line); padding-top:28px; }
+  .sechead { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:16px; }
+  .label { font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--label); margin-bottom:10px; }
+  .label .note { text-transform:none; letter-spacing:0; }
+  .media { height:var(--tile-h); border-radius:8px; overflow:hidden; position:relative; background:#000; }
+  #cam { width:100%; height:100%; object-fit:contain; display:block; transition:opacity .2s; }
+  .card { min-height:var(--tile-h); background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; overflow:hidden; }
+  .kv { margin-bottom:8px; }
+  .kv b { display:block; font-size:10.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--label); font-weight:500; }
+  .kv span { font-weight:600; overflow-wrap:anywhere; }
+  .mono { font-family:ui-monospace,monospace; font-weight:500; font-size:13px; }
+  .good { color:var(--ok); } .badtxt { color:var(--bad); } .warntxt { color:var(--warn); } .dimtxt { color:var(--dim); }
+  .pill { display:inline-block; padding:6px 14px; border-radius:999px; font-weight:700; font-size:14px; color:#fff; }
+  .pill.ok { background:var(--ok); } .pill.bad { background:var(--bad); } .pill.warn { background:var(--warn); } .pill.rec { background:var(--bad); animation:blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity:.55; } }
+  .checks { display:flex; flex-wrap:wrap; gap:8px 20px; margin-bottom:20px; font-size:14px; }
+  .checks span { white-space:nowrap; }
+  button, .btn { border:0; border-radius:8px; font:600 14px system-ui,sans-serif; cursor:pointer; padding:9px 16px;
+                 background:#e5e7eb; color:var(--fg); text-decoration:none; display:inline-flex; align-items:center; gap:6px; }
+  button:disabled { opacity:.5; cursor:default; }
+  .primary { background:var(--accent); color:#fff; }
+  .danger { background:var(--bad); color:#fff; }
+  .big { font-size:16px; padding:14px 22px; }
+  #poweroff { background:#000; color:#fff; font-size:17px; padding:12px 20px; }
+  .msg { color:var(--dim); font-size:13px; min-height:1.2em; margin-top:8px; }
+  .msg.err { color:var(--bad); }
+  .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .errand { display:flex; align-items:center; justify-content:center; height:56px; padding:0 1rem; border-radius:9px;
+            color:#fff; font-weight:700; text-decoration:none; box-shadow:0 4px 14px rgba(0,0,0,.22);
+            background:linear-gradient(135deg,#10b981,#3b82f6); }
+  input[type=text], input[type=password], select { font:14px system-ui,sans-serif; padding:9px 12px; border:1px solid #d1d5db;
+            border-radius:8px; background:#fff; color:var(--fg); min-width:0; }
+  /* Episodes */
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--label); font-weight:600; }
+  tbody tr { cursor:pointer; } tbody tr:hover { background:#f9fafb; } tbody tr.sel { background:#eff6ff; }
+  td.num, th.num { text-align:right; }
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:12px; margin:12px 0; max-height:60vh; overflow-y:auto; }
+  .tablewrap thead th { position:sticky; top:0; background:#fff; }
+  .empty { padding:24px; text-align:center; color:var(--dim); }
+  video { width:100%; max-height:60vh; background:#000; border-radius:8px; display:block; }
+  .checkcard { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:12px; }
+  .checkcard ul { margin:8px 0 0; padding-left:0; list-style:none; }
+  .checkcard li { margin:3px 0; }
+  /* Network */
+  .nets { display:flex; flex-direction:column; gap:6px; margin:12px 0; max-width:520px; }
+  .net { display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border:1px solid var(--line);
+         border-radius:8px; cursor:pointer; background:#fff; }
+  .net:hover { background:#f9fafb; } .net.sel { border-color:var(--accent); background:#eff6ff; }
+  .bars { font-family:ui-monospace,monospace; color:var(--dim); }
+  .narrow { max-width:520px; }
+  @media (max-width:600px) { .wrap { padding:16px; } h1 { font-size:22px; } #poweroff { font-size:14px; padding:10px 14px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="titlebar">
+    <h1>CASQUETTE</h1>
+    <button id="poweroff">⛔ Power off</button>
+  </div>
+  <div id="titlemsg" class="msg"></div>
+  <nav>
+    <a href="#overview" data-page="overview">Overview</a>
+    <a href="#episodes" data-page="episodes">Episodes</a>
+    <a href="#network" data-page="network">Network</a>
+  </nav>
+
+  <!-- ═════════════════════════════ Overview ═════════════════════════════ -->
+  <div class="page" id="page-overview">
+    <div class="section">
+      <div class="sechead">
+        <div>
+          <h2>Casquette status</h2>
+          <p class="sub">What your Casquette sees and how it is doing right now.</p>
+        </div>
+        <span id="banner" class="pill warn">connecting…</span>
+      </div>
+      <div id="checks" class="checks"></div>
+
+      <div class="tiles">
+        <div>
+          <div class="label">Camera <span id="camage" class="note"></span></div>
+          <div class="media"><img id="cam" alt="camera"></div>
+        </div>
+        <div>
+          <div class="label">IMU</div>
+          <div class="card">
+            <div class="kv"><b>Accelerometer (m/s²)</b><span id="accel" class="mono">—</span></div>
+            <div class="kv"><b>Gyroscope (rad/s)</b><span id="gyro" class="mono">—</span></div>
+            <canvas id="imuplot" height="60" style="width:100%;height:60px;display:block"></canvas>
+          </div>
+        </div>
+        <div>
+          <div class="label">Device</div>
+          <div class="card">
+            <div class="kv"><b>Name</b><span id="ov-name">—</span></div>
+            <div class="kv"><b>IP address</b><span id="ov-ip">—</span></div>
+            <div class="kv"><b>Network</b><span id="ov-net">—</span></div>
+            <div class="kv"><b>Device id</b><span id="ov-id" class="mono">—</span></div>
+          </div>
+          <div class="row" style="margin-top:10px"><a class="btn" href="#network">Change network</a></div>
+        </div>
+        <div>
+          <div class="label">Health</div>
+          <div class="card">
+            <div class="kv"><b>Temperature</b><span id="ov-temp">—</span></div>
+            <div class="kv"><b>Power</b><span id="ov-power">—</span></div>
+            <div class="kv"><b>WiFi signal</b><span id="ov-wifi">—</span></div>
+            <div class="kv"><b>Storage</b><span id="ov-disk">—</span></div>
+            <div class="kv"><b>Memory</b><span id="ov-mem">—</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="sechead">
+        <div>
+          <h2>Casquette data</h2>
+          <p class="sub">Browse what is on the device.</p>
+        </div>
+      </div>
+      <div class="row"><a class="btn primary big" href="#episodes">See recorded episodes →</a></div>
+    </div>
+
+    <div class="section">
+      <div class="sechead">
+        <div>
+          <h2>Account &amp; fleet</h2>
+          <p class="sub">Sign in to Hugging Face, and open the Fleet Space to start recording organized data and creating datasets.</p>
+        </div>
+      </div>
+      <div class="tiles">
+        <div>
+          <div class="label">HuggingFace account</div>
+          <div id="hf-in" style="display:none">
+            <div class="row"><span>Signed in as <b id="hf-user">—</b></span>
+              <button id="hf-logout">Sign out</button></div>
+          </div>
+          <div id="hf-out" style="display:none">
+            <button id="hf-oauth" class="errand" style="width:100%;border:0;font-size:16px;background:linear-gradient(135deg,#f59e0b,#ef4444)">🤗 Sign in with Hugging Face</button>
+            <p class="sub" style="text-align:center;margin:10px 0"><a href="#" id="hf-token-toggle">or use a token</a></p>
+            <div id="hf-token-box" style="display:none">
+              <div class="row">
+                <input id="hf-token" type="password" placeholder="hf_… access token" style="flex:1" autocomplete="off">
+                <button id="hf-save" class="primary">Save</button>
+              </div>
+              <p class="sub">Create a token with <i>write</i> access at
+                <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener">huggingface.co/settings/tokens</a>.</p>
+            </div>
+          </div>
+          <div id="hf-msg" class="msg"></div>
+        </div>
+        <div>
+          <div class="label">Fleet Space</div>
+          <a id="fleet" class="errand" href="#" target="_blank" rel="noopener">Record data and create dataset ↗</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═════════════════════════════ Episodes ═════════════════════════════ -->
+  <div class="page" id="page-episodes">
+    <div class="label">Tasks</div>
+    <div class="row">
+      <select id="task" style="flex:0 1 300px;min-width:0"></select>
+      <input id="filter" type="text" placeholder="Filter episodes…" style="flex:1 1 180px;max-width:260px">
+    </div>
+    <p id="ep-header" class="sub" style="margin-top:10px"></p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="selall" title="Select all"></th>
+          <th>Episode</th><th class="num">Duration</th><th class="num">Frames</th><th class="num">IMU samples</th><th>Status</th>
+        </tr></thead>
+        <tbody id="eps"></tbody>
+      </table>
+    </div>
+    <div class="row">
+      <button id="ep-replay" class="primary">▶ Replay</button>
+      <button id="ep-check">Check</button>
+      <button id="ep-dl">Download</button>
+      <button id="ep-del" class="danger">Delete</button>
+    </div>
+    <div id="ep-msg" class="msg"></div>
+    <div id="ep-checkcard"></div>
+    <div id="replay" style="display:none;margin-top:16px">
+      <div class="label">Replay <span id="replay-title" class="note"></span></div>
+      <video id="replay-video" controls preload="metadata"></video>
+      <div class="row" style="margin-top:10px"><button id="replay-stop">Close replay</button></div>
+    </div>
+    <div style="border-top:1px solid var(--line);margin:28px 0 16px"></div>
+    <button id="ep-wipe" class="big" style="background:#fee2e2;color:var(--bad)">🗑 Delete all Casquette data</button>
+  </div>
+
+  <!-- ═════════════════════════════ Network ══════════════════════════════ -->
+  <div class="page" id="page-network">
+    <div class="narrow">
+      <div class="label">Device</div>
+      <div class="card" style="min-height:0">
+        <div class="kv"><b>Name</b><span id="nw-name">—</span></div>
+        <div class="kv"><b>IP address</b><span id="nw-ip">—</span></div>
+        <div class="kv"><b>Network</b><span id="nw-net">—</span></div>
+        <div class="kv"><b>WiFi signal</b><span id="nw-wifi">—</span></div>
+      </div>
+      <div style="border-top:1px solid var(--line);margin:24px 0"></div>
+      <div class="label">Change WiFi network</div>
+      <button id="scan">Scan for networks</button>
+      <div id="nets" class="nets"></div>
+      <div id="joinbox" style="display:none">
+        <div class="row">
+          <input id="wifi-pw" type="password" placeholder="Password (leave empty for an open network)" style="flex:1" autocomplete="off">
+          <button id="join" class="primary">Connect</button>
+        </div>
+        <p class="sub">The Casquette leaves this network: reopen the dashboard from the new one
+          (<span class="mono" id="nw-host">casquette.local</span>:8000). If the connection fails, it goes back to the previous network.</p>
+      </div>
+      <div id="wifi-msg" class="msg"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const dash = (v, suffix = "") => v === null || v === undefined ? "—" : v + suffix;
+
+function setText(id, text, cls = "") { const el = $(id); el.textContent = text; el.className = cls; }
+function msg(id, text, isErr = false) { const el = $(id); el.textContent = text || ""; el.className = "msg" + (isErr ? " err" : ""); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  let body = null;
+  try { body = await r.json(); } catch (e) { /* empty or non-JSON body */ }
+  if (!r.ok) throw new Error((body && (body.detail || body.error || body.message)) || `${r.status} ${r.statusText}`);
+  return body;
+}
+
+function fmtDuration(s) {
+  s = Number(s) || 0;
+  const m = Math.floor(s / 60);
+  return m ? `${m}m ${(s % 60).toFixed(0).padStart(2, "0")}s` : `${s.toFixed(1)}s`;
+}
+
+// Episode ids are UTC timestamps (YYYYMMDD_HHMMSS): show them in local time.
+function fmtEpisode(id) {
+  const m = /^(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})$/.exec(id);
+  if (!m) return id;
+  const d = new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+  return d.toLocaleString(undefined, { year: "numeric", month: "2-digit", day: "2-digit",
+                                       hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+// ── Tabs (hash routing) ─────────────────────────────────────────────────
+const PAGES = ["overview", "episodes", "network"];
+let page = null;
+function route() {
+  const want = location.hash.slice(1);
+  page = PAGES.includes(want) ? want : "overview";
+  for (const p of PAGES) $("page-" + p).classList.toggle("on", p === page);
+  for (const a of document.querySelectorAll("nav a")) a.classList.toggle("on", a.dataset.page === page);
+  if (page === "overview") { pollStatus(); pollInfo(); pollHf(); refreshImage(); }
+  if (page === "episodes") loadTasks();
+  if (page === "network") pollInfo();
+  if (page !== "episodes") closeReplay();
+}
+window.addEventListener("hashchange", route);
+
+// A hidden tab polls nothing: the page costs the Pi nothing while no one looks.
+function every(ms, pages, fn) {
+  setInterval(() => { if (!document.hidden && pages.includes(page)) fn(); }, ms);
+}
+
+// ── Power off ───────────────────────────────────────────────────────────
+$("poweroff").onclick = async () => {
+  if (!confirm("Power off the Casquette?")) return;
+  $("poweroff").disabled = true;
+  try {
+    await api("/api/system/shutdown", { method: "POST" });
+    msg("titlemsg", "Powering off… Wait for the green LED to stop blinking before unplugging.");
+  } catch (e) {
+    msg("titlemsg", e.message, true);
+    $("poweroff").disabled = false;
+  }
+};
+
+// ── Overview: status ────────────────────────────────────────────────────
+let lastImuAt = 0;
+const accHist = [];
+
+function check(ok, label, detail) {
+  const mark = ok === null ? '<span class="dimtxt">•</span>' : ok ? '<span class="good">✓</span>' : '<span class="badtxt">✗</span>';
+  return `<span>${mark} ${esc(label)}${detail ? ` <span class="dimtxt">— ${esc(detail)}</span>` : ""}</span>`;
+}
+
+async function pollStatus() {
+  let st;
+  try {
+    st = await api("/api/daemon/status");
+  } catch (e) {
+    setBanner("bad", "Casquette service unreachable");
+    $("checks").innerHTML = check(false, "Service", e.message);
+    return;
+  }
+  const running = st.state === "running";
+  const sensor = st.sensor || {};
+  const imu = sensor.imu;
+  const cap = sensor.capture || {};
+  const imuOk = !!imu;
+  if (imuOk) lastImuAt = Date.now();
+
+  const checks = [
+    check(running, "Service", running ? "" : (st.error || st.state)),
+    check(running ? camOk : null, "Camera", running && !camOk ? "no image" : ""),
+    check(running ? imuOk : null, "IMU", running && !imuOk ? "no samples" : ""),
+  ];
+  if (diskFreeGb !== null) checks.push(check(diskFreeGb >= 1, "Storage", diskFreeGb < 1 ? `${diskFreeGb} GB free` : ""));
+  $("checks").innerHTML = checks.join("");
+
+  if (!running) setBanner("bad", "Service " + st.state);
+  else if (cap.is_capturing) setBanner("rec", `● Recording ${fmtDuration(cap.duration_seconds)}`);
+  else if (!camOk) setBanner("bad", "Camera failure");
+  else if (!imuOk) setBanner("bad", "IMU failure");
+  else if (diskFreeGb !== null && diskFreeGb < 1) setBanner("warn", "Storage almost full");
+  else setBanner("ok", "Ready to record");
+
+  if (imu) {
+    const f = v => (v >= 0 ? " " : "") + v.toFixed(2);
+    setText("accel", imu.accel.map(f).join("  "), "mono");
+    setText("gyro", imu.gyro.map(f).join("  "), "mono");
+    accHist.push(Math.hypot(...imu.accel));
+    if (accHist.length > 60) accHist.shift();
+    drawImu();
+  } else {
+    setText("accel", "—"); setText("gyro", "—");
+  }
+}
+
+function setBanner(cls, text) { const b = $("banner"); b.className = "pill " + cls; b.textContent = text; }
+
+function drawImu() {
+  const c = $("imuplot");
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w) c.width = w;
+  const ctx = c.getContext("2d");
+  ctx.clearRect(0, 0, w, h);
+  if (accHist.length < 2) return;
+  const lo = Math.min(...accHist) - 0.2, hi = Math.max(...accHist) + 0.2;
+  ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1.5; ctx.beginPath();
+  accHist.forEach((v, i) => {
+    const x = i / 59 * w, y = h - (v - lo) / (hi - lo) * h;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  });
+  ctx.stroke();
+  ctx.fillStyle = "#8a94a6"; ctx.font = "10px system-ui"; ctx.fillText("|accel| — last minute", 2, 10);
+}
+
+// ── Overview: camera ────────────────────────────────────────────────────
+let camOk = true;
+function refreshImage() {
+  const img = $("cam");
+  const next = new Image();
+  next.onload = () => { img.src = next.src; img.style.opacity = 1; camOk = true; $("camage").textContent = "(live)"; };
+  // Dim the stale image on failure: a frozen frame must never look live.
+  next.onerror = () => { img.style.opacity = 0.25; camOk = false; $("camage").textContent = "(no image)"; };
+  next.src = "/api/camera/snapshot?t=" + Date.now();
+}
+
+// ── Overview + Network: device info ─────────────────────────────────────
+let diskFreeGb = null;
+function pollInfo() {
+  // Two independent calls: the WiFi one shells out to nmcli and can be slow,
+  // it must not hold the rest of the cards back.
+  api("/api/system/info").then(showSystemInfo, () => {});
+  api("/api/wifi/status").then(showWifi, () => {});
+}
+
+function showWifi(wifi) {
+  const sig = wifi.signal_dbm;
+  const sigCls = sig === null ? "" : sig <= -75 ? "badtxt" : sig <= -67 ? "warntxt" : "";
+  for (const p of ["ov", "nw"]) {
+    if (wifi.ip) setText(p + "-ip", wifi.ip);
+    setText(p + "-net", wifi.ssid || "—");
+    setText(p + "-wifi", dash(sig, " dBm"), sigCls);
+  }
+}
+
+function showSystemInfo(info) {
+  diskFreeGb = info.disk_free_gb ?? null;
+  for (const p of ["ov", "nw"]) {
+    setText(p + "-name", dash(info.device_name || info.hostname));
+    if ($(p + "-ip").textContent === "—") setText(p + "-ip", dash(info.ip));
+  }
+  setText("ov-id", dash(info.device_id), "mono");
+  $("nw-host").textContent = (info.hostname || "casquette") + ".local";
+
+  const t = info.cpu_temp_c;
+  setText("ov-temp", dash(t, " °C"), t == null ? "" : t >= 80 ? "badtxt" : t >= 70 ? "warntxt" : "");
+  // vcgencmd get_throttled: 0x0 healthy; low bits = now, bits 16+ = since boot.
+  const th = info.throttled == null ? NaN : parseInt(info.throttled, 16);
+  if (isNaN(th)) setText("ov-power", "—");
+  else if (th === 0) setText("ov-power", "OK", "good");
+  else if (th & 0xf) setText("ov-power", `Under-voltage / throttled now (${info.throttled})`, "badtxt");
+  else setText("ov-power", `Throttled since boot (${info.throttled})`, "warntxt");
+  if (info.disk_total_gb != null) {
+    const used = (info.disk_total_gb - info.disk_free_gb).toFixed(1);
+    setText("ov-disk", `${used} / ${info.disk_total_gb} GB used (${info.disk_free_gb} GB free)`,
+            info.disk_free_gb < 1 ? "badtxt" : info.disk_free_gb < 3 ? "warntxt" : "");
+  }
+  if (info.mem_total_mb) {
+    const avail = info.mem_available_mb;
+    setText("ov-mem", `${avail} MB free of ${info.mem_total_mb} MB`, avail < 60 ? "badtxt" : avail < 120 ? "warntxt" : "");
+  }
+  if (info.relay_url) $("fleet").href = info.relay_url;
+}
+
+// ── Overview: Hugging Face account ──────────────────────────────────────
+function showHf(s) {
+  $("hf-in").style.display = s.is_logged_in ? "" : "none";
+  $("hf-out").style.display = s.is_logged_in ? "none" : "";
+  $("hf-user").textContent = s.username || (s.offline ? "(offline — can't check)" : "—");
+  $("hf-logout").disabled = !!s.from_env;
+  $("hf-logout").title = s.from_env ? "The token comes from the HF_TOKEN environment variable" : "";
+}
+async function pollHf() {
+  try { showHf(await api("/api/hf-auth/status")); } catch (e) { msg("hf-msg", e.message, true); }
+}
+
+// OAuth: HF → fleet Space relay → back to this Casquette's callback, in a
+// popup. The page polls the login session until the popup has done its job.
+let oauthPoll = null;
+$("hf-oauth").onclick = async () => {
+  // Open the popup now, inside the click: opened after an await, browsers block it.
+  const popup = window.open("", "hf-login", "width=600,height=750");
+  const btn = $("hf-oauth");
+  btn.disabled = true; msg("hf-msg", "");
+  try {
+    btn.textContent = "Waking the fleet…";
+    // HF sends the callback through the fleet Space: wake it first, or a
+    // sleeping Space drops the login.
+    await api("/api/hf-auth/oauth/warm-relay").catch(() => {});
+    const r = await api("/api/hf-auth/oauth/start");
+    if (popup && !popup.closed) popup.location = r.auth_url;
+    else window.open(r.auth_url, "hf-login", "width=600,height=750");
+    btn.textContent = "Finish signing in in the popup…";
+    clearInterval(oauthPoll);
+    oauthPoll = setInterval(async () => {
+      let st;
+      try { st = await api(`/api/hf-auth/oauth/status/${encodeURIComponent(r.session_id)}`); }
+      catch (e) { return; }
+      if (st.status === "pending") return;
+      clearInterval(oauthPoll); resetOauthButton();
+      if (st.status === "authorized") { try { popup && popup.close(); } catch (e) {} pollHf(); }
+      else msg("hf-msg", st.message || "Sign-in failed.", true);
+    }, 1500);
+  } catch (e) {
+    try { popup && popup.close(); } catch (e2) {}
+    msg("hf-msg", e.message, true);
+    resetOauthButton();
+  }
+};
+function resetOauthButton() {
+  $("hf-oauth").disabled = false;
+  $("hf-oauth").textContent = "🤗 Sign in with Hugging Face";
+}
+$("hf-token-toggle").onclick = e => {
+  e.preventDefault();
+  const box = $("hf-token-box");
+  box.style.display = box.style.display === "none" ? "" : "none";
+};
+$("hf-save").onclick = async () => {
+  const token = $("hf-token").value.trim();
+  if (!token) return;
+  $("hf-save").disabled = true; msg("hf-msg", "Checking the token…");
+  try {
+    showHf(await api("/api/hf-auth/save-token", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                    body: JSON.stringify({ token }) }));
+    $("hf-token").value = ""; msg("hf-msg", "");
+  } catch (e) { msg("hf-msg", e.message, true); }
+  $("hf-save").disabled = false;
+};
+$("hf-token").addEventListener("keydown", e => { if (e.key === "Enter") $("hf-save").click(); });
+$("hf-logout").onclick = async () => {
+  if (!confirm("Sign out of Hugging Face? The Casquette leaves the fleet until you sign in again.")) return;
+  try { showHf(await api("/api/hf-auth/token", { method: "DELETE" })); msg("hf-msg", ""); }
+  catch (e) { msg("hf-msg", e.message, true); }
+};
+
+// ── Episodes ────────────────────────────────────────────────────────────
+const TASK_KEY = "casquette_selected_task";
+const MIN_SECONDS = 2.0;
+let tasks = [];
+const selected = new Set();
+
+function store(key, value) { try { localStorage.setItem(key, value); } catch (e) { /* private mode */ } }
+function recall(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+
+function episodeStatus(ep) {
+  if (ep.saving) return ["⏳ saving video", "dimtxt"];
+  if (!ep.camera_ok || !ep.has_video && !ep.saving || ep.frame_count === 0) return ["✗ camera", "badtxt"];
+  if (ep.missing.some(f => f.startsWith("metadata.json"))) return ["✗ metadata", "badtxt"];
+  if (!ep.has_imu || ep.imu_sample_count === 0) return ["✗ IMU", "badtxt"];
+  if (ep.missing.length) return ["✗ missing " + ep.missing.join(", "), "badtxt"];
+  if (ep.duration_seconds < MIN_SECONDS) return ["⚠ very short", "warntxt"];
+  return ["✓ ok", "good"];
+}
+
+async function loadTasks() {
+  try { tasks = await api("/api/tasks"); }
+  catch (e) { msg("ep-msg", "Could not load the episodes: " + e.message, true); return; }
+  const sel = $("task");
+  const current = sel.value || recall(TASK_KEY);
+  // Named tasks first, Unassigned last; hide Unassigned while it is empty.
+  const shown = tasks.filter(t => t.id !== "unassigned" || t.episode_count)
+                     .sort((a, b) => (a.id === "unassigned") - (b.id === "unassigned"));
+  sel.innerHTML = shown.map(t => `<option value="${esc(t.id)}">${esc(t.name)} (${t.episode_count})</option>`).join("")
+                  || '<option value="">No episodes yet</option>';
+  if (shown.some(t => t.id === current)) sel.value = current;
+  renderEpisodes();
+}
+
+function currentTask() { return tasks.find(t => t.id === $("task").value); }
+
+function visibleEpisodes() {
+  const t = currentTask();
+  if (!t) return [];
+  const q = $("filter").value.trim().toLowerCase();
+  return t.episodes.slice().reverse()   // newest first
+    .filter(ep => !q || ep.episode_id.includes(q) || fmtEpisode(ep.episode_id).toLowerCase().includes(q)
+                  || episodeStatus(ep)[0].toLowerCase().includes(q));
+}
+
+function renderEpisodes() {
+  const t = currentTask();
+  const eps = visibleEpisodes();
+  const all = t ? t.episodes : [];
+  // Drop selections for episodes that are gone.
+  const ids = new Set(all.map(e => e.episode_id));
+  for (const id of [...selected]) if (!ids.has(id)) selected.delete(id);
+
+  $("ep-header").textContent = t
+    ? `${t.episode_count} episode${t.episode_count === 1 ? "" : "s"} · ${fmtDuration(t.total_duration)} recorded`
+      + (t.description ? ` · ${t.description}` : "")
+    : "";
+  $("eps").innerHTML = eps.length ? eps.map(ep => {
+    const [status, cls] = episodeStatus(ep);
+    const on = selected.has(ep.episode_id);
+    return `<tr data-id="${esc(ep.episode_id)}" class="${on ? "sel" : ""}">
+      <td><input type="checkbox" ${on ? "checked" : ""}></td>
+      <td title="${esc(ep.episode_id)}">${esc(fmtEpisode(ep.episode_id))}</td>
+      <td class="num">${fmtDuration(ep.duration_seconds)}</td>
+      <td class="num">${ep.frame_count}</td>
+      <td class="num">${ep.imu_sample_count}</td>
+      <td class="${cls}">${esc(status)}</td></tr>`;
+  }).join("") : `<tr><td colspan="6" class="empty">${t ? "No episode matches." : "No episodes on this Casquette yet."}</td></tr>`;
+  $("selall").checked = eps.length > 0 && eps.every(e => selected.has(e.episode_id));
+}
+
+$("eps").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-id]");
+  if (!tr) return;
+  const id = tr.dataset.id;
+  selected.has(id) ? selected.delete(id) : selected.add(id);
+  renderEpisodes();
+});
+$("selall").onchange = () => {
+  for (const ep of visibleEpisodes()) $("selall").checked ? selected.add(ep.episode_id) : selected.delete(ep.episode_id);
+  renderEpisodes();
+};
+$("task").onchange = () => { store(TASK_KEY, $("task").value); selected.clear(); $("ep-checkcard").innerHTML = ""; renderEpisodes(); };
+$("filter").oninput = renderEpisodes;
+
+function picked(single) {
+  const ids = [...selected];
+  if (!ids.length) { msg("ep-msg", "Select an episode first (click its row).", true); return null; }
+  if (single && ids.length > 1) { msg("ep-msg", "Select a single episode for this.", true); return null; }
+  msg("ep-msg", "");
+  return ids;
+}
+
+$("ep-replay").onclick = () => {
+  const ids = picked(true); if (!ids) return;
+  const ep = currentTask().episodes.find(e => e.episode_id === ids[0]);
+  if (!ep.has_video) { msg("ep-msg", ep.saving ? "The video is still being saved, try again in a few seconds." : "This episode has no video.", true); return; }
+  $("replay-title").textContent = fmtEpisode(ids[0]);
+  $("replay-video").src = `/api/episodes/${encodeURIComponent(ids[0])}/video`;
+  $("replay").style.display = "";
+  $("replay-video").play().catch(() => {});
+  $("replay").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
+function closeReplay() {
+  const v = $("replay-video");
+  v.pause(); v.removeAttribute("src"); v.load();   // releases the connection to the Pi
+  $("replay").style.display = "none";
+}
+$("replay-stop").onclick = closeReplay;
+
+const FILE_LABELS = {
+  "raw_video.mp4": "Video", "imu_data.json": "IMU data",
+  "frame_timestamps.json": "Frame timestamps", "metadata.json": "Metadata",
+};
+$("ep-check").onclick = async () => {
+  const ids = picked(true); if (!ids) return;
+  try {
+    const c = await api(`/api/episodes/${encodeURIComponent(ids[0])}/check`);
+    const verdict = c.saving ? ['<span class="dimtxt">⏳ The video is still being saved.</span>']
+      : c.complete ? ['<span class="good">✓ This episode is complete.</span>']
+      : ['<span class="badtxt">✗ This episode is incomplete and can\'t be used in a dataset.</span>'];
+    const rows = Object.entries(FILE_LABELS).map(([f, label]) => {
+      const missing = c.missing.some(m => m.startsWith(f));
+      return `<li>${missing ? '<span class="badtxt">✗</span>' : '<span class="good">✓</span>'} ${label} <span class="dimtxt mono">${f}</span></li>`;
+    });
+    if (!c.camera_ok) rows.push('<li><span class="badtxt">✗</span> The camera reported a failure during this recording.</li>');
+    $("ep-checkcard").innerHTML = `<div class="checkcard"><b>${esc(fmtEpisode(ids[0]))}</b> — ${verdict}<ul>${rows.join("")}</ul></div>`;
+  } catch (e) { msg("ep-msg", e.message, true); }
+};
+
+$("ep-dl").onclick = () => {
+  const ids = picked(false); if (!ids) return;
+  // The archive is built on the Pi before the download starts: that takes a while.
+  msg("ep-msg", `Preparing ${ids.length} episode${ids.length > 1 ? "s" : ""}… the download starts when the archive is ready.`);
+  const a = document.createElement("a");
+  a.href = "/api/episodes/download?" + ids.map(id => "episode_ids=" + encodeURIComponent(id)).join("&");
+  a.download = "";
+  document.body.appendChild(a); a.click(); a.remove();
+};
+
+$("ep-del").onclick = async () => {
+  const ids = picked(false); if (!ids) return;
+  if (!confirm(`Delete ${ids.length} episode${ids.length > 1 ? "s" : ""} from this Casquette? This cannot be undone.`)) return;
+  const errors = [];
+  for (const id of ids) {
+    try { await api(`/api/episodes/${encodeURIComponent(id)}`, { method: "DELETE" }); selected.delete(id); }
+    catch (e) { errors.push(`${fmtEpisode(id)}: ${e.message}`); }
+  }
+  closeReplay(); $("ep-checkcard").innerHTML = "";
+  msg("ep-msg", errors.length ? errors.join(" · ") : `Deleted ${ids.length} episode${ids.length > 1 ? "s" : ""}.`, errors.length > 0);
+  loadTasks();
+};
+
+$("ep-wipe").onclick = async () => {
+  if (!confirm("Delete ALL episodes on this Casquette? This cannot be undone.")) return;
+  try {
+    const r = await api("/api/episodes", { method: "DELETE" });
+    selected.clear(); closeReplay(); $("ep-checkcard").innerHTML = "";
+    msg("ep-msg", `Deleted ${r.deleted} episode${r.deleted === 1 ? "" : "s"}.`);
+  } catch (e) { msg("ep-msg", e.message, true); }
+  loadTasks();
+};
+
+// ── Network ─────────────────────────────────────────────────────────────
+let chosenSsid = null;
+function bars(signal) { const n = Math.round(signal / 25); return "▂▄▆█".slice(0, Math.max(1, n)).padEnd(4, "·"); }
+
+$("scan").onclick = async () => {
+  $("scan").disabled = true; msg("wifi-msg", "Scanning…");
+  $("nets").innerHTML = ""; $("joinbox").style.display = "none"; chosenSsid = null;
+  try {
+    const nets = await api("/api/wifi/scan");
+    $("nets").innerHTML = nets.map(n =>
+      `<div class="net" data-ssid="${esc(n.ssid)}"><span>${esc(n.ssid)}</span><span class="bars" title="${n.signal}%">${bars(n.signal)}</span></div>`
+    ).join("");
+    msg("wifi-msg", nets.length ? "Pick a network." : "No other network found.");
+  } catch (e) { msg("wifi-msg", e.message, true); }
+  $("scan").disabled = false;
+};
+$("nets").addEventListener("click", e => {
+  const el = e.target.closest(".net"); if (!el) return;
+  chosenSsid = el.dataset.ssid;
+  for (const n of document.querySelectorAll(".net")) n.classList.toggle("sel", n === el);
+  $("joinbox").style.display = ""; $("wifi-pw").value = ""; $("wifi-pw").focus();
+  msg("wifi-msg", "");
+});
+$("wifi-pw").addEventListener("keydown", e => { if (e.key === "Enter") $("join").click(); });
+$("join").onclick = async () => {
+  if (!chosenSsid) return;
+  if (!confirm(`Move the Casquette to "${chosenSsid}"? This page will lose it if your computer is not on that network.`)) return;
+  $("join").disabled = true;
+  try {
+    await api("/api/wifi/connect", { method: "POST", headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ ssid: chosenSsid, password: $("wifi-pw").value }) });
+    msg("wifi-msg", `Connecting to ${chosenSsid}…`);
+    // Poll the outcome. If the Casquette moved away the requests start failing:
+    // that is success as far as this page can tell.
+    for (let i = 0; i < 40; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      let res;
+      try { res = await api("/api/wifi/connect-result"); }
+      catch (e) { msg("wifi-msg", `The Casquette left this network. Reopen the dashboard from "${chosenSsid}".`); break; }
+      if (res.status === "ok") { msg("wifi-msg", res.message.replace(/^OK:\s*/, "") + "."); pollInfo(); break; }
+      if (res.status === "error") { msg("wifi-msg", res.message.replace(/^ERROR:\s*/, ""), true); break; }
+    }
+  } catch (e) { msg("wifi-msg", e.message, true); }
+  $("join").disabled = false;
+};
+
+// ── Start ───────────────────────────────────────────────────────────────
+route();
+every(1000, ["overview"], pollStatus);
+every(500, ["overview"], refreshImage);
+every(10000, ["overview", "network"], pollInfo);
+every(60000, ["overview"], pollHf);
+// Slow beat: nothing on the page records, so the only changes to catch come
+// from the fleet. Skipped while a replay plays so the table doesn't jump.
+every(10000, ["episodes"], () => { if ($("replay").style.display === "none") loadTasks(); });
+</script>
+</body>
+</html>
