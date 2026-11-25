@@ -10,6 +10,9 @@ ExecStart=/home/rasp/Project/Repo/casquette/.venv/bin/python -m casquette
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Optional per-device config (CASQUETTE_RELAY_URL, CASQUETTE_DEVICE_NAME, …).
+# Leading '-': the service boots without it. Same as grabette's /etc/grabette/env.
+EnvironmentFile=-/etc/casquette/env
 
 [Install]
 WantedBy=multi-user.target
