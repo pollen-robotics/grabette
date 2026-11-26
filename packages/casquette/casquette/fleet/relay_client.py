@@ -1,8 +1,8 @@
 # Copied from grabette/relay_client.py (develop @0cb3453) for the casquette
 # fleet prototype. Deviations: imports point at casquette.fleet.{wifi,cancel};
 # logger name is "casquette.relay_client". fault_provider / last_episode_provider
-# (and the heartbeat fields they feed) were ported later from grabette's
-# current relay_client; its other providers (depth_warm, storage, unassigned)
+# and the heartbeat's `running` list were ported later from grabette's current
+# relay_client; its other providers (depth_warm, storage, unassigned)
 # have no casquette counterpart yet. Everything else (config + providers)
 # is constructor-injected, so nothing else changes. Keep in sync until extracted
 # to a shared package. See casquette/fleet/__init__.py.
@@ -298,6 +298,12 @@ class RelayClient:
                         # a field that only appears when broken can never say
                         # "fixed". Truncated because it rides in a query string.
                         params["error"] = (fault or "")[:_FAULT_MAX_CHARS]
+                    # Sent on every beat, empty included: lets the fleet spot a
+                    # command this device forgot (fast restart, lost result) —
+                    # e.g. an upload whose process was OOM-killed, which would
+                    # otherwise leave the device "uploading" (busy) on the fleet
+                    # forever, since its result can never arrive.
+                    params["running"] = ",".join(sorted(inflight))
                     if self.last_episode_provider is not None:
                         try:
                             last = self.last_episode_provider()

@@ -204,3 +204,4 @@ async def test_the_heartbeat_carries_the_fault_and_the_last_take(monkeypatch):
     assert b["error"] == FAULT
     assert b["last_episode"] == "20261125_155326"
     assert b["last_issues"] == "start_failed"
+    assert b["running"] == ""
