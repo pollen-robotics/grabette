@@ -17,6 +17,7 @@ def _backend(monkeypatch, tmp_path, camera):
     backend._needs_reinit = False
     backend._speaker = None
     backend._angle = None
+    backend._imu = None
     backend._sync = SimpleNamespace(get_timestamp_ms=lambda: 1000.0, reset=lambda: None)
     backend._camera = camera
     backend._oakd = None
